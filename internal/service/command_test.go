@@ -102,3 +102,36 @@ func TestRunCommand_RejectsMissingCompositionDependencies(t *testing.T) {
 		t.Fatalf("stderr = %q, want missing-path diagnostic", stderr.String())
 	}
 }
+
+func TestRunCommand_SuccessAndDiagnosticWriterFailures(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	called := false
+	exitCode := RunCommand(context.Background(), nil, &stdout, &stderr, CommandConfig{
+		DefaultDatabasePath: "/private/tmp/default.db",
+		DefaultSocketPath:   "/private/tmp/default.sock",
+		RunService: func(context.Context, Config) error {
+			called = true
+			return nil
+		},
+	})
+	if exitCode != 0 || !called {
+		t.Fatalf("RunCommand(success) = %d, called=%v, want 0 and called", exitCode, called)
+	}
+	stdout.Reset()
+	if exit := RunCommand(context.Background(), []string{"--version"}, &stdout, &stderr, CommandConfig{}); exit != 0 || stdout.String() != "devcrew-service dev\n" {
+		t.Fatalf("RunCommand(default version) = %d, %q", exit, stdout.String())
+	}
+	if exit := writeServiceDiagnostic(nil, "message", 0); exit != 1 {
+		t.Fatalf("writeServiceDiagnostic(nil) = %d, want 1", exit)
+	}
+	if exit := writeServiceDiagnostic(errorWriter{}, "message", 0); exit != 1 {
+		t.Fatalf("writeServiceDiagnostic(failing) = %d, want 1", exit)
+	}
+}
+
+type errorWriter struct{}
+
+func (errorWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
+}
