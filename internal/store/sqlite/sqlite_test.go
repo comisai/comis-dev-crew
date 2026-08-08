@@ -388,14 +388,49 @@ func TestStore_RejectsInvalidDuplicateAndMissingRecords(t *testing.T) {
 	if err := store.RecordOperation(context.Background(), operation); err != nil {
 		t.Fatalf("RecordOperation() error = %v", err)
 	}
-	if err := store.RecordOperation(context.Background(), operation); !errors.Is(err, application.ErrConflict) {
-		t.Fatalf("RecordOperation(duplicate) error = %v, want ErrConflict", err)
+	if err := store.RecordOperation(context.Background(), operation); err != nil {
+		t.Fatalf("RecordOperation(same replay) error = %v, want original outcome replay", err)
+	}
+	alteredOperation := operation
+	alteredOperation.SubjectDigest = strings.Repeat("c", 64)
+	if err := store.RecordOperation(context.Background(), alteredOperation); !errors.Is(err, application.ErrConflict) {
+		t.Fatalf("RecordOperation(altered replay) error = %v, want ErrConflict", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := store.ListTasks(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("ListTasks(cancelled) error = %v, want context.Canceled", err)
+	}
+}
+
+func TestStore_ConcurrentIdenticalOperationReplayHasOneLogicalEffect(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	operation := storeOperation("op-0001", 1)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			results <- store.RecordOperation(context.Background(), operation)
+		}()
+	}
+	close(start)
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatalf("concurrent RecordOperation() error = %v", err)
+		}
+	}
+	var count int
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM operations WHERE id = ?", operation.ID).Scan(&count); err != nil {
+		t.Fatalf("count operation records: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("operation row count = %d, want one logical effect", count)
 	}
 }
 
