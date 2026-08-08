@@ -157,6 +157,30 @@ func checkImportBoundary(t *testing.T, relative, importPath string) {
 	if strings.HasPrefix(relative, "internal/application/") && strings.HasPrefix(importPath, module+"internal/") && !strings.HasPrefix(importPath, module+"internal/domain") {
 		t.Errorf("%s: application may import only domain from internal packages", relative)
 	}
+	if strings.HasPrefix(relative, "internal/localapi/") && strings.HasPrefix(importPath, module+"internal/") &&
+		!strings.HasPrefix(importPath, module+"internal/application") && !strings.HasPrefix(importPath, module+"internal/domain") {
+		t.Errorf("%s: local API may import only application and domain from internal packages", relative)
+	}
+	if strings.HasPrefix(relative, "internal/cli/") && strings.HasPrefix(importPath, module+"internal/") &&
+		!strings.HasPrefix(importPath, module+"internal/application") && !strings.HasPrefix(importPath, module+"internal/domain") {
+		t.Errorf("%s: CLI rendering may import only application and domain from internal packages", relative)
+	}
+	if strings.HasPrefix(importPath, module+"internal/store/sqlite") && relative != "internal/service/service.go" {
+		t.Errorf("%s: only the service composition may import the writable SQLite adapter", relative)
+	}
+	if relative == "cmd/devcrew/main.go" && strings.HasPrefix(importPath, module+"internal/") {
+		allowed := []string{module + "internal/cli", module + "internal/command", module + "internal/localapi", module + "internal/localconfig"}
+		isAllowed := false
+		for _, allowedImport := range allowed {
+			if importPath == allowedImport {
+				isAllowed = true
+				break
+			}
+		}
+		if !isAllowed {
+			t.Errorf("%s: operator CLI composition must reach domain behavior only through the local client", relative)
+		}
+	}
 	if importPath == "database/sql" && !strings.HasPrefix(relative, "internal/store/sqlite/") {
 		t.Errorf("%s: database/sql belongs only in the SQLite store adapter", relative)
 	}

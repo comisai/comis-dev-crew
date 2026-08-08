@@ -4,10 +4,10 @@ import (
 	"context"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
 	"github.com/comisai/comis-dev-crew/internal/command"
+	"github.com/comisai/comis-dev-crew/internal/localconfig"
 	"github.com/comisai/comis-dev-crew/internal/service"
 )
 
@@ -27,6 +27,9 @@ func defaultPaths() (string, string) {
 	if err != nil {
 		return "", ""
 	}
-	root := filepath.Join(configurationRoot, "comis-dev-crew")
-	return filepath.Join(root, "state", "devcrew.db"), filepath.Join(root, "run", "devcrew.sock")
+	paths, err := localconfig.Under(configurationRoot)
+	if err != nil {
+		return "", ""
+	}
+	return paths.Database, paths.Socket
 }

@@ -52,7 +52,7 @@ func main() {
 			}
 		}
 	}
-	fmt.Println("release-shaped archive and four-command scaffold smoke passed")
+	fmt.Println("release-shaped archive and four-command help/version smoke passed")
 }
 
 func copyFile(source, destination string) error {
