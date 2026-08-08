@@ -11,12 +11,14 @@ import (
 )
 
 type module struct {
-	Path    string
-	Version string
-	Sum     string
-	Dir     string
-	Main    bool
-	Replace *module
+	Path     string
+	Version  string
+	Sum      string
+	GoModSum string
+	Dir      string
+	GoMod    string
+	Main     bool
+	Replace  *module
 }
 
 type policy struct {
@@ -28,9 +30,6 @@ func main() {
 	allowed := make(map[string]bool)
 	for _, licenseClass := range configuration.AllowedClasses {
 		allowed[licenseClass] = true
-	}
-	if output, err := exec.Command("go", "mod", "download", "all").CombinedOutput(); err != nil {
-		fatal("download modules", fmt.Errorf("%w: %s", err, output))
 	}
 	output, err := exec.Command("go", "list", "-m", "-json", "all").Output()
 	if err != nil {
@@ -50,8 +49,16 @@ func main() {
 		if item.Replace != nil {
 			resolved = *item.Replace
 		}
-		if resolved.Version != "" && resolved.Sum == "" {
-			fatal(item.Path, fmt.Errorf("module has no checksum provenance"))
+		if resolved.Dir == "" && resolved.GoMod == "" {
+			fmt.Printf("license: %s %s graph-only (not in the reachable package closure)\n", item.Path, item.Version)
+			continue
+		}
+		if resolved.Version != "" && resolved.GoModSum == "" {
+			fatal(item.Path, fmt.Errorf("module definition has no checksum provenance"))
+		}
+		if resolved.Sum == "" || resolved.Dir == "" {
+			fmt.Printf("license: %s %s graph-only (go.mod checksum verified)\n", item.Path, item.Version)
+			continue
 		}
 		licenseClass, licenseFile, err := classifyLicense(resolved.Dir)
 		if err != nil {

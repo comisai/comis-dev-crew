@@ -5,7 +5,7 @@ SHELL := /bin/sh
 .PHONY: docs-check format-check mod-check generate-check vet staticcheck \
 	test-architecture test coverage test-race test-conformance test-integration \
 	test-fuzz-smoke build cross-build vulncheck license-check secret-check smoke \
-	test-live verify verify-full
+	test-live verify verify-full post-full-check
 
 docs-check:
 	go run ./tools/checkdocs
@@ -70,9 +70,12 @@ secret-check:
 smoke:
 	go run ./tools/smoke
 
+post-full-check:
+	go run ./tools/modcheck
+
 test-live:
 	go test -mod=readonly -tags=live -count=1 -timeout=2h ./test/live/...
 
 verify: docs-check format-check mod-check generate-check vet staticcheck test-architecture test coverage test-race test-conformance build
 
-verify-full: verify test-integration test-fuzz-smoke cross-build vulncheck license-check secret-check smoke
+verify-full: verify test-integration test-fuzz-smoke cross-build vulncheck license-check secret-check smoke post-full-check
