@@ -22,7 +22,8 @@ type module struct {
 }
 
 type policy struct {
-	AllowedClasses []string `json:"allowedClasses"`
+	AllowedClasses           []string          `json:"allowedClasses"`
+	ReviewedModuleExceptions map[string]string `json:"reviewedModuleExceptions"`
 }
 
 func main() {
@@ -64,10 +65,16 @@ func main() {
 		if err != nil {
 			fatal(item.Path, err)
 		}
-		if !allowed[licenseClass] {
+		moduleKey := item.Path + "@" + item.Version
+		reviewedException := configuration.ReviewedModuleExceptions[moduleKey] == licenseClass
+		if !allowed[licenseClass] && !reviewedException {
 			fatal(item.Path, fmt.Errorf("license %s in %s is not allowed", licenseClass, licenseFile))
 		}
-		fmt.Printf("license: %s %s %s\n", item.Path, item.Version, licenseClass)
+		if reviewedException {
+			fmt.Printf("license: %s %s %s (exact reviewed exception)\n", item.Path, item.Version, licenseClass)
+		} else {
+			fmt.Printf("license: %s %s %s\n", item.Path, item.Version, licenseClass)
+		}
 		checked++
 	}
 	fmt.Printf("license: verified %d external modules\n", checked)
@@ -107,6 +114,8 @@ func classifyLicense(directory string) (string, string, error) {
 				return "BSD", match, nil
 			case strings.Contains(text, "Permission to use, copy, modify, and/or distribute"):
 				return "ISC", match, nil
+			case strings.Contains(text, "Mozilla Public License, version 2.0"):
+				return "MPL-2.0", match, nil
 			}
 		}
 	}
