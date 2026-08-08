@@ -1,0 +1,29 @@
+# Build output
+/dist/
+/bin/
+*.exe
+coverage.out
+coverage/
+
+# Local databases, sockets, runtime state
+*.db
+*.db-wal
+*.db-shm
+*.sock
+/runtime/
+/data/
+
+# Credentials and local environment
+.env
+.env.*
+*.pem
+*.key
+
+# Task worktrees and local execution ledgers
+/worktrees/
+*.local.md
+
+# Editor/OS noise
+.DS_Store
+.idea/
+.vscode/
