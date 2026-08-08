@@ -46,6 +46,9 @@ func TestQueries_ProduceStablePartialFleetAndDiagnosticSnapshots(t *testing.T) {
 	if fleet.StateVersion != 2 || fleet.Completeness != CompletenessPartial || len(fleet.Tasks) != 2 {
 		t.Fatalf("Fleet() = %#v, want versioned partial two-task snapshot", fleet)
 	}
+	if !repository.snapshotCalled {
+		t.Fatal("Fleet() did not use the atomic task snapshot port")
+	}
 	if fleet.Tasks[0].TaskHandle != "task-0002" || fleet.Tasks[0].StateSource != StateSourceStore || fleet.Tasks[0].Freshness != FreshnessCurrent {
 		t.Fatalf("Fleet() first task = %#v, want stable source and freshness", fleet.Tasks[0])
 	}
@@ -279,6 +282,7 @@ type queryRepository struct {
 	stateVersionErr error
 	readErr         error
 	readCalled      bool
+	snapshotCalled  bool
 }
 
 func (repository *queryRepository) CreateTask(context.Context, domain.Task) error { return nil }
@@ -319,6 +323,18 @@ func (repository *queryRepository) CurrentStateVersion(context.Context) (int64, 
 		return 0, repository.stateVersionErr
 	}
 	return repository.stateVersion, repository.readErr
+}
+
+func (repository *queryRepository) TaskSnapshot(context.Context) ([]domain.Task, int64, error) {
+	repository.readCalled = true
+	repository.snapshotCalled = true
+	if repository.readErr != nil {
+		return nil, 0, repository.readErr
+	}
+	if repository.stateVersionErr != nil {
+		return nil, 0, repository.stateVersionErr
+	}
+	return repository.tasks, repository.stateVersion, nil
 }
 
 func queryTask(handle string, state domain.TaskState, stateVersion int64) domain.Task {
