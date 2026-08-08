@@ -149,6 +149,9 @@ func TestStore_CloseAndMigrationFailuresRemainExplicit(t *testing.T) {
 	if err := store.migrate(context.Background()); err == nil {
 		t.Fatal("migrate() error = nil after close, want explicit failure")
 	}
+	if _, _, err := store.TaskSnapshot(context.Background()); err == nil {
+		t.Fatal("TaskSnapshot() error = nil after close, want explicit failure")
+	}
 }
 
 func TestStore_InvalidMigrationRollsBackPartialSchema(t *testing.T) {
@@ -330,6 +333,13 @@ func TestStore_TaskAndOperationRecordsRoundTripAcrossRestart(t *testing.T) {
 	if !reflect.DeepEqual(tasks, []domain.Task{taskOne, taskTwo}) {
 		t.Fatalf("ListTasks() = %#v, want stable handle order", tasks)
 	}
+	snapshotTasks, snapshotVersion, err := reopened.TaskSnapshot(context.Background())
+	if err != nil {
+		t.Fatalf("TaskSnapshot() error = %v", err)
+	}
+	if !reflect.DeepEqual(snapshotTasks, tasks) || snapshotVersion != 3 {
+		t.Fatalf("TaskSnapshot() = %#v, %d, want list and version 3", snapshotTasks, snapshotVersion)
+	}
 	gotTask, err := reopened.GetTask(context.Background(), taskTwo.Handle)
 	if err != nil {
 		t.Fatalf("GetTask() error = %v", err)
@@ -452,6 +462,9 @@ func TestStore_CorruptRowsFailValidationInsteadOfBecomingTaskState(t *testing.T)
 	}
 	if _, err := store.ListTasks(context.Background()); err == nil {
 		t.Fatal("ListTasks(corrupt) error = nil, want fail-closed validation error")
+	}
+	if _, _, err := store.TaskSnapshot(context.Background()); err == nil {
+		t.Fatal("TaskSnapshot(corrupt) error = nil, want rolled-back fail-closed error")
 	}
 }
 

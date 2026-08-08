@@ -89,17 +89,49 @@ func (store *Store) RecordOperation(ctx context.Context, operation domain.Operat
 
 // ListTasks returns a deterministic snapshot ordered by opaque task handle.
 func (store *Store) ListTasks(ctx context.Context) ([]domain.Task, error) {
+	return listTasks(ctx, store.db)
+}
+
+// TaskSnapshot reads task rows and their advertised state version from one
+// database snapshot so concurrent mutation cannot produce a mixed projection.
+func (store *Store) TaskSnapshot(ctx context.Context) ([]domain.Task, int64, error) {
+	transaction, err := store.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, 0, fmt.Errorf("begin task snapshot: %w", err)
+	}
+	tasks, err := listTasks(ctx, transaction)
+	if err != nil {
+		return nil, 0, errors.Join(err, transaction.Rollback())
+	}
+	stateVersion, err := currentStateVersion(ctx, transaction)
+	if err != nil {
+		return nil, 0, errors.Join(err, transaction.Rollback())
+	}
+	if err := transaction.Commit(); err != nil {
+		return nil, 0, fmt.Errorf("commit task snapshot: %w", err)
+	}
+	return tasks, stateVersion, nil
+}
+
+type queryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func listTasks(ctx context.Context, source queryer) (tasks []domain.Task, resultErr error) {
 	const query = `SELECT
         handle, schema_version, state, shape, repository_id, base_revision,
         brief_revision, validation_profile, delivery_mode, worker_profile_id,
         report_cursor, state_version, created_at, updated_at
     FROM tasks ORDER BY handle`
-	rows, err := store.db.QueryContext(ctx, query)
+	rows, err := source.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("list tasks: %w", err)
 	}
-	defer rows.Close()
-	tasks := make([]domain.Task, 0)
+	defer func() {
+		resultErr = errors.Join(resultErr, rows.Close())
+	}()
+	tasks = make([]domain.Task, 0)
 	for rows.Next() {
 		task, err := scanTask(rows)
 		if err != nil {
@@ -173,13 +205,17 @@ func (store *Store) GetOperation(ctx context.Context, id string) (domain.Operati
 // CurrentStateVersion returns the greatest durable record version, or zero for
 // an empty store.
 func (store *Store) CurrentStateVersion(ctx context.Context) (int64, error) {
+	return currentStateVersion(ctx, store.db)
+}
+
+func currentStateVersion(ctx context.Context, source queryer) (int64, error) {
 	const query = `SELECT COALESCE(MAX(state_version), 0) FROM (
         SELECT state_version FROM tasks
         UNION ALL
         SELECT state_version FROM operations
     )`
 	var version int64
-	if err := store.db.QueryRowContext(ctx, query).Scan(&version); err != nil {
+	if err := source.QueryRowContext(ctx, query).Scan(&version); err != nil {
 		return 0, fmt.Errorf("read current state version: %w", err)
 	}
 	return version, nil

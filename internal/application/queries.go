@@ -159,13 +159,9 @@ func (queries *Queries) Operation(ctx context.Context, id string) (OperationView
 }
 
 func (queries *Queries) taskSnapshot(ctx context.Context) ([]domain.Task, int64, error) {
-	tasks, err := queries.repository.ListTasks(ctx)
+	tasks, stateVersion, err := queries.repository.TaskSnapshot(ctx)
 	if err != nil {
-		return nil, 0, translateReadError(err, "task list")
-	}
-	stateVersion, err := queries.repository.CurrentStateVersion(ctx)
-	if err != nil {
-		return nil, 0, translateReadError(err, "task state version")
+		return nil, 0, translateReadError(err, "task snapshot")
 	}
 	return tasks, stateVersion, nil
 }
