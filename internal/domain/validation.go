@@ -19,6 +19,16 @@ func validateOpaqueID(field, value string) error {
 	return nil
 }
 
+// ValidateTaskHandle rejects task references that are not bounded opaque IDs.
+func ValidateTaskHandle(value string) error {
+	return validateOpaqueID("taskHandle", value)
+}
+
+// ValidateOperationID rejects operation references that are not bounded opaque IDs.
+func ValidateOperationID(value string) error {
+	return validateOpaqueID("operationId", value)
+}
+
 func validateCommand(value string) error {
 	if !commandPattern.MatchString(value) {
 		return &ValidationError{Field: "command", Reason: "must be a known command-style identifier"}

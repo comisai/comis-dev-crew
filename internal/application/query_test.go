@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -75,7 +76,7 @@ func TestQueries_ListShowExplainAndOperationShareCanonicalProjections(t *testing
 	if err != nil {
 		t.Fatalf("ExplainTask() error = %v", err)
 	}
-	if len(list.Tasks) != 1 || list.Tasks[0] != show.Summary || explanation.Summary != show.Summary {
+	if len(list.Tasks) != 1 || !reflect.DeepEqual(list.Tasks[0], show.Summary) || !reflect.DeepEqual(explanation.Summary, show.Summary) {
 		t.Fatalf("query projections diverged: list=%#v show=%#v explain=%#v", list, show, explanation)
 	}
 	if explanation.ReasonCode != "task_blocked" || len(explanation.NextSafeActions) == 0 {
@@ -181,12 +182,103 @@ func TestNewQueries_RejectsMissingDependencies(t *testing.T) {
 	}
 }
 
+func TestQueries_FailureBranchesAndClosedStateExplanations(t *testing.T) {
+	privateCause := errors.New("private adapter detail")
+
+	t.Run("diagnostic read failure", func(t *testing.T) {
+		queries, err := NewQueries(&queryRepository{readErr: privateCause}, time.Now)
+		if err != nil {
+			t.Fatalf("NewQueries() error = %v", err)
+		}
+		if _, err := queries.Diagnose(context.Background()); failureCode(err) != domain.ErrorInternal {
+			t.Fatalf("Diagnose() error = %v, want internal failure", err)
+		}
+	})
+
+	t.Run("fleet list failure", func(t *testing.T) {
+		queries, err := NewQueries(&queryRepository{readErr: privateCause}, time.Now)
+		if err != nil {
+			t.Fatalf("NewQueries() error = %v", err)
+		}
+		if _, err := queries.Fleet(context.Background()); failureCode(err) != domain.ErrorInternal {
+			t.Fatalf("Fleet() error = %v, want internal failure", err)
+		}
+	})
+
+	t.Run("state version failure", func(t *testing.T) {
+		queries, err := NewQueries(&queryRepository{stateVersionErr: privateCause}, time.Now)
+		if err != nil {
+			t.Fatalf("NewQueries() error = %v", err)
+		}
+		if _, err := queries.ListTasks(context.Background()); failureCode(err) != domain.ErrorInternal {
+			t.Fatalf("ListTasks() error = %v, want internal failure", err)
+		}
+	})
+
+	t.Run("operation read failure", func(t *testing.T) {
+		queries, err := NewQueries(&queryRepository{readErr: ErrNotFound}, time.Now)
+		if err != nil {
+			t.Fatalf("NewQueries() error = %v", err)
+		}
+		if _, err := queries.Operation(context.Background(), "op-0001"); failureCode(err) != domain.ErrorNotFound {
+			t.Fatalf("Operation() error = %v, want not-found failure", err)
+		}
+	})
+
+	t.Run("future task clamps elapsed duration", func(t *testing.T) {
+		now := time.Date(2026, time.August, 8, 20, 0, 0, 0, time.UTC)
+		task := queryTask("task-0001", domain.TaskPrepared, 1)
+		task.CreatedAt = now.Add(time.Hour)
+		queries, err := NewQueries(&queryRepository{tasks: []domain.Task{task}}, func() time.Time { return now })
+		if err != nil {
+			t.Fatalf("NewQueries() error = %v", err)
+		}
+		fleet, err := queries.Fleet(context.Background())
+		if err != nil {
+			t.Fatalf("Fleet() error = %v", err)
+		}
+		if fleet.Tasks[0].ElapsedMs != 0 {
+			t.Fatalf("Fleet() elapsed = %d, want zero", fleet.Tasks[0].ElapsedMs)
+		}
+	})
+
+	for _, state := range []domain.TaskState{
+		domain.TaskPrepared,
+		domain.TaskBlocked,
+		domain.TaskUnknown,
+		domain.TaskFailed,
+		domain.TaskCancelled,
+		domain.TaskCleanupHeld,
+		domain.TaskDelivered,
+		domain.TaskCleaned,
+		domain.TaskWorking,
+	} {
+		reason, explanation, rootCause, actions := explainState(state)
+		if reason == "" || explanation == "" || rootCause == "" || len(actions) == 0 {
+			t.Fatalf("explainState(%q) returned incomplete output", state)
+		}
+	}
+
+	if err := newSafeFailure(domain.ErrorCode("invalid"), false, "message", "hint", nil); err == nil {
+		t.Fatal("newSafeFailure(invalid code) error = nil")
+	}
+}
+
+func failureCode(err error) domain.ErrorCode {
+	var failure *domain.Failure
+	if !errors.As(err, &failure) {
+		return ""
+	}
+	return failure.Code
+}
+
 type queryRepository struct {
-	tasks        []domain.Task
-	operation    domain.OperationRecord
-	stateVersion int64
-	readErr      error
-	readCalled   bool
+	tasks           []domain.Task
+	operation       domain.OperationRecord
+	stateVersion    int64
+	stateVersionErr error
+	readErr         error
+	readCalled      bool
 }
 
 func (repository *queryRepository) CreateTask(context.Context, domain.Task) error { return nil }
@@ -223,6 +315,9 @@ func (repository *queryRepository) GetOperation(context.Context, string) (domain
 
 func (repository *queryRepository) CurrentStateVersion(context.Context) (int64, error) {
 	repository.readCalled = true
+	if repository.stateVersionErr != nil {
+		return 0, repository.stateVersionErr
+	}
 	return repository.stateVersion, repository.readErr
 }
 
