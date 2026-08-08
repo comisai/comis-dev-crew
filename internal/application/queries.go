@@ -204,6 +204,7 @@ func projectTask(task domain.Task, now time.Time) TaskSummary {
 		Validation:       "unknown",
 		BlockedBy:        "unknown",
 		Attention:        "unknown",
+		StateVersion:     task.StateVersion,
 		ElapsedMs:        elapsed,
 		LastActivityAtMs: task.UpdatedAt.UnixMilli(),
 		NextSafeActions:  actions,

@@ -29,7 +29,7 @@ func TestServerClient_ReadQueriesOverOwnerOnlyUnixSocket(t *testing.T) {
 		}},
 		operation: application.OperationView{SchemaVersion: 1, CapturedAtMs: now.UnixMilli(), OperationID: "op-0001", StateVersion: 7},
 	}
-	socketPath, stop := startAPIServer(t, queries, CallerOperatorCLI, func() time.Time { return now })
+	socketPath, stop := startAPIServer(t, queries, CallerOperatorCLI, time.Now)
 	defer stop()
 	client, err := NewClient(socketPath, time.Second)
 	if err != nil {
@@ -81,8 +81,12 @@ func TestServer_StrictlyRejectsMalformedAndAuthorityBroadeningRequests(t *testin
 		{name: "wrong protocol", line: `{"protocolVersion":"other","operationId":"read-0001","method":"Diagnose","payload":{}}`, code: domain.ErrorInvalidArgument},
 		{name: "invalid operation id", line: `{"protocolVersion":"devcrew.local.v1","operationId":"bad id","method":"Diagnose","payload":{}}`, code: domain.ErrorInvalidArgument},
 		{name: "unknown method", line: validPrefix + `"method":"DeleteEverything","payload":{}}`, code: domain.ErrorInvalidArgument},
+		{name: "fleet payload field", line: validPrefix + `"method":"FleetStatus","payload":{"scope":"all"}}`, code: domain.ErrorInvalidArgument},
+		{name: "list payload field", line: validPrefix + `"method":"ListTasks","payload":{"scope":"all"}}`, code: domain.ErrorInvalidArgument},
 		{name: "unknown payload field", line: validPrefix + `"method":"ShowTask","payload":{"taskHandle":"task-0001","scope":"all"}}`, code: domain.ErrorInvalidArgument},
 		{name: "duplicate payload field", line: validPrefix + `"method":"ShowTask","payload":{"taskHandle":"task-0001","taskHandle":"task-0002"}}`, code: domain.ErrorInvalidArgument},
+		{name: "explain payload field", line: validPrefix + `"method":"ExplainTask","payload":{"taskHandle":"task-0001","scope":"all"}}`, code: domain.ErrorInvalidArgument},
+		{name: "operation payload field", line: validPrefix + `"method":"GetOperation","payload":{"operationId":"op-0001","scope":"all"}}`, code: domain.ErrorInvalidArgument},
 		{name: "expired deadline", line: validPrefix + `"method":"Diagnose","payload":{},"deadlineAtMs":` + formatInt(now.Add(-time.Second).UnixMilli()) + `}`, code: domain.ErrorDeadlineExceeded},
 		{name: "oversized request", line: validPrefix + `"method":"Diagnose","payload":{"padding":"` + strings.Repeat("x", MaxRequestBytes) + `"}}`, code: domain.ErrorInvalidArgument},
 	}
@@ -259,7 +263,16 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 
 func canonicalTempDir(t *testing.T) string {
 	t.Helper()
-	resolved, err := filepath.EvalSymlinks(t.TempDir())
+	directory, err := os.MkdirTemp(os.TempDir(), "devcrew-api-")
+	if err != nil {
+		t.Fatalf("create short temporary directory: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(directory); err != nil {
+			t.Errorf("remove short temporary directory: %v", err)
+		}
+	})
+	resolved, err := filepath.EvalSymlinks(directory)
 	if err != nil {
 		t.Fatalf("resolve temporary directory: %v", err)
 	}
@@ -268,4 +281,29 @@ func canonicalTempDir(t *testing.T) string {
 
 func formatInt(value int64) string {
 	return strconv.FormatInt(value, 10)
+}
+
+func FuzzStrictDecoder(f *testing.F) {
+	for _, seed := range []string{
+		`{}`,
+		`{"value":1}`,
+		`{"nested":[{"value":true},null]}`,
+		`{"duplicate":1,"duplicate":2}`,
+		`[]`,
+		`null`,
+		`{"unterminated":`,
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, input string) {
+		if len(input) > MaxRequestBytes {
+			return
+		}
+		var decoded any
+		if err := decodeStrict([]byte(input), &decoded); err == nil {
+			if _, err := json.Marshal(decoded); err != nil {
+				t.Fatalf("marshal successfully decoded value: %v", err)
+			}
+		}
+	})
 }

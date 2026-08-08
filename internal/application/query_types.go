@@ -100,6 +100,7 @@ type TaskSummary struct {
 	Validation       string           `json:"validation"`
 	BlockedBy        string           `json:"blockedBy"`
 	Attention        string           `json:"attention"`
+	StateVersion     int64            `json:"stateVersion"`
 	ElapsedMs        int64            `json:"elapsedMs"`
 	LastActivityAtMs int64            `json:"lastActivityAtMs"`
 	NextSafeActions  []NextAction     `json:"nextSafeActions"`
