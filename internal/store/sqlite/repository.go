@@ -49,8 +49,9 @@ func (store *Store) CreateTask(ctx context.Context, task domain.Task) error {
 	return nil
 }
 
-// RecordOperation inserts one immutable operation outcome for later replay and
-// uncertain-result reconciliation.
+// RecordOperation inserts one immutable outcome. Repeating its stable ID with
+// the same command and subject digest reuses that logical effect; altered
+// content is a conflict. Callers read the record to recover the original outcome.
 func (store *Store) RecordOperation(ctx context.Context, operation domain.OperationRecord) error {
 	if err := operation.Validate(); err != nil {
 		return fmt.Errorf("record operation: %w", err)
@@ -72,7 +73,14 @@ func (store *Store) RecordOperation(ctx context.Context, operation domain.Operat
 	)
 	if err != nil {
 		if isConstraintError(err) {
-			return fmt.Errorf("record operation: %w", application.ErrConflict)
+			existing, readErr := store.GetOperation(ctx, operation.ID)
+			if readErr != nil {
+				return fmt.Errorf("resolve operation replay: %w", readErr)
+			}
+			if existing.Command == operation.Command && existing.SubjectDigest == operation.SubjectDigest {
+				return nil
+			}
+			return fmt.Errorf("record operation altered replay: %w", application.ErrConflict)
 		}
 		return fmt.Errorf("record operation: %w", err)
 	}
