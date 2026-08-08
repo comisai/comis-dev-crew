@@ -23,6 +23,40 @@ INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 `
 
+const recordMigration = `
+CREATE TABLE IF NOT EXISTS tasks (
+    handle TEXT PRIMARY KEY,
+    schema_version INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    shape TEXT NOT NULL,
+    repository_id TEXT NOT NULL,
+    base_revision TEXT NOT NULL,
+    brief_revision INTEGER NOT NULL,
+    validation_profile TEXT NOT NULL,
+    delivery_mode TEXT NOT NULL,
+    worker_profile_id TEXT NOT NULL,
+    report_cursor INTEGER NOT NULL,
+    state_version INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tasks_state_handle_idx ON tasks(state, handle);
+CREATE TABLE IF NOT EXISTS operations (
+    id TEXT PRIMARY KEY,
+    schema_version INTEGER NOT NULL,
+    command TEXT NOT NULL,
+    subject_digest TEXT NOT NULL,
+    status TEXT NOT NULL,
+    error_code TEXT NOT NULL,
+    state_version INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS operations_status_id_idx ON operations(status, id);
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+`
+
 const busyTimeoutMilliseconds = 500
 
 // Store owns one SQLite connection pool. The service composition root is the
@@ -107,7 +141,10 @@ func (store *Store) Close() error {
 }
 
 func (store *Store) migrate(ctx context.Context) error {
-	return store.applyMigration(ctx, initialMigration)
+	if err := store.applyMigration(ctx, initialMigration); err != nil {
+		return err
+	}
+	return store.applyMigration(ctx, recordMigration)
 }
 
 func (store *Store) applyMigration(ctx context.Context, migration string) error {
@@ -117,10 +154,10 @@ func (store *Store) applyMigration(ctx context.Context, migration string) error 
 	}
 	if _, err := transaction.ExecContext(ctx, migration); err != nil {
 		_ = transaction.Rollback()
-		return fmt.Errorf("apply SQLite migration 1: %w", err)
+		return fmt.Errorf("apply SQLite migration: %w", err)
 	}
 	if err := transaction.Commit(); err != nil {
-		return fmt.Errorf("commit SQLite migration 1: %w", err)
+		return fmt.Errorf("commit SQLite migration: %w", err)
 	}
 	return nil
 }
