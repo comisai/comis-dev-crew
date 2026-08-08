@@ -6,9 +6,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 func TestOpen_ConfiguresPureGoSQLiteForPrivateWALServiceStore(t *testing.T) {
@@ -290,6 +294,162 @@ func TestOpen_LockContentionCancelsAndRollbackPreservesWriterProgress(t *testing
 	}
 	if rows != 1 {
 		t.Fatalf("row count = %d, want only the post-rollback row", rows)
+	}
+}
+
+func TestStore_TaskAndOperationRecordsRoundTripAcrossRestart(t *testing.T) {
+	databasePath := filepath.Join(canonicalTempDir(t), "devcrew.db")
+	store, err := Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	taskTwo := storeTask("task-0002", 2)
+	taskOne := storeTask("task-0001", 1)
+	for _, task := range []domain.Task{taskTwo, taskOne} {
+		if err := store.CreateTask(context.Background(), task); err != nil {
+			t.Fatalf("CreateTask(%q) error = %v", task.Handle, err)
+		}
+	}
+	operation := storeOperation("op-0001", 3)
+	if err := store.RecordOperation(context.Background(), operation); err != nil {
+		t.Fatalf("RecordOperation() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatalf("Open(restart) error = %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	tasks, err := reopened.ListTasks(context.Background())
+	if err != nil {
+		t.Fatalf("ListTasks() error = %v", err)
+	}
+	if !reflect.DeepEqual(tasks, []domain.Task{taskOne, taskTwo}) {
+		t.Fatalf("ListTasks() = %#v, want stable handle order", tasks)
+	}
+	gotTask, err := reopened.GetTask(context.Background(), taskTwo.Handle)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	if !reflect.DeepEqual(gotTask, taskTwo) {
+		t.Fatalf("GetTask() = %#v, want %#v", gotTask, taskTwo)
+	}
+	gotOperation, err := reopened.GetOperation(context.Background(), operation.ID)
+	if err != nil {
+		t.Fatalf("GetOperation() error = %v", err)
+	}
+	if !reflect.DeepEqual(gotOperation, operation) {
+		t.Fatalf("GetOperation() = %#v, want %#v", gotOperation, operation)
+	}
+	stateVersion, err := reopened.CurrentStateVersion(context.Background())
+	if err != nil {
+		t.Fatalf("CurrentStateVersion() error = %v", err)
+	}
+	if stateVersion != 3 {
+		t.Fatalf("CurrentStateVersion() = %d, want 3", stateVersion)
+	}
+}
+
+func TestStore_RejectsInvalidDuplicateAndMissingRecords(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	invalidTask := storeTask("task-0001", 1)
+	invalidTask.Handle = "../escape"
+	if err := store.CreateTask(context.Background(), invalidTask); err == nil {
+		t.Fatal("CreateTask(invalid) error = nil, want validation failure")
+	}
+	if _, err := store.GetTask(context.Background(), "missing-task"); !errors.Is(err, application.ErrNotFound) {
+		t.Fatalf("GetTask(missing) error = %v, want ErrNotFound", err)
+	}
+	task := storeTask("task-0001", 1)
+	if err := store.CreateTask(context.Background(), task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	if err := store.CreateTask(context.Background(), task); !errors.Is(err, application.ErrConflict) {
+		t.Fatalf("CreateTask(duplicate) error = %v, want ErrConflict", err)
+	}
+
+	invalidOperation := storeOperation("op-0001", 2)
+	invalidOperation.SubjectDigest = "invalid"
+	if err := store.RecordOperation(context.Background(), invalidOperation); err == nil {
+		t.Fatal("RecordOperation(invalid) error = nil, want validation failure")
+	}
+	if _, err := store.GetOperation(context.Background(), "missing-operation"); !errors.Is(err, application.ErrNotFound) {
+		t.Fatalf("GetOperation(missing) error = %v, want ErrNotFound", err)
+	}
+	operation := storeOperation("op-0001", 2)
+	if err := store.RecordOperation(context.Background(), operation); err != nil {
+		t.Fatalf("RecordOperation() error = %v", err)
+	}
+	if err := store.RecordOperation(context.Background(), operation); !errors.Is(err, application.ErrConflict) {
+		t.Fatalf("RecordOperation(duplicate) error = %v, want ErrConflict", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := store.ListTasks(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ListTasks(cancelled) error = %v, want context.Canceled", err)
+	}
+}
+
+func TestStore_CorruptRowsFailValidationInsteadOfBecomingTaskState(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	task := storeTask("task-0001", 1)
+	if err := store.CreateTask(context.Background(), task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	if _, err := store.db.Exec("UPDATE tasks SET state = 'invented' WHERE handle = ?", task.Handle); err != nil {
+		t.Fatalf("corrupt task row: %v", err)
+	}
+	if _, err := store.GetTask(context.Background(), task.Handle); err == nil {
+		t.Fatal("GetTask(corrupt) error = nil, want fail-closed validation error")
+	}
+	if _, err := store.ListTasks(context.Background()); err == nil {
+		t.Fatal("ListTasks(corrupt) error = nil, want fail-closed validation error")
+	}
+}
+
+func storeTask(handle string, stateVersion int64) domain.Task {
+	created := time.Date(2026, time.August, 8, 20, 0, 0, 123456789, time.UTC)
+	return domain.Task{
+		SchemaVersion:     1,
+		Handle:            handle,
+		State:             domain.TaskPrepared,
+		Shape:             domain.ShapeShip,
+		RepositoryID:      "product-api",
+		BaseRevision:      strings.Repeat("a", 40),
+		BriefRevision:     1,
+		ValidationProfile: "go-default",
+		DeliveryMode:      domain.DeliveryPullRequest,
+		WorkerProfileID:   "codex-standard",
+		StateVersion:      stateVersion,
+		CreatedAt:         created,
+		UpdatedAt:         created,
+	}
+}
+
+func storeOperation(id string, stateVersion int64) domain.OperationRecord {
+	created := time.Date(2026, time.August, 8, 20, 1, 0, 987654321, time.UTC)
+	return domain.OperationRecord{
+		SchemaVersion: 1,
+		ID:            id,
+		Command:       "PrepareTask",
+		SubjectDigest: strings.Repeat("b", 64),
+		Status:        domain.OperationCompleted,
+		StateVersion:  stateVersion,
+		CreatedAt:     created,
+		UpdatedAt:     created,
 	}
 }
 
