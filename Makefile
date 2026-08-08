@@ -1,0 +1,78 @@
+SHELL := /bin/sh
+
+.DEFAULT_GOAL := build
+
+.PHONY: docs-check format-check mod-check generate-check vet staticcheck \
+	test-architecture test coverage test-race test-conformance test-integration \
+	test-fuzz-smoke build cross-build vulncheck license-check secret-check smoke \
+	test-live verify verify-full
+
+docs-check:
+	go run ./tools/checkdocs
+
+format-check:
+	@test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
+
+mod-check:
+	go run ./tools/modcheck
+
+generate-check:
+	go generate ./...
+
+vet:
+	go vet ./...
+
+staticcheck:
+	go tool staticcheck ./...
+
+test-architecture:
+	go test -mod=readonly -count=1 -timeout=5m ./test/architecture/...
+
+test:
+	go test -mod=readonly -count=1 -shuffle=on -timeout=10m ./...
+
+coverage:
+	go test -mod=readonly -count=1 -covermode=atomic -coverpkg=./internal/... -coverprofile=coverage.out ./...
+	go run ./tools/checkcoverage -profile coverage.out
+
+test-race:
+	go test -mod=readonly -race -count=1 -timeout=20m ./...
+
+test-conformance:
+	go test -mod=readonly -count=1 -timeout=10m ./test/conformance/...
+
+test-integration:
+	go test -mod=readonly -tags=integration -p=1 -count=1 -timeout=30m ./test/integration/...
+
+test-fuzz-smoke:
+	go test -mod=readonly -run '^$$' -fuzz '^FuzzCommandArguments$$' -fuzztime=1s ./test/fuzz
+
+build:
+	go build -trimpath ./cmd/...
+
+cross-build:
+	@set -eu; \
+	for platform in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do \
+		goos=$${platform%/*}; goarch=$${platform#*/}; \
+		echo "building GOOS=$$goos GOARCH=$$goarch"; \
+		CGO_ENABLED=0 GOOS=$$goos GOARCH=$$goarch go build -trimpath ./cmd/...; \
+	done
+
+vulncheck:
+	go tool govulncheck ./...
+
+license-check:
+	go run ./tools/checklicenses
+
+secret-check:
+	go run ./tools/checksecrets
+
+smoke:
+	go run ./tools/smoke
+
+test-live:
+	go test -mod=readonly -tags=live -count=1 -timeout=2h ./test/live/...
+
+verify: docs-check format-check mod-check generate-check vet staticcheck test-architecture test coverage test-race test-conformance build
+
+verify-full: verify test-integration test-fuzz-smoke cross-build vulncheck license-check secret-check smoke

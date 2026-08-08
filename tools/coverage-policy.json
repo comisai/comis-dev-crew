@@ -1,0 +1,14 @@
+{
+  "aggregateFloor": 90,
+  "packageFloor": 80,
+  "criticalFloor": 90,
+  "criticalPackages": [
+    "internal/domain",
+    "internal/application",
+    "internal/store/sqlite",
+    "internal/localapi",
+    "internal/git",
+    "internal/delivery",
+    "internal/processes"
+  ]
+}

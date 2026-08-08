@@ -1,0 +1,38 @@
+name: protected-live
+
+on:
+  schedule:
+    - cron: "41 2 * * 6"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: protected-live
+  cancel-in-progress: false
+
+jobs:
+  e0-live-campaign:
+    name: E0 protected live campaign
+    runs-on: macos-15
+    environment: devcrew-live
+    env:
+      DEVCREW_LIVE_COMIS_SOCKET: ${{ secrets.DEVCREW_LIVE_COMIS_SOCKET }}
+      DEVCREW_LIVE_TELEGRAM_THREAD: ${{ secrets.DEVCREW_LIVE_TELEGRAM_THREAD }}
+      DEVCREW_LIVE_GITHUB_REPOSITORY: ${{ secrets.DEVCREW_LIVE_GITHUB_REPOSITORY }}
+      DEVCREW_LIVE_WORKER_PROFILE: ${{ secrets.DEVCREW_LIVE_WORKER_PROFILE }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Require protected prerequisites
+        run: |
+          test -n "$DEVCREW_LIVE_COMIS_SOCKET"
+          test -n "$DEVCREW_LIVE_TELEGRAM_THREAD"
+          test -n "$DEVCREW_LIVE_GITHUB_REPOSITORY"
+          test -n "$DEVCREW_LIVE_WORKER_PROFILE"
+      - run: go mod download
+      - run: make test-live
