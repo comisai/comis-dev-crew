@@ -77,6 +77,12 @@ func TestRun_RejectsMissingContextAndConfiguration(t *testing.T) {
 	if err := Run(context.Background(), Config{}); err == nil {
 		t.Fatal("Run(empty config) error = nil")
 	}
+	if err := Run(context.Background(), Config{DatabasePath: "relative.db", SocketPath: valid.SocketPath}); err == nil {
+		t.Fatal("Run(relative database) error = nil")
+	}
+	if err := Run(context.Background(), Config{DatabasePath: valid.DatabasePath, SocketPath: "relative.sock"}); err == nil {
+		t.Fatal("Run(relative socket) error = nil")
+	}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := Run(cancelled, valid); !errors.Is(err, context.Canceled) {
