@@ -69,6 +69,26 @@ func TestMutations_AcknowledgeBindingBuildsExactReplaySubject(t *testing.T) {
 	}
 }
 
+func TestMutations_StartTaskBuildsExactReplaySubject(t *testing.T) {
+	clock := time.Date(2026, time.August, 9, 16, 10, 0, 0, time.UTC)
+	store := &mutationStore{}
+	mutations, err := NewMutations(MutationConfig{
+		Store: store, Repositories: &repositoryCatalog{},
+		TaskIDs: func() (string, error) { return "task-unused", nil },
+		Clock:   func() time.Time { return clock },
+	})
+	if err != nil {
+		t.Fatalf("NewMutations() error = %v", err)
+	}
+	command := StartTaskCommand{OperationID: "op-start-0001", TaskHandle: "task-0001"}
+	if _, err := mutations.StartTask(context.Background(), command); err != nil {
+		t.Fatalf("StartTask() error = %v", err)
+	}
+	if store.start.TaskHandle != command.TaskHandle || len(store.start.SubjectDigest) != 64 || store.start.At != clock {
+		t.Fatalf("start mutation = %#v, want exact task subject, SHA-256 digest, and injected time", store.start)
+	}
+}
+
 func TestMutations_RejectsInvalidCommandsAndDependencyFailuresBeforeCommit(t *testing.T) {
 	privateCause := errors.New("private repository cause")
 	tests := []struct {
@@ -144,6 +164,7 @@ func TestMutations_ValidatesRequiredDependenciesAndCancellation(t *testing.T) {
 type mutationStore struct {
 	prepared     PreparedTaskMutation
 	binding      TaskBindingMutation
+	start        TaskStartMutation
 	prepareCalls int
 }
 
@@ -159,6 +180,11 @@ func (store *mutationStore) CommitPreparedTask(_ context.Context, mutation Prepa
 
 func (store *mutationStore) CommitTaskBinding(_ context.Context, mutation TaskBindingMutation) (MutationResult, error) {
 	store.binding = mutation
+	return MutationResult{}, nil
+}
+
+func (store *mutationStore) CommitTaskStart(_ context.Context, mutation TaskStartMutation) (MutationResult, error) {
+	store.start = mutation
 	return MutationResult{}, nil
 }
 

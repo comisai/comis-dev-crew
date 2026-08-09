@@ -83,6 +83,26 @@ func TestMutations_PrepareAndBindReplayAcrossRestartWithoutDuplicateTask(t *test
 	if len(tasks) != 1 || tasks[0].ManagedRunID != "managed-run-0001" || tasks[0].WorkspaceLeaseID != "workspace-lease-0001" {
 		t.Fatalf("durable tasks = %#v, want one exactly bound task", tasks)
 	}
+	started, err := replayedMutations.StartTask(context.Background(), application.StartTaskCommand{
+		OperationID: "op-start-0001", TaskHandle: prepared.Task.Handle,
+	})
+	if err != nil {
+		t.Fatalf("StartTask() error = %v", err)
+	}
+	if started.Task.State != domain.TaskLaunching || started.Task.StateVersion != 3 || started.Operation.StateVersion != 3 {
+		t.Fatalf("started result = %#v, want atomic launching state version 3", started)
+	}
+	startReplay, err := replayedMutations.StartTask(context.Background(), application.StartTaskCommand{
+		OperationID: "op-start-0001", TaskHandle: prepared.Task.Handle,
+	})
+	if err != nil || !reflect.DeepEqual(startReplay, started) {
+		t.Fatalf("StartTask(replay) = %#v, %v, want %#v", startReplay, err, started)
+	}
+	if _, err := replayedMutations.StartTask(context.Background(), application.StartTaskCommand{
+		OperationID: "op-start-0001", TaskHandle: "task-altered",
+	}); !errors.Is(err, application.ErrConflict) {
+		t.Fatalf("StartTask(altered replay) error = %v, want ErrConflict", err)
+	}
 }
 
 func TestMutations_ConcurrentIdenticalPrepareCreatesOneLogicalTask(t *testing.T) {
