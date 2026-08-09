@@ -22,6 +22,7 @@ func TestRun_ComposesCanonicalMutationOnDedicatedMCPEndpoint(t *testing.T) {
 	mcpSocket := filepath.Join(root, "run", "mcp.sock")
 	ready := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	done := make(chan error, 1)
 	go func() {
 		done <- Run(ctx, Config{
@@ -32,7 +33,13 @@ func TestRun_ComposesCanonicalMutationOnDedicatedMCPEndpoint(t *testing.T) {
 			PreparationTTL:     time.Hour, Ready: func() { close(ready) },
 		})
 	}()
-	<-ready
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("Run() before ready error = %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() did not advertise ready")
+	}
 	client, err := localapi.NewClient(mcpSocket, time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -86,6 +93,7 @@ func TestRun_ServesPersistedQueriesAndRestartsCleanly(t *testing.T) {
 	for iteration := 1; iteration <= 2; iteration++ {
 		ready := make(chan struct{})
 		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
 		done := make(chan error, 1)
 		go func() {
 			done <- Run(ctx, Config{
@@ -94,7 +102,13 @@ func TestRun_ServesPersistedQueriesAndRestartsCleanly(t *testing.T) {
 				Ready:        func() { close(ready) },
 			})
 		}()
-		<-ready
+		select {
+		case <-ready:
+		case err := <-done:
+			t.Fatalf("iteration %d Run() before ready error = %v", iteration, err)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("iteration %d Run() did not advertise ready", iteration)
+		}
 
 		client, err := localapi.NewClient(socketPath, time.Second)
 		if err != nil {
@@ -172,6 +186,7 @@ func TestRun_ReconcilesAmbiguousStateBeforeAdvertisingReady(t *testing.T) {
 
 	ready := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	done := make(chan error, 1)
 	go func() {
 		done <- Run(ctx, Config{
@@ -179,7 +194,13 @@ func TestRun_ReconcilesAmbiguousStateBeforeAdvertisingReady(t *testing.T) {
 			Clock: time.Now, Ready: func() { close(ready) },
 		})
 	}()
-	<-ready
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("Run() before ready error = %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() did not advertise ready")
+	}
 	client, err := localapi.NewClient(socketPath, time.Second)
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
@@ -227,7 +248,7 @@ func serviceTask() domain.Task {
 
 func shortTempDir(t *testing.T) string {
 	t.Helper()
-	directory, err := os.MkdirTemp(os.TempDir(), "devcrew-service-")
+	directory, err := os.MkdirTemp("/tmp", "dcs-")
 	if err != nil {
 		t.Fatalf("create short temporary directory: %v", err)
 	}

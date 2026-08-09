@@ -55,8 +55,10 @@ The typed local client and strict handler now expose `PrepareTask` as the first 
 Its public payload contains only task-contract fields: the stable operation ID comes from the
 request envelope and the configured service instance comes from endpoint composition. The result
 classifies the operation as `mutate` and carries the private durable registration for the later MCP
-adapter. Production service and CLI composition are still pending, so the installed command surface
-remains read-only at this point.
+adapter. The service composition can bind this same coordinator to a dedicated owner-only MCP
+endpoint while retaining a separate operator endpoint, and both servers cancel and join together.
+The installed service command still lacks repository and identity-source configuration, so its
+default runtime remains read-only even though the CLI preparation adapter is present.
 
 The repository registry resolves only operator-configured opaque IDs. It validates canonical
 primary checkouts and dedicated worktree roots beneath approved roots, pins the primary Git
@@ -126,8 +128,10 @@ digest agreement plus altered-digest and wrong-credential rejection. This is con
 not a claim that the production host lifecycle is wired. The CLI never opens SQLite as a
 normal-operation fallback. Task preparation reads one strict bounded JSON contract, rejects
 unknown authority fields, and uses either the explicit stable operation ID or one locally minted
-request ID. Service-side mutation composition is the next integration step; until it is configured,
-the current service reports the mutation as unavailable rather than opening an alternate writer.
+request ID. Service-side mutation composition requires an explicit repository catalog, task and
+registration identity sources, service instance, expiry, and dedicated MCP socket. Until those are
+configured by the production command, the current service reports the mutation as unavailable
+rather than opening an alternate writer.
 
 ## Development
 

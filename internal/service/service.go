@@ -14,10 +14,16 @@ import (
 
 // Config identifies the service-owned database and operator endpoint.
 type Config struct {
-	DatabasePath string
-	SocketPath   string
-	Clock        application.Clock
-	Ready        func()
+	DatabasePath       string
+	SocketPath         string
+	MCPSocketPath      string
+	ServiceInstanceID  string
+	Repositories       application.RepositoryCatalog
+	TaskIDs            application.TaskIDSource
+	RegistrationNonces application.RegistrationNonceSource
+	PreparationTTL     time.Duration
+	Clock              application.Clock
+	Ready              func()
 }
 
 // Run opens the sole writable store and serves canonical operator queries until
@@ -34,7 +40,7 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	}
 	clock := config.Clock
 	if clock == nil {
-		clock = time.Now
+		clock = func() time.Time { return time.Now().UTC() }
 	}
 	store, err := sqlite.Open(ctx, config.DatabasePath)
 	if err != nil {
@@ -54,19 +60,82 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if err != nil {
 		return fmt.Errorf("run service queries: %w", err)
 	}
-	handler, err := localapi.NewHandler(localapi.HandlerConfig{Queries: queries, Clock: clock})
+	mutations, err := composeMutations(config, store, clock)
+	if err != nil {
+		return err
+	}
+	handlerConfig := localapi.HandlerConfig{Queries: queries, Clock: clock}
+	if mutations != nil {
+		handlerConfig.Mutations = mutations
+		handlerConfig.ServiceInstanceID = config.ServiceInstanceID
+	}
+	handler, err := localapi.NewHandler(handlerConfig)
 	if err != nil {
 		return fmt.Errorf("run service local handler: %w", err)
 	}
-	server, err := localapi.Listen(config.SocketPath, localapi.CallerOperatorCLI, handler)
+	operatorServer, err := localapi.Listen(config.SocketPath, localapi.CallerOperatorCLI, handler)
 	if err != nil {
 		return fmt.Errorf("run service local endpoint: %w", err)
 	}
 	defer func() {
-		resultErr = errors.Join(resultErr, server.Close())
+		resultErr = errors.Join(resultErr, operatorServer.Close())
 	}()
+	servers := []*localapi.Server{operatorServer}
+	if config.MCPSocketPath != "" {
+		mcpServer, listenErr := localapi.Listen(config.MCPSocketPath, localapi.CallerMCPFacade, handler)
+		if listenErr != nil {
+			return fmt.Errorf("run service MCP endpoint: %w", listenErr)
+		}
+		defer func() { resultErr = errors.Join(resultErr, mcpServer.Close()) }()
+		servers = append(servers, mcpServer)
+	}
 	if config.Ready != nil {
 		config.Ready()
 	}
-	return server.Serve(ctx)
+	return serveLocalEndpoints(ctx, servers)
+}
+
+func composeMutations(config Config, store *sqlite.Store, clock application.Clock) (*application.Mutations, error) {
+	configured := config.Repositories != nil || config.TaskIDs != nil || config.RegistrationNonces != nil ||
+		config.PreparationTTL != 0 || config.ServiceInstanceID != ""
+	if !configured {
+		if config.MCPSocketPath != "" {
+			return nil, errors.New("run service: MCP endpoint requires mutation configuration")
+		}
+		return nil, nil
+	}
+	mutations, err := application.NewMutations(application.MutationConfig{
+		Store: store, Repositories: config.Repositories, TaskIDs: config.TaskIDs,
+		RegistrationNonces: config.RegistrationNonces, PreparationTTL: config.PreparationTTL,
+		Clock: clock,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("run service mutation coordinator: %w", err)
+	}
+	if config.ServiceInstanceID == "" {
+		return nil, errors.New("run service: mutation service instance is required")
+	}
+	return mutations, nil
+}
+
+func serveLocalEndpoints(ctx context.Context, servers []*localapi.Server) error {
+	if len(servers) == 1 {
+		return servers[0].Serve(ctx)
+	}
+	serveContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make(chan error, len(servers))
+	for _, server := range servers {
+		go func(endpoint *localapi.Server) { results <- endpoint.Serve(serveContext) }(server)
+	}
+	var resultErr error
+	for range servers {
+		err := <-results
+		resultErr = errors.Join(resultErr, err)
+		cancel()
+		for _, server := range servers {
+			resultErr = errors.Join(resultErr, server.Close())
+		}
+	}
+	return resultErr
 }
