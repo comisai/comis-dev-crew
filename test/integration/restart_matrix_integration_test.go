@@ -99,7 +99,7 @@ func TestDurableWorkflow_DeterministicFixtureRunsOnceAndRestartFailsClosed(t *te
 		if err := fixture.Run(context.Background()); err != nil {
 			t.Fatalf("fixture Run() error = %v", err)
 		}
-		harness.assertFixtureEvidence(t, 3, domain.TaskWorking, 6)
+		harness.assertFixtureEvidence(t, 4, domain.TaskValidating, 7)
 		if decisions.calls != 1 || decisions.key != matrixDecisionKey {
 			t.Fatalf("decision calls/key = %d/%q, want one %q", decisions.calls, decisions.key, matrixDecisionKey)
 		}

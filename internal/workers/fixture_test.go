@@ -27,11 +27,11 @@ func TestFixture_AcceptsPinnedBriefReportsProgressRequestsOneDecisionAndResolves
 	if harness.decisions.calls != 1 || harness.decisions.key != "decision-0001" {
 		t.Fatalf("decision source calls/key = %d/%q, want one exact request", harness.decisions.calls, harness.decisions.key)
 	}
-	if len(harness.sink.reports) != 3 {
-		t.Fatalf("accepted reports = %d, want progress, decision, resolution", len(harness.sink.reports))
+	if len(harness.sink.reports) != 4 {
+		t.Fatalf("accepted reports = %d, want progress, decision, resolution, candidate", len(harness.sink.reports))
 	}
-	wantKinds := []domain.WorkerReportKind{domain.ReportProgress, domain.ReportDecision, domain.ReportResolution}
-	wantIDs := []string{"fixture-progress", "fixture-decision", "fixture-resolution"}
+	wantKinds := []domain.WorkerReportKind{domain.ReportProgress, domain.ReportDecision, domain.ReportResolution, domain.ReportCandidateComplete}
+	wantIDs := []string{"fixture-progress", "fixture-decision", "fixture-resolution", "fixture-candidate"}
 	for index, accepted := range harness.sink.reports {
 		if accepted.TaskHandle != "task-0001" || accepted.Report.Kind != wantKinds[index] || accepted.Report.LocalReportID != wantIDs[index] {
 			t.Fatalf("report %d = %#v, want endpoint-derived task, kind %q, ID %q", index, accepted, wantKinds[index], wantIDs[index])
@@ -55,6 +55,7 @@ func TestFixture_StopsAtControlledFaultBoundaries(t *testing.T) {
 		{fault: workers.FaultAfterProgress, wantReports: 1, wantDecisions: 0},
 		{fault: workers.FaultAfterDecision, wantReports: 2, wantDecisions: 0},
 		{fault: workers.FaultAfterResolution, wantReports: 3, wantDecisions: 1},
+		{fault: workers.FaultAfterCandidate, wantReports: 4, wantDecisions: 1},
 	}
 	for _, test := range tests {
 		t.Run(string(test.fault), func(t *testing.T) {
