@@ -35,3 +35,12 @@ fixture through the generated schema dispatch. The canonical examples decode int
 and serialize back to identical compact JSON bytes. Replay, envelope identity, and combined UTF-8
 report-size behavior are checked by a direct test evaluator; it is not a socket listener and does
 not stand in for a runnable Comis host.
+
+## Live handshake status
+
+At the pinned source commit, the SDK has no `bin` entry and exposes scripts only for building,
+testing, and protocol generation/checking. The only capability-service fixture host is under the
+daemon's Vitest-only `src/__tests__/` surface, with no standalone socket listener or runnable host
+entry. Consequently, a real cross-repository socket handshake cannot be executed from this lane.
+No local server is used as substitute evidence; this is the sole remaining cross-repository
+validation gap.
