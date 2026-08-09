@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -133,7 +134,7 @@ func TestTaskApplyTransition_RejectsUnknownIllegalOrNonMonotonicChange(t *testin
 			if !errors.Is(err, ErrInvalidTransition) {
 				t.Fatalf("ApplyTransition() error = %v, want ErrInvalidTransition", err)
 			}
-			if got != test.task {
+			if !reflect.DeepEqual(got, test.task) {
 				t.Fatalf("failed transition mutated task: got %#v want %#v", got, test.task)
 			}
 		})
