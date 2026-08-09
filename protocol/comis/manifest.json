@@ -1,0 +1,284 @@
+{
+  "artifacts": [
+    {
+      "path": "fixtures/altered-replay.json",
+      "sha256": "36b876228910b55e0b6677a371b3ae3a2c219a98e4b032430213b55723d0221c"
+    },
+    {
+      "path": "fixtures/boundary-size.json",
+      "sha256": "626884b173c1e4beaa55dd2d954df04aa1f2eb6726983fd969256d86bcffb914"
+    },
+    {
+      "path": "fixtures/digest-mismatch.json",
+      "sha256": "99603e6a17bfc29bc35a8d37633b6b98d0e7be52629e60204e7489f2b28cd409"
+    },
+    {
+      "path": "fixtures/invalid.json",
+      "sha256": "31ac3583dc5b1501db8d57cbbdf207e3e77fc1d642c9bd7046db4b5d47fff176"
+    },
+    {
+      "path": "fixtures/unknown-field.json",
+      "sha256": "167bdcaef56398ed60eefadec676c120e21f4f94f60a483c52a91d725b93bd59"
+    },
+    {
+      "path": "fixtures/valid.json",
+      "sha256": "ed53b1fc4ff2657e4b20dce0cc4dc691fea884b955a2652176830f9862a35b44"
+    },
+    {
+      "path": "fixtures/version-mismatch.json",
+      "sha256": "81c5d62a85e78f67f584df3fc5a220724f62bb271b9518183b6637004432be14"
+    },
+    {
+      "path": "schemas/abandon.request.schema.json",
+      "sha256": "94d38fd50f0ba091fbdbf520813dc7ca684a54ba7f412e3159df76f75495d215"
+    },
+    {
+      "path": "schemas/abandon.response.schema.json",
+      "sha256": "809dd7608595a3460d4c4ef0e7bec15f58807196135f8c66c9467a54dc4dce15"
+    },
+    {
+      "path": "schemas/activate.request.schema.json",
+      "sha256": "35dc548a3bc737175a922ae1304d9983f3dfc017c54c644203ae0f38a53f7052"
+    },
+    {
+      "path": "schemas/activate.response.schema.json",
+      "sha256": "a7f3a5b4c128ef5bbcab0f7c68d50f040dbbd1f179ed467fc3c144998e6e9428"
+    },
+    {
+      "path": "schemas/error-response.schema.json",
+      "sha256": "072e5adc20191294b68bbea18015d2e97279174344385bb0982a5af25b5e3c45"
+    },
+    {
+      "path": "schemas/external-run-ref.schema.json",
+      "sha256": "6ce7c2e98c72c234146c75606a1d2d02f2616d2bc71f03bac9098d055038e201"
+    },
+    {
+      "path": "schemas/handshake.request.schema.json",
+      "sha256": "885ddabb75bcc98012f9667d2044a8df90d5c79885c41aa96e1c763c407fa2d9"
+    },
+    {
+      "path": "schemas/handshake.response.schema.json",
+      "sha256": "19d7b13111d3cc188fcf3e20da3e961268e069494a78c82b8fe6e62849a60419"
+    },
+    {
+      "path": "schemas/health.request.schema.json",
+      "sha256": "157b0d0bddf1820e0b0a29a3871ba64a333088ca840a25a55c9dc972c6a67ed5"
+    },
+    {
+      "path": "schemas/health.response.schema.json",
+      "sha256": "3cd00c4f53ef90872e2f457463304294b47aa8dfe29f3db3eda603e5cedac420"
+    },
+    {
+      "path": "schemas/mcp-call-context.schema.json",
+      "sha256": "8a50e1da6cf1ddbfd77c3f23e9517390aa2f6e081438a2e4d11d583b8dc2351c"
+    },
+    {
+      "path": "schemas/mcp-managed-run-result.schema.json",
+      "sha256": "cf4d8223ebf23be62c0f583bdeb409b4f8d45f82ce6b6226603e85ed89551274"
+    },
+    {
+      "path": "schemas/report.request.schema.json",
+      "sha256": "0401f97d2d39f1ba2b16be699cb5b0cf278147d87b39ca5403b909c849c3f0e6"
+    },
+    {
+      "path": "schemas/report.response.schema.json",
+      "sha256": "d01e2ceee491c4a3099da2b3320f00f017f9f5df01ed1d13cd3e3f1b5936eb0a"
+    },
+    {
+      "path": "schemas/service-instance-id.schema.json",
+      "sha256": "7d204815e2afb9119ff08ea392d0989867b083b83625c755e429343c0994cc58"
+    }
+  ],
+  "bundleDigest": "e87e69511ea9e01ea2383cd211f9946233fdbe1ce8edf016e76ce55eae683297",
+  "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
+  "errorKinds": [
+    "bundle_digest_mismatch",
+    "deadline_exceeded",
+    "internal_error",
+    "invalid_params",
+    "invalid_request",
+    "method_not_found",
+    "precondition_failed",
+    "protocol_mismatch",
+    "rate_limited",
+    "replay_conflict",
+    "size_limit_exceeded",
+    "unauthorized_instance"
+  ],
+  "errors": [
+    {
+      "code": -32012,
+      "kind": "bundle_digest_mismatch",
+      "retryable": false
+    },
+    {
+      "code": -32017,
+      "kind": "deadline_exceeded",
+      "retryable": true
+    },
+    {
+      "code": -32603,
+      "kind": "internal_error",
+      "retryable": true
+    },
+    {
+      "code": -32602,
+      "kind": "invalid_params",
+      "retryable": false
+    },
+    {
+      "code": -32600,
+      "kind": "invalid_request",
+      "retryable": false
+    },
+    {
+      "code": -32601,
+      "kind": "method_not_found",
+      "retryable": false
+    },
+    {
+      "code": -32018,
+      "kind": "precondition_failed",
+      "retryable": false
+    },
+    {
+      "code": -32011,
+      "kind": "protocol_mismatch",
+      "retryable": false
+    },
+    {
+      "code": -32016,
+      "kind": "rate_limited",
+      "retryable": true
+    },
+    {
+      "code": -32014,
+      "kind": "replay_conflict",
+      "retryable": false
+    },
+    {
+      "code": -32015,
+      "kind": "size_limit_exceeded",
+      "retryable": false
+    },
+    {
+      "code": -32013,
+      "kind": "unauthorized_instance",
+      "retryable": false
+    }
+  ],
+  "fixtureDigestToken": "__BUNDLE_DIGEST__",
+  "generator": {
+    "command": "pnpm capability-protocol:generate",
+    "package": "@comis/capability-service-sdk",
+    "version": "1.0.59"
+  },
+  "limits": {
+    "maxEvidenceBytes": 1048576,
+    "maxInFlightRequests": 32,
+    "maxLineBytes": 65536,
+    "maxReportBytes": 16384,
+    "maxRequestBytes": 65536,
+    "maxResponseBytes": 65536,
+    "reportRetentionDays": 30
+  },
+  "mcpMeta": {
+    "callContextKey": "comis.callContext",
+    "managedRunResultKey": "comis.managedRun"
+  },
+  "methodCatalog": [
+    {
+      "callerClass": "capability-service",
+      "classification": "mutation",
+      "direction": "service-to-comis",
+      "maxRequestBytes": 65536,
+      "maxResponseBytes": 65536,
+      "method": "capabilityServices.handshake",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/handshake.request.schema.json",
+      "requiredServiceScope": null,
+      "responseSchema": "schemas/handshake.response.schema.json",
+      "semanticInvariants": [
+        "exact-protocol-identifier",
+        "exact-bundle-digest",
+        "requested-scopes-must-be-active"
+      ]
+    },
+    {
+      "callerClass": "both",
+      "classification": "read",
+      "direction": "bidirectional",
+      "maxRequestBytes": 65536,
+      "maxResponseBytes": 65536,
+      "method": "capabilityServices.health",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/health.request.schema.json",
+      "requiredServiceScope": "health",
+      "responseSchema": "schemas/health.response.schema.json",
+      "semanticInvariants": [
+        "exact-protocol-identifier",
+        "exact-bundle-digest"
+      ]
+    },
+    {
+      "callerClass": "comis-daemon",
+      "classification": "mutation",
+      "direction": "comis-to-service",
+      "maxRequestBytes": 65536,
+      "maxResponseBytes": 65536,
+      "method": "managedRuns.abandon",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/abandon.request.schema.json",
+      "requiredServiceScope": null,
+      "responseSchema": "schemas/abandon.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "identical-replay-returns-original-result",
+        "altered-replay-is-rejected"
+      ]
+    },
+    {
+      "callerClass": "comis-daemon",
+      "classification": "mutation",
+      "direction": "comis-to-service",
+      "maxRequestBytes": 65536,
+      "maxResponseBytes": 65536,
+      "method": "managedRuns.activate",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/activate.request.schema.json",
+      "requiredServiceScope": null,
+      "responseSchema": "schemas/activate.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "identical-replay-returns-original-result",
+        "altered-replay-is-rejected"
+      ]
+    },
+    {
+      "callerClass": "capability-service",
+      "classification": "mutation",
+      "direction": "service-to-comis",
+      "maxRequestBytes": 65536,
+      "maxResponseBytes": 65536,
+      "method": "managedRuns.report",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/report.request.schema.json",
+      "requiredServiceScope": "report",
+      "responseSchema": "schemas/report.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "utf8-report-content-bytes-at-most-max-report-bytes",
+        "service-report-id-identical-replay-returns-original-sequence",
+        "service-report-id-altered-replay-is-rejected"
+      ]
+    }
+  ],
+  "methods": [
+    "capabilityServices.handshake",
+    "capabilityServices.health",
+    "managedRuns.abandon",
+    "managedRuns.activate",
+    "managedRuns.report"
+  ],
+  "protocolId": "comis.capability-service/1"
+}

@@ -5,7 +5,7 @@ SHELL := /bin/sh
 .PHONY: docs-check format-check mod-check generate-check vet staticcheck \
 	test-architecture test coverage test-race test-conformance test-integration \
 	test-fuzz-smoke build cross-build vulncheck license-check secret-check smoke \
-	test-live verify verify-full post-full-check
+	test-live verify verify-full post-full-check protocol-sync protocol-check
 
 docs-check:
 	go run ./tools/checkdocs
@@ -16,7 +16,15 @@ format-check:
 mod-check:
 	go run ./tools/modcheck
 
-generate-check:
+protocol-sync:
+	@test -n "$(COMIS_ROOT)" || { echo "COMIS_ROOT is required"; exit 1; }
+	@test -n "$(COMIS_COMMIT)" || { echo "COMIS_COMMIT is required"; exit 1; }
+	go run ./tools/protocolsync -source-root "$(COMIS_ROOT)" -source-commit "$(COMIS_COMMIT)" -destination-root protocol/comis
+
+protocol-check:
+	go run ./tools/protocolcheck -root protocol/comis
+
+generate-check: protocol-check
 	go generate ./...
 
 vet:

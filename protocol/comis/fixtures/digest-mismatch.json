@@ -1,0 +1,27 @@
+{
+  "class": "digest-mismatch",
+  "name": "handshake rejects a different bundle digest",
+  "steps": [
+    {
+      "expectation": "reject",
+      "expectedErrorKind": "bundle_digest_mismatch",
+      "payload": {
+        "id": "operation_digest",
+        "jsonrpc": "2.0",
+        "method": "capabilityServices.handshake",
+        "params": {
+          "bundleDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "operationId": "operation_digest",
+          "protocolId": "comis.capability-service/1",
+          "requestedScopes": [
+            "health",
+            "report"
+          ],
+          "serviceInstanceId": "service-instance_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    }
+  ]
+}

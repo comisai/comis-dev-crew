@@ -10,6 +10,7 @@
     "internal/localapi",
     "internal/git",
     "internal/delivery",
-    "internal/processes"
+    "internal/processes",
+    "internal/comiswire/bundle"
   ]
 }

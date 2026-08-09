@@ -162,11 +162,27 @@ func TestManifestRejectsIncompleteIdentityLimitsAndCatalogEntries(t *testing.T) 
 			manifest.ErrorKinds = []string{"invalid_request", "invalid_request"}
 			manifest.Errors = append(manifest.Errors, manifest.Errors[0])
 		}},
+		{name: "empty error kind", mutate: func(manifest *Manifest) { manifest.ErrorKinds[0] = ""; manifest.Errors[0].Kind = "" }},
+		{name: "duplicate error code", mutate: func(manifest *Manifest) {
+			manifest.ErrorKinds = append(manifest.ErrorKinds, "internal_error")
+			manifest.Errors = append(manifest.Errors, ErrorDefinition{Code: manifest.Errors[0].Code, Kind: "internal_error"})
+		}},
 		{name: "unknown error definition", mutate: func(manifest *Manifest) { manifest.Errors[0].Kind = "unknown" }},
 		{name: "method count mismatch", mutate: func(manifest *Manifest) { manifest.Methods = nil }},
 		{name: "method name mismatch", mutate: func(manifest *Manifest) { manifest.MethodCatalog[0].Name = "other" }},
+		{name: "duplicate method", mutate: func(manifest *Manifest) {
+			manifest.Methods = append(manifest.Methods, manifest.Methods[0])
+			manifest.MethodCatalog = append(manifest.MethodCatalog, manifest.MethodCatalog[0])
+		}},
+		{name: "unknown service scope", mutate: func(manifest *Manifest) { scope := "admin"; manifest.MethodCatalog[0].RequiredServiceScope = &scope }},
 		{name: "operation identity optional", mutate: func(manifest *Manifest) { manifest.MethodCatalog[0].OperationIDRequired = false }},
+		{name: "method request limit differs", mutate: func(manifest *Manifest) { manifest.MethodCatalog[0].MaxRequestBytes-- }},
+		{name: "duplicate semantic invariant", mutate: func(manifest *Manifest) {
+			manifest.MethodCatalog[0].SemanticInvariants = []string{"exact-protocol-identifier", "exact-protocol-identifier"}
+		}},
 		{name: "missing request schema", mutate: func(manifest *Manifest) { manifest.MethodCatalog[0].RequestSchema = "schemas/missing.json" }},
+		{name: "response schema is not a schema artifact", mutate: func(manifest *Manifest) { manifest.MethodCatalog[0].ResponseSchema = "fixtures/valid.json" }},
+		{name: "missing response schema", mutate: func(manifest *Manifest) { manifest.MethodCatalog[0].ResponseSchema = "schemas/missing.schema.json" }},
 	}
 
 	for _, test := range tests {
@@ -219,6 +235,77 @@ func TestOpenRejectsMalformedDuplicateAndTrailingManifestJSON(t *testing.T) {
 	}
 }
 
+func TestOpenRejectsUnsafeRootsAndArtifactFileTypes(t *testing.T) {
+	t.Run("missing root", func(t *testing.T) {
+		if _, err := Open(filepath.Join(t.TempDir(), "missing")); err == nil {
+			t.Fatal("expected missing root rejection")
+		}
+	})
+	t.Run("root is a regular file", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "protocol")
+		writeFile(t, root, []byte("not a directory"))
+		if _, err := Open(root); err == nil {
+			t.Fatal("expected regular-file root rejection")
+		}
+	})
+	t.Run("manifest is oversized", func(t *testing.T) {
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, "manifest.json"), make([]byte, maxProtocolFileBytes+1))
+		if _, err := Open(root); err == nil {
+			t.Fatal("expected oversized manifest rejection")
+		}
+	})
+	t.Run("artifact is a symlink", func(t *testing.T) {
+		root, _ := writeFixtureBundle(t)
+		artifact := filepath.Join(root, "fixtures", "valid.json")
+		if err := os.Remove(artifact); err != nil {
+			t.Fatalf("remove artifact: %v", err)
+		}
+		if err := os.Symlink(filepath.Join(root, "schemas", "handshake.request.schema.json"), artifact); err != nil {
+			t.Fatalf("symlink artifact: %v", err)
+		}
+		if _, err := Open(root); err == nil {
+			t.Fatal("expected symlink artifact rejection")
+		}
+	})
+}
+
+func TestOpenRejectsInventoryOrderMissingFilesAndDigestMismatch(t *testing.T) {
+	t.Run("manifest inventory is not sorted", func(t *testing.T) {
+		root, _ := writeFixtureBundle(t)
+		verified, err := Open(root)
+		if err != nil {
+			t.Fatalf("open fixture bundle: %v", err)
+		}
+		manifest := cloneManifest(verified.Manifest)
+		manifest.Artifacts[0], manifest.Artifacts[1] = manifest.Artifacts[1], manifest.Artifacts[0]
+		if err := verifyArtifacts(root, manifest); err == nil {
+			t.Fatal("expected unsorted inventory rejection")
+		}
+	})
+	t.Run("inventoried artifact is missing", func(t *testing.T) {
+		root, _ := writeFixtureBundle(t)
+		if err := os.Remove(filepath.Join(root, "fixtures", "valid.json")); err != nil {
+			t.Fatalf("remove artifact: %v", err)
+		}
+		if _, err := Open(root); err == nil {
+			t.Fatal("expected missing artifact rejection")
+		}
+	})
+	t.Run("aggregate digest differs", func(t *testing.T) {
+		root, digest := writeFixtureBundle(t)
+		path := filepath.Join(root, "manifest.json")
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read manifest: %v", err)
+		}
+		writeFile(t, path, []byte(strings.Replace(string(contents), digest, strings.Repeat("d", 64), 1)))
+		if _, err := Open(root); err == nil {
+			t.Fatal("expected aggregate digest rejection")
+		}
+	})
+}
+
 func TestOpenPinnedRequiresExactProvenance(t *testing.T) {
 	root, digest := writeFixtureBundle(t)
 	pin := fmt.Sprintf(`{
@@ -249,6 +336,22 @@ func TestOpenPinnedRequiresExactProvenance(t *testing.T) {
 	if _, err := OpenPinned(root); err == nil {
 		t.Fatal("expected provenance mismatch rejection")
 	}
+}
+
+func TestOpenPinnedRejectsMissingAndMalformedProvenance(t *testing.T) {
+	t.Run("missing provenance", func(t *testing.T) {
+		root, _ := writeFixtureBundle(t)
+		if _, err := OpenPinned(root); err == nil {
+			t.Fatal("expected missing provenance rejection")
+		}
+	})
+	t.Run("malformed provenance", func(t *testing.T) {
+		root, _ := writeFixtureBundle(t)
+		writeFile(t, filepath.Join(root, "provenance.json"), []byte("{\n"))
+		if _, err := OpenPinned(root); err == nil {
+			t.Fatal("expected malformed provenance rejection")
+		}
+	})
 }
 
 func TestVerifyProvenanceRejectsEveryAuthorityMismatch(t *testing.T) {
