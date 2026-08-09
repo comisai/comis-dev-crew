@@ -155,6 +155,19 @@ func TestSemanticBoundaryRejectsEnvelopeOperationDisagreement(t *testing.T) {
 	}
 }
 
+func TestSemanticBoundaryRejectsWorkspacePreparationActivatedWithoutLease(t *testing.T) {
+	boundary := semanticBoundary{operations: make(map[string]string)}
+	preparation := []byte(`{"state":"prepared","externalRunRef":"external-run_workspace","registrationNonce":"registration-nonce_workspace","expiresAt":"2030-01-01T00:00:00.000Z","requestedWorkspace":{"rootHint":"/approved/workspaces/task"}}`)
+	if kind := boundary.validate(comiswire.PayloadMCPManagedRunResult, preparation); kind != nil {
+		t.Fatalf("workspace preparation rejected: %q", *kind)
+	}
+	activation := []byte(`{"jsonrpc":"2.0","id":"operation_workspace","method":"managedRuns.activate","params":{"operationId":"operation_workspace","managedRunId":"managed-run_workspace","externalRunRef":"external-run_workspace","registrationNonce":"registration-nonce_workspace"}}`)
+	kind := boundary.validate(comiswire.PayloadRequest, activation)
+	if kind == nil || *kind != comiswire.ErrorKindInvalidParams {
+		t.Fatalf("missing workspace lease rejection = %v", kind)
+	}
+}
+
 func (boundary *semanticBoundary) validate(target comiswire.PayloadTarget, payload []byte) *comiswire.ErrorKind {
 	if target != comiswire.PayloadMCPCallContext && target != comiswire.PayloadMCPManagedRunResult {
 		limit := comiswire.MaxResponseBytes
