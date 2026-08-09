@@ -79,6 +79,10 @@ and official-SDK MCP transport. Preparation produces the same normalized task, o
 version, and `mutate` classification across all three paths; repeated calls create one task, and an
 altered stable operation remains the same non-retryable `conflict`. List, get, and explain return
 identical versioned projections through all adapters and retain their `read` classification.
+A tagged integration test also builds and kills the real stdio `devcrew-mcp` process, replaces it,
+and proves the prepared task, completed operation, exact private extension, and one logical replay
+remain intact; a forged managed-run metadata hint changes no task authority. Extending this proof
+through an active fixture and its reports still depends on the blocked host activation join.
 
 The repository registry resolves only operator-configured opaque IDs. It validates canonical
 primary checkouts and dedicated worktree roots beneath approved roots, pins the primary Git
