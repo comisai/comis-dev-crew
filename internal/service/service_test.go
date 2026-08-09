@@ -90,6 +90,61 @@ func TestRun_RejectsMissingContextAndConfiguration(t *testing.T) {
 	}
 }
 
+func TestRun_ReconcilesAmbiguousStateBeforeAdvertisingReady(t *testing.T) {
+	root := shortTempDir(t)
+	databasePath := filepath.Join(root, "state", "devcrew.db")
+	socketPath := filepath.Join(root, "run", "devcrew.sock")
+	seed, err := sqlite.Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatalf("open seed store: %v", err)
+	}
+	task := serviceTask()
+	task.ManagedRunID = "managed-run-0001"
+	task.WorkspaceLeaseID = "workspace-lease-0001"
+	task.State = domain.TaskWorking
+	if err := seed.CreateTask(context.Background(), task); err != nil {
+		t.Fatalf("seed working task: %v", err)
+	}
+	accepted := domain.OperationRecord{
+		SchemaVersion: 1, ID: "op-accepted-0001", Command: "StartTask",
+		SubjectDigest: strings.Repeat("b", 64), Status: domain.OperationAccepted,
+		StateVersion: 2, CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt,
+	}
+	if err := seed.RecordOperation(context.Background(), accepted); err != nil {
+		t.Fatalf("seed accepted operation: %v", err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatalf("close seed store: %v", err)
+	}
+
+	ready := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Config{
+			DatabasePath: databasePath, SocketPath: socketPath,
+			Clock: time.Now, Ready: func() { close(ready) },
+		})
+	}()
+	<-ready
+	client, err := localapi.NewClient(socketPath, time.Second)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	detail, err := client.ShowTask(context.Background(), "read-reconciled-task", task.Handle)
+	if err != nil || detail.Summary.State != domain.TaskUnknown {
+		t.Fatalf("ShowTask() = %#v, %v, want unknown before ready", detail, err)
+	}
+	operation, err := client.Operation(context.Background(), "read-reconciled-operation", accepted.ID)
+	if err != nil || operation.Status != domain.OperationUnknown {
+		t.Fatalf("Operation() = %#v, %v, want unknown before ready", operation, err)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
 func serviceTask() domain.Task {
 	created := time.Date(2026, time.August, 8, 20, 0, 0, 0, time.UTC)
 	task := domain.Task{
