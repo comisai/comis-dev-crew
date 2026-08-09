@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -132,6 +133,27 @@ func TestMutations_StartTaskRejectsInvalidCancelledAndAlteredReplay(t *testing.T
 	result, err := mutations.StartTask(context.Background(), StartTaskCommand{OperationID: "op-start-0001", TaskHandle: "task-0001"})
 	if err != nil || result.Task.Handle != "task-original" {
 		t.Fatalf("StartTask(replay) = %#v, %v, want original", result, err)
+	}
+}
+
+func TestMutations_ClassifiesStableReplayConflictForEveryAdapter(t *testing.T) {
+	store := &mutationStore{replayErr: fmt.Errorf("private store replay detail: %w", ErrConflict)}
+	mutations, err := NewMutations(MutationConfig{
+		Store: store, Repositories: &repositoryCatalog{},
+		TaskIDs:            func() (string, error) { return "task-unused", nil },
+		RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour,
+		Clock: func() time.Time { return time.Date(2026, time.August, 9, 12, 30, 0, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = mutations.PrepareTask(context.Background(), validPrepareCommand())
+	var failure *domain.Failure
+	if !errors.As(err, &failure) || failure.Code != domain.ErrorConflict || failure.Retryable {
+		t.Fatalf("PrepareTask(altered replay) error = %v, want nonretryable conflict", err)
+	}
+	if strings.Contains(err.Error(), "private store replay detail") {
+		t.Fatalf("replay failure leaked private store detail: %v", err)
 	}
 }
 
