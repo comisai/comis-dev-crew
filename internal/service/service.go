@@ -43,6 +43,13 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	defer func() {
 		resultErr = errors.Join(resultErr, store.Close())
 	}()
+	reconciler, err := application.NewStartupReconciler(application.StartupReconcilerConfig{Store: store, Clock: clock})
+	if err != nil {
+		return fmt.Errorf("run service startup reconciler: %w", err)
+	}
+	if _, err := reconciler.Reconcile(ctx); err != nil {
+		return fmt.Errorf("run service startup reconciliation: %w", err)
+	}
 	queries, err := application.NewQueries(store, clock)
 	if err != nil {
 		return fmt.Errorf("run service queries: %w", err)

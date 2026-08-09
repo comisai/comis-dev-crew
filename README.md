@@ -28,6 +28,12 @@ Task records persist bounded acceptance criteria and constraints with the exact 
 hash. Any changed contract field invalidates the pin, and incomplete lifecycle reconciliation
 can become only `unknown` until verified evidence selects a known E0 state.
 
+Before opening its local socket or advertising readiness, the service reconciles durable startup
+state. Prepared and ready tasks remain known because no work-start evidence exists; tasks whose
+runtime may have been active become `unknown`, as do operations left merely `accepted`. Stable
+terminal task evidence and completed or already-unknown operations are preserved, and a repeated
+restart is idempotent.
+
 The first mutation boundary prepares a service-minted task and later acknowledges the exact
 host-managed run and workspace lease. Each change commits the task and its completed operation
 at one global state version. Identical operation replays recover the original task across a

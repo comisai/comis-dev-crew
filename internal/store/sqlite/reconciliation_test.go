@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -93,6 +94,153 @@ func TestStartupReconciliationMarksOnlyAmbiguousTasksAndIncompleteOperationsUnkn
 	secondResult, err := second.Reconcile(context.Background())
 	if err != nil || secondResult.TasksMarkedUnknown != 0 || secondResult.OperationsMarkedUnknown != 0 || secondResult.StateVersion != 27 {
 		t.Fatalf("second reconciliation = %#v, %v, want idempotent version 27", secondResult, err)
+	}
+}
+
+func TestStartupReconciliation_FailsClosedOnInvalidTimeEvidenceAndStorage(t *testing.T) {
+	t.Run("invalid time", func(t *testing.T) {
+		store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+		if err != nil {
+			t.Fatalf("Open() error = %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		if _, err := store.ReconcileStartup(context.Background(), time.Now()); err == nil {
+			t.Fatal("ReconcileStartup(non-UTC) error = nil")
+		}
+	})
+
+	t.Run("backward task time", func(t *testing.T) {
+		store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+		if err != nil {
+			t.Fatalf("Open() error = %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		task := reconciliationTask(1, domain.TaskWorking)
+		if err := store.CreateTask(context.Background(), task); err != nil {
+			t.Fatalf("CreateTask() error = %v", err)
+		}
+		if _, err := store.ReconcileStartup(context.Background(), task.UpdatedAt.Add(-time.Second)); !errors.Is(err, domain.ErrInvalidTransition) {
+			t.Fatalf("ReconcileStartup(backward) error = %v, want ErrInvalidTransition", err)
+		}
+	})
+
+	t.Run("exhausted operation version", func(t *testing.T) {
+		store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+		if err != nil {
+			t.Fatalf("Open() error = %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		operation := reconciliationOperation("op-accepted-exhausted", domain.OperationAccepted, int64(^uint64(0)>>1))
+		if err := store.RecordOperation(context.Background(), operation); err != nil {
+			t.Fatalf("RecordOperation() error = %v", err)
+		}
+		if _, err := store.ReconcileStartup(context.Background(), operation.UpdatedAt.Add(time.Minute)); err == nil {
+			t.Fatal("ReconcileStartup(exhausted) error = nil")
+		}
+	})
+
+	t.Run("missing operation schema", func(t *testing.T) {
+		store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+		if err != nil {
+			t.Fatalf("Open() error = %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		if _, err := store.db.Exec("DROP TABLE operations"); err != nil {
+			t.Fatalf("drop operations table: %v", err)
+		}
+		if _, err := store.ReconcileStartup(context.Background(), time.Now().UTC()); err == nil {
+			t.Fatal("ReconcileStartup(missing operations) error = nil")
+		}
+	})
+
+	t.Run("corrupt task evidence", func(t *testing.T) {
+		store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+		if err != nil {
+			t.Fatalf("Open() error = %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		task := reconciliationTask(1, domain.TaskWorking)
+		if err := store.CreateTask(context.Background(), task); err != nil {
+			t.Fatalf("CreateTask() error = %v", err)
+		}
+		if _, err := store.db.Exec("UPDATE tasks SET state = 'invented' WHERE handle = ?", task.Handle); err != nil {
+			t.Fatalf("corrupt task: %v", err)
+		}
+		if _, err := store.ReconcileStartup(context.Background(), time.Now().UTC()); err == nil {
+			t.Fatal("ReconcileStartup(corrupt task) error = nil")
+		}
+	})
+
+	t.Run("backward operation time", func(t *testing.T) {
+		store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+		if err != nil {
+			t.Fatalf("Open() error = %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		operation := reconciliationOperation("op-accepted-future", domain.OperationAccepted, 1)
+		if err := store.RecordOperation(context.Background(), operation); err != nil {
+			t.Fatalf("RecordOperation() error = %v", err)
+		}
+		if _, err := store.ReconcileStartup(context.Background(), operation.UpdatedAt.Add(-time.Second)); err == nil {
+			t.Fatal("ReconcileStartup(backward operation time) error = nil")
+		}
+	})
+
+	t.Run("corrupt accepted operation", func(t *testing.T) {
+		store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+		if err != nil {
+			t.Fatalf("Open() error = %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		operation := reconciliationOperation("op-accepted-corrupt", domain.OperationAccepted, 1)
+		if err := store.RecordOperation(context.Background(), operation); err != nil {
+			t.Fatalf("RecordOperation() error = %v", err)
+		}
+		if _, err := store.db.Exec("UPDATE operations SET subject_digest = 'invalid' WHERE id = ?", operation.ID); err != nil {
+			t.Fatalf("corrupt accepted operation: %v", err)
+		}
+		if _, err := store.ReconcileStartup(context.Background(), time.Now().UTC()); err == nil {
+			t.Fatal("ReconcileStartup(corrupt operation) error = nil")
+		}
+	})
+
+	t.Run("closed store", func(t *testing.T) {
+		store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+		if err != nil {
+			t.Fatalf("Open() error = %v", err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+		if _, err := store.ReconcileStartup(context.Background(), time.Now().UTC()); err == nil {
+			t.Fatal("ReconcileStartup(closed) error = nil")
+		}
+	})
+}
+
+func TestUpdateReconciledOperation_RequiresValidExactAcceptedRow(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	transaction, err := store.db.Begin()
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	t.Cleanup(func() { _ = transaction.Rollback() })
+	if err := updateReconciledOperation(context.Background(), transaction, domain.OperationRecord{}); err == nil {
+		t.Fatal("updateReconciledOperation(invalid) error = nil")
+	}
+	operation := reconciliationOperation("op-not-stored", domain.OperationUnknown, 1)
+	if err := updateReconciledOperation(context.Background(), transaction, operation); err == nil {
+		t.Fatal("updateReconciledOperation(missing row) error = nil")
+	}
+	if _, err := transaction.Exec("DROP TABLE operations"); err != nil {
+		t.Fatalf("drop operations in transaction: %v", err)
+	}
+	if _, err := nextReconciliationVersion(context.Background(), transaction); err == nil {
+		t.Fatal("nextReconciliationVersion(missing schema) error = nil")
 	}
 }
 
