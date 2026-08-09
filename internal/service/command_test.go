@@ -138,7 +138,7 @@ func TestRunCommand_ComposesInstalledComisFixtureLaneFromExplicitConfiguration(t
 	wantRepository := &RepositoryComposition{
 		GitExecutable: "/usr/bin/git", ApprovedRoot: "/private/repositories",
 		RepositoryID: "product-api", PrimaryCheckout: "/private/repositories/product-api",
-		WorktreeRoot: "/private/repositories/worktrees",
+		WorktreeRoot:  "/private/repositories/worktrees",
 		WorkspaceRoot: "/private/repositories/worktrees/managed-run-fixture",
 	}
 	wantComis := &ComisComposition{

@@ -41,8 +41,9 @@ workspace-request invariant are checked in the transaction that commits the exac
 workspace lease. Inbound abandonment durably closes the private preparation; `preserve` retains
 the prepared task with its closed reason, while `reap_safe` enters the unbound reversible
 cancellation/cleanup path. Exact operation replay returns the original wire acknowledgement and
-altered reuse is rejected with a content-free durable conflict audit. The installed command does
-not yet configure the control connection.
+altered reuse is rejected with a content-free durable conflict audit. The installed service
+command constructs that connection from an explicit owner-local configuration profile and never
+accepts the protected bearer on its command line.
 
 Task records persist bounded acceptance criteria and constraints with the exact brief revision
 hash. Any changed contract field invalidates the pin, and incomplete lifecycle reconciliation
@@ -70,8 +71,10 @@ request envelope and the configured service instance comes from endpoint composi
 classifies the operation as `mutate` and carries the private durable registration for the later MCP
 adapter. The service composition can bind this same coordinator to a dedicated owner-only MCP
 endpoint while retaining a separate operator endpoint, and both servers cancel and join together.
-The installed service command still lacks repository and identity-source configuration, so its
-default runtime remains read-only even though the CLI preparation adapter is present.
+The installed service command validates one explicitly configured primary repository and linked
+fixture worktree before opening its endpoints. It supplies cryptographically random task and
+registration identities, advertises that verified worktree in the managed-run preparation, and
+binds the same mutation authority to the dedicated MCP endpoint.
 
 The stateless MCP adapter now uses the exact-pinned official Go SDK and defines only four tools:
 `prepare_task`, `list_tasks`, `get_task`, and `explain_task`. Every call must carry a generated-schema
@@ -89,15 +92,16 @@ altered stable operation remains the same non-retryable `conflict`. List, get, a
 identical versioned projections through all adapters and retain their `read` classification.
 A tagged integration test also builds and kills the real stdio `devcrew-mcp` process, replaces it,
 and proves the prepared task, completed operation, exact private extension, and one logical replay
-remain intact; a forged managed-run metadata hint changes no task authority. Extending this proof
-through an active fixture and its reports now depends only on the installed executable composition
-that supplies the repository/workspace, service identities, authenticated Comis connection, and
-fixture-worker configuration.
+remain intact; a forged managed-run metadata hint changes no task authority. A second tagged test
+builds and launches both installed processes, performs the authenticated pinned handshake,
+prepares through the official-SDK MCP facade, activates through the persistent control socket,
+and acknowledges the exact four reports from the fixture worker.
 
 The repository registry resolves only operator-configured opaque IDs. It validates canonical
 primary checkouts and dedicated worktree roots beneath approved roots, pins the primary Git
 common-directory filesystem identity, and accepts a task worktree only when a real Git query
-proves that exact identity. It does not create worktrees or launch workers yet.
+proves that exact identity. It does not create worktrees; installed configuration must name an
+already verified linked worktree before the service can launch the deterministic fixture.
 
 The in-process reporter seam is append-only and task-scoped: its endpoint stores only a digest
 of the protected credential, derives the task identity instead of accepting it from worker
@@ -108,9 +112,9 @@ Comis delivery identity at the same global state version. Pending deliveries sur
 remain eligible for exact-identity resend until the store records the host's matching sequence and
 retention acknowledgement. Identical task/report IDs replay the original receipt across restart;
 altered payloads, acknowledgements, and ambiguous decision keys fail closed. The control-socket
-forwarder is implemented as an independently supervised adapter and participates in the service
-lifecycle when a control connection is supplied; installed control configuration and Unix-socket
-reporter transport are still pending.
+forwarder is implemented as an independently supervised adapter and participates in the installed
+service lifecycle. The fixture uses the reviewed in-process task-scoped reporter seam; Unix-socket
+reporter transport remains future work for a real worker process.
 
 The deterministic fixture worker runs synchronously from a verified brief, emits authenticated
 progress, requests exactly one keyed decision, records its resolution, and ends by reporting only
@@ -119,7 +123,9 @@ boundary. The restart matrix independently cancels
 the service and requesting context before and after prepare, binding acknowledgement, and report
 acceptance. Stable identities replay one logical effect; an interrupted runtime becomes `unknown`
 without relaunch or false success. The fixture launches no subprocess and exists to prove these
-properties before the first real coding-worker adapter. Candidate completion advances only to
+properties before the first real coding-worker adapter. In the installed fixture profile, the
+service scans only `ready` tasks selecting `fixture-worker`, commits stable launch intent, renders
+the exact pinned brief, and runs each task once. Candidate completion advances only to
 `validating`; it never claims validation, delivery, or terminal success.
 
 The design authority lives in the private `comisai/planning` repository
@@ -136,7 +142,7 @@ binding ratification record.
 
 All four commands support `--help` and `--version`. Build them with `make build`.
 
-Start the current service with explicit canonical paths:
+The minimal read-only service remains available with explicit canonical paths:
 
 ```text
 devcrew-service --database /absolute/private/state/devcrew.db \
@@ -147,6 +153,40 @@ The service creates its final state/runtime directories as owner-only, stores th
 as owner-only, and refuses relative, non-canonical, symlinked, broad-root, non-regular, live,
 or identity-ambiguous targets. Without explicit flags, both binaries derive the same paths
 under the operating system's user configuration directory.
+
+For the runnable Comis fixture lane, first place the 32–256 character instance bearer in an
+owner-private (`0600`) regular file. The Comis control socket must already exist as an owner-only
+Unix socket. The primary checkout and worktree parent must be separate canonical directories
+under the approved root, and `--workspace-root` must name an existing linked Git worktree beneath
+that parent. Then launch the installed service without hand-editing generated or runtime files:
+
+```text
+devcrew-service \
+  --database /absolute/private/state/devcrew.db \
+  --socket /absolute/private/run/operator.sock \
+  --mcp-socket /absolute/private/run/mcp.sock \
+  --service-instance service-instance-devcrew \
+  --git-executable /absolute/path/to/git \
+  --approved-root /absolute/repositories \
+  --repository-id product-api \
+  --repository-primary /absolute/repositories/product-api \
+  --worktree-root /absolute/repositories/worktrees \
+  --workspace-root /absolute/repositories/worktrees/managed-run-devcrew \
+  --comis-socket /absolute/private/run/comis-control.sock \
+  --comis-credential-file /absolute/private/comis.credential \
+  --comis-handshake-operation handshake-devcrew-0001 \
+  --preparation-ttl 10m \
+  --fixture-worker \
+  --fixture-decision "use the bounded fixture choice"
+```
+
+Expose the replaceable official-SDK stdio MCP facade to the MCP client as a separate process:
+
+```text
+devcrew-mcp \
+  --socket /absolute/private/run/mcp.sock \
+  --service-instance service-instance-devcrew
+```
 
 The current CLI adapter surface is:
 
@@ -165,17 +205,19 @@ devcrew-mcp [--socket PATH] --service-instance ID
 JSON outputs are stable versioned projections. Human and YAML views are presentation only
 and carry no authority. The generated authenticated client is verified against Comis's standalone
 test-only capability-service host over a real owner-only Unix socket, including exact protocol and
-digest agreement plus altered-digest and wrong-credential rejection. This is conformance evidence,
-not a claim that the production host lifecycle is wired. The CLI never opens SQLite as a
+digest agreement plus altered-digest and wrong-credential rejection. The runnable fixture test
+extends that conformance evidence through the installed lifecycle, while still making no claim
+about a real coding-worker adapter. The CLI never opens SQLite as a
 normal-operation fallback. Task preparation reads one strict bounded JSON contract, rejects
 unknown authority fields, and uses either the explicit stable operation ID or one locally minted
 request ID. Service-side mutation composition requires an explicit repository catalog, task and
-registration identity sources, service instance, expiry, and dedicated MCP socket. Until those are
-configured by the production command, the current service reports the mutation as unavailable
-rather than opening an alternate writer. The SDK facade package is implemented and tested over its
-official in-memory transport before the command root uses the production stdio transport. The MCP
-command defaults to a separate `mcp.sock` and validates the out-of-band service instance against
-every private call context. Tagged integration tests include the full direct/CLI/MCP parity matrix.
+registration identity sources, service instance, expiry, and dedicated MCP socket. The installed
+fixture profile supplies those dependencies only when its complete flag set validates; otherwise
+the minimal service does not open an alternate writer. The SDK facade package is implemented and
+tested over its official in-memory transport before the command root uses the production stdio
+transport. The MCP command defaults to a separate `mcp.sock` and validates the out-of-band service
+instance against every private call context. Tagged integration tests include the full
+direct/CLI/MCP parity matrix.
 
 ## Development
 

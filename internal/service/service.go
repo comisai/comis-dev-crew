@@ -17,6 +17,10 @@ const (
 	comisReportPollInterval   = 250 * time.Millisecond
 	comisReportMinimumBackoff = 100 * time.Millisecond
 	comisReportMaximumBackoff = 5 * time.Second
+	comisRequestTimeout       = 5 * time.Second
+	comisMinimumBackoff       = 100 * time.Millisecond
+	comisMaximumBackoff       = 5 * time.Second
+	fixturePollInterval       = 25 * time.Millisecond
 )
 
 // ComisControl is the single persistent authenticated connection supervised
@@ -39,7 +43,34 @@ type Config struct {
 	PreparationTTL         time.Duration
 	Clock                  application.Clock
 	ComisControl           ComisControl
+	RepositoryComposition  *RepositoryComposition
+	ComisComposition       *ComisComposition
+	FixtureComposition     *FixtureComposition
 	Ready                  func()
+}
+
+// RepositoryComposition is the installed single-repository fixture lane.
+type RepositoryComposition struct {
+	GitExecutable   string
+	ApprovedRoot    string
+	RepositoryID    string
+	PrimaryCheckout string
+	WorktreeRoot    string
+	WorkspaceRoot   string
+}
+
+// ComisComposition identifies the installed authenticated control lane without
+// placing its protected bearer on the process command line.
+type ComisComposition struct {
+	SocketPath           string
+	CredentialFile       string
+	HandshakeOperationID string
+}
+
+// FixtureComposition enables the reviewed deterministic worker with one fixed
+// local decision response.
+type FixtureComposition struct {
+	Decision string
 }
 
 // Run opens the sole writable store and serves canonical operator queries until
@@ -54,6 +85,11 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if config.DatabasePath == "" || config.SocketPath == "" {
 		return errors.New("run service: database and socket paths are required")
 	}
+	configured, err := composeInstalledRuntime(ctx, config)
+	if err != nil {
+		return err
+	}
+	config = configured
 	clock := config.Clock
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
@@ -80,6 +116,21 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if err != nil {
 		return err
 	}
+	control, err := composeComisControl(config, mutations)
+	if err != nil {
+		return err
+	}
+	var fixture *fixtureSupervisor
+	if config.FixtureComposition != nil {
+		fixture, err = newFixtureSupervisor(fixtureSupervisorConfig{
+			Store: store, Mutations: mutations, Clock: clock,
+			Decision: config.FixtureComposition.Decision, PollInterval: fixturePollInterval,
+			NewCredential: func() (string, error) { return randomIdentity("fixture-reporter", 16) },
+		})
+		if err != nil {
+			return fmt.Errorf("run service fixture composition: %w", err)
+		}
+	}
 	handlerConfig := localapi.HandlerConfig{Queries: queries, Clock: clock}
 	if mutations != nil {
 		handlerConfig.Mutations = mutations
@@ -105,21 +156,28 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		defer func() { resultErr = errors.Join(resultErr, mcpServer.Close()) }()
 		servers = append(servers, mcpServer)
 	}
-	if config.ComisControl == nil {
+	if control == nil {
 		if config.Ready != nil {
 			config.Ready()
 		}
 		return serveLocalEndpoints(ctx, servers)
 	}
 	forwarder, err := comiswire.NewReportForwarder(comiswire.ReportForwarderConfig{
-		Outbox: store, Sender: config.ComisControl, Clock: clock,
+		Outbox: store, Sender: control, Clock: clock,
 		PollInterval: comisReportPollInterval, MinimumBackoff: comisReportMinimumBackoff,
 		MaximumBackoff: comisReportMaximumBackoff,
 	})
 	if err != nil {
 		return fmt.Errorf("run service Comis report forwarder: %w", err)
 	}
-	return serveComisComponents(ctx, servers, config.ComisControl, forwarder, config.Ready)
+	components := []func(context.Context) error{
+		control.Run,
+		forwarder.Run,
+	}
+	if fixture != nil {
+		components = append(components, fixture.Run)
+	}
+	return serveServiceComponents(ctx, servers, components, config.Ready)
 }
 
 func composeMutations(config Config, store *sqlite.Store, clock application.Clock) (*application.Mutations, error) {
@@ -168,20 +226,17 @@ func serveLocalEndpoints(ctx context.Context, servers []*localapi.Server) error 
 	return resultErr
 }
 
-func serveComisComponents(
+func serveServiceComponents(
 	ctx context.Context,
 	servers []*localapi.Server,
-	control ComisControl,
-	forwarder *comiswire.ReportForwarder,
+	components []func(context.Context) error,
 	ready func(),
 ) error {
 	runContext, cancel := context.WithCancel(ctx)
 	defer cancel()
-	components := []func(context.Context) error{
+	components = append([]func(context.Context) error{
 		func(componentContext context.Context) error { return serveLocalEndpoints(componentContext, servers) },
-		control.Run,
-		forwarder.Run,
-	}
+	}, components...)
 	results := make(chan error, len(components))
 	for _, component := range components {
 		go func(run func(context.Context) error) { results <- run(runContext) }(component)
