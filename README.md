@@ -3,7 +3,9 @@
 Pre-release E0 foundation. The service now owns durable SQLite state and a strict owner-only
 local API; the operator CLI provides read-only service, fleet, task, and operation views. The
 protocol foundation pins an exact Comis capability-service bundle and generates a closed Go
-adapter. Worker execution, mutation commands, and end-to-end Comis runtime wiring are not
+adapter. The durable-work wave now includes the closed E0 task transition authority and one
+canonical task contract whose deterministic worker brief is pinned by a stored SHA-256 revision
+hash. Worker execution, mutation commands, and end-to-end Comis runtime wiring are not
 implemented yet.
 
 `comis-dev-crew` is a companion product for the [Comis](https://github.com/comisai/comis)
@@ -20,6 +22,10 @@ newline-delimited local protocol over an owner-only Unix socket, the first read-
 CLI, and an authenticated Comis protocol pin with generated DTO, validation, and Unix control
 client support. The protocol-foundation join gate is implemented. End-to-end Comis host
 integration, task mutation, and worker capability are not claimed yet.
+
+Task records persist bounded acceptance criteria and constraints with the exact brief revision
+hash. Any changed contract field invalidates the pin, and incomplete lifecycle reconciliation
+can become only `unknown` until verified evidence selects a known E0 state.
 
 The design authority lives in the private `comisai/planning` repository
 (`comis-companion-ecosystem/`), including the implementation design, the common

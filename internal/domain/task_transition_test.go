@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"math"
 	"reflect"
 	"testing"
 	"time"
@@ -119,6 +120,14 @@ func TestTaskApplyTransition_RejectsUnknownIllegalOrNonMonotonicChange(t *testin
 		{name: "time moves backwards", task: base, kind: TransitionBindAcknowledged, at: base.UpdatedAt.Add(-time.Second)},
 		{name: "time is not UTC", task: base, kind: TransitionBindAcknowledged, at: base.UpdatedAt.In(time.FixedZone("offset", 3600))},
 	}
+	exhausted := base
+	exhausted.StateVersion = math.MaxInt64
+	tests = append(tests, struct {
+		name string
+		task Task
+		kind TaskTransition
+		at   time.Time
+	}{name: "state version exhausted", task: exhausted, kind: TransitionBindAcknowledged, at: exhausted.UpdatedAt.Add(time.Second)})
 	cleaned := base
 	cleaned.State = TaskCleaned
 	tests = append(tests, struct {
@@ -133,6 +142,10 @@ func TestTaskApplyTransition_RejectsUnknownIllegalOrNonMonotonicChange(t *testin
 			got, err := test.task.ApplyTransition(test.kind, test.at)
 			if !errors.Is(err, ErrInvalidTransition) {
 				t.Fatalf("ApplyTransition() error = %v, want ErrInvalidTransition", err)
+			}
+			var transitionError *TransitionError
+			if !errors.As(err, &transitionError) || transitionError.Error() == "" {
+				t.Fatalf("ApplyTransition() error = %v, want safe typed TransitionError", err)
 			}
 			if !reflect.DeepEqual(got, test.task) {
 				t.Fatalf("failed transition mutated task: got %#v want %#v", got, test.task)

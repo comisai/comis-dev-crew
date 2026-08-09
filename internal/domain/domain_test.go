@@ -79,7 +79,10 @@ func TestTaskValidate_RejectsInvalidOrOutOfScopeTaskFields(t *testing.T) {
 		{name: "unknown delivery", mutate: func(task *Task) { task.DeliveryMode = DeliveryMode("local_branch") }},
 		{name: "ship report mismatch", mutate: func(task *Task) { task.DeliveryMode = DeliveryReport }},
 		{name: "scout pull request mismatch", mutate: func(task *Task) { task.Shape = ShapeScout }},
+		{name: "negative report cursor", mutate: func(task *Task) { task.ReportCursor = -1 }},
 		{name: "state version", mutate: func(task *Task) { task.StateVersion = 0 }},
+		{name: "missing timestamp", mutate: func(task *Task) { task.CreatedAt = time.Time{} }},
+		{name: "non UTC timestamp", mutate: func(task *Task) { task.UpdatedAt = task.UpdatedAt.In(time.FixedZone("offset", 3600)) }},
 		{name: "time order", mutate: func(task *Task) { task.UpdatedAt = task.CreatedAt.Add(-time.Second) }},
 	}
 	for _, test := range tests {
@@ -90,6 +93,21 @@ func TestTaskValidate_RejectsInvalidOrOutOfScopeTaskFields(t *testing.T) {
 				t.Fatal("Task.Validate() error = nil, want validation failure")
 			}
 		})
+	}
+}
+
+func TestOpaqueReferenceValidators_RejectUntrustedReferences(t *testing.T) {
+	if err := ValidateTaskHandle("task-0001"); err != nil {
+		t.Fatalf("ValidateTaskHandle(valid) error = %v", err)
+	}
+	if err := ValidateTaskHandle("../escape"); err == nil {
+		t.Fatal("ValidateTaskHandle(escape) error = nil")
+	}
+	if err := ValidateOperationID("op-0001"); err != nil {
+		t.Fatalf("ValidateOperationID(valid) error = %v", err)
+	}
+	if err := ValidateOperationID("bad id"); err == nil {
+		t.Fatal("ValidateOperationID(invalid) error = nil")
 	}
 }
 
@@ -126,22 +144,29 @@ func TestOperationValidate_EnforcesReplayAndOutcomeInvariants(t *testing.T) {
 
 func validTask(shape TaskShape, delivery DeliveryMode) Task {
 	created := time.Date(2026, time.August, 8, 20, 0, 0, 0, time.UTC)
-	return Task{
-		SchemaVersion:     1,
-		Handle:            "task-0001",
-		State:             TaskPrepared,
-		Shape:             shape,
-		RepositoryID:      "product-api",
-		BaseRevision:      strings.Repeat("a", 40),
-		BriefRevision:     1,
-		ValidationProfile: "go-default",
-		DeliveryMode:      delivery,
-		WorkerProfileID:   "codex-standard",
-		ReportCursor:      0,
-		StateVersion:      1,
-		CreatedAt:         created,
-		UpdatedAt:         created,
+	task := Task{
+		SchemaVersion:      1,
+		Handle:             "task-0001",
+		State:              TaskPrepared,
+		Shape:              shape,
+		RepositoryID:       "product-api",
+		BaseRevision:       strings.Repeat("a", 40),
+		BriefRevision:      1,
+		AcceptanceCriteria: []string{"The requested behavior is proven."},
+		Constraints:        []string{"Preserve unrelated work."},
+		ValidationProfile:  "go-default",
+		DeliveryMode:       delivery,
+		WorkerProfileID:    "codex-standard",
+		ReportCursor:       0,
+		StateVersion:       1,
+		CreatedAt:          created,
+		UpdatedAt:          created,
 	}
+	pinned, err := task.PinBriefRevision()
+	if err != nil {
+		panic(err)
+	}
+	return pinned
 }
 
 func validOperation() OperationRecord {

@@ -92,21 +92,28 @@ func TestRun_RejectsMissingContextAndConfiguration(t *testing.T) {
 
 func serviceTask() domain.Task {
 	created := time.Date(2026, time.August, 8, 20, 0, 0, 0, time.UTC)
-	return domain.Task{
-		SchemaVersion:     1,
-		Handle:            "task-0001",
-		State:             domain.TaskPrepared,
-		Shape:             domain.ShapeShip,
-		RepositoryID:      "product-api",
-		BaseRevision:      strings.Repeat("a", 40),
-		BriefRevision:     1,
-		ValidationProfile: "go-default",
-		DeliveryMode:      domain.DeliveryPullRequest,
-		WorkerProfileID:   "codex-standard",
-		StateVersion:      1,
-		CreatedAt:         created,
-		UpdatedAt:         created,
+	task := domain.Task{
+		SchemaVersion:      1,
+		Handle:             "task-0001",
+		State:              domain.TaskPrepared,
+		Shape:              domain.ShapeShip,
+		RepositoryID:       "product-api",
+		BaseRevision:       strings.Repeat("a", 40),
+		BriefRevision:      1,
+		AcceptanceCriteria: []string{"The requested change is proven."},
+		Constraints:        []string{"Preserve unrelated changes."},
+		ValidationProfile:  "go-default",
+		DeliveryMode:       domain.DeliveryPullRequest,
+		WorkerProfileID:    "codex-standard",
+		StateVersion:       1,
+		CreatedAt:          created,
+		UpdatedAt:          created,
 	}
+	pinned, err := task.PinBriefRevision()
+	if err != nil {
+		panic(err)
+	}
+	return pinned
 }
 
 func shortTempDir(t *testing.T) string {

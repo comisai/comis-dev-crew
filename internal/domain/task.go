@@ -66,20 +66,23 @@ func (state TaskState) valid() bool {
 // Task is the pure E0 durable domain record. Comis protocol DTOs do not appear
 // here; managed-run binding is added through an adapter-owned join after handoff.
 type Task struct {
-	SchemaVersion     int
-	Handle            string
-	State             TaskState
-	Shape             TaskShape
-	RepositoryID      string
-	BaseRevision      string
-	BriefRevision     int64
-	ValidationProfile string
-	DeliveryMode      DeliveryMode
-	WorkerProfileID   string
-	ReportCursor      int64
-	StateVersion      int64
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	SchemaVersion      int
+	Handle             string
+	State              TaskState
+	Shape              TaskShape
+	RepositoryID       string
+	BaseRevision       string
+	BriefRevision      int64
+	BriefRevisionHash  string
+	AcceptanceCriteria []string
+	Constraints        []string
+	ValidationProfile  string
+	DeliveryMode       DeliveryMode
+	WorkerProfileID    string
+	ReportCursor       int64
+	StateVersion       int64
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // Validate enforces the E0 record and shape/delivery relationship.
@@ -112,6 +115,22 @@ func (task Task) Validate() error {
 	}
 	if task.BriefRevision < 1 {
 		return &ValidationError{Field: "briefRevision", Reason: "must be positive"}
+	}
+	if err := validateContractTextList("acceptanceCriteria", task.AcceptanceCriteria, true); err != nil {
+		return err
+	}
+	if err := validateContractTextList("constraints", task.Constraints, false); err != nil {
+		return err
+	}
+	if err := validateSHA256("briefRevisionHash", task.BriefRevisionHash); err != nil {
+		return err
+	}
+	wantBriefHash, err := task.briefRevisionDigest()
+	if err != nil {
+		return err
+	}
+	if task.BriefRevisionHash != wantBriefHash {
+		return &ValidationError{Field: "briefRevisionHash", Reason: "does not pin the canonical worker brief"}
 	}
 	if !task.DeliveryMode.valid() {
 		return &ValidationError{Field: "deliveryMode", Reason: "must be an E0 delivery mode"}

@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -19,12 +20,21 @@ func (store *Store) CreateTask(ctx context.Context, task domain.Task) error {
 	if err := task.Validate(); err != nil {
 		return fmt.Errorf("create task: %w", err)
 	}
+	acceptanceCriteria, err := json.Marshal(task.AcceptanceCriteria)
+	if err != nil {
+		return fmt.Errorf("encode task acceptance criteria: %w", err)
+	}
+	constraints, err := json.Marshal(task.Constraints)
+	if err != nil {
+		return fmt.Errorf("encode task constraints: %w", err)
+	}
 	const statement = `INSERT INTO tasks (
         handle, schema_version, state, shape, repository_id, base_revision,
-        brief_revision, validation_profile, delivery_mode, worker_profile_id,
+        brief_revision, brief_revision_hash, acceptance_criteria_json,
+        constraints_json, validation_profile, delivery_mode, worker_profile_id,
         report_cursor, state_version, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err := store.db.ExecContext(ctx, statement,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err = store.db.ExecContext(ctx, statement,
 		task.Handle,
 		task.SchemaVersion,
 		task.State,
@@ -32,6 +42,9 @@ func (store *Store) CreateTask(ctx context.Context, task domain.Task) error {
 		task.RepositoryID,
 		task.BaseRevision,
 		task.BriefRevision,
+		task.BriefRevisionHash,
+		string(acceptanceCriteria),
+		string(constraints),
 		task.ValidationProfile,
 		task.DeliveryMode,
 		task.WorkerProfileID,
@@ -121,7 +134,8 @@ type queryer interface {
 func listTasks(ctx context.Context, source queryer) (tasks []domain.Task, resultErr error) {
 	const query = `SELECT
         handle, schema_version, state, shape, repository_id, base_revision,
-        brief_revision, validation_profile, delivery_mode, worker_profile_id,
+        brief_revision, brief_revision_hash, acceptance_criteria_json,
+        constraints_json, validation_profile, delivery_mode, worker_profile_id,
         report_cursor, state_version, created_at, updated_at
     FROM tasks ORDER BY handle`
 	rows, err := source.QueryContext(ctx, query)
@@ -149,7 +163,8 @@ func listTasks(ctx context.Context, source queryer) (tasks []domain.Task, result
 func (store *Store) GetTask(ctx context.Context, handle string) (domain.Task, error) {
 	const query = `SELECT
         handle, schema_version, state, shape, repository_id, base_revision,
-        brief_revision, validation_profile, delivery_mode, worker_profile_id,
+        brief_revision, brief_revision_hash, acceptance_criteria_json,
+        constraints_json, validation_profile, delivery_mode, worker_profile_id,
         report_cursor, state_version, created_at, updated_at
     FROM tasks WHERE handle = ?`
 	task, err := scanTask(store.db.QueryRowContext(ctx, query, handle))
@@ -227,6 +242,8 @@ type rowScanner interface {
 
 func scanTask(row rowScanner) (domain.Task, error) {
 	var task domain.Task
+	var acceptanceCriteria string
+	var constraints string
 	var createdAt string
 	var updatedAt string
 	if err := row.Scan(
@@ -237,6 +254,9 @@ func scanTask(row rowScanner) (domain.Task, error) {
 		&task.RepositoryID,
 		&task.BaseRevision,
 		&task.BriefRevision,
+		&task.BriefRevisionHash,
+		&acceptanceCriteria,
+		&constraints,
 		&task.ValidationProfile,
 		&task.DeliveryMode,
 		&task.WorkerProfileID,
@@ -246,6 +266,12 @@ func scanTask(row rowScanner) (domain.Task, error) {
 		&updatedAt,
 	); err != nil {
 		return domain.Task{}, err
+	}
+	if err := json.Unmarshal([]byte(acceptanceCriteria), &task.AcceptanceCriteria); err != nil {
+		return domain.Task{}, fmt.Errorf("decode task acceptance criteria: %w", err)
+	}
+	if err := json.Unmarshal([]byte(constraints), &task.Constraints); err != nil {
+		return domain.Task{}, fmt.Errorf("decode task constraints: %w", err)
 	}
 	var err error
 	task.CreatedAt, err = parseTime(createdAt)

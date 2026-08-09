@@ -470,21 +470,28 @@ func TestStore_CorruptRowsFailValidationInsteadOfBecomingTaskState(t *testing.T)
 
 func storeTask(handle string, stateVersion int64) domain.Task {
 	created := time.Date(2026, time.August, 8, 20, 0, 0, 123456789, time.UTC)
-	return domain.Task{
-		SchemaVersion:     1,
-		Handle:            handle,
-		State:             domain.TaskPrepared,
-		Shape:             domain.ShapeShip,
-		RepositoryID:      "product-api",
-		BaseRevision:      strings.Repeat("a", 40),
-		BriefRevision:     1,
-		ValidationProfile: "go-default",
-		DeliveryMode:      domain.DeliveryPullRequest,
-		WorkerProfileID:   "codex-standard",
-		StateVersion:      stateVersion,
-		CreatedAt:         created,
-		UpdatedAt:         created,
+	task := domain.Task{
+		SchemaVersion:      1,
+		Handle:             handle,
+		State:              domain.TaskPrepared,
+		Shape:              domain.ShapeShip,
+		RepositoryID:       "product-api",
+		BaseRevision:       strings.Repeat("a", 40),
+		BriefRevision:      1,
+		AcceptanceCriteria: []string{"The requested change is proven."},
+		Constraints:        []string{"Preserve unrelated changes."},
+		ValidationProfile:  "go-default",
+		DeliveryMode:       domain.DeliveryPullRequest,
+		WorkerProfileID:    "codex-standard",
+		StateVersion:       stateVersion,
+		CreatedAt:          created,
+		UpdatedAt:          created,
 	}
+	pinned, err := task.PinBriefRevision()
+	if err != nil {
+		panic(err)
+	}
+	return pinned
 }
 
 func storeOperation(id string, stateVersion int64) domain.OperationRecord {
