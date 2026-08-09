@@ -27,14 +27,14 @@ type fixtureStep struct {
 	Target            comiswire.PayloadTarget `json:"target"`
 }
 
-type fixtureHost struct {
+type semanticBoundary struct {
 	operations map[string]string
 }
 
 func TestGeneratedBoundaryMatchesEveryPinnedFixtureStep(t *testing.T) {
 	for _, scenario := range loadFixtureScenarios(t) {
 		t.Run(scenario.Class, func(t *testing.T) {
-			host := fixtureHost{operations: make(map[string]string)}
+			boundary := semanticBoundary{operations: make(map[string]string)}
 			for index, step := range scenario.Steps {
 				payload := materializeFixturePayload(t, step.Payload)
 				schemaErr := comiswire.ValidatePayload(step.Target, payload)
@@ -42,7 +42,7 @@ func TestGeneratedBoundaryMatchesEveryPinnedFixtureStep(t *testing.T) {
 				if schemaAccepted != (step.SchemaExpectation == "accept") {
 					t.Fatalf("step %d schema acceptance = %v, want %s: %v", index, schemaAccepted, step.SchemaExpectation, schemaErr)
 				}
-				kind := host.validate(step.Target, payload)
+				kind := boundary.validate(step.Target, payload)
 				accepted := kind == nil
 				if accepted != (step.Expectation == "accept") {
 					t.Fatalf("step %d semantic acceptance = %v, want %s (%v)", index, accepted, step.Expectation, kind)
@@ -83,35 +83,35 @@ func TestSemanticBoundaryAcceptsIdenticalReplayAndRejectsAlteration(t *testing.T
 	if len(scenario.Steps) != 2 {
 		t.Fatalf("altered replay step count = %d", len(scenario.Steps))
 	}
-	host := fixtureHost{operations: make(map[string]string)}
+	boundary := semanticBoundary{operations: make(map[string]string)}
 	original := materializeFixturePayload(t, scenario.Steps[0].Payload)
 	altered := materializeFixturePayload(t, scenario.Steps[1].Payload)
-	if kind := host.validate(comiswire.PayloadRequest, original); kind != nil {
+	if kind := boundary.validate(comiswire.PayloadRequest, original); kind != nil {
 		t.Fatalf("original request rejected: %q", *kind)
 	}
-	if kind := host.validate(comiswire.PayloadRequest, original); kind != nil {
+	if kind := boundary.validate(comiswire.PayloadRequest, original); kind != nil {
 		t.Fatalf("identical replay rejected: %q", *kind)
 	}
-	kind := host.validate(comiswire.PayloadRequest, altered)
+	kind := boundary.validate(comiswire.PayloadRequest, altered)
 	if kind == nil || *kind != comiswire.ErrorKindReplayConflict {
 		t.Fatalf("altered replay kind = %v", kind)
 	}
 }
 
 func TestSemanticBoundaryCountsCombinedUTF8ReportBytes(t *testing.T) {
-	boundary := fixtureByClass(t, "boundary-size")
-	if len(boundary.Steps) == 0 {
+	boundaryFixture := fixtureByClass(t, "boundary-size")
+	if len(boundaryFixture.Steps) == 0 {
 		t.Fatal("boundary-size fixture is empty")
 	}
-	base := decodeObject(t, materializeFixturePayload(t, boundary.Steps[0].Payload))
+	base := decodeObject(t, materializeFixturePayload(t, boundaryFixture.Steps[0].Payload))
 	params := base["params"].(map[string]any)
 	params["summary"] = strings.Repeat("é", comiswire.MaxReportBytes)
 	encoded, err := json.Marshal(base)
 	if err != nil {
 		t.Fatalf("encode UTF-8 report: %v", err)
 	}
-	host := fixtureHost{operations: make(map[string]string)}
-	kind := host.validate(comiswire.PayloadRequest, encoded)
+	boundary := semanticBoundary{operations: make(map[string]string)}
+	kind := boundary.validate(comiswire.PayloadRequest, encoded)
 	if kind == nil || *kind != comiswire.ErrorKindSizeLimitExceeded {
 		t.Fatalf("UTF-8 report rejection = %v", kind)
 	}
@@ -122,7 +122,7 @@ func TestSemanticBoundaryCountsCombinedUTF8ReportBytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode combined report: %v", err)
 	}
-	kind = host.validate(comiswire.PayloadRequest, encoded)
+	kind = boundary.validate(comiswire.PayloadRequest, encoded)
 	if kind == nil || *kind != comiswire.ErrorKindSizeLimitExceeded {
 		t.Fatalf("combined report rejection = %v", kind)
 	}
@@ -148,14 +148,14 @@ func TestSemanticBoundaryRejectsEnvelopeOperationDisagreement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode altered envelope: %v", err)
 	}
-	host := fixtureHost{operations: make(map[string]string)}
-	kind := host.validate(comiswire.PayloadRequest, encoded)
+	boundary := semanticBoundary{operations: make(map[string]string)}
+	kind := boundary.validate(comiswire.PayloadRequest, encoded)
 	if kind == nil || *kind != comiswire.ErrorKindInvalidRequest {
 		t.Fatalf("operation disagreement rejection = %v", kind)
 	}
 }
 
-func (host *fixtureHost) validate(target comiswire.PayloadTarget, payload []byte) *comiswire.ErrorKind {
+func (boundary *semanticBoundary) validate(target comiswire.PayloadTarget, payload []byte) *comiswire.ErrorKind {
 	if target != comiswire.PayloadMCPCallContext && target != comiswire.PayloadMCPManagedRunResult {
 		limit := comiswire.MaxResponseBytes
 		if target == comiswire.PayloadRequest {
@@ -205,10 +205,10 @@ func (host *fixtureHost) validate(target comiswire.PayloadTarget, payload []byte
 	if err != nil {
 		return errorKind(comiswire.ErrorKindInvalidParams)
 	}
-	if previous, exists := host.operations[operationID]; exists && previous != string(canonical) {
+	if previous, exists := boundary.operations[operationID]; exists && previous != string(canonical) {
 		return errorKind(comiswire.ErrorKindReplayConflict)
 	}
-	host.operations[operationID] = string(canonical)
+	boundary.operations[operationID] = string(canonical)
 	return nil
 }
 

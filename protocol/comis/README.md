@@ -29,3 +29,9 @@ activate and abandon DTOs are inbound handler contracts and cannot be used as ou
 methods. Strict runtime validation rejects unknown or duplicate fields, trailing JSON, invalid
 closed discriminators, operation-envelope disagreement, response identity drift, and size-limit
 violations before they can cross the adapter boundary.
+
+`make test-conformance` materializes the manifest's digest token and evaluates every pinned
+fixture through the generated schema dispatch. The canonical examples decode into generated DTOs
+and serialize back to identical compact JSON bytes. Replay, envelope identity, and combined UTF-8
+report-size behavior are checked by a direct test evaluator; it is not a socket listener and does
+not stand in for a runnable Comis host.
