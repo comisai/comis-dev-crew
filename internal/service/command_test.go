@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRunCommand_HelpVersionAndStrictArguments(t *testing.T) {
@@ -100,6 +102,71 @@ func TestRunCommand_RejectsMissingCompositionDependencies(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "service paths are not configured") {
 		t.Fatalf("stderr = %q, want missing-path diagnostic", stderr.String())
+	}
+}
+
+func TestRunCommand_ComposesInstalledComisFixtureLaneFromExplicitConfiguration(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	var got Config
+	exitCode := RunCommand(context.Background(), []string{
+		"--database", "/private/state/devcrew.db",
+		"--socket", "/private/run/operator.sock",
+		"--mcp-socket", "/private/run/mcp.sock",
+		"--service-instance", "service-instance-fixture",
+		"--git-executable", "/usr/bin/git",
+		"--approved-root", "/private/repositories",
+		"--repository-id", "product-api",
+		"--repository-primary", "/private/repositories/product-api",
+		"--worktree-root", "/private/repositories/worktrees",
+		"--workspace-root", "/private/repositories/worktrees/managed-run-fixture",
+		"--comis-socket", "/private/run/comis-control.sock",
+		"--comis-credential-file", "/private/config/comis.credential",
+		"--comis-handshake-operation", "handshake-fixture-0001",
+		"--preparation-ttl", "15m",
+		"--fixture-worker",
+		"--fixture-decision", "use the bounded fixture choice",
+	}, &stdout, &stderr, CommandConfig{
+		RunService: func(_ context.Context, config Config) error {
+			got = config
+			return nil
+		},
+	})
+	if exitCode != 0 {
+		t.Fatalf("RunCommand() exit = %d, stderr=%q", exitCode, stderr.String())
+	}
+	wantRepository := &RepositoryComposition{
+		GitExecutable: "/usr/bin/git", ApprovedRoot: "/private/repositories",
+		RepositoryID: "product-api", PrimaryCheckout: "/private/repositories/product-api",
+		WorktreeRoot: "/private/repositories/worktrees",
+		WorkspaceRoot: "/private/repositories/worktrees/managed-run-fixture",
+	}
+	wantComis := &ComisComposition{
+		SocketPath: "/private/run/comis-control.sock", CredentialFile: "/private/config/comis.credential",
+		HandshakeOperationID: "handshake-fixture-0001",
+	}
+	wantFixture := &FixtureComposition{Decision: "use the bounded fixture choice"}
+	if got.DatabasePath != "/private/state/devcrew.db" || got.SocketPath != "/private/run/operator.sock" ||
+		got.MCPSocketPath != "/private/run/mcp.sock" || got.ServiceInstanceID != "service-instance-fixture" ||
+		got.PreparationTTL != 15*time.Minute || !reflect.DeepEqual(got.RepositoryComposition, wantRepository) ||
+		!reflect.DeepEqual(got.ComisComposition, wantComis) || !reflect.DeepEqual(got.FixtureComposition, wantFixture) {
+		t.Fatalf("installed service config = %#v", got)
+	}
+}
+
+func TestRunCommand_RejectsPartialInstalledCompositionWithoutLeakingValues(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	privateValue := "/private/run/comis-secret.sock"
+	exitCode := RunCommand(context.Background(), []string{
+		"--database", "/private/state/devcrew.db", "--socket", "/private/run/operator.sock",
+		"--comis-socket", privateValue,
+	}, &stdout, &stderr, CommandConfig{})
+	if exitCode != 2 || !strings.Contains(stderr.String(), "installed composition is incomplete") {
+		t.Fatalf("RunCommand(partial) = %d, stderr=%q", exitCode, stderr.String())
+	}
+	if strings.Contains(stdout.String()+stderr.String(), privateValue) {
+		t.Fatalf("partial-composition diagnostic leaked private value: %q", stderr.String())
 	}
 }
 
