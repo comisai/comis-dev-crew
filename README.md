@@ -6,9 +6,9 @@ protocol foundation pins an exact Comis capability-service bundle and generates 
 adapter. The durable-work wave now includes the closed E0 task transition authority and one
 canonical task contract whose deterministic worker brief is pinned by a stored SHA-256 revision
 hash. The application now commits replay-safe task preparation and exact host binding atomically
-with their durable operation outcomes. A tagged cross-repository integration test now proves the
-generated client handshake against Comis's standalone fixture host. Real worker execution, public
-mutation transport, and end-to-end production Comis runtime wiring are not implemented yet.
+with their durable operation outcomes. Tagged integration tests prove the restart/replay matrix
+and the generated client handshake against Comis's standalone fixture host. Real worker execution,
+public mutation transport, and end-to-end production Comis runtime wiring are not implemented yet.
 
 `comis-dev-crew` is a companion product for the [Comis](https://github.com/comisai/comis)
 agent platform: a long-lived Go service (`devcrew-service`), an independent operator CLI
@@ -58,8 +58,11 @@ is still pending.
 
 The deterministic fixture worker runs synchronously from a verified brief, emits authenticated
 progress, requests exactly one keyed decision, records its resolution, and supports explicit
-fault stops before or after each durable-report boundary. It launches no subprocess and exists
-to drive restart/replay tests before the first real coding-worker adapter.
+fault stops before or after each durable-report boundary. The restart matrix independently cancels
+the service and requesting context before and after prepare, binding acknowledgement, and report
+acceptance. Stable identities replay one logical effect; an interrupted runtime becomes `unknown`
+without relaunch or false success. The fixture launches no subprocess and exists to prove these
+properties before the first real coding-worker adapter.
 
 The design authority lives in the private `comisai/planning` repository
 (`comis-companion-ecosystem/`), including the implementation design, the common
