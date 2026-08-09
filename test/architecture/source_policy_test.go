@@ -162,8 +162,9 @@ func checkImportBoundary(t *testing.T, relative, importPath string) {
 		t.Errorf("%s: local API may import only application and domain from internal packages", relative)
 	}
 	if strings.HasPrefix(relative, "internal/cli/") && strings.HasPrefix(importPath, module+"internal/") &&
-		!strings.HasPrefix(importPath, module+"internal/application") && !strings.HasPrefix(importPath, module+"internal/domain") {
-		t.Errorf("%s: CLI rendering may import only application and domain from internal packages", relative)
+		!strings.HasPrefix(importPath, module+"internal/application") && !strings.HasPrefix(importPath, module+"internal/domain") &&
+		!strings.HasPrefix(importPath, module+"internal/localapi") {
+		t.Errorf("%s: CLI may import only application, domain, and the typed local client from internal packages", relative)
 	}
 	if strings.HasPrefix(importPath, module+"internal/store/sqlite") && relative != "internal/service/service.go" {
 		t.Errorf("%s: only the service composition may import the writable SQLite adapter", relative)

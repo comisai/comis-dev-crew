@@ -1,4 +1,4 @@
-// Package cli implements the read-only human and script control console.
+// Package cli implements the human and script control console over the typed local client.
 package cli
 
 import (
@@ -9,6 +9,7 @@ import (
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
+	"github.com/comisai/comis-dev-crew/internal/localapi"
 )
 
 const (
@@ -21,7 +22,7 @@ const (
 
 const usage = `Usage: devcrew [--socket PATH] <command>
 
-Read-only commands:
+Commands:
   service status
   doctor [--format table|json]
   status [--format table|json]
@@ -29,6 +30,7 @@ Read-only commands:
   task show TASK [--format yaml|json]
   task explain TASK [--format text|json]
   task operation OPERATION [--format text|json]
+  task prepare --input FILE|- [--operation OPERATION] [--format json]
 
 Global options:
   --socket PATH  Owner-only service Unix socket
@@ -44,6 +46,7 @@ type ReadClient interface {
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
 	Operation(context.Context, string, string) (application.OperationView, error)
+	PrepareTask(context.Context, string, localapi.PrepareTaskInput) (localapi.PrepareTaskResult, error)
 }
 
 // Config injects host paths, client creation, and operation identity.
@@ -52,6 +55,8 @@ type Config struct {
 	Version           string
 	NewClient         func(string) (ReadClient, error)
 	NewOperationID    func() (string, error)
+	Stdin             io.Reader
+	OpenInput         func(string) (io.ReadCloser, error)
 }
 
 type commandKind int
@@ -64,13 +69,17 @@ const (
 	commandShowTask
 	commandExplainTask
 	commandOperation
+	commandPrepareTask
 )
 
 type parsedCommand struct {
-	kind       commandKind
-	socketPath string
-	format     string
-	reference  string
+	kind         commandKind
+	socketPath   string
+	format       string
+	reference    string
+	inputPath    string
+	operationID  string
+	prepareInput *localapi.PrepareTaskInput
 }
 
 // Run parses one read-only command, calls the canonical local client, and
@@ -90,6 +99,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, config Co
 	if err != nil {
 		return writeCLIOutput(stderr, "devcrew: invalid command\nHint: run devcrew --help\n", ExitUsage)
 	}
+	if command.kind == commandPrepareTask {
+		input, readErr := readPrepareInput(command.inputPath, config)
+		if readErr != nil {
+			return writeCLIOutput(stderr, "devcrew: invalid task contract\nHint: provide one strict bounded JSON input\n", ExitUsage)
+		}
+		command.prepareInput = &input
+	}
 	if ctx == nil || config.NewClient == nil || config.NewOperationID == nil || command.socketPath == "" {
 		return writeCLIOutput(stderr, "devcrew: local client is unavailable\nHint: inspect CLI configuration\n", ExitUnavailable)
 	}
@@ -97,7 +113,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, config Co
 	if err != nil || client == nil {
 		return writeCLIOutput(stderr, "devcrew: local service is unavailable\nHint: verify the service socket and retry\n", ExitUnavailable)
 	}
-	operationID, err := config.NewOperationID()
+	operationID := command.operationID
+	if operationID == "" {
+		operationID, err = config.NewOperationID()
+	}
 	if err != nil || domain.ValidateOperationID(operationID) != nil {
 		return writeCLIOutput(stderr, "devcrew: request identity is unavailable\nHint: retry after checking local entropy\n", ExitUnavailable)
 	}
@@ -160,6 +179,9 @@ func parseCommand(args []string, defaultSocketPath string) (parsedCommand, error
 }
 
 func parseTaskCommand(command parsedCommand, args []string) (parsedCommand, error) {
+	if len(args) > 0 && args[0] == "prepare" {
+		return parsePrepareTaskCommand(command, args[1:])
+	}
 	if len(args) < 2 {
 		return parsedCommand{}, errors.New("task subcommand and reference are required")
 	}
@@ -193,6 +215,70 @@ func parseTaskCommand(command parsedCommand, args []string) (parsedCommand, erro
 	return command, nil
 }
 
+func parsePrepareTaskCommand(command parsedCommand, args []string) (parsedCommand, error) {
+	command.kind = commandPrepareTask
+	command.format = "json"
+	seen := make(map[string]bool)
+	for len(args) > 0 {
+		if len(args) < 2 || seen[args[0]] {
+			return parsedCommand{}, errors.New("invalid prepare arguments")
+		}
+		name, value := args[0], args[1]
+		seen[name] = true
+		switch name {
+		case "--input":
+			if value == "" {
+				return parsedCommand{}, errors.New("prepare input is required")
+			}
+			command.inputPath = value
+		case "--operation":
+			if err := domain.ValidateOperationID(value); err != nil {
+				return parsedCommand{}, err
+			}
+			command.operationID = value
+		case "--format":
+			if value != "json" {
+				return parsedCommand{}, errors.New("prepare format must be JSON")
+			}
+		default:
+			return parsedCommand{}, errors.New("unknown prepare option")
+		}
+		args = args[2:]
+	}
+	if command.inputPath == "" {
+		return parsedCommand{}, errors.New("prepare input is required")
+	}
+	return command, nil
+}
+
+func readPrepareInput(path string, config Config) (localapi.PrepareTaskInput, error) {
+	var reader io.Reader
+	var closer io.Closer
+	if path == "-" {
+		reader = config.Stdin
+	} else {
+		if config.OpenInput == nil {
+			return localapi.PrepareTaskInput{}, errors.New("input file access is unavailable")
+		}
+		opened, err := config.OpenInput(path)
+		if err != nil {
+			return localapi.PrepareTaskInput{}, err
+		}
+		reader, closer = opened, opened
+	}
+	if reader == nil {
+		return localapi.PrepareTaskInput{}, errors.New("input is unavailable")
+	}
+	if closer != nil {
+		defer func() { _ = closer.Close() }()
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, localapi.MaxRequestBytes+1))
+	if err != nil || len(data) > localapi.MaxRequestBytes {
+		return localapi.PrepareTaskInput{}, errors.New("read bounded task contract")
+	}
+	return localapi.DecodePrepareTaskInput(data)
+}
+
 func parseFormat(args []string, defaultFormat string, allowed ...string) (string, error) {
 	if len(args) == 0 {
 		return defaultFormat, nil
@@ -222,6 +308,11 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 		return client.ExplainTask(ctx, operationID, command.reference)
 	case commandOperation:
 		return client.Operation(ctx, operationID, command.reference)
+	case commandPrepareTask:
+		if command.prepareInput == nil {
+			return nil, errors.New("prepare input is unavailable")
+		}
+		return client.PrepareTask(ctx, operationID, *command.prepareInput)
 	default:
 		return nil, errors.New("unknown parsed command")
 	}

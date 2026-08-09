@@ -88,7 +88,7 @@ binding ratification record.
 ## Commands
 
 - `devcrew-service` — long-lived store and local read-API authority
-- `devcrew` — read-only operator control console
+- `devcrew` — operator control console over the typed local client
 - `devcrew-mcp` — thin MCP facade composition root (scaffold only)
 - `devcrew-report` — restricted worker reporter composition root (scaffold only)
 
@@ -106,7 +106,7 @@ as owner-only, and refuses relative, non-canonical, symlinked, broad-root, non-r
 or identity-ambiguous targets. Without explicit flags, both binaries derive the same paths
 under the operating system's user configuration directory.
 
-The current CLI surface is read-only:
+The current CLI adapter surface is:
 
 ```text
 devcrew [--socket PATH] service status
@@ -116,6 +116,7 @@ devcrew [--socket PATH] tasks list [--format table|json]
 devcrew [--socket PATH] task show TASK [--format yaml|json]
 devcrew [--socket PATH] task explain TASK [--format text|json]
 devcrew [--socket PATH] task operation OPERATION [--format text|json]
+devcrew [--socket PATH] task prepare --input FILE|- [--operation OPERATION] [--format json]
 ```
 
 JSON outputs are stable versioned projections. Human and YAML views are presentation only
@@ -123,7 +124,10 @@ and carry no authority. The generated authenticated client is verified against C
 test-only capability-service host over a real owner-only Unix socket, including exact protocol and
 digest agreement plus altered-digest and wrong-credential rejection. This is conformance evidence,
 not a claim that the production host lifecycle is wired. The CLI never opens SQLite as a
-normal-operation fallback.
+normal-operation fallback. Task preparation reads one strict bounded JSON contract, rejects
+unknown authority fields, and uses either the explicit stable operation ID or one locally minted
+request ID. Service-side mutation composition is the next integration step; until it is configured,
+the current service reports the mutation as unavailable rather than opening an alternate writer.
 
 ## Development
 

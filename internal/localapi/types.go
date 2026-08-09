@@ -4,6 +4,7 @@ package localapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -149,6 +150,18 @@ type PrepareTaskResult struct {
 	StateVersion  int64                             `json:"stateVersion"`
 	SideEffect    SideEffectClass                   `json:"sideEffect"`
 	ManagedRun    application.ManagedRunPreparation `json:"managedRun"`
+}
+
+// DecodePrepareTaskInput applies the canonical strict local payload decoder.
+func DecodePrepareTaskInput(data []byte) (PrepareTaskInput, error) {
+	var input PrepareTaskInput
+	if len(data) == 0 || len(data) > MaxRequestBytes {
+		return PrepareTaskInput{}, errors.New("prepare task input exceeds its bound")
+	}
+	if err := decodeObject(data, &input); err != nil {
+		return PrepareTaskInput{}, err
+	}
+	return input, nil
 }
 
 type emptyPayload struct{}

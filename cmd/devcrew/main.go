@@ -27,6 +27,10 @@ func main() {
 			return localapi.NewClient(socketPath, 5*time.Second)
 		},
 		NewOperationID: newOperationID,
+		Stdin:          os.Stdin,
+		OpenInput: func(path string) (io.ReadCloser, error) {
+			return os.Open(path)
+		},
 	}))
 }
 
