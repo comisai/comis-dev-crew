@@ -73,7 +73,8 @@ func TestRegistry_RejectsUnsafeConfiguredRootsAndPrimaryCheckouts(t *testing.T) 
 		{name: "relative git executable", config: fixture.config(func(config *devgit.RegistryConfig) { config.GitExecutable = "git" })},
 		{name: "relative primary", config: fixture.config(func(config *devgit.RegistryConfig) { config.Repositories[0].PrimaryCheckout = "relative/repo" })},
 		{name: "noncanonical primary", config: fixture.config(func(config *devgit.RegistryConfig) {
-			config.Repositories[0].PrimaryCheckout = filepath.Join(fixture.approvedRoot, "nested", "..", filepath.Base(fixture.primary))
+			separator := string(filepath.Separator)
+			config.Repositories[0].PrimaryCheckout = fixture.approvedRoot + separator + "nested" + separator + ".." + separator + filepath.Base(fixture.primary)
 		})},
 		{name: "symlink primary", config: fixture.config(func(config *devgit.RegistryConfig) { config.Repositories[0].PrimaryCheckout = symlinkPrimary })},
 		{name: "primary subdirectory", config: fixture.config(func(config *devgit.RegistryConfig) { config.Repositories[0].PrimaryCheckout = subdirectory })},
@@ -82,6 +83,16 @@ func TestRegistry_RejectsUnsafeConfiguredRootsAndPrimaryCheckouts(t *testing.T) 
 		{name: "primary used as worktree root", config: fixture.config(func(config *devgit.RegistryConfig) { config.Repositories[0].WorktreeRoot = fixture.primary })},
 		{name: "duplicate repository id", config: fixture.config(func(config *devgit.RegistryConfig) {
 			config.Repositories = append(config.Repositories, config.Repositories[0])
+		})},
+		{name: "duplicate repository identity", config: fixture.config(func(config *devgit.RegistryConfig) {
+			duplicate := config.Repositories[0]
+			duplicate.ID = "product-copy"
+			config.Repositories = append(config.Repositories, duplicate)
+		})},
+		{name: "invalid repository id", config: fixture.config(func(config *devgit.RegistryConfig) { config.Repositories[0].ID = "owner/repository" })},
+		{name: "no repositories", config: fixture.config(func(config *devgit.RegistryConfig) { config.Repositories = nil })},
+		{name: "duplicate approved root", config: fixture.config(func(config *devgit.RegistryConfig) {
+			config.ApprovedRoots = append(config.ApprovedRoots, config.ApprovedRoots[0])
 		})},
 		{name: "no approved roots", config: fixture.config(func(config *devgit.RegistryConfig) { config.ApprovedRoots = nil })},
 	}
@@ -161,6 +172,13 @@ func TestRegistry_HonorsCancellationAndReturnsTypedMissingRepository(t *testing.
 	}
 	if _, err := registry.Resolve("missing-repository"); !errors.Is(err, devgit.ErrRepositoryNotFound) {
 		t.Fatalf("Resolve(missing) error = %v, want ErrRepositoryNotFound", err)
+	}
+	if _, err := registry.ValidateWorktree(cancelled, fixture.repositoryID, fixture.worktreeRoot); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ValidateWorktree(cancelled) error = %v, want context.Canceled", err)
+	}
+	//lint:ignore SA1012 The boundary test proves nil contexts fail before path or Git inspection.
+	if _, err := registry.ValidateWorktree(nil, fixture.repositoryID, fixture.worktreeRoot); err == nil {
+		t.Fatal("ValidateWorktree(nil context) error = nil")
 	}
 }
 

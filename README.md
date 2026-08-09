@@ -27,6 +27,11 @@ Task records persist bounded acceptance criteria and constraints with the exact 
 hash. Any changed contract field invalidates the pin, and incomplete lifecycle reconciliation
 can become only `unknown` until verified evidence selects a known E0 state.
 
+The repository registry resolves only operator-configured opaque IDs. It validates canonical
+primary checkouts and dedicated worktree roots beneath approved roots, pins the primary Git
+common-directory filesystem identity, and accepts a task worktree only when a real Git query
+proves that exact identity. It does not create worktrees or launch workers yet.
+
 The design authority lives in the private `comisai/planning` repository
 (`comis-companion-ecosystem/`), including the implementation design, the common
 companion-service architecture contract, the parallel-development process, and the
