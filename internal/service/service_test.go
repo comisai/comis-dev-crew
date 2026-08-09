@@ -9,10 +9,63 @@ import (
 	"testing"
 	"time"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 	"github.com/comisai/comis-dev-crew/internal/localapi"
 	"github.com/comisai/comis-dev-crew/internal/store/sqlite"
 )
+
+func TestRun_ComposesCanonicalMutationOnDedicatedMCPEndpoint(t *testing.T) {
+	root := shortTempDir(t)
+	databasePath := filepath.Join(root, "state", "devcrew.db")
+	operatorSocket := filepath.Join(root, "run", "operator.sock")
+	mcpSocket := filepath.Join(root, "run", "mcp.sock")
+	ready := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Config{
+			DatabasePath: databasePath, SocketPath: operatorSocket, MCPSocketPath: mcpSocket,
+			ServiceInstanceID: "service-instance_a", Repositories: serviceRepositoryCatalog{},
+			TaskIDs:            func() (string, error) { return "task-service-prepare", nil },
+			RegistrationNonces: func() (string, error) { return "registration-nonce_service", nil },
+			PreparationTTL:     time.Hour, Ready: func() { close(ready) },
+		})
+	}()
+	<-ready
+	client, err := localapi.NewClient(mcpSocket, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.PrepareTask(context.Background(), "operation-service-prepare", localapi.PrepareTaskInput{
+		Shape: domain.ShapeScout, RepositoryID: "product-api",
+		BaseRevision: strings.Repeat("a", 40), AcceptanceCriteria: []string{"Return one report."},
+		Constraints: []string{"Do not deliver."}, ValidationProfile: "go-default",
+		DeliveryMode: domain.DeliveryReport, WorkerProfileID: "fixture-worker",
+	})
+	if err != nil {
+		t.Fatalf("PrepareTask() error = %v", err)
+	}
+	if result.TaskHandle != "task-service-prepare" || result.ManagedRun.RegistrationNonce != "registration-nonce_service" {
+		t.Fatalf("PrepareTask() = %#v", result)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if _, err := os.Lstat(operatorSocket); !os.IsNotExist(err) {
+		t.Fatalf("operator socket remains: %v", err)
+	}
+	if _, err := os.Lstat(mcpSocket); !os.IsNotExist(err) {
+		t.Fatalf("MCP socket remains: %v", err)
+	}
+}
+
+type serviceRepositoryCatalog struct{}
+
+func (serviceRepositoryCatalog) ValidateRepository(context.Context, string) error { return nil }
+
+var _ application.RepositoryCatalog = serviceRepositoryCatalog{}
 
 func TestRun_ServesPersistedQueriesAndRestartsCleanly(t *testing.T) {
 	root := shortTempDir(t)
