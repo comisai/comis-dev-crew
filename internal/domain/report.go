@@ -97,3 +97,33 @@ type ReportReceipt struct {
 	StateVersion  int64
 	AcceptedAt    time.Time
 }
+
+// AcceptedReport is the exact durable sparse-report evidence joined to the
+// task state version produced by accepting it.
+type AcceptedReport struct {
+	TaskHandle    string
+	Report        WorkerReport
+	SubjectDigest string
+	StateVersion  int64
+	AcceptedAt    time.Time
+}
+
+// Validate enforces the persisted report identity and joined receipt fields.
+func (accepted AcceptedReport) Validate() error {
+	if err := validateOpaqueID("taskHandle", accepted.TaskHandle); err != nil {
+		return err
+	}
+	if err := accepted.Report.Validate(); err != nil {
+		return err
+	}
+	if err := validateSHA256("subjectDigest", accepted.SubjectDigest); err != nil {
+		return err
+	}
+	if accepted.StateVersion < 1 {
+		return &ValidationError{Field: "stateVersion", Reason: "must be positive"}
+	}
+	if accepted.AcceptedAt.IsZero() || accepted.AcceptedAt.Location() != time.UTC {
+		return &ValidationError{Field: "acceptedAt", Reason: "must be nonzero UTC service time"}
+	}
+	return nil
+}

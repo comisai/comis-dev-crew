@@ -74,6 +74,33 @@ INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 `
 
+const reportMigration = `
+CREATE TABLE reports (
+    task_handle TEXT NOT NULL,
+    local_report_id TEXT NOT NULL,
+    subject_digest TEXT NOT NULL,
+    schema_version INTEGER NOT NULL,
+    brief_revision INTEGER NOT NULL,
+    brief_revision_hash TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    external_key TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    details TEXT NOT NULL,
+    worker_observed_at TEXT,
+    state_version INTEGER NOT NULL,
+    accepted_at TEXT NOT NULL,
+    PRIMARY KEY(task_handle, local_report_id),
+    FOREIGN KEY(task_handle) REFERENCES tasks(handle)
+);
+CREATE INDEX reports_task_version_idx ON reports(task_handle, state_version, local_report_id);
+CREATE UNIQUE INDEX reports_decision_key_idx ON reports(task_handle, external_key)
+WHERE kind = 'decision';
+CREATE UNIQUE INDEX reports_resolution_key_idx ON reports(task_handle, external_key)
+WHERE kind = 'resolution';
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+`
+
 const busyTimeoutMilliseconds = 500
 
 // Store owns one SQLite connection pool. The service composition root is the
@@ -167,7 +194,10 @@ func (store *Store) migrate(ctx context.Context) error {
 	if err := store.applyVersionedMigration(ctx, 3, taskContractMigration); err != nil {
 		return err
 	}
-	return store.applyVersionedMigration(ctx, 4, taskBindingMigration)
+	if err := store.applyVersionedMigration(ctx, 4, taskBindingMigration); err != nil {
+		return err
+	}
+	return store.applyVersionedMigration(ctx, 5, reportMigration)
 }
 
 func (store *Store) applyVersionedMigration(ctx context.Context, version int, migration string) error {

@@ -42,7 +42,11 @@ proves that exact identity. It does not create worktrees or launch workers yet.
 The in-process reporter seam is append-only and task-scoped: its endpoint stores only a digest
 of the protected credential, derives the task identity instead of accepting it from worker
 content, requires the exact pinned brief revision/hash, bounds the sparse closed report payload,
-and rejects a mismatched sink receipt. Unix-socket reporter transport is still pending.
+and rejects a mismatched sink receipt. Its application sink now atomically persists the exact
+authenticated report, advances the task cursor and closed E0 lifecycle, and returns a receipt at
+the same global state version. Identical task/report IDs replay the original receipt across
+restart; altered payloads and ambiguous decision keys fail closed. Unix-socket reporter transport
+is still pending.
 
 The deterministic fixture worker runs synchronously from a verified brief, emits authenticated
 progress, requests exactly one keyed decision, records its resolution, and supports explicit
