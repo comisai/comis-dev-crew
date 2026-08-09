@@ -5,8 +5,9 @@ local API; the operator CLI provides read-only service, fleet, task, and operati
 protocol foundation pins an exact Comis capability-service bundle and generates a closed Go
 adapter. The durable-work wave now includes the closed E0 task transition authority and one
 canonical task contract whose deterministic worker brief is pinned by a stored SHA-256 revision
-hash. Worker execution, mutation commands, and end-to-end Comis runtime wiring are not
-implemented yet.
+hash. The application now commits replay-safe task preparation and exact host binding atomically
+with their durable operation outcomes. Worker execution, public mutation transport, and
+end-to-end Comis runtime wiring are not implemented yet.
 
 `comis-dev-crew` is a companion product for the [Comis](https://github.com/comisai/comis)
 agent platform: a long-lived Go service (`devcrew-service`), an independent operator CLI
@@ -21,11 +22,17 @@ E0 domain records, a pure-Go SQLite store, canonical read application handlers, 
 newline-delimited local protocol over an owner-only Unix socket, the first read-only operator
 CLI, and an authenticated Comis protocol pin with generated DTO, validation, and Unix control
 client support. The protocol-foundation join gate is implemented. End-to-end Comis host
-integration, task mutation, and worker capability are not claimed yet.
+integration, public mutation transport, and real worker capability are not claimed yet.
 
 Task records persist bounded acceptance criteria and constraints with the exact brief revision
 hash. Any changed contract field invalidates the pin, and incomplete lifecycle reconciliation
 can become only `unknown` until verified evidence selects a known E0 state.
+
+The first mutation boundary prepares a service-minted task and later acknowledges the exact
+host-managed run and workspace lease. Each change commits the task and its completed operation
+at one global state version. Identical operation replays recover the original task across a
+service restart; altered subjects fail closed, and concurrent identical preparation creates one
+logical task.
 
 The repository registry resolves only operator-configured opaque IDs. It validates canonical
 primary checkouts and dedicated worktree roots beneath approved roots, pins the primary Git

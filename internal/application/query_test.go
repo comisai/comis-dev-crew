@@ -339,21 +339,32 @@ func (repository *queryRepository) TaskSnapshot(context.Context) ([]domain.Task,
 
 func queryTask(handle string, state domain.TaskState, stateVersion int64) domain.Task {
 	created := time.Date(2026, time.August, 8, 20, 0, 0, 0, time.UTC)
-	return domain.Task{
-		SchemaVersion:     1,
-		Handle:            handle,
-		State:             state,
-		Shape:             domain.ShapeShip,
-		RepositoryID:      "product-api",
-		BaseRevision:      strings.Repeat("a", 40),
-		BriefRevision:     1,
-		ValidationProfile: "go-default",
-		DeliveryMode:      domain.DeliveryPullRequest,
-		WorkerProfileID:   "codex-standard",
-		StateVersion:      stateVersion,
-		CreatedAt:         created,
-		UpdatedAt:         created.Add(time.Minute),
+	task := domain.Task{
+		SchemaVersion:      1,
+		Handle:             handle,
+		ServiceInstanceID:  "service-instance-0001",
+		State:              state,
+		Shape:              domain.ShapeShip,
+		RepositoryID:       "product-api",
+		BaseRevision:       strings.Repeat("a", 40),
+		BriefRevision:      1,
+		AcceptanceCriteria: []string{"The requested behavior is proven."},
+		ValidationProfile:  "go-default",
+		DeliveryMode:       domain.DeliveryPullRequest,
+		WorkerProfileID:    "codex-standard",
+		StateVersion:       stateVersion,
+		CreatedAt:          created,
+		UpdatedAt:          created.Add(time.Minute),
 	}
+	if state != domain.TaskPrepared && state != domain.TaskReconciling && state != domain.TaskUnknown {
+		task.ManagedRunID = "managed-run-0001"
+		task.WorkspaceLeaseID = "workspace-lease-0001"
+	}
+	pinned, err := task.PinBriefRevision()
+	if err != nil {
+		panic(err)
+	}
+	return pinned
 }
 
 func queryOperation(id string, stateVersion int64) domain.OperationRecord {

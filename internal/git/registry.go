@@ -51,7 +51,7 @@ func NewRegistry(ctx context.Context, config RegistryConfig) (*Registry, error) 
 			return nil, err
 		}
 		if _, duplicate := identities[repository.GitCommonDirIdentity]; duplicate {
-			return nil, errors.New("create repository registry: Git repository identity is duplicated")
+			return nil, errors.New("create repository registry: git repository identity is duplicated")
 		}
 		identities[repository.GitCommonDirIdentity] = struct{}{}
 		registry.repositories[repository.ID] = repository
@@ -69,6 +69,19 @@ func (registry *Registry) Resolve(repositoryID string) (Repository, error) {
 		return Repository{}, ErrRepositoryNotFound
 	}
 	return repository, nil
+}
+
+// ValidateRepository implements the application catalog seam without exposing
+// configured paths or Git identities outside the adapter.
+func (registry *Registry) ValidateRepository(ctx context.Context, repositoryID string) error {
+	if ctx == nil {
+		return errors.New("validate repository: context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := registry.Resolve(repositoryID)
+	return err
 }
 
 // ValidateWorktree proves that a real linked worktree is inside its dedicated
@@ -98,7 +111,7 @@ func (registry *Registry) ValidateWorktree(ctx context.Context, repositoryID, pa
 		return Worktree{}, err
 	}
 	if commonDirectory != repository.GitCommonDir || identity != repository.GitCommonDirIdentity {
-		return Worktree{}, errors.New("validate task worktree: Git common-directory identity differs")
+		return Worktree{}, errors.New("validate task worktree: git common-directory identity differs")
 	}
 	return Worktree{
 		RepositoryID: repository.ID, CanonicalPath: path,
@@ -157,26 +170,26 @@ func inspectConfiguredRepository(ctx context.Context, executable string, roots [
 func inspectGitWorktree(ctx context.Context, executable, path string) (string, string, error) {
 	topLevel, err := runGit(ctx, executable, "--no-optional-locks", "-C", path, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return "", "", fmt.Errorf("inspect Git worktree root: %w", err)
+		return "", "", fmt.Errorf("inspect git worktree root: %w", err)
 	}
 	if topLevel != path {
-		return "", "", errors.New("inspect Git worktree root: configured path is not the worktree root")
+		return "", "", errors.New("inspect git worktree root: configured path is not the worktree root")
 	}
 	bare, err := runGit(ctx, executable, "--no-optional-locks", "-C", path, "rev-parse", "--is-bare-repository")
 	if err != nil || bare != "false" {
-		return "", "", errors.New("inspect Git worktree root: bare or unreadable repository")
+		return "", "", errors.New("inspect git worktree root: bare or unreadable repository")
 	}
 	commonDirectory, err := runGit(ctx, executable, "--no-optional-locks", "-C", path,
 		"rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
-		return "", "", fmt.Errorf("inspect Git common directory: %w", err)
+		return "", "", fmt.Errorf("inspect git common directory: %w", err)
 	}
 	if err := validateCanonicalDirectory(commonDirectory); err != nil {
-		return "", "", safePathError("inspect Git common directory", err)
+		return "", "", safePathError("inspect git common directory", err)
 	}
 	identity, err := commonDirectoryIdentity(commonDirectory)
 	if err != nil {
-		return "", "", errors.New("inspect Git common directory: identity unavailable")
+		return "", "", errors.New("inspect git common directory: identity unavailable")
 	}
 	return commonDirectory, identity, nil
 }

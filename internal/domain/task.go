@@ -64,10 +64,13 @@ func (state TaskState) valid() bool {
 }
 
 // Task is the pure E0 durable domain record. Comis protocol DTOs do not appear
-// here; managed-run binding is added through an adapter-owned join after handoff.
+// here; only exact opaque host-authority references cross the adapter boundary.
 type Task struct {
 	SchemaVersion      int
 	Handle             string
+	ServiceInstanceID  string
+	ManagedRunID       string
+	WorkspaceLeaseID   string
 	State              TaskState
 	Shape              TaskShape
 	RepositoryID       string
@@ -104,8 +107,27 @@ func (task Task) Validate() error {
 			return err
 		}
 	}
+	if err := validateAuthorityReference("serviceInstanceId", task.ServiceInstanceID); err != nil {
+		return err
+	}
+	hasRun := task.ManagedRunID != ""
+	hasLease := task.WorkspaceLeaseID != ""
+	if hasRun != hasLease {
+		return &ValidationError{Field: "binding", Reason: "managed run and workspace lease must be present together"}
+	}
+	if hasRun {
+		if err := validateAuthorityReference("managedRunId", task.ManagedRunID); err != nil {
+			return err
+		}
+		if err := validateAuthorityReference("workspaceLeaseId", task.WorkspaceLeaseID); err != nil {
+			return err
+		}
+	}
 	if !task.State.valid() {
 		return &ValidationError{Field: "state", Reason: "must be a known E0 task state"}
+	}
+	if task.State != TaskPrepared && task.State != TaskReconciling && task.State != TaskUnknown && !hasRun {
+		return &ValidationError{Field: "binding", Reason: "active and terminal task states require exact host binding"}
 	}
 	if !task.Shape.valid() {
 		return &ValidationError{Field: "shape", Reason: "must be ship or scout"}

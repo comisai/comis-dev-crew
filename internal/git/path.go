@@ -38,11 +38,11 @@ func validateGitExecutable(path string) error {
 	}
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil || resolved != path {
-		return errors.New("Git executable is unavailable or noncanonical")
+		return errors.New("git executable is unavailable or noncanonical")
 	}
 	info, err := os.Lstat(path)
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
-		return errors.New("Git executable is not a regular executable")
+		return errors.New("git executable is not a regular executable")
 	}
 	return nil
 }
@@ -85,10 +85,10 @@ func validatePrimaryMarker(primary string) error {
 	marker := filepath.Join(primary, ".git")
 	info, err := os.Lstat(marker)
 	if err != nil {
-		return errors.New("primary checkout has no Git directory")
+		return errors.New("primary checkout has no git directory")
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return errors.New("configured checkout is not the primary Git checkout")
+		return errors.New("configured checkout is not the primary git checkout")
 	}
 	return nil
 }
@@ -97,10 +97,10 @@ func validateWorktreeMarker(path string) error {
 	marker := filepath.Join(path, ".git")
 	info, err := os.Lstat(marker)
 	if err != nil {
-		return errors.New("task path has no Git worktree marker")
+		return errors.New("task path has no git worktree marker")
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return errors.New("task path is not a linked Git worktree")
+		return errors.New("task path is not a linked git worktree")
 	}
 	return nil
 }

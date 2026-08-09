@@ -10,6 +10,7 @@ var (
 	commandPattern   = regexp.MustCompile(`^[A-Z][A-Za-z0-9]{2,63}$`)
 	revisionPattern  = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 	sha256HexPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	authorityPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._~-]{2,255}$`)
 )
 
 func validateOpaqueID(field, value string) error {
@@ -49,6 +50,18 @@ func validateCommand(value string) error {
 		return &ValidationError{Field: "command", Reason: "must be a known command-style identifier"}
 	}
 	return nil
+}
+
+func validateAuthorityReference(field, value string) error {
+	if !authorityPattern.MatchString(value) {
+		return &ValidationError{Field: field, Reason: "must be a bounded opaque authority reference"}
+	}
+	return nil
+}
+
+// ValidateAuthorityReference rejects malformed host-owned opaque identities.
+func ValidateAuthorityReference(field, value string) error {
+	return validateAuthorityReference(field, value)
 }
 
 func validateRevision(value string) error {

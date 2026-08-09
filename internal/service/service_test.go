@@ -95,6 +95,7 @@ func serviceTask() domain.Task {
 	task := domain.Task{
 		SchemaVersion:      1,
 		Handle:             "task-0001",
+		ServiceInstanceID:  "service-instance-0001",
 		State:              domain.TaskPrepared,
 		Shape:              domain.ShapeShip,
 		RepositoryID:       "product-api",

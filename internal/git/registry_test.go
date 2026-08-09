@@ -173,6 +173,19 @@ func TestRegistry_HonorsCancellationAndReturnsTypedMissingRepository(t *testing.
 	if _, err := registry.Resolve("missing-repository"); !errors.Is(err, devgit.ErrRepositoryNotFound) {
 		t.Fatalf("Resolve(missing) error = %v, want ErrRepositoryNotFound", err)
 	}
+	if err := registry.ValidateRepository(context.Background(), fixture.repositoryID); err != nil {
+		t.Fatalf("ValidateRepository(valid) error = %v", err)
+	}
+	if err := registry.ValidateRepository(context.Background(), "missing-repository"); !errors.Is(err, devgit.ErrRepositoryNotFound) {
+		t.Fatalf("ValidateRepository(missing) error = %v, want ErrRepositoryNotFound", err)
+	}
+	if err := registry.ValidateRepository(cancelled, fixture.repositoryID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ValidateRepository(cancelled) error = %v, want context.Canceled", err)
+	}
+	//lint:ignore SA1012 The boundary test proves nil cannot reach registry resolution.
+	if err := registry.ValidateRepository(nil, fixture.repositoryID); err == nil {
+		t.Fatal("ValidateRepository(nil) error = nil")
+	}
 	if _, err := registry.ValidateWorktree(cancelled, fixture.repositoryID, fixture.worktreeRoot); !errors.Is(err, context.Canceled) {
 		t.Fatalf("ValidateWorktree(cancelled) error = %v, want context.Canceled", err)
 	}

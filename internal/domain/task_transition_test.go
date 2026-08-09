@@ -10,11 +10,17 @@ import (
 
 func TestTaskApplyTransition_AdvancesCanonicalE0Lifecycle(t *testing.T) {
 	task := validTask(ShapeShip, DeliveryPullRequest)
+	var err error
+	task, err = task.AcknowledgeBinding(TaskBinding{
+		ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001",
+	}, task.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatalf("AcknowledgeBinding() error = %v", err)
+	}
 	transitions := []struct {
 		kind TaskTransition
 		want TaskState
 	}{
-		{kind: TransitionBindAcknowledged, want: TaskReady},
 		{kind: TransitionLaunchRequested, want: TaskLaunching},
 		{kind: TransitionWorkerAcknowledged, want: TaskWorking},
 		{kind: TransitionValidationStarted, want: TaskValidating},
@@ -28,7 +34,6 @@ func TestTaskApplyTransition_AdvancesCanonicalE0Lifecycle(t *testing.T) {
 	for index, transition := range transitions {
 		at := task.UpdatedAt.Add(time.Duration(index+1) * time.Second)
 		previousVersion := task.StateVersion
-		var err error
 		task, err = task.ApplyTransition(transition.kind, at)
 		if err != nil {
 			t.Fatalf("ApplyTransition(%q) error = %v", transition.kind, err)
@@ -182,12 +187,17 @@ func TestTaskApplyTransition_RejectsUnknownIllegalOrNonMonotonicChange(t *testin
 func transitionTaskToWorking(t *testing.T) Task {
 	t.Helper()
 	task := validTask(ShapeShip, DeliveryPullRequest)
+	var err error
+	task, err = task.AcknowledgeBinding(TaskBinding{
+		ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001",
+	}, task.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatalf("AcknowledgeBinding() error = %v", err)
+	}
 	for _, transition := range []TaskTransition{
-		TransitionBindAcknowledged,
 		TransitionLaunchRequested,
 		TransitionWorkerAcknowledged,
 	} {
-		var err error
 		task, err = task.ApplyTransition(transition, task.UpdatedAt.Add(time.Second))
 		if err != nil {
 			t.Fatalf("ApplyTransition(%q) error = %v", transition, err)

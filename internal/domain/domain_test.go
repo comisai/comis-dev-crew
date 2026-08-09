@@ -156,6 +156,7 @@ func validTask(shape TaskShape, delivery DeliveryMode) Task {
 	task := Task{
 		SchemaVersion:      1,
 		Handle:             "task-0001",
+		ServiceInstanceID:  "service-instance-0001",
 		State:              TaskPrepared,
 		Shape:              shape,
 		RepositoryID:       "product-api",

@@ -152,6 +152,9 @@ func TestStore_CloseAndMigrationFailuresRemainExplicit(t *testing.T) {
 	if _, _, err := store.TaskSnapshot(context.Background()); err == nil {
 		t.Fatal("TaskSnapshot() error = nil after close, want explicit failure")
 	}
+	if _, err := store.CurrentStateVersion(context.Background()); err == nil {
+		t.Fatal("CurrentStateVersion() error = nil after close, want explicit failure")
+	}
 }
 
 func TestStore_InvalidMigrationRollsBackPartialSchema(t *testing.T) {
@@ -468,11 +471,68 @@ func TestStore_CorruptRowsFailValidationInsteadOfBecomingTaskState(t *testing.T)
 	}
 }
 
+func TestStore_RejectsCorruptTaskCollectionsAndStoredTimes(t *testing.T) {
+	tests := []struct {
+		name   string
+		column string
+		value  string
+	}{
+		{name: "acceptance criteria", column: "acceptance_criteria_json", value: "{"},
+		{name: "constraints", column: "constraints_json", value: "{"},
+		{name: "created time", column: "created_at", value: "not-a-time"},
+		{name: "updated time", column: "updated_at", value: "not-a-time"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+			if err != nil {
+				t.Fatalf("Open() error = %v", err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			task := storeTask("task-corrupt", 1)
+			if err := store.CreateTask(context.Background(), task); err != nil {
+				t.Fatalf("CreateTask() error = %v", err)
+			}
+			query := "UPDATE tasks SET " + test.column + " = ? WHERE handle = ?" // #nosec G202 -- column is a closed test fixture.
+			if _, err := store.db.Exec(query, test.value, task.Handle); err != nil {
+				t.Fatalf("corrupt task row: %v", err)
+			}
+			if _, err := store.GetTask(context.Background(), task.Handle); err == nil {
+				t.Fatal("GetTask(corrupt) error = nil")
+			}
+		})
+	}
+}
+
+func TestStore_RejectsCorruptOperationTimes(t *testing.T) {
+	for _, column := range []string{"created_at", "updated_at"} {
+		t.Run(column, func(t *testing.T) {
+			store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+			if err != nil {
+				t.Fatalf("Open() error = %v", err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			operation := storeOperation("op-corrupt-time", 1)
+			if err := store.RecordOperation(context.Background(), operation); err != nil {
+				t.Fatalf("RecordOperation() error = %v", err)
+			}
+			query := "UPDATE operations SET " + column + " = 'not-a-time' WHERE id = ?" // #nosec G202 -- column is a closed test fixture.
+			if _, err := store.db.Exec(query, operation.ID); err != nil {
+				t.Fatalf("corrupt operation time: %v", err)
+			}
+			if _, err := store.GetOperation(context.Background(), operation.ID); err == nil {
+				t.Fatal("GetOperation(corrupt time) error = nil")
+			}
+		})
+	}
+}
+
 func storeTask(handle string, stateVersion int64) domain.Task {
 	created := time.Date(2026, time.August, 8, 20, 0, 0, 123456789, time.UTC)
 	task := domain.Task{
 		SchemaVersion:      1,
 		Handle:             handle,
+		ServiceInstanceID:  "service-instance-0001",
 		State:              domain.TaskPrepared,
 		Shape:              domain.ShapeShip,
 		RepositoryID:       "product-api",

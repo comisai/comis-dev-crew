@@ -147,6 +147,10 @@ type mutationStore struct {
 	prepareCalls int
 }
 
+func (store *mutationStore) ReplayMutation(context.Context, string, string, string) (MutationResult, bool, error) {
+	return MutationResult{}, false, nil
+}
+
 func (store *mutationStore) CommitPreparedTask(_ context.Context, mutation PreparedTaskMutation) (MutationResult, error) {
 	store.prepareCalls++
 	store.prepared = mutation

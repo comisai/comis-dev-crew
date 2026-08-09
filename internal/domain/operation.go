@@ -30,6 +30,7 @@ type OperationRecord struct {
 	SubjectDigest string
 	Status        OperationStatus
 	ErrorCode     ErrorCode
+	ResultRef     string
 	StateVersion  int64
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
@@ -58,6 +59,11 @@ func (operation OperationRecord) Validate() error {
 		}
 	} else if operation.ErrorCode != "" {
 		return &ValidationError{Field: "errorCode", Reason: "only rejected operations carry an error code"}
+	}
+	if operation.ResultRef != "" {
+		if err := validateOpaqueID("resultRef", operation.ResultRef); err != nil {
+			return err
+		}
 	}
 	if operation.StateVersion < 1 {
 		return &ValidationError{Field: "stateVersion", Reason: "must be positive"}

@@ -12,7 +12,7 @@ import (
 
 const maximumGitOutputBytes = 8192
 
-var errGitOutputTooLarge = errors.New("Git output exceeded the configured bound")
+var errGitOutputTooLarge = errors.New("git output exceeded the configured bound")
 
 type boundedBuffer struct {
 	buffer bytes.Buffer
@@ -33,7 +33,7 @@ func (destination *boundedBuffer) Write(contents []byte) (int, error) {
 
 func runGit(ctx context.Context, executable string, arguments ...string) (string, error) {
 	if ctx == nil {
-		return "", errors.New("Git command context is required")
+		return "", errors.New("git command context is required")
 	}
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -57,11 +57,11 @@ func runGit(ctx context.Context, executable string, arguments ...string) (string
 		if errors.Is(err, errGitOutputTooLarge) {
 			return "", errGitOutputTooLarge
 		}
-		return "", fmt.Errorf("Git inspection command failed: %w", err)
+		return "", fmt.Errorf("git inspection command failed: %w", err)
 	}
 	output := strings.TrimSuffix(stdout.buffer.String(), "\n")
 	if output == "" || strings.ContainsAny(output, "\r\n\x00") {
-		return "", errors.New("Git inspection returned an invalid single-line result")
+		return "", errors.New("git inspection returned an invalid single-line result")
 	}
 	return output, nil
 }

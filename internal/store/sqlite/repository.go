@@ -17,8 +17,19 @@ const sqliteConstraintCode = 19
 // CreateTask inserts one validated task record. The service mutation
 // coordinator is the only production caller allowed to invoke it.
 func (store *Store) CreateTask(ctx context.Context, task domain.Task) error {
-	if err := task.Validate(); err != nil {
+	if err := insertTask(ctx, store.db, task); err != nil {
 		return fmt.Errorf("create task: %w", err)
+	}
+	return nil
+}
+
+type execer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func insertTask(ctx context.Context, target execer, task domain.Task) error {
+	if err := task.Validate(); err != nil {
+		return err
 	}
 	acceptanceCriteria, err := json.Marshal(task.AcceptanceCriteria)
 	if err != nil {
@@ -29,14 +40,18 @@ func (store *Store) CreateTask(ctx context.Context, task domain.Task) error {
 		return fmt.Errorf("encode task constraints: %w", err)
 	}
 	const statement = `INSERT INTO tasks (
-        handle, schema_version, state, shape, repository_id, base_revision,
+        handle, schema_version, service_instance_id, managed_run_id,
+        workspace_lease_id, state, shape, repository_id, base_revision,
         brief_revision, brief_revision_hash, acceptance_criteria_json,
         constraints_json, validation_profile, delivery_mode, worker_profile_id,
         report_cursor, state_version, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err = store.db.ExecContext(ctx, statement,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err = target.ExecContext(ctx, statement,
 		task.Handle,
 		task.SchemaVersion,
+		task.ServiceInstanceID,
+		task.ManagedRunID,
+		task.WorkspaceLeaseID,
 		task.State,
 		task.Shape,
 		task.RepositoryID,
@@ -55,9 +70,9 @@ func (store *Store) CreateTask(ctx context.Context, task domain.Task) error {
 	)
 	if err != nil {
 		if isConstraintError(err) {
-			return fmt.Errorf("create task: %w", application.ErrConflict)
+			return application.ErrConflict
 		}
-		return fmt.Errorf("create task: %w", err)
+		return err
 	}
 	return nil
 }
@@ -66,24 +81,7 @@ func (store *Store) CreateTask(ctx context.Context, task domain.Task) error {
 // the same command and subject digest reuses that logical effect; altered
 // content is a conflict. Callers read the record to recover the original outcome.
 func (store *Store) RecordOperation(ctx context.Context, operation domain.OperationRecord) error {
-	if err := operation.Validate(); err != nil {
-		return fmt.Errorf("record operation: %w", err)
-	}
-	const statement = `INSERT INTO operations (
-        id, schema_version, command, subject_digest, status, error_code,
-        state_version, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err := store.db.ExecContext(ctx, statement,
-		operation.ID,
-		operation.SchemaVersion,
-		operation.Command,
-		operation.SubjectDigest,
-		operation.Status,
-		operation.ErrorCode,
-		operation.StateVersion,
-		formatTime(operation.CreatedAt),
-		formatTime(operation.UpdatedAt),
-	)
+	err := insertOperation(ctx, store.db, operation)
 	if err != nil {
 		if isConstraintError(err) {
 			existing, readErr := store.GetOperation(ctx, operation.ID)
@@ -98,6 +96,23 @@ func (store *Store) RecordOperation(ctx context.Context, operation domain.Operat
 		return fmt.Errorf("record operation: %w", err)
 	}
 	return nil
+}
+
+func insertOperation(ctx context.Context, target execer, operation domain.OperationRecord) error {
+	if err := operation.Validate(); err != nil {
+		return err
+	}
+	const statement = `INSERT INTO operations (
+        id, schema_version, command, subject_digest, status, error_code,
+        result_ref, state_version, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err := target.ExecContext(ctx, statement,
+		operation.ID, operation.SchemaVersion, operation.Command,
+		operation.SubjectDigest, operation.Status, operation.ErrorCode,
+		operation.ResultRef, operation.StateVersion,
+		formatTime(operation.CreatedAt), formatTime(operation.UpdatedAt),
+	)
+	return err
 }
 
 // ListTasks returns a deterministic snapshot ordered by opaque task handle.
@@ -133,7 +148,8 @@ type queryer interface {
 
 func listTasks(ctx context.Context, source queryer) (tasks []domain.Task, resultErr error) {
 	const query = `SELECT
-        handle, schema_version, state, shape, repository_id, base_revision,
+        handle, schema_version, service_instance_id, managed_run_id,
+        workspace_lease_id, state, shape, repository_id, base_revision,
         brief_revision, brief_revision_hash, acceptance_criteria_json,
         constraints_json, validation_profile, delivery_mode, worker_profile_id,
         report_cursor, state_version, created_at, updated_at
@@ -161,13 +177,18 @@ func listTasks(ctx context.Context, source queryer) (tasks []domain.Task, result
 
 // GetTask returns one validated task record by its opaque handle.
 func (store *Store) GetTask(ctx context.Context, handle string) (domain.Task, error) {
+	return getTask(ctx, store.db, handle)
+}
+
+func getTask(ctx context.Context, source queryer, handle string) (domain.Task, error) {
 	const query = `SELECT
-        handle, schema_version, state, shape, repository_id, base_revision,
+        handle, schema_version, service_instance_id, managed_run_id,
+        workspace_lease_id, state, shape, repository_id, base_revision,
         brief_revision, brief_revision_hash, acceptance_criteria_json,
         constraints_json, validation_profile, delivery_mode, worker_profile_id,
         report_cursor, state_version, created_at, updated_at
     FROM tasks WHERE handle = ?`
-	task, err := scanTask(store.db.QueryRowContext(ctx, query, handle))
+	task, err := scanTask(source.QueryRowContext(ctx, query, handle))
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Task{}, fmt.Errorf("get task: %w", application.ErrNotFound)
 	}
@@ -179,20 +200,25 @@ func (store *Store) GetTask(ctx context.Context, handle string) (domain.Task, er
 
 // GetOperation returns one validated immutable operation outcome.
 func (store *Store) GetOperation(ctx context.Context, id string) (domain.OperationRecord, error) {
+	return getOperation(ctx, store.db, id)
+}
+
+func getOperation(ctx context.Context, source queryer, id string) (domain.OperationRecord, error) {
 	const query = `SELECT
         id, schema_version, command, subject_digest, status, error_code,
-        state_version, created_at, updated_at
+        result_ref, state_version, created_at, updated_at
     FROM operations WHERE id = ?`
 	var operation domain.OperationRecord
 	var createdAt string
 	var updatedAt string
-	err := store.db.QueryRowContext(ctx, query, id).Scan(
+	err := source.QueryRowContext(ctx, query, id).Scan(
 		&operation.ID,
 		&operation.SchemaVersion,
 		&operation.Command,
 		&operation.SubjectDigest,
 		&operation.Status,
 		&operation.ErrorCode,
+		&operation.ResultRef,
 		&operation.StateVersion,
 		&createdAt,
 		&updatedAt,
@@ -249,6 +275,9 @@ func scanTask(row rowScanner) (domain.Task, error) {
 	if err := row.Scan(
 		&task.Handle,
 		&task.SchemaVersion,
+		&task.ServiceInstanceID,
+		&task.ManagedRunID,
+		&task.WorkspaceLeaseID,
 		&task.State,
 		&task.Shape,
 		&task.RepositoryID,

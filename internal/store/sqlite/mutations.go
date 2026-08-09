@@ -1,0 +1,198 @@
+package sqlite
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"math"
+	"time"
+
+	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
+)
+
+// ReplayMutation returns the original atomic task outcome for an identical
+// operation subject before callers mint any new local identity. Commit methods
+// repeat this check inside their write transaction to close the race window.
+func (store *Store) ReplayMutation(
+	ctx context.Context,
+	operationID, command, subjectDigest string,
+) (application.MutationResult, bool, error) {
+	operation, err := store.GetOperation(ctx, operationID)
+	if errors.Is(err, application.ErrNotFound) {
+		return application.MutationResult{}, false, nil
+	}
+	if err != nil {
+		return application.MutationResult{}, false, err
+	}
+	if operation.Command != command || operation.SubjectDigest != subjectDigest {
+		return application.MutationResult{}, false, fmt.Errorf("operation altered replay: %w", application.ErrConflict)
+	}
+	if operation.ResultRef == "" {
+		return application.MutationResult{}, false, errors.New("operation replay has no result reference")
+	}
+	task, err := store.GetTask(ctx, operation.ResultRef)
+	if err != nil {
+		return application.MutationResult{}, false, fmt.Errorf("read operation replay task: %w", err)
+	}
+	return application.MutationResult{Task: task, Operation: operation}, true, nil
+}
+
+// CommitPreparedTask atomically creates one task and its completed replay
+// outcome at a single global state version.
+func (store *Store) CommitPreparedTask(ctx context.Context, mutation application.PreparedTaskMutation) (application.MutationResult, error) {
+	if err := mutation.Task.Validate(); err != nil || mutation.Task.State != domain.TaskPrepared {
+		return application.MutationResult{}, errors.New("commit prepared task: invalid prepared record")
+	}
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return application.MutationResult{}, fmt.Errorf("begin prepared task mutation: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+
+	if replay, found, err := mutationReplay(ctx, transaction, mutation.OperationID, commandPrepareTask, mutation.SubjectDigest); err != nil {
+		return application.MutationResult{}, err
+	} else if found {
+		return replayResult(ctx, transaction, replay)
+	}
+	stateVersion, err := nextMutationStateVersion(ctx, transaction)
+	if err != nil {
+		return application.MutationResult{}, err
+	}
+	task := mutation.Task
+	task.StateVersion = stateVersion
+	if err := task.Validate(); err != nil {
+		return application.MutationResult{}, fmt.Errorf("validate versioned prepared task: %w", err)
+	}
+	operation := completedMutationOperation(
+		mutation.OperationID, commandPrepareTask, mutation.SubjectDigest,
+		task.Handle, stateVersion, mutation.At,
+	)
+	if err := insertTask(ctx, transaction, task); err != nil {
+		return application.MutationResult{}, fmt.Errorf("insert prepared task: %w", err)
+	}
+	if err := insertOperation(ctx, transaction, operation); err != nil {
+		if isConstraintError(err) {
+			return application.MutationResult{}, fmt.Errorf("insert prepare operation: %w", application.ErrConflict)
+		}
+		return application.MutationResult{}, fmt.Errorf("insert prepare operation: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return application.MutationResult{}, fmt.Errorf("commit prepared task mutation: %w", err)
+	}
+	return application.MutationResult{Task: task, Operation: operation}, nil
+}
+
+// CommitTaskBinding atomically records exact host authority, advances the task
+// to ready, and persists its replay outcome at one state version.
+func (store *Store) CommitTaskBinding(ctx context.Context, mutation application.TaskBindingMutation) (application.MutationResult, error) {
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return application.MutationResult{}, fmt.Errorf("begin task binding mutation: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+
+	if replay, found, err := mutationReplay(ctx, transaction, mutation.OperationID, commandAcknowledgeBinding, mutation.SubjectDigest); err != nil {
+		return application.MutationResult{}, err
+	} else if found {
+		return replayResult(ctx, transaction, replay)
+	}
+	task, err := getTask(ctx, transaction, mutation.TaskHandle)
+	if err != nil {
+		return application.MutationResult{}, err
+	}
+	bound, err := task.AcknowledgeBinding(mutation.Binding, mutation.At)
+	if err != nil {
+		return application.MutationResult{}, fmt.Errorf("apply task binding: %w", err)
+	}
+	stateVersion, err := nextMutationStateVersion(ctx, transaction)
+	if err != nil {
+		return application.MutationResult{}, err
+	}
+	bound.StateVersion = stateVersion
+	if err := bound.Validate(); err != nil {
+		return application.MutationResult{}, fmt.Errorf("validate bound task: %w", err)
+	}
+	operation := completedMutationOperation(
+		mutation.OperationID, commandAcknowledgeBinding, mutation.SubjectDigest,
+		bound.Handle, stateVersion, mutation.At,
+	)
+	const update = `UPDATE tasks
+        SET managed_run_id = ?, workspace_lease_id = ?, state = ?, state_version = ?, updated_at = ?
+        WHERE handle = ?`
+	result, err := transaction.ExecContext(ctx, update,
+		bound.ManagedRunID, bound.WorkspaceLeaseID, bound.State,
+		bound.StateVersion, formatTime(bound.UpdatedAt), bound.Handle,
+	)
+	if err != nil {
+		return application.MutationResult{}, fmt.Errorf("update bound task: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return application.MutationResult{}, errors.New("update bound task: exact task was not updated")
+	}
+	if err := insertOperation(ctx, transaction, operation); err != nil {
+		if isConstraintError(err) {
+			return application.MutationResult{}, fmt.Errorf("insert binding operation: %w", application.ErrConflict)
+		}
+		return application.MutationResult{}, fmt.Errorf("insert binding operation: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return application.MutationResult{}, fmt.Errorf("commit task binding mutation: %w", err)
+	}
+	return application.MutationResult{Task: bound, Operation: operation}, nil
+}
+
+const (
+	commandPrepareTask        = "PrepareTask"
+	commandAcknowledgeBinding = "AcknowledgeBinding"
+)
+
+func mutationReplay(
+	ctx context.Context,
+	transaction *sql.Tx,
+	operationID, command, subjectDigest string,
+) (domain.OperationRecord, bool, error) {
+	existing, err := getOperation(ctx, transaction, operationID)
+	if errors.Is(err, application.ErrNotFound) {
+		return domain.OperationRecord{}, false, nil
+	}
+	if err != nil {
+		return domain.OperationRecord{}, false, err
+	}
+	if existing.Command != command || existing.SubjectDigest != subjectDigest {
+		return domain.OperationRecord{}, false, fmt.Errorf("operation altered replay: %w", application.ErrConflict)
+	}
+	if existing.ResultRef == "" {
+		return domain.OperationRecord{}, false, errors.New("operation replay has no result reference")
+	}
+	return existing, true, nil
+}
+
+func replayResult(ctx context.Context, transaction *sql.Tx, operation domain.OperationRecord) (application.MutationResult, error) {
+	task, err := getTask(ctx, transaction, operation.ResultRef)
+	if err != nil {
+		return application.MutationResult{}, fmt.Errorf("read operation replay task: %w", err)
+	}
+	return application.MutationResult{Task: task, Operation: operation}, nil
+}
+
+func nextMutationStateVersion(ctx context.Context, transaction *sql.Tx) (int64, error) {
+	current, err := currentStateVersion(ctx, transaction)
+	if err != nil {
+		return 0, err
+	}
+	if current == math.MaxInt64 {
+		return 0, errors.New("state version is exhausted")
+	}
+	return current + 1, nil
+}
+
+func completedMutationOperation(id, command, digest, resultRef string, stateVersion int64, at time.Time) domain.OperationRecord {
+	return domain.OperationRecord{
+		SchemaVersion: 1, ID: id, Command: command, SubjectDigest: digest,
+		Status: domain.OperationCompleted, ResultRef: resultRef, StateVersion: stateVersion,
+		CreatedAt: at, UpdatedAt: at,
+	}
+}
