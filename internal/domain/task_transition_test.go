@@ -137,6 +137,25 @@ func TestTaskAcknowledgeBinding_RequiresExactHostAndWorkspaceIdentity(t *testing
 	}
 }
 
+func TestTaskApplyTransition_ClosesUnboundPreparationIntoReversibleCleanup(t *testing.T) {
+	task := validTask(ShapeScout, DeliveryReport)
+	cancelled, err := task.ApplyTransition(TransitionPreparationAbandoned, task.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatalf("ApplyTransition(preparation abandoned) error = %v", err)
+	}
+	if cancelled.State != TaskCancelled || cancelled.ManagedRunID != "" || cancelled.WorkspaceLeaseID != "" {
+		t.Fatalf("cancelled preparation = %#v, want unbound reversible terminal state", cancelled)
+	}
+	held, err := cancelled.ApplyTransition(TransitionCleanupStarted, cancelled.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatalf("ApplyTransition(cleanup started) error = %v", err)
+	}
+	cleaned, err := held.ApplyTransition(TransitionCleanupAccepted, held.UpdatedAt.Add(time.Second))
+	if err != nil || cleaned.State != TaskCleaned || cleaned.ManagedRunID != "" || cleaned.WorkspaceLeaseID != "" {
+		t.Fatalf("unbound cleanup result = %#v, %v", cleaned, err)
+	}
+}
+
 func TestTaskApplyTransition_RejectsUnknownIllegalOrNonMonotonicChange(t *testing.T) {
 	base := validTask(ShapeShip, DeliveryPullRequest)
 	tests := []struct {
