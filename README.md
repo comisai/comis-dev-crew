@@ -1,8 +1,10 @@
 # comis-dev-crew
 
 Pre-release E0 foundation. The service now owns durable SQLite state and a strict owner-only
-local API; the operator CLI provides read-only service, fleet, task, and operation views.
-Worker execution, mutation commands, reporting, and Comis binding are not implemented yet.
+local API; the operator CLI provides read-only service, fleet, task, and operation views. The
+protocol foundation pins an exact Comis capability-service bundle and generates a closed Go
+adapter. Worker execution, mutation commands, and end-to-end Comis runtime wiring are not
+implemented yet.
 
 `comis-dev-crew` is a companion product for the [Comis](https://github.com/comisai/comis)
 agent platform: a long-lived Go service (`devcrew-service`), an independent operator CLI
@@ -14,9 +16,10 @@ agent platform: a long-lived Go service (`devcrew-service`), an independent oper
 The maintainer-created bootstrap was adopted without reinitializing its history. The
 repository now has its engineering protocol, verification contract, CI foundation, pure
 E0 domain records, a pure-Go SQLite store, canonical read application handlers, a bounded
-newline-delimited local protocol over an owner-only Unix socket, and the first read-only
-operator CLI. Development is proceeding toward the protocol-foundation join gate. No Comis
-integration, task mutation, or worker capability is claimed yet.
+newline-delimited local protocol over an owner-only Unix socket, the first read-only operator
+CLI, and an authenticated Comis protocol pin with generated DTO, validation, and Unix control
+client support. The protocol-foundation join gate is implemented. End-to-end Comis host
+integration, task mutation, and worker capability are not claimed yet.
 
 The design authority lives in the private `comisai/planning` repository
 (`comis-companion-ecosystem/`), including the implementation design, the common
@@ -57,8 +60,9 @@ devcrew [--socket PATH] task operation OPERATION [--format text|json]
 ```
 
 JSON outputs are stable versioned projections. Human and YAML views are presentation only
-and carry no authority. Host integration is explicitly reported as unavailable until a
-ratified protocol bundle is pinned; the CLI never opens SQLite as a normal-operation fallback.
+and carry no authority. Host integration remains explicitly unavailable until the adapter is
+wired to a runnable Comis capability-service host; the pinned source exposes only a test fixture
+host. The CLI never opens SQLite as a normal-operation fallback.
 
 ## Development
 
