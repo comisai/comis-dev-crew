@@ -19,3 +19,15 @@ global license-class allowance. MPL-2.0's file-level source and notice obligatio
 redistribution of its covered code; a future release process must preserve the upstream
 license and make the covered source available. Any version change fails the license gate
 until it receives a new explicit review.
+
+## Official Go MCP SDK
+
+`github.com/modelcontextprotocol/go-sdk` version `v1.6.1` is the official Go implementation
+used only by the stateless `devcrew-mcp` facade. The pin resolves to upstream commit
+`d454bbaf06a342aee5336df3370321d9cdec2478`, requires Go 1.25 or newer, and is compatible
+with this repository's Go 1.26 toolchain. Its module checksum is
+`h1:0zOSupjKUxPKSocPT1Wtago+mUHU2/uZ4xSOY0FGReU=`. The reviewed upstream distribution is in
+an MIT-to-Apache-2.0 transition and includes both grants; both license classes are allowed by
+the repository policy. The facade uses the typed tool registration, private MCP metadata,
+in-memory test transport, and stdio production transport only. Version changes require a new
+API, license, checksum, vulnerability, and reachability review.
