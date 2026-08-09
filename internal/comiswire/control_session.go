@@ -125,13 +125,14 @@ func (session *controlSession) route(ctx context.Context, line []byte) error {
 	}
 	select {
 	case session.limit <- struct{}{}:
+		request := append([]byte(nil), line...)
 		session.workers.Add(1)
 		go func() {
 			defer session.workers.Done()
 			defer func() { <-session.limit }()
 			requestContext, cancel := context.WithTimeout(ctx, session.timeout)
 			defer cancel()
-			if err := session.dispatch(requestContext, *header.Method, line); err != nil {
+			if err := session.dispatch(requestContext, *header.Method, request); err != nil {
 				session.fail(err)
 			}
 		}()
