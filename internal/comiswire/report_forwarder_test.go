@@ -198,7 +198,7 @@ func TestReportForwarder_InvalidConfigurationEvidenceAndCancellationFailClosed(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := forwarder.Run(nil); err == nil {
+	if err := forwarder.Run(nilForwarderContext()); err == nil {
 		t.Fatal("Run(nil) error = nil")
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
@@ -226,6 +226,93 @@ func TestReportForwarder_InvalidConfigurationEvidenceAndCancellationFailClosed(t
 	forged.ManagedRunID = "managed-run-forged"
 	if _, err := reportForwarderAcknowledgement(validForwarderDelivery(), forged, fixedForwarderClock()); err == nil {
 		t.Fatal("reportForwarderAcknowledgement(forged identity) error = nil")
+	}
+}
+
+func TestReportForwarder_InvalidDurableAndHostEvidenceStopsBeforeMark(t *testing.T) {
+	invalidDeliveries := []application.ComisReportDelivery{
+		func() application.ComisReportDelivery {
+			value := validForwarderDelivery()
+			value.TaskHandle = "bad task"
+			return value
+		}(),
+		func() application.ComisReportDelivery {
+			value := validForwarderDelivery()
+			value.LocalReportID = "bad report"
+			return value
+		}(),
+		func() application.ComisReportDelivery {
+			value := validForwarderDelivery()
+			value.StateVersion = 0
+			return value
+		}(),
+		func() application.ComisReportDelivery {
+			value := validForwarderDelivery()
+			value.OperationID = "bad operation"
+			return value
+		}(),
+		func() application.ComisReportDelivery {
+			value := validForwarderDelivery()
+			value.Summary = string(make([]byte, MaxReportBytes))
+			return value
+		}(),
+	}
+	for _, delivery := range invalidDeliveries {
+		if _, err := reportForwarderRequest(delivery); err == nil {
+			t.Errorf("reportForwarderRequest(%#v) error = nil", delivery)
+		}
+	}
+
+	delivery := validForwarderDelivery()
+	outbox := &reportForwarderOutbox{delivery: delivery, found: true}
+	badResult := validForwarderAcknowledgement(ReportRequestParams{
+		ManagedRunID: ManagedRunID(delivery.ManagedRunID), ServiceReportID: ServiceReportID(delivery.ServiceReportID),
+	})
+	badResult.AcceptedSequence = 0
+	forwarder := newTestReportForwarder(t, outbox, &reportForwarderSender{send: func(_ int, _ ReportRequestParams) (ReportResponseResult, error) {
+		return badResult, nil
+	}})
+	if err := forwarder.Run(context.Background()); err == nil {
+		t.Fatal("Run(invalid acknowledgement) error = nil")
+	}
+	if len(outbox.marks) != 0 {
+		t.Fatalf("marks after invalid acknowledgement = %#v", outbox.marks)
+	}
+
+	validResult := validForwarderAcknowledgement(ReportRequestParams{
+		ManagedRunID: ManagedRunID(delivery.ManagedRunID), ServiceReportID: ServiceReportID(delivery.ServiceReportID),
+	})
+	if _, err := reportForwarderAcknowledgement(delivery, validResult, time.Time{}); err == nil {
+		t.Fatal("reportForwarderAcknowledgement(zero delivery time) error = nil")
+	}
+	if _, err := reportForwarderAcknowledgement(delivery, validResult, fixedForwarderClock().In(time.FixedZone("other", 3600))); err == nil {
+		t.Fatal("reportForwarderAcknowledgement(non-UTC delivery time) error = nil")
+	}
+	validResult.RetainedUntilMs = fixedForwarderClock().UnixMilli()
+	if _, err := reportForwarderAcknowledgement(delivery, validResult, fixedForwarderClock()); err == nil {
+		t.Fatal("reportForwarderAcknowledgement(expired retention) error = nil")
+	}
+}
+
+func TestReportForwarder_CancellationDuringUncertainSendAndBackoffBounds(t *testing.T) {
+	delivery := validForwarderDelivery()
+	outbox := &reportForwarderOutbox{delivery: delivery, found: true}
+	ctx, cancel := context.WithCancel(context.Background())
+	forwarder := newTestReportForwarder(t, outbox, &reportForwarderSender{send: func(_ int, _ ReportRequestParams) (ReportResponseResult, error) {
+		cancel()
+		return ReportResponseResult{}, errors.New("uncertain cancellation")
+	}})
+	if err := forwarder.Run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run(cancelled send) error = %v", err)
+	}
+	if next := nextReportBackoff(time.Millisecond, 8*time.Millisecond); next != 2*time.Millisecond {
+		t.Fatalf("nextReportBackoff(minimum) = %v", next)
+	}
+	if next := nextReportBackoff(5*time.Millisecond, 8*time.Millisecond); next != 8*time.Millisecond {
+		t.Fatalf("nextReportBackoff(near maximum) = %v", next)
+	}
+	if next := nextReportBackoff(8*time.Millisecond, 8*time.Millisecond); next != 8*time.Millisecond {
+		t.Fatalf("nextReportBackoff(maximum) = %v", next)
 	}
 }
 
@@ -289,6 +376,8 @@ func validForwarderAcknowledgement(request ReportRequestParams) ReportResponseRe
 func fixedForwarderClock() time.Time {
 	return time.Date(2026, time.August, 9, 18, 5, 0, 0, time.UTC)
 }
+
+func nilForwarderContext() context.Context { return nil }
 
 func assertForwarderRequest(t *testing.T, request ReportRequestParams, delivery application.ComisReportDelivery) {
 	t.Helper()
