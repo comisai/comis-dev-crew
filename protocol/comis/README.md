@@ -10,7 +10,8 @@ Refresh the pin only from an explicit clean Comis worktree and full commit:
 make protocol-sync COMIS_ROOT=/absolute/path/to/comis COMIS_COMMIT=<full-commit>
 ```
 
-Verify artifact hashes, the aggregate digest, and provenance with:
+Verify artifact hashes, the aggregate digest, provenance, and a temporary regeneration against
+the committed Go output with:
 
 ```sh
 make protocol-check
@@ -18,3 +19,13 @@ make protocol-check
 
 Generated Go files remain under `internal/comiswire/`, carry the standard generated marker,
 and are never edited by hand.
+
+## Authority and threat boundary
+
+The pinned manifest and provenance are authenticated inputs to generation. Generation fails
+closed if the accepted protocol identifier, bundle digest, schema inventory, or closed method
+catalog changes. The service-side client exposes only handshake, health, and report; generated
+activate and abandon DTOs are inbound handler contracts and cannot be used as outbound client
+methods. Strict runtime validation rejects unknown or duplicate fields, trailing JSON, invalid
+closed discriminators, operation-envelope disagreement, response identity drift, and size-limit
+violations before they can cross the adapter boundary.

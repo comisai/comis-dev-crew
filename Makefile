@@ -22,7 +22,7 @@ protocol-sync:
 	go run ./tools/protocolsync -source-root "$(COMIS_ROOT)" -source-commit "$(COMIS_COMMIT)" -destination-root protocol/comis
 
 protocol-check:
-	go run ./tools/protocolcheck -root protocol/comis
+	go run ./tools/protocolcheck -root protocol/comis -generated internal/comiswire/protocol.gen.go
 
 generate-check: protocol-check
 	go generate ./...

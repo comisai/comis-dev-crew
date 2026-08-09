@@ -11,6 +11,8 @@
     "internal/git",
     "internal/delivery",
     "internal/processes",
-    "internal/comiswire/bundle"
+    "internal/comiswire/bundle",
+    "internal/comiswire",
+    "internal/comiswire/generator"
   ]
 }
