@@ -15,6 +15,7 @@ import (
 )
 
 func TestNewUnixClientRejectsUnsafeEndpointConfiguration(t *testing.T) {
+	canonicalDirectory := newCanonicalTempDirectory(t)
 	for _, test := range []struct {
 		name    string
 		path    string
@@ -23,13 +24,24 @@ func TestNewUnixClientRejectsUnsafeEndpointConfiguration(t *testing.T) {
 		{name: "relative path", path: "capability.sock", timeout: time.Second},
 		{name: "noncanonical path", path: filepath.Join(t.TempDir(), "nested", "..", "capability.sock"), timeout: time.Second},
 		{name: "oversized path", path: filepath.Join(string(filepath.Separator), strings.Repeat("x", 104)), timeout: time.Second},
-		{name: "nonpositive timeout", path: filepath.Join(t.TempDir(), "capability.sock"), timeout: 0},
+		{name: "nonpositive timeout", path: filepath.Join(canonicalDirectory, "capability.sock"), timeout: 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := NewUnixClient(test.path, test.timeout); err == nil {
 				t.Fatal("expected unsafe endpoint rejection")
 			}
 		})
+	}
+	if _, err := NewUnixClient(filepath.Join(canonicalDirectory, "missing", "capability.sock"), time.Second); err == nil {
+		t.Fatal("expected missing socket parent rejection")
+	}
+	realParent := newCanonicalTempDirectory(t)
+	symlinkParent := filepath.Join(canonicalDirectory, "linked")
+	if err := os.Symlink(realParent, symlinkParent); err != nil {
+		t.Fatalf("create socket parent symlink: %v", err)
+	}
+	if _, err := NewUnixClient(filepath.Join(symlinkParent, "capability.sock"), time.Second); err == nil {
+		t.Fatal("expected symlinked socket parent rejection")
 	}
 }
 
@@ -134,6 +146,60 @@ func TestUnixClientAppliesDeadlineToBlockedResponse(t *testing.T) {
 	}
 }
 
+func TestUnixRoundTripperRejectsUnsupportedRequestsAndSocketKinds(t *testing.T) {
+	transport := &unixRoundTripper{socketPath: filepath.Join(newCanonicalTempDirectory(t), "missing.sock"), timeout: time.Second}
+	if err := transport.roundTrip(missingContext(), HealthRequest{}, &HealthResponse{}); err == nil {
+		t.Fatal("expected nil context rejection")
+	}
+	if err := transport.roundTrip(context.Background(), struct{}{}, &HealthResponse{}); err == nil {
+		t.Fatal("expected unsupported request rejection")
+	}
+	if _, err := outboundOperationID(HandshakeRequest{ID: "operation_handshake"}); err != nil {
+		t.Fatalf("handshake operation ID: %v", err)
+	}
+	if _, err := outboundOperationID(ReportRequest{ID: "operation_report"}); err != nil {
+		t.Fatalf("report operation ID: %v", err)
+	}
+
+	regular := filepath.Join(newCanonicalTempDirectory(t), "not-a-socket")
+	if err := os.WriteFile(regular, []byte("file"), 0o600); err != nil {
+		t.Fatalf("write regular endpoint: %v", err)
+	}
+	if _, err := inspectOwnerOnlySocket(regular); err == nil {
+		t.Fatal("expected regular endpoint rejection")
+	}
+	if _, err := inspectOwnerOnlySocket(filepath.Join(newCanonicalTempDirectory(t), "missing")); err == nil {
+		t.Fatal("expected missing endpoint rejection")
+	}
+}
+
+func TestDecodeWireResponseRejectsEveryEnvelopeContradiction(t *testing.T) {
+	validResult := healthResponse("operation_response")
+	tests := []struct {
+		name     string
+		response string
+		target   any
+	}{
+		{name: "malformed envelope", response: "{", target: &HealthResponse{}},
+		{name: "wrong JSON-RPC version", response: strings.Replace(validResult, `"2.0"`, `"1.0"`, 1), target: &HealthResponse{}},
+		{name: "numeric operation ID", response: strings.Replace(validResult, `"operation_response"`, `1`, 1), target: &HealthResponse{}},
+		{name: "missing result and error", response: `{"jsonrpc":"2.0","id":"operation_response"}`, target: &HealthResponse{}},
+		{name: "result and error both present", response: `{"jsonrpc":"2.0","id":"operation_response","result":{},"error":{}}`, target: &HealthResponse{}},
+		{name: "invalid closed remote error", response: `{"jsonrpc":"2.0","id":"operation_response","error":{"code":-32018,"kind":"invalid_request","retryable":false,"message":"invalid"}}`, target: &HealthResponse{}},
+		{name: "result target cannot decode", response: validResult, target: make(chan int)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := decodeWireResponse([]byte(test.response), "operation_response", test.target); err == nil {
+				t.Fatal("expected contradictory response rejection")
+			}
+		})
+	}
+	if err := contextOrTransportError(context.Background(), "read", errors.New("cause")); err == nil || !strings.Contains(err.Error(), "cause") {
+		t.Fatalf("transport cause was not preserved: %v", err)
+	}
+}
+
 type wireServer struct {
 	path        string
 	listener    *net.UnixListener
@@ -145,7 +211,8 @@ type wireServer struct {
 
 func startWireServer(t *testing.T, calls int, respond func(string) string) *wireServer {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "capability.sock")
+	directory := newCanonicalTempDirectory(t)
+	path := filepath.Join(directory, "capability.sock")
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
 	if err != nil {
 		t.Fatalf("listen on Unix socket: %v", err)
@@ -190,6 +257,24 @@ func startWireServer(t *testing.T, calls int, respond func(string) string) *wire
 		}
 	})
 	return server
+}
+
+func newCanonicalTempDirectory(t *testing.T) string {
+	t.Helper()
+	directory, err := os.MkdirTemp("", "cw-")
+	if err != nil {
+		t.Fatalf("create short Unix socket directory: %v", err)
+	}
+	directory, err = filepath.EvalSymlinks(directory)
+	if err != nil {
+		t.Fatalf("canonicalize Unix socket directory: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(directory); err != nil {
+			t.Errorf("remove Unix socket directory: %v", err)
+		}
+	})
+	return directory
 }
 
 func (server *wireServer) setError(err error) {
