@@ -156,6 +156,10 @@ func TestMutationStore_DirectReplayAndInvalidMutationsFailClosed(t *testing.T) {
 	preparedAt := time.Date(2026, time.August, 9, 13, 0, 0, 0, time.UTC)
 	prepared := application.PreparedTaskMutation{
 		Task: storeTask("task-direct-0001", 1), OperationID: "op-direct-prepare-0001",
+		Preparation: application.ManagedRunPreparation{
+			ExternalRunRef: "task-direct-0001", RegistrationNonce: "registration-nonce_direct",
+			ExpiresAt: preparedAt.Add(time.Hour),
+		},
 		SubjectDigest: strings.Repeat("a", 64), At: preparedAt,
 	}
 	prepared.Task.CreatedAt = preparedAt
@@ -187,6 +191,12 @@ func TestMutationStore_DirectReplayAndInvalidMutationsFailClosed(t *testing.T) {
 	invalidPrepared.Task.State = domain.TaskReady
 	if _, err := store.CommitPreparedTask(ctx, invalidPrepared); err == nil {
 		t.Fatal("CommitPreparedTask(invalid) error = nil")
+	}
+	invalidPreparation := prepared
+	invalidPreparation.OperationID = "op-invalid-preparation"
+	invalidPreparation.Preparation.RegistrationNonce = "short"
+	if _, err := store.CommitPreparedTask(ctx, invalidPreparation); err == nil {
+		t.Fatal("CommitPreparedTask(invalid preparation) error = nil")
 	}
 	invalidOutcome := prepared
 	invalidOutcome.Task.Handle = "task-invalid-outcome"
@@ -229,6 +239,29 @@ func TestMutationStore_DirectReplayAndInvalidMutationsFailClosed(t *testing.T) {
 	alteredBinding.SubjectDigest = strings.Repeat("e", 64)
 	if _, err := store.CommitTaskBinding(ctx, alteredBinding); !errors.Is(err, application.ErrConflict) {
 		t.Fatalf("CommitTaskBinding(altered replay) error = %v, want ErrConflict", err)
+	}
+}
+
+func TestMutationStore_RejectsCorruptManagedRunPreparationReplay(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	mutations := sqliteMutations(t, store, &sequenceIDs{ids: []string{"task-corrupt-prep"}}, time.Date(2026, time.August, 9, 13, 0, 0, 0, time.UTC))
+	command := sqlitePrepareCommand()
+	if _, err := mutations.PrepareTask(context.Background(), command); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE task_preparations SET registration_nonce = 'short'`); err != nil {
+		t.Fatal(err)
+	}
+	operation, err := store.GetOperation(context.Background(), command.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.ReplayMutation(context.Background(), command.OperationID, commandPrepareTask, operation.SubjectDigest); err == nil {
+		t.Fatal("ReplayMutation(corrupt preparation) error = nil")
 	}
 }
 
@@ -291,6 +324,10 @@ func TestMutationStore_RejectsExhaustedVersionAndClosedDatabase(t *testing.T) {
 	}
 	prepared := application.PreparedTaskMutation{
 		Task: storeTask("task-exhausted", 1), OperationID: "op-after-exhaustion",
+		Preparation: application.ManagedRunPreparation{
+			ExternalRunRef: "task-exhausted", RegistrationNonce: "registration-nonce_exhausted",
+			ExpiresAt: now.Add(time.Hour),
+		},
 		SubjectDigest: strings.Repeat("a", 64), At: now,
 	}
 	prepared.Task.CreatedAt, prepared.Task.UpdatedAt = now, now
@@ -425,7 +462,9 @@ func (source *sequenceIDs) next() (string, error) {
 func sqliteMutations(t *testing.T, store *Store, ids *sequenceIDs, now time.Time) *application.Mutations {
 	t.Helper()
 	mutations, err := application.NewMutations(application.MutationConfig{
-		Store: store, Repositories: configuredCatalog{}, TaskIDs: ids.next, Clock: func() time.Time { return now },
+		Store: store, Repositories: configuredCatalog{}, TaskIDs: ids.next,
+		RegistrationNonces: func() (string, error) { return "registration-nonce_0001", nil },
+		PreparationTTL:     time.Hour, Clock: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatalf("NewMutations() error = %v", err)

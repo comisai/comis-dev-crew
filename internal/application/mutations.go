@@ -6,26 +6,37 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 // Mutations owns canonical E0 prepare and bind command construction.
 type Mutations struct {
-	store        MutationStore
-	repositories RepositoryCatalog
-	taskIDs      TaskIDSource
-	clock        Clock
+	store          MutationStore
+	repositories   RepositoryCatalog
+	taskIDs        TaskIDSource
+	nonces         RegistrationNonceSource
+	preparationTTL time.Duration
+	clock          Clock
 }
+
+var registrationNoncePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._~-]{15,255}$`)
 
 // NewMutations creates the sole application mutation coordinator.
 func NewMutations(config MutationConfig) (*Mutations, error) {
-	if config.Store == nil || config.Repositories == nil || config.TaskIDs == nil || config.Clock == nil {
-		return nil, errors.New("create mutations: store, repositories, task IDs, and clock are required")
+	if config.Store == nil || config.Repositories == nil || config.TaskIDs == nil ||
+		config.RegistrationNonces == nil || config.Clock == nil {
+		return nil, errors.New("create mutations: store, repositories, task IDs, registration nonces, and clock are required")
+	}
+	if config.PreparationTTL <= 0 || config.PreparationTTL > 24*time.Hour {
+		return nil, errors.New("create mutations: preparation TTL must be within 24 hours")
 	}
 	return &Mutations{
 		store: config.Store, repositories: config.Repositories,
-		taskIDs: config.TaskIDs, clock: config.Clock,
+		taskIDs: config.TaskIDs, nonces: config.RegistrationNonces,
+		preparationTTL: config.PreparationTTL, clock: config.Clock,
 	}, nil
 }
 
@@ -68,9 +79,35 @@ func (mutations *Mutations) PrepareTask(ctx context.Context, command PrepareTask
 	if err := mutations.repositories.ValidateRepository(ctx, command.RepositoryID); err != nil {
 		return MutationResult{}, &dependencyFailure{message: "repository validation failed", cause: err}
 	}
+	nonce, err := mutations.nonces()
+	if err != nil {
+		return MutationResult{}, &dependencyFailure{message: "registration identity source failed", cause: err}
+	}
+	preparation := ManagedRunPreparation{
+		ExternalRunRef: task.Handle, RegistrationNonce: nonce,
+		ExpiresAt: now.Add(mutations.preparationTTL).UTC(),
+	}
+	if err := preparation.Validate(now); err != nil {
+		return MutationResult{}, mutationValidationFailure("managed-run preparation is invalid")
+	}
 	return mutations.store.CommitPreparedTask(ctx, PreparedTaskMutation{
-		Task: task, OperationID: command.OperationID, SubjectDigest: subjectDigest, At: now,
+		Task: task, Preparation: preparation,
+		OperationID: command.OperationID, SubjectDigest: subjectDigest, At: now,
 	})
+}
+
+// Validate rejects malformed, expired, or non-UTC activation joins.
+func (preparation ManagedRunPreparation) Validate(createdAt time.Time) error {
+	if err := domain.ValidateTaskHandle(preparation.ExternalRunRef); err != nil {
+		return err
+	}
+	if !registrationNoncePattern.MatchString(preparation.RegistrationNonce) {
+		return errors.New("registration nonce is invalid")
+	}
+	if preparation.ExpiresAt.Location() != time.UTC || !preparation.ExpiresAt.After(createdAt) {
+		return errors.New("preparation expiry is invalid")
+	}
+	return nil
 }
 
 // AcknowledgeBinding validates exact host references and delegates one atomic

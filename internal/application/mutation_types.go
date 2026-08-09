@@ -46,6 +46,7 @@ type StartTaskCommand struct {
 // PreparedTaskMutation is the fully validated store transaction input.
 type PreparedTaskMutation struct {
 	Task          domain.Task
+	Preparation   ManagedRunPreparation
 	OperationID   string
 	SubjectDigest string
 	At            time.Time
@@ -71,8 +72,9 @@ type TaskStartMutation struct {
 // MutationResult joins one canonical task state and its replay outcome at the
 // same durable state version.
 type MutationResult struct {
-	Task      domain.Task
-	Operation domain.OperationRecord
+	Task        domain.Task
+	Operation   domain.OperationRecord
+	Preparation *ManagedRunPreparation
 }
 
 // MutationStore is the service-owned transactional mutation port.
@@ -92,10 +94,23 @@ type RepositoryCatalog interface {
 // TaskIDSource mints one opaque service-local task handle.
 type TaskIDSource func() (string, error)
 
+// RegistrationNonceSource mints one private expiring activation join secret.
+type RegistrationNonceSource func() (string, error)
+
+// ManagedRunPreparation is the durable service-owned half of the two-phase
+// Comis activation join. It is private adapter metadata, not model authority.
+type ManagedRunPreparation struct {
+	ExternalRunRef    string    `json:"externalRunRef"`
+	RegistrationNonce string    `json:"registrationNonce"`
+	ExpiresAt         time.Time `json:"expiresAt"`
+}
+
 // MutationConfig supplies every deterministic dependency.
 type MutationConfig struct {
-	Store        MutationStore
-	Repositories RepositoryCatalog
-	TaskIDs      TaskIDSource
-	Clock        Clock
+	Store              MutationStore
+	Repositories       RepositoryCatalog
+	TaskIDs            TaskIDSource
+	RegistrationNonces RegistrationNonceSource
+	PreparationTTL     time.Duration
+	Clock              Clock
 }

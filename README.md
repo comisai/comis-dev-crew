@@ -46,7 +46,9 @@ The first mutation boundary prepares a service-minted task and later acknowledge
 host-managed run and workspace lease. Each change commits the task and its completed operation
 at one global state version. Identical operation replays recover the original task across a
 service restart; altered subjects fail closed, and concurrent identical preparation creates one
-logical task. A separate durable start command records `ready` to `launching` intent and its
+logical task. Preparation also atomically stores the private external reference, registration
+nonce, and bounded UTC expiry needed for the Comis two-phase join; exact replay returns that same
+private registration instead of minting another. A separate durable start command records `ready` to `launching` intent and its
 operation outcome before the deterministic fixture may emit progress or begin work.
 
 The repository registry resolves only operator-configured opaque IDs. It validates canonical

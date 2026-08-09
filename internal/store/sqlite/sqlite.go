@@ -101,6 +101,19 @@ INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 `
 
+const managedRunPreparationMigration = `
+CREATE TABLE task_preparations (
+    task_handle TEXT PRIMARY KEY,
+    external_run_ref TEXT NOT NULL UNIQUE,
+    registration_nonce TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(task_handle) REFERENCES tasks(handle)
+);
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+`
+
 const busyTimeoutMilliseconds = 500
 
 // Store owns one SQLite connection pool. The service composition root is the
@@ -197,7 +210,10 @@ func (store *Store) migrate(ctx context.Context) error {
 	if err := store.applyVersionedMigration(ctx, 4, taskBindingMigration); err != nil {
 		return err
 	}
-	return store.applyVersionedMigration(ctx, 5, reportMigration)
+	if err := store.applyVersionedMigration(ctx, 5, reportMigration); err != nil {
+		return err
+	}
+	return store.applyVersionedMigration(ctx, 6, managedRunPreparationMigration)
 }
 
 func (store *Store) applyVersionedMigration(ctx context.Context, version int, migration string) error {

@@ -194,7 +194,8 @@ func (harness *restartHarness) open(t *testing.T) {
 	}
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: matrixRepositoryCatalog{}, TaskIDs: harness.taskIDs.next,
-		Clock: func() time.Time { return harness.now },
+		RegistrationNonces: func() (string, error) { return "registration-nonce_matrix", nil },
+		PreparationTTL:     time.Hour, Clock: func() time.Time { return harness.now },
 	})
 	if err != nil {
 		_ = store.Close()

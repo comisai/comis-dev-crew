@@ -57,8 +57,9 @@ func TestMutations_AcknowledgeBindingBuildsExactReplaySubject(t *testing.T) {
 	store := &mutationStore{}
 	mutations, err := NewMutations(MutationConfig{
 		Store: store, Repositories: &repositoryCatalog{},
-		TaskIDs: func() (string, error) { return "task-0001", nil },
-		Clock:   func() time.Time { return clock },
+		TaskIDs:            func() (string, error) { return "task-0001", nil },
+		RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour,
+		Clock: func() time.Time { return clock },
 	})
 	if err != nil {
 		t.Fatalf("NewMutations() error = %v", err)
@@ -81,8 +82,9 @@ func TestMutations_StartTaskBuildsExactReplaySubject(t *testing.T) {
 	store := &mutationStore{}
 	mutations, err := NewMutations(MutationConfig{
 		Store: store, Repositories: &repositoryCatalog{},
-		TaskIDs: func() (string, error) { return "task-unused", nil },
-		Clock:   func() time.Time { return clock },
+		TaskIDs:            func() (string, error) { return "task-unused", nil },
+		RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour,
+		Clock: func() time.Time { return clock },
 	})
 	if err != nil {
 		t.Fatalf("NewMutations() error = %v", err)
@@ -100,7 +102,8 @@ func TestMutations_StartTaskRejectsInvalidCancelledAndAlteredReplay(t *testing.T
 	store := &mutationStore{}
 	mutations, err := NewMutations(MutationConfig{
 		Store: store, Repositories: &repositoryCatalog{},
-		TaskIDs: func() (string, error) { return "task-unused", nil }, Clock: time.Now,
+		TaskIDs:            func() (string, error) { return "task-unused", nil },
+		RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour, Clock: time.Now,
 	})
 	if err != nil {
 		t.Fatalf("NewMutations() error = %v", err)
@@ -154,8 +157,9 @@ func TestMutations_RejectsInvalidCommandsAndDependencyFailuresBeforeCommit(t *te
 			repositories := &repositoryCatalog{}
 			mutations, err := NewMutations(MutationConfig{
 				Store: store, Repositories: repositories,
-				TaskIDs: func() (string, error) { return "task-0001", nil },
-				Clock:   func() time.Time { return time.Date(2026, time.August, 9, 12, 30, 0, 0, time.UTC) },
+				TaskIDs:            func() (string, error) { return "task-0001", nil },
+				RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour,
+				Clock: func() time.Time { return time.Date(2026, time.August, 9, 12, 30, 0, 0, time.UTC) },
 			})
 			if err != nil {
 				t.Fatalf("NewMutations() error = %v", err)
@@ -179,12 +183,16 @@ func TestMutations_RejectsInvalidCommandsAndDependencyFailuresBeforeCommit(t *te
 func TestMutations_ValidatesRequiredDependenciesAndCancellation(t *testing.T) {
 	valid := MutationConfig{
 		Store: &mutationStore{}, Repositories: &repositoryCatalog{},
-		TaskIDs: func() (string, error) { return "task-0001", nil }, Clock: time.Now,
+		TaskIDs:            func() (string, error) { return "task-0001", nil },
+		RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour, Clock: time.Now,
 	}
 	for _, mutate := range []func(*MutationConfig){
 		func(config *MutationConfig) { config.Store = nil },
 		func(config *MutationConfig) { config.Repositories = nil },
 		func(config *MutationConfig) { config.TaskIDs = nil },
+		func(config *MutationConfig) { config.RegistrationNonces = nil },
+		func(config *MutationConfig) { config.PreparationTTL = 0 },
+		func(config *MutationConfig) { config.PreparationTTL = 25 * time.Hour },
 		func(config *MutationConfig) { config.Clock = nil },
 	} {
 		config := valid
@@ -201,6 +209,49 @@ func TestMutations_ValidatesRequiredDependenciesAndCancellation(t *testing.T) {
 	cancel()
 	if _, err := mutations.PrepareTask(cancelled, validPrepareCommand()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("PrepareTask(cancelled) error = %v, want context.Canceled", err)
+	}
+}
+
+func TestMutations_RejectsInvalidRegistrationIdentityWithoutCommit(t *testing.T) {
+	clock := time.Date(2026, time.August, 9, 12, 30, 0, 0, time.UTC)
+	privateCause := errors.New("private entropy failure")
+	tests := []struct {
+		name  string
+		nonce RegistrationNonceSource
+	}{
+		{name: "source failure", nonce: func() (string, error) { return "", privateCause }},
+		{name: "invalid shape", nonce: func() (string, error) { return "short", nil }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := &mutationStore{}
+			mutations, err := NewMutations(MutationConfig{
+				Store: store, Repositories: &repositoryCatalog{},
+				TaskIDs:            func() (string, error) { return "task-0001", nil },
+				RegistrationNonces: test.nonce, PreparationTTL: time.Hour,
+				Clock: func() time.Time { return clock },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := mutations.PrepareTask(context.Background(), validPrepareCommand()); err == nil {
+				t.Fatal("PrepareTask() error = nil")
+			} else if strings.Contains(err.Error(), privateCause.Error()) {
+				t.Fatalf("private nonce error leaked: %v", err)
+			}
+			if store.prepareCalls != 0 {
+				t.Fatalf("prepare calls = %d, want 0", store.prepareCalls)
+			}
+		})
+	}
+	if err := (ManagedRunPreparation{}).Validate(clock); err == nil {
+		t.Fatal("ManagedRunPreparation.Validate(empty) error = nil")
+	}
+	if err := (ManagedRunPreparation{
+		ExternalRunRef: "task-0001", RegistrationNonce: "registration-nonce_0001",
+		ExpiresAt: clock,
+	}).Validate(clock); err == nil {
+		t.Fatal("ManagedRunPreparation.Validate(expired) error = nil")
 	}
 }
 
@@ -254,3 +305,5 @@ func validPrepareCommand() PrepareTaskCommand {
 		ValidationProfile: "go-default", DeliveryMode: domain.DeliveryPullRequest, WorkerProfileID: "fixture-worker",
 	}
 }
+
+func testRegistrationNonceSource() (string, error) { return "registration-nonce_0001", nil }

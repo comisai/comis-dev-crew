@@ -32,11 +32,8 @@ func (store *Store) ReplayMutation(
 	if operation.ResultRef == "" {
 		return application.MutationResult{}, false, errors.New("operation replay has no result reference")
 	}
-	task, err := store.GetTask(ctx, operation.ResultRef)
-	if err != nil {
-		return application.MutationResult{}, false, fmt.Errorf("read operation replay task: %w", err)
-	}
-	return application.MutationResult{Task: task, Operation: operation}, true, nil
+	result, err := store.mutationResult(ctx, store.db, operation)
+	return result, err == nil, err
 }
 
 // CommitPreparedTask atomically creates one task and its completed replay
@@ -44,6 +41,9 @@ func (store *Store) ReplayMutation(
 func (store *Store) CommitPreparedTask(ctx context.Context, mutation application.PreparedTaskMutation) (application.MutationResult, error) {
 	if err := mutation.Task.Validate(); err != nil || mutation.Task.State != domain.TaskPrepared {
 		return application.MutationResult{}, errors.New("commit prepared task: invalid prepared record")
+	}
+	if err := mutation.Preparation.Validate(mutation.At); err != nil || mutation.Preparation.ExternalRunRef != mutation.Task.Handle {
+		return application.MutationResult{}, errors.New("commit prepared task: invalid managed-run preparation")
 	}
 	transaction, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -72,6 +72,9 @@ func (store *Store) CommitPreparedTask(ctx context.Context, mutation application
 	if err := insertTask(ctx, transaction, task); err != nil {
 		return application.MutationResult{}, fmt.Errorf("insert prepared task: %w", err)
 	}
+	if err := insertManagedRunPreparation(ctx, transaction, task.Handle, mutation.Preparation, mutation.At); err != nil {
+		return application.MutationResult{}, fmt.Errorf("insert managed-run preparation: %w", err)
+	}
 	if err := insertOperation(ctx, transaction, operation); err != nil {
 		if isConstraintError(err) {
 			return application.MutationResult{}, fmt.Errorf("insert prepare operation: %w", application.ErrConflict)
@@ -81,7 +84,8 @@ func (store *Store) CommitPreparedTask(ctx context.Context, mutation application
 	if err := transaction.Commit(); err != nil {
 		return application.MutationResult{}, fmt.Errorf("commit prepared task mutation: %w", err)
 	}
-	return application.MutationResult{Task: task, Operation: operation}, nil
+	preparation := mutation.Preparation
+	return application.MutationResult{Task: task, Operation: operation, Preparation: &preparation}, nil
 }
 
 // CommitTaskBinding atomically records exact host authority, advances the task
@@ -231,11 +235,64 @@ func mutationReplay(
 }
 
 func replayResult(ctx context.Context, transaction *sql.Tx, operation domain.OperationRecord) (application.MutationResult, error) {
-	task, err := getTask(ctx, transaction, operation.ResultRef)
+	return mutationResult(ctx, transaction, operation)
+}
+
+func (store *Store) mutationResult(ctx context.Context, source queryer, operation domain.OperationRecord) (application.MutationResult, error) {
+	return mutationResult(ctx, source, operation)
+}
+
+func mutationResult(ctx context.Context, source queryer, operation domain.OperationRecord) (application.MutationResult, error) {
+	task, err := getTask(ctx, source, operation.ResultRef)
 	if err != nil {
 		return application.MutationResult{}, fmt.Errorf("read operation replay task: %w", err)
 	}
-	return application.MutationResult{Task: task, Operation: operation}, nil
+	result := application.MutationResult{Task: task, Operation: operation}
+	if operation.Command != commandPrepareTask {
+		return result, nil
+	}
+	preparation, err := getManagedRunPreparation(ctx, source, task)
+	if err != nil {
+		return application.MutationResult{}, fmt.Errorf("read operation replay preparation: %w", err)
+	}
+	result.Preparation = &preparation
+	return result, nil
+}
+
+func insertManagedRunPreparation(
+	ctx context.Context,
+	target execer,
+	taskHandle string,
+	preparation application.ManagedRunPreparation,
+	createdAt time.Time,
+) error {
+	const statement = `INSERT INTO task_preparations (
+        task_handle, external_run_ref, registration_nonce, expires_at, created_at
+    ) VALUES (?, ?, ?, ?, ?)`
+	_, err := target.ExecContext(ctx, statement, taskHandle, preparation.ExternalRunRef,
+		preparation.RegistrationNonce, formatTime(preparation.ExpiresAt), formatTime(createdAt))
+	return err
+}
+
+func getManagedRunPreparation(ctx context.Context, source queryer, task domain.Task) (application.ManagedRunPreparation, error) {
+	const query = `SELECT external_run_ref, registration_nonce, expires_at
+        FROM task_preparations WHERE task_handle = ?`
+	var preparation application.ManagedRunPreparation
+	var expiresAt string
+	if err := source.QueryRowContext(ctx, query, task.Handle).Scan(
+		&preparation.ExternalRunRef, &preparation.RegistrationNonce, &expiresAt,
+	); err != nil {
+		return application.ManagedRunPreparation{}, err
+	}
+	var err error
+	preparation.ExpiresAt, err = parseTime(expiresAt)
+	if err != nil {
+		return application.ManagedRunPreparation{}, err
+	}
+	if err := preparation.Validate(task.CreatedAt); err != nil || preparation.ExternalRunRef != task.Handle {
+		return application.ManagedRunPreparation{}, errors.New("stored managed-run preparation is invalid")
+	}
+	return preparation, nil
 }
 
 func nextMutationStateVersion(ctx context.Context, transaction *sql.Tx) (int64, error) {
