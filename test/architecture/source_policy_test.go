@@ -187,6 +187,19 @@ func checkImportBoundary(t *testing.T, relative, importPath string) {
 			t.Errorf("%s: operator CLI composition must reach domain behavior only through the local client", relative)
 		}
 	}
+	if relative == "cmd/devcrew-mcp/main.go" && strings.HasPrefix(importPath, module+"internal/") {
+		allowed := []string{module + "internal/command", module + "internal/localapi", module + "internal/localconfig", module + "internal/mcpadapter"}
+		isAllowed := false
+		for _, allowedImport := range allowed {
+			if importPath == allowedImport {
+				isAllowed = true
+				break
+			}
+		}
+		if !isAllowed {
+			t.Errorf("%s: MCP composition must reach durable behavior only through its stateless facade and typed local client", relative)
+		}
+	}
 	if importPath == "database/sql" && !strings.HasPrefix(relative, "internal/store/sqlite/") {
 		t.Errorf("%s: database/sql belongs only in the SQLite store adapter", relative)
 	}

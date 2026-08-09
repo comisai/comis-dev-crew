@@ -66,7 +66,8 @@ valid `comis.callContext`; the configured service identity must match, while opt
 references grant no task authority. Preparation returns its visible task outcome separately from
 the private schema-validated `comis.managedRun` result metadata. Only retryable uncertain mutations
 trigger one bounded operation reconciliation and, after a completed durable outcome, one exact
-idempotent replay. The `devcrew-mcp` executable is still a scaffold pending stdio composition.
+idempotent replay. The `devcrew-mcp` executable now runs this facade on the SDK stdio transport,
+requires the exact service instance out of band, and connects only to its dedicated local socket.
 
 The repository registry resolves only operator-configured opaque IDs. It validates canonical
 primary checkouts and dedicated worktree roots beneath approved roots, pins the primary Git
@@ -99,7 +100,7 @@ binding ratification record.
 
 - `devcrew-service` — long-lived store and local read-API authority
 - `devcrew` — operator control console over the typed local client
-- `devcrew-mcp` — thin MCP facade composition root (stdio composition pending)
+- `devcrew-mcp` — stateless four-tool MCP facade over the official SDK stdio transport
 - `devcrew-report` — restricted worker reporter composition root (scaffold only)
 
 All four commands support `--help` and `--version`. Build them with `make build`.
@@ -127,6 +128,7 @@ devcrew [--socket PATH] task show TASK [--format yaml|json]
 devcrew [--socket PATH] task explain TASK [--format text|json]
 devcrew [--socket PATH] task operation OPERATION [--format text|json]
 devcrew [--socket PATH] task prepare --input FILE|- [--operation OPERATION] [--format json]
+devcrew-mcp [--socket PATH] --service-instance ID
 ```
 
 JSON outputs are stable versioned projections. Human and YAML views are presentation only
@@ -140,7 +142,9 @@ request ID. Service-side mutation composition requires an explicit repository ca
 registration identity sources, service instance, expiry, and dedicated MCP socket. Until those are
 configured by the production command, the current service reports the mutation as unavailable
 rather than opening an alternate writer. The SDK facade package is implemented and tested over its
-official in-memory transport; the command root does not start it yet.
+official in-memory transport before the command root uses the production stdio transport. The MCP
+command defaults to a separate `mcp.sock` and validates the out-of-band service instance against
+every private call context.
 
 ## Development
 
