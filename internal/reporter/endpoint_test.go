@@ -134,6 +134,13 @@ func TestEndpoint_ValidatesConfigurationContextAndSinkFailure(t *testing.T) {
 	if _, err := reporter.NewClient(nil, validCredential); err == nil {
 		t.Fatal("NewClient(nil endpoint) error = nil")
 	}
+	if _, err := reporter.NewClient(&reporter.Endpoint{}, "short"); err == nil {
+		t.Fatal("NewClient(short credential) error = nil")
+	}
+	var unavailableClient *reporter.Client
+	if _, err := unavailableClient.Report(context.Background(), sparseReport(3, strings.Repeat("a", 64))); err == nil {
+		t.Fatal("Report(unavailable client) error = nil")
+	}
 
 	sinkFailure := errors.New("private sink cause")
 	sink := &recordingSink{err: sinkFailure}
@@ -155,6 +162,8 @@ func TestEndpoint_ValidatesConfigurationContextAndSinkFailure(t *testing.T) {
 	}
 	if _, err := client.Report(context.Background(), sparseReport(3, strings.Repeat("a", 64))); !errors.Is(err, sinkFailure) {
 		t.Fatalf("Report(sink failure) error = %v, want preserved cause", err)
+	} else if strings.Contains(err.Error(), sinkFailure.Error()) {
+		t.Fatalf("safe sink error leaked private cause: %q", err)
 	}
 }
 

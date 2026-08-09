@@ -9,6 +9,7 @@
     "internal/store/sqlite",
     "internal/localapi",
     "internal/git",
+    "internal/reporter",
     "internal/delivery",
     "internal/processes",
     "internal/comiswire/bundle",

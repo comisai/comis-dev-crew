@@ -81,11 +81,15 @@ func (failure *ValidationError) Error() string {
 }
 
 func validateSafeText(field, value string) error {
+	return validateBoundedSafeText(field, value, 512)
+}
+
+func validateBoundedSafeText(field, value string, maximumBytes int) error {
 	if strings.TrimSpace(value) == "" {
 		return &ValidationError{Field: field, Reason: "must not be empty"}
 	}
-	if len(value) > 512 {
-		return &ValidationError{Field: field, Reason: "must be at most 512 bytes"}
+	if len(value) > maximumBytes {
+		return &ValidationError{Field: field, Reason: fmt.Sprintf("must be at most %d bytes", maximumBytes)}
 	}
 	if !utf8.ValidString(value) {
 		return &ValidationError{Field: field, Reason: "must be valid UTF-8"}

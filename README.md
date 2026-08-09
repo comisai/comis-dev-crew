@@ -32,6 +32,11 @@ primary checkouts and dedicated worktree roots beneath approved roots, pins the 
 common-directory filesystem identity, and accepts a task worktree only when a real Git query
 proves that exact identity. It does not create worktrees or launch workers yet.
 
+The in-process reporter seam is append-only and task-scoped: its endpoint stores only a digest
+of the protected credential, derives the task identity instead of accepting it from worker
+content, requires the exact pinned brief revision/hash, bounds the sparse closed report payload,
+and rejects a mismatched sink receipt. Unix-socket reporter transport is still pending.
+
 The design authority lives in the private `comisai/planning` repository
 (`comis-companion-ecosystem/`), including the implementation design, the common
 companion-service architecture contract, the parallel-development process, and the

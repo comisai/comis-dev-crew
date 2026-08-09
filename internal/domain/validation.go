@@ -29,6 +29,11 @@ func ValidateOperationID(value string) error {
 	return validateOpaqueID("operationId", value)
 }
 
+// ValidateBriefRevisionHash rejects values that are not lowercase SHA-256 digests.
+func ValidateBriefRevisionHash(value string) error {
+	return validateSHA256("briefRevisionHash", value)
+}
+
 func validateCommand(value string) error {
 	if !commandPattern.MatchString(value) {
 		return &ValidationError{Field: "command", Reason: "must be a known command-style identifier"}
