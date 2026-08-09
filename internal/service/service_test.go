@@ -5,11 +5,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/comiswire"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 	"github.com/comisai/comis-dev-crew/internal/localapi"
 	"github.com/comisai/comis-dev-crew/internal/store/sqlite"
@@ -217,6 +220,177 @@ func TestRun_ReconcilesAmbiguousStateBeforeAdvertisingReady(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
+}
+
+type serviceComisControl struct {
+	mu          sync.Mutex
+	runCalls    int
+	reportCalls int
+	reports     chan comiswire.ReportRequestParams
+	failRun     chan error
+}
+
+func (control *serviceComisControl) Run(ctx context.Context) error {
+	control.mu.Lock()
+	control.runCalls++
+	control.mu.Unlock()
+	if control.failRun != nil {
+		select {
+		case err := <-control.failRun:
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (control *serviceComisControl) Report(ctx context.Context, request comiswire.ReportRequestParams) (comiswire.ReportResponseResult, error) {
+	control.mu.Lock()
+	control.reportCalls++
+	call := control.reportCalls
+	control.mu.Unlock()
+	control.reports <- request
+	if call == 1 {
+		return comiswire.ReportResponseResult{}, errors.New("uncertain first report")
+	}
+	if call == 3 {
+		<-ctx.Done()
+		return comiswire.ReportResponseResult{}, ctx.Err()
+	}
+	return comiswire.ReportResponseResult{
+		AcceptedSequence: int64(call), ManagedRunID: request.ManagedRunID,
+		ServiceReportID: request.ServiceReportID,
+		RetainedUntilMs: time.Date(2026, time.August, 11, 0, 0, 0, 0, time.UTC).UnixMilli(),
+	}, nil
+}
+
+func TestRun_OwnsOneControlConnectionAndDurableReportForwarder(t *testing.T) {
+	root := shortTempDir(t)
+	databasePath := filepath.Join(root, "state", "devcrew.db")
+	socketPath := filepath.Join(root, "run", "devcrew.sock")
+	seedServiceReports(t, databasePath)
+	control := &serviceComisControl{reports: make(chan comiswire.ReportRequestParams, 3)}
+	ready := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Config{
+			DatabasePath: databasePath, SocketPath: socketPath, ComisControl: control,
+			Clock: serviceForwarderClock, Ready: func() { close(ready) },
+		})
+	}()
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("Run() before ready error = %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() did not advertise ready")
+	}
+	requests := make([]comiswire.ReportRequestParams, 3)
+	for index := range requests {
+		select {
+		case requests[index] = <-control.reports:
+		case err := <-done:
+			t.Fatalf("Run() before report %d error = %v", index+1, err)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("report %d was not forwarded", index+1)
+		}
+	}
+	if !reflect.DeepEqual(requests[0], requests[1]) {
+		t.Fatalf("uncertain retry = %#v / %#v, want exact request", requests[0], requests[1])
+	}
+	if requests[2].ServiceReportID == requests[0].ServiceReportID || requests[2].OperationID == requests[0].OperationID {
+		t.Fatalf("next durable report reused prior identity: %#v / %#v", requests[0], requests[2])
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() cancellation error = %v", err)
+	}
+	control.mu.Lock()
+	runCalls := control.runCalls
+	control.mu.Unlock()
+	if runCalls != 1 {
+		t.Fatalf("control Run() calls = %d, want one", runCalls)
+	}
+
+	reopened, err := sqlite.Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	pending, found, err := reopened.NextComisReport(context.Background())
+	if err != nil || !found || pending.LocalReportID != "service-report-progress-0002" {
+		t.Fatalf("pending after joined cancellation = %#v, %t, %v", pending, found, err)
+	}
+}
+
+func TestRun_ControlFailureCancelsAndJoinsLocalEndpoint(t *testing.T) {
+	root := shortTempDir(t)
+	socketPath := filepath.Join(root, "run", "devcrew.sock")
+	controlFailure := errors.New("control supervisor failed")
+	control := &serviceComisControl{
+		reports: make(chan comiswire.ReportRequestParams, 1), failRun: make(chan error, 1),
+	}
+	ready := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(context.Background(), Config{
+			DatabasePath: filepath.Join(root, "state", "devcrew.db"), SocketPath: socketPath,
+			ComisControl: control, Clock: serviceForwarderClock, Ready: func() { close(ready) },
+		})
+	}()
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("Run() before ready error = %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() did not advertise ready")
+	}
+	control.failRun <- controlFailure
+	if err := <-done; !errors.Is(err, controlFailure) {
+		t.Fatalf("Run(control failure) error = %v", err)
+	}
+	if _, err := os.Lstat(socketPath); !os.IsNotExist(err) {
+		t.Fatalf("operator socket remains after control failure: %v", err)
+	}
+}
+
+func seedServiceReports(t *testing.T, databasePath string) {
+	t.Helper()
+	store, err := sqlite.Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := serviceTask()
+	task.State = domain.TaskWorking
+	task.ManagedRunID = "managed-run-service-0001"
+	task.WorkspaceLeaseID = "workspace-lease-service-0001"
+	if err := store.CreateTask(context.Background(), task); err != nil {
+		t.Fatal(err)
+	}
+	sink, err := application.NewReportSink(application.ReportSinkConfig{Store: store, Clock: serviceForwarderClock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 1; index <= 2; index++ {
+		report := domain.AuthenticatedReport{TaskHandle: task.Handle, Report: domain.WorkerReport{
+			SchemaVersion: 1, LocalReportID: "service-report-progress-000" + string(rune('0'+index)),
+			BriefRevision: task.BriefRevision, BriefRevisionHash: task.BriefRevisionHash,
+			Kind: domain.ReportProgress, Summary: "Deterministic service progress.",
+		}}
+		if _, err := sink.AcceptReport(context.Background(), report); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func serviceForwarderClock() time.Time {
+	return time.Date(2026, time.August, 10, 0, 0, 0, 0, time.UTC)
 }
 
 func serviceTask() domain.Task {
