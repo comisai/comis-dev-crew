@@ -56,6 +56,37 @@ func TestTaskPinBriefRevision_RendersOneCanonicalWorkerContract(t *testing.T) {
 	}
 }
 
+func TestWorkerBriefValidate_RequiresExactBoundedRevisionPin(t *testing.T) {
+	content := "taskHandle: task-0001\nbriefRevision: 1\n"
+	valid := WorkerBrief{
+		Revision: 1, RevisionHash: fmt.Sprintf("%x", sha256.Sum256([]byte(content))), Content: content,
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("WorkerBrief.Validate(valid) error = %v", err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*WorkerBrief)
+	}{
+		{name: "revision", mutate: func(brief *WorkerBrief) { brief.Revision = 0 }},
+		{name: "hash shape", mutate: func(brief *WorkerBrief) { brief.RevisionHash = "bad" }},
+		{name: "empty content", mutate: func(brief *WorkerBrief) { brief.Content = "" }},
+		{name: "oversized content", mutate: func(brief *WorkerBrief) { brief.Content = strings.Repeat("x", maximumWorkerBriefBytes+1) }},
+		{name: "invalid UTF8", mutate: func(brief *WorkerBrief) { brief.Content = string([]byte{0xff}) }},
+		{name: "nonline control", mutate: func(brief *WorkerBrief) { brief.Content = "task\thandle" }},
+		{name: "changed content", mutate: func(brief *WorkerBrief) { brief.Content += "changed\n" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			brief := valid
+			test.mutate(&brief)
+			if err := brief.Validate(); err == nil {
+				t.Fatal("WorkerBrief.Validate() error = nil, want rejection")
+			}
+		})
+	}
+}
+
 func TestTaskRenderWorkerBrief_RejectsContractChangedAfterPin(t *testing.T) {
 	task := validTask(ShapeShip, DeliveryPullRequest)
 	task.AcceptanceCriteria = []string{"The requested behavior is proven."}

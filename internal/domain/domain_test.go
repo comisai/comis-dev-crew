@@ -109,6 +109,15 @@ func TestOpaqueReferenceValidators_RejectUntrustedReferences(t *testing.T) {
 	if err := ValidateOperationID("bad id"); err == nil {
 		t.Fatal("ValidateOperationID(invalid) error = nil")
 	}
+	if err := ValidateBriefRevisionHash(strings.Repeat("a", 64)); err != nil {
+		t.Fatalf("ValidateBriefRevisionHash(valid) error = %v", err)
+	}
+	if err := ValidateLocalReportID("report-0001"); err != nil {
+		t.Fatalf("ValidateLocalReportID(valid) error = %v", err)
+	}
+	if err := ValidateDecisionKey("decision-0001"); err != nil {
+		t.Fatalf("ValidateDecisionKey(valid) error = %v", err)
+	}
 }
 
 func TestOperationValidate_EnforcesReplayAndOutcomeInvariants(t *testing.T) {

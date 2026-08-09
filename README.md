@@ -37,6 +37,11 @@ of the protected credential, derives the task identity instead of accepting it f
 content, requires the exact pinned brief revision/hash, bounds the sparse closed report payload,
 and rejects a mismatched sink receipt. Unix-socket reporter transport is still pending.
 
+The deterministic fixture worker runs synchronously from a verified brief, emits authenticated
+progress, requests exactly one keyed decision, records its resolution, and supports explicit
+fault stops before or after each durable-report boundary. It launches no subprocess and exists
+to drive restart/replay tests before the first real coding-worker adapter.
+
 The design authority lives in the private `comisai/planning` repository
 (`comis-companion-ecosystem/`), including the implementation design, the common
 companion-service architecture contract, the parallel-development process, and the

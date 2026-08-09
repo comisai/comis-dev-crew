@@ -34,6 +34,16 @@ func ValidateBriefRevisionHash(value string) error {
 	return validateSHA256("briefRevisionHash", value)
 }
 
+// ValidateLocalReportID rejects report identities outside the bounded opaque form.
+func ValidateLocalReportID(value string) error {
+	return validateOpaqueID("localReportId", value)
+}
+
+// ValidateDecisionKey rejects decision identities outside the bounded opaque form.
+func ValidateDecisionKey(value string) error {
+	return validateOpaqueID("externalKey", value)
+}
+
 func validateCommand(value string) error {
 	if !commandPattern.MatchString(value) {
 		return &ValidationError{Field: "command", Reason: "must be a known command-style identifier"}

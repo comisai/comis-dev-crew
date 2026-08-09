@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 const maximumContractEntries = 32
+const maximumWorkerBriefBytes = 16 * 1024
 
 // WorkerBrief is the canonical private launch contract. Content is the exact
 // byte sequence pinned by RevisionHash.
@@ -15,6 +18,31 @@ type WorkerBrief struct {
 	Revision     int64
 	RevisionHash string
 	Content      string
+}
+
+// Validate proves that Content is bounded UTF-8 and exactly matches its stored
+// revision hash. Newlines are allowed because the canonical brief is line based;
+// all other control characters are rejected.
+func (brief WorkerBrief) Validate() error {
+	if brief.Revision < 1 {
+		return &ValidationError{Field: "briefRevision", Reason: "must be positive"}
+	}
+	if err := validateSHA256("briefRevisionHash", brief.RevisionHash); err != nil {
+		return err
+	}
+	if strings.TrimSpace(brief.Content) == "" || len(brief.Content) > maximumWorkerBriefBytes || !utf8.ValidString(brief.Content) {
+		return &ValidationError{Field: "briefContent", Reason: "must be bounded nonempty UTF-8"}
+	}
+	for _, character := range brief.Content {
+		if unicode.IsControl(character) && character != '\n' {
+			return &ValidationError{Field: "briefContent", Reason: "must not contain non-line control characters"}
+		}
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(brief.Content)))
+	if digest != brief.RevisionHash {
+		return &ValidationError{Field: "briefRevisionHash", Reason: "does not pin the rendered worker brief"}
+	}
+	return nil
 }
 
 // PinBriefRevision validates the contract fields and binds the current brief
