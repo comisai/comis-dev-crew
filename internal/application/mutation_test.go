@@ -1,0 +1,180 @@
+package application
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/comisai/comis-dev-crew/internal/domain"
+)
+
+func TestMutations_PrepareBuildsOnePinnedServiceMintedTask(t *testing.T) {
+	clock := time.Date(2026, time.August, 9, 12, 30, 0, 0, time.UTC)
+	store := &mutationStore{}
+	repositories := &repositoryCatalog{}
+	mutations, err := NewMutations(MutationConfig{
+		Store: store, Repositories: repositories,
+		TaskIDs: func() (string, error) { return "task-0001", nil },
+		Clock:   func() time.Time { return clock },
+	})
+	if err != nil {
+		t.Fatalf("NewMutations() error = %v", err)
+	}
+	command := validPrepareCommand()
+	_, err = mutations.PrepareTask(context.Background(), command)
+	if err != nil {
+		t.Fatalf("PrepareTask() error = %v", err)
+	}
+	mutation := store.prepared
+	if mutation.Task.Handle != "task-0001" || mutation.Task.State != domain.TaskPrepared || mutation.Task.ServiceInstanceID != command.ServiceInstanceID {
+		t.Fatalf("prepared task = %#v, want service-minted prepared record", mutation.Task)
+	}
+	if err := mutation.Task.Validate(); err != nil {
+		t.Fatalf("prepared task validation error = %v", err)
+	}
+	if _, err := mutation.Task.RenderWorkerBrief(); err != nil {
+		t.Fatalf("prepared task brief error = %v", err)
+	}
+	if mutation.OperationID != command.OperationID || len(mutation.SubjectDigest) != 64 || mutation.At != clock {
+		t.Fatalf("prepared operation = %#v, want stable ID, SHA-256 subject, and injected time", mutation)
+	}
+	if repositories.calls != 1 || repositories.repositoryID != command.RepositoryID {
+		t.Fatalf("repository validation calls/id = %d/%q", repositories.calls, repositories.repositoryID)
+	}
+}
+
+func TestMutations_AcknowledgeBindingBuildsExactReplaySubject(t *testing.T) {
+	clock := time.Date(2026, time.August, 9, 12, 31, 0, 0, time.UTC)
+	store := &mutationStore{}
+	mutations, err := NewMutations(MutationConfig{
+		Store: store, Repositories: &repositoryCatalog{},
+		TaskIDs: func() (string, error) { return "task-0001", nil },
+		Clock:   func() time.Time { return clock },
+	})
+	if err != nil {
+		t.Fatalf("NewMutations() error = %v", err)
+	}
+	command := AcknowledgeBindingCommand{
+		OperationID: "op-bind-0001", TaskHandle: "task-0001",
+		ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001",
+	}
+	if _, err := mutations.AcknowledgeBinding(context.Background(), command); err != nil {
+		t.Fatalf("AcknowledgeBinding() error = %v", err)
+	}
+	if store.binding.TaskHandle != command.TaskHandle || store.binding.Binding.ManagedRunID != command.ManagedRunID ||
+		store.binding.Binding.WorkspaceLeaseID != command.WorkspaceLeaseID || len(store.binding.SubjectDigest) != 64 || store.binding.At != clock {
+		t.Fatalf("binding mutation = %#v, want exact stable subject", store.binding)
+	}
+}
+
+func TestMutations_RejectsInvalidCommandsAndDependencyFailuresBeforeCommit(t *testing.T) {
+	privateCause := errors.New("private repository cause")
+	tests := []struct {
+		name   string
+		mutate func(*PrepareTaskCommand, *repositoryCatalog)
+	}{
+		{name: "operation", mutate: func(command *PrepareTaskCommand, _ *repositoryCatalog) { command.OperationID = "bad id" }},
+		{name: "service instance", mutate: func(command *PrepareTaskCommand, _ *repositoryCatalog) { command.ServiceInstanceID = "bad id" }},
+		{name: "shape", mutate: func(command *PrepareTaskCommand, _ *repositoryCatalog) {
+			command.Shape = domain.TaskShape("initiative")
+		}},
+		{name: "repository", mutate: func(_ *PrepareTaskCommand, repositories *repositoryCatalog) { repositories.err = privateCause }},
+		{name: "unsafe criterion", mutate: func(command *PrepareTaskCommand, _ *repositoryCatalog) {
+			command.AcceptanceCriteria = []string{"unsafe\ncriterion"}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := &mutationStore{}
+			repositories := &repositoryCatalog{}
+			mutations, err := NewMutations(MutationConfig{
+				Store: store, Repositories: repositories,
+				TaskIDs: func() (string, error) { return "task-0001", nil },
+				Clock:   func() time.Time { return time.Date(2026, time.August, 9, 12, 30, 0, 0, time.UTC) },
+			})
+			if err != nil {
+				t.Fatalf("NewMutations() error = %v", err)
+			}
+			command := validPrepareCommand()
+			test.mutate(&command, repositories)
+			_, err = mutations.PrepareTask(context.Background(), command)
+			if err == nil {
+				t.Fatal("PrepareTask() error = nil, want rejection")
+			}
+			if strings.Contains(err.Error(), privateCause.Error()) {
+				t.Fatalf("safe mutation error leaked private cause: %q", err)
+			}
+			if store.prepareCalls != 0 {
+				t.Fatalf("store prepare calls = %d, want zero", store.prepareCalls)
+			}
+		})
+	}
+}
+
+func TestMutations_ValidatesRequiredDependenciesAndCancellation(t *testing.T) {
+	valid := MutationConfig{
+		Store: &mutationStore{}, Repositories: &repositoryCatalog{},
+		TaskIDs: func() (string, error) { return "task-0001", nil }, Clock: time.Now,
+	}
+	for _, mutate := range []func(*MutationConfig){
+		func(config *MutationConfig) { config.Store = nil },
+		func(config *MutationConfig) { config.Repositories = nil },
+		func(config *MutationConfig) { config.TaskIDs = nil },
+		func(config *MutationConfig) { config.Clock = nil },
+	} {
+		config := valid
+		mutate(&config)
+		if _, err := NewMutations(config); err == nil {
+			t.Fatal("NewMutations() error = nil for missing dependency")
+		}
+	}
+	mutations, err := NewMutations(valid)
+	if err != nil {
+		t.Fatalf("NewMutations() error = %v", err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := mutations.PrepareTask(cancelled, validPrepareCommand()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("PrepareTask(cancelled) error = %v, want context.Canceled", err)
+	}
+}
+
+type mutationStore struct {
+	prepared     PreparedTaskMutation
+	binding      TaskBindingMutation
+	prepareCalls int
+}
+
+func (store *mutationStore) CommitPreparedTask(_ context.Context, mutation PreparedTaskMutation) (MutationResult, error) {
+	store.prepareCalls++
+	store.prepared = mutation
+	return MutationResult{}, nil
+}
+
+func (store *mutationStore) CommitTaskBinding(_ context.Context, mutation TaskBindingMutation) (MutationResult, error) {
+	store.binding = mutation
+	return MutationResult{}, nil
+}
+
+type repositoryCatalog struct {
+	repositoryID string
+	calls        int
+	err          error
+}
+
+func (catalog *repositoryCatalog) ValidateRepository(_ context.Context, repositoryID string) error {
+	catalog.calls++
+	catalog.repositoryID = repositoryID
+	return catalog.err
+}
+
+func validPrepareCommand() PrepareTaskCommand {
+	return PrepareTaskCommand{
+		OperationID: "op-prepare-0001", ServiceInstanceID: "service-instance-0001",
+		Shape: domain.ShapeShip, RepositoryID: "product-api", BaseRevision: strings.Repeat("a", 40),
+		AcceptanceCriteria: []string{"The requested behavior is proven."}, Constraints: []string{"Preserve unrelated changes."},
+		ValidationProfile: "go-default", DeliveryMode: domain.DeliveryPullRequest, WorkerProfileID: "fixture-worker",
+	}
+}

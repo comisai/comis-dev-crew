@@ -107,6 +107,31 @@ func TestTaskApplyTransition_ReconciliationFailsClosed(t *testing.T) {
 	}
 }
 
+func TestTaskAcknowledgeBinding_RequiresExactHostAndWorkspaceIdentity(t *testing.T) {
+	task := validTask(ShapeShip, DeliveryPullRequest)
+	binding := TaskBinding{ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001"}
+	bound, err := task.AcknowledgeBinding(binding, task.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatalf("AcknowledgeBinding() error = %v", err)
+	}
+	if bound.State != TaskReady || bound.ManagedRunID != binding.ManagedRunID || bound.WorkspaceLeaseID != binding.WorkspaceLeaseID {
+		t.Fatalf("bound task = %#v, want ready with exact binding", bound)
+	}
+	if _, err := task.AcknowledgeBinding(TaskBinding{ManagedRunID: "", WorkspaceLeaseID: binding.WorkspaceLeaseID}, task.UpdatedAt.Add(time.Second)); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("partial binding error = %v, want ErrInvalidTransition", err)
+	}
+	if _, err := bound.AcknowledgeBinding(TaskBinding{ManagedRunID: "managed-run-other", WorkspaceLeaseID: binding.WorkspaceLeaseID}, bound.UpdatedAt.Add(time.Second)); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("altered binding error = %v, want ErrInvalidTransition", err)
+	}
+	replayed, err := bound.AcknowledgeBinding(binding, bound.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatalf("identical binding replay error = %v", err)
+	}
+	if !reflect.DeepEqual(replayed, bound) {
+		t.Fatalf("identical binding replay mutated task: got %#v want %#v", replayed, bound)
+	}
+}
+
 func TestTaskApplyTransition_RejectsUnknownIllegalOrNonMonotonicChange(t *testing.T) {
 	base := validTask(ShapeShip, DeliveryPullRequest)
 	tests := []struct {
