@@ -10,6 +10,7 @@ import (
 const (
 	commandPrepareTask        = "PrepareTask"
 	commandAcknowledgeBinding = "AcknowledgeBinding"
+	commandStartTask          = "StartTask"
 )
 
 // PrepareTaskCommand contains immutable E0 contract fields. The service mints
@@ -36,6 +37,12 @@ type AcknowledgeBindingCommand struct {
 	WorkspaceLeaseID string
 }
 
+// StartTaskCommand requests the sole durable ready-to-launching transition.
+type StartTaskCommand struct {
+	OperationID string
+	TaskHandle  string
+}
+
 // PreparedTaskMutation is the fully validated store transaction input.
 type PreparedTaskMutation struct {
 	Task          domain.Task
@@ -53,6 +60,14 @@ type TaskBindingMutation struct {
 	At            time.Time
 }
 
+// TaskStartMutation is the fully validated launch-intent transaction input.
+type TaskStartMutation struct {
+	TaskHandle    string
+	OperationID   string
+	SubjectDigest string
+	At            time.Time
+}
+
 // MutationResult joins one canonical task state and its replay outcome at the
 // same durable state version.
 type MutationResult struct {
@@ -65,6 +80,7 @@ type MutationStore interface {
 	ReplayMutation(context.Context, string, string, string) (MutationResult, bool, error)
 	CommitPreparedTask(context.Context, PreparedTaskMutation) (MutationResult, error)
 	CommitTaskBinding(context.Context, TaskBindingMutation) (MutationResult, error)
+	CommitTaskStart(context.Context, TaskStartMutation) (MutationResult, error)
 }
 
 // RepositoryCatalog validates an operator-configured repository ID without

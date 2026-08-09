@@ -310,6 +310,93 @@ func TestMutationStore_RejectsExhaustedVersionAndClosedDatabase(t *testing.T) {
 	}
 }
 
+func TestMutationStore_DirectTaskStartReplayAndFailures(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	ctx := context.Background()
+	now := time.Date(2026, time.August, 9, 16, 15, 0, 0, time.UTC)
+	missing := application.TaskStartMutation{
+		TaskHandle: "task-missing", OperationID: "op-start-missing",
+		SubjectDigest: strings.Repeat("a", 64), At: now,
+	}
+	if _, err := store.CommitTaskStart(ctx, missing); !errors.Is(err, application.ErrNotFound) {
+		t.Fatalf("CommitTaskStart(missing) error = %v, want ErrNotFound", err)
+	}
+	prepared := storeTask("task-prepared-start", 1)
+	prepared.CreatedAt, prepared.UpdatedAt = now, now
+	if err := store.CreateTask(ctx, prepared); err != nil {
+		t.Fatalf("CreateTask(prepared) error = %v", err)
+	}
+	illegal := missing
+	illegal.TaskHandle = prepared.Handle
+	illegal.OperationID = "op-start-illegal"
+	if _, err := store.CommitTaskStart(ctx, illegal); !errors.Is(err, domain.ErrInvalidTransition) {
+		t.Fatalf("CommitTaskStart(illegal) error = %v, want ErrInvalidTransition", err)
+	}
+	ready := storeTask("task-ready-start", 2)
+	ready.CreatedAt, ready.UpdatedAt = now, now
+	ready.ManagedRunID = "managed-run-0001"
+	ready.WorkspaceLeaseID = "workspace-lease-0001"
+	ready.State = domain.TaskReady
+	if err := store.CreateTask(ctx, ready); err != nil {
+		t.Fatalf("CreateTask(ready) error = %v", err)
+	}
+	start := application.TaskStartMutation{
+		TaskHandle: ready.Handle, OperationID: "op-start-direct",
+		SubjectDigest: strings.Repeat("b", 64), At: now.Add(time.Minute),
+	}
+	started, err := store.CommitTaskStart(ctx, start)
+	if err != nil {
+		t.Fatalf("CommitTaskStart() error = %v", err)
+	}
+	replay, err := store.CommitTaskStart(ctx, start)
+	if err != nil || !reflect.DeepEqual(replay, started) {
+		t.Fatalf("CommitTaskStart(replay) = %#v, %v, want %#v", replay, err, started)
+	}
+	altered := start
+	altered.SubjectDigest = strings.Repeat("c", 64)
+	if _, err := store.CommitTaskStart(ctx, altered); !errors.Is(err, application.ErrConflict) {
+		t.Fatalf("CommitTaskStart(altered) error = %v, want ErrConflict", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if _, err := store.CommitTaskStart(ctx, start); err == nil {
+		t.Fatal("CommitTaskStart(closed) error = nil")
+	}
+}
+
+func TestMutationStore_TaskStartRejectsExhaustedGlobalVersion(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Date(2026, time.August, 9, 16, 15, 0, 0, time.UTC)
+	ready := storeTask("task-ready-exhausted", 1)
+	ready.CreatedAt, ready.UpdatedAt = now, now
+	ready.ManagedRunID = "managed-run-0001"
+	ready.WorkspaceLeaseID = "workspace-lease-0001"
+	ready.State = domain.TaskReady
+	if err := store.CreateTask(context.Background(), ready); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	exhausted := storeOperation("op-exhaust-start", int64(^uint64(0)>>1))
+	exhausted.CreatedAt, exhausted.UpdatedAt = now, now
+	if err := store.RecordOperation(context.Background(), exhausted); err != nil {
+		t.Fatalf("RecordOperation() error = %v", err)
+	}
+	mutation := application.TaskStartMutation{
+		TaskHandle: ready.Handle, OperationID: "op-start-after-exhaustion",
+		SubjectDigest: strings.Repeat("a", 64), At: now.Add(time.Minute),
+	}
+	if _, err := store.CommitTaskStart(context.Background(), mutation); err == nil {
+		t.Fatal("CommitTaskStart(exhausted) error = nil")
+	}
+}
+
 type configuredCatalog struct{}
 
 func (configuredCatalog) ValidateRepository(context.Context, string) error { return nil }

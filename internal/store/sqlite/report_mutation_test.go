@@ -269,6 +269,9 @@ func TestReportStorageHelpersRejectInvalidRecordsBeforeWriting(t *testing.T) {
 	if err := updateReportedTask(context.Background(), transaction, invalidTask); err == nil {
 		t.Fatal("updateReportedTask(invalid) error = nil")
 	}
+	if err := updateTaskState(context.Background(), transaction, invalidTask); err == nil {
+		t.Fatal("updateTaskState(invalid) error = nil")
+	}
 }
 
 func openReportFixture(t *testing.T, databasePath string) (*Store, domain.Task) {

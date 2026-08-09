@@ -89,6 +89,42 @@ func TestMutations_StartTaskBuildsExactReplaySubject(t *testing.T) {
 	}
 }
 
+func TestMutations_StartTaskRejectsInvalidCancelledAndAlteredReplay(t *testing.T) {
+	store := &mutationStore{}
+	mutations, err := NewMutations(MutationConfig{
+		Store: store, Repositories: &repositoryCatalog{},
+		TaskIDs: func() (string, error) { return "task-unused", nil }, Clock: time.Now,
+	})
+	if err != nil {
+		t.Fatalf("NewMutations() error = %v", err)
+	}
+	for _, command := range []StartTaskCommand{
+		{OperationID: "bad id", TaskHandle: "task-0001"},
+		{OperationID: "op-start-0001", TaskHandle: "../escape"},
+	} {
+		if _, err := mutations.StartTask(context.Background(), command); err == nil {
+			t.Fatalf("StartTask(%#v) error = nil", command)
+		}
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := mutations.StartTask(cancelled, StartTaskCommand{OperationID: "op-start-0001", TaskHandle: "task-0001"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("StartTask(cancelled) error = %v, want context.Canceled", err)
+	}
+	privateReplayError := errors.New("private replay failure")
+	store.replayErr = privateReplayError
+	if _, err := mutations.StartTask(context.Background(), StartTaskCommand{OperationID: "op-start-0001", TaskHandle: "task-0001"}); !errors.Is(err, privateReplayError) {
+		t.Fatalf("StartTask(replay failure) error = %v, want preserved cause", err)
+	}
+	store.replayErr = nil
+	store.replayFound = true
+	store.replayResult = MutationResult{Task: domain.Task{Handle: "task-original"}}
+	result, err := mutations.StartTask(context.Background(), StartTaskCommand{OperationID: "op-start-0001", TaskHandle: "task-0001"})
+	if err != nil || result.Task.Handle != "task-original" {
+		t.Fatalf("StartTask(replay) = %#v, %v, want original", result, err)
+	}
+}
+
 func TestMutations_RejectsInvalidCommandsAndDependencyFailuresBeforeCommit(t *testing.T) {
 	privateCause := errors.New("private repository cause")
 	tests := []struct {
@@ -166,10 +202,13 @@ type mutationStore struct {
 	binding      TaskBindingMutation
 	start        TaskStartMutation
 	prepareCalls int
+	replayResult MutationResult
+	replayFound  bool
+	replayErr    error
 }
 
 func (store *mutationStore) ReplayMutation(context.Context, string, string, string) (MutationResult, bool, error) {
-	return MutationResult{}, false, nil
+	return store.replayResult, store.replayFound, store.replayErr
 }
 
 func (store *mutationStore) CommitPreparedTask(_ context.Context, mutation PreparedTaskMutation) (MutationResult, error) {

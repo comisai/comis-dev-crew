@@ -32,7 +32,8 @@ The first mutation boundary prepares a service-minted task and later acknowledge
 host-managed run and workspace lease. Each change commits the task and its completed operation
 at one global state version. Identical operation replays recover the original task across a
 service restart; altered subjects fail closed, and concurrent identical preparation creates one
-logical task.
+logical task. A separate durable start command records `ready` to `launching` intent and its
+operation outcome before the deterministic fixture may emit progress or begin work.
 
 The repository registry resolves only operator-configured opaque IDs. It validates canonical
 primary checkouts and dedicated worktree roots beneath approved roots, pins the primary Git

@@ -144,10 +144,70 @@ func (store *Store) CommitTaskBinding(ctx context.Context, mutation application.
 	return application.MutationResult{Task: bound, Operation: operation}, nil
 }
 
+// CommitTaskStart atomically records launch intent and its replay outcome
+// before a fixture worker is allowed to begin.
+func (store *Store) CommitTaskStart(ctx context.Context, mutation application.TaskStartMutation) (application.MutationResult, error) {
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return application.MutationResult{}, fmt.Errorf("begin task start mutation: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+
+	if replay, found, err := mutationReplay(ctx, transaction, mutation.OperationID, commandStartTask, mutation.SubjectDigest); err != nil {
+		return application.MutationResult{}, err
+	} else if found {
+		return replayResult(ctx, transaction, replay)
+	}
+	task, err := getTask(ctx, transaction, mutation.TaskHandle)
+	if err != nil {
+		return application.MutationResult{}, err
+	}
+	started, err := task.ApplyTransition(domain.TransitionLaunchRequested, mutation.At)
+	if err != nil {
+		return application.MutationResult{}, fmt.Errorf("apply task start: %w", err)
+	}
+	stateVersion, err := nextMutationStateVersion(ctx, transaction)
+	if err != nil {
+		return application.MutationResult{}, err
+	}
+	started.StateVersion = stateVersion
+	if err := updateTaskState(ctx, transaction, started); err != nil {
+		return application.MutationResult{}, err
+	}
+	operation := completedMutationOperation(
+		mutation.OperationID, commandStartTask, mutation.SubjectDigest,
+		started.Handle, stateVersion, mutation.At,
+	)
+	if err := insertOperation(ctx, transaction, operation); err != nil {
+		return application.MutationResult{}, fmt.Errorf("insert task start operation: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return application.MutationResult{}, fmt.Errorf("commit task start mutation: %w", err)
+	}
+	return application.MutationResult{Task: started, Operation: operation}, nil
+}
+
 const (
 	commandPrepareTask        = "PrepareTask"
 	commandAcknowledgeBinding = "AcknowledgeBinding"
+	commandStartTask          = "StartTask"
 )
+
+func updateTaskState(ctx context.Context, transaction *sql.Tx, task domain.Task) error {
+	if err := task.Validate(); err != nil {
+		return fmt.Errorf("validate task state update: %w", err)
+	}
+	const update = `UPDATE tasks SET state = ?, state_version = ?, updated_at = ? WHERE handle = ?`
+	result, err := transaction.ExecContext(ctx, update, task.State, task.StateVersion, formatTime(task.UpdatedAt), task.Handle)
+	if err != nil {
+		return fmt.Errorf("update task state: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return errors.New("update task state: exact task was not updated")
+	}
+	return nil
+}
 
 func mutationReplay(
 	ctx context.Context,
