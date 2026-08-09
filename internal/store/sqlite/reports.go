@@ -58,6 +58,9 @@ func (store *Store) CommitReport(ctx context.Context, mutation application.Repor
 	if err := insertAcceptedReport(ctx, transaction, accepted); err != nil {
 		return domain.ReportReceipt{}, err
 	}
+	if err := insertComisReport(ctx, transaction, task, accepted); err != nil {
+		return domain.ReportReceipt{}, err
+	}
 	if err := transaction.Commit(); err != nil {
 		return domain.ReportReceipt{}, fmt.Errorf("commit report mutation: %w", err)
 	}

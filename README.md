@@ -84,10 +84,12 @@ The in-process reporter seam is append-only and task-scoped: its endpoint stores
 of the protected credential, derives the task identity instead of accepting it from worker
 content, requires the exact pinned brief revision/hash, bounds the sparse closed report payload,
 and rejects a mismatched sink receipt. Its application sink now atomically persists the exact
-authenticated report, advances the task cursor and closed E0 lifecycle, and returns a receipt at
-the same global state version. Identical task/report IDs replay the original receipt across
-restart; altered payloads and ambiguous decision keys fail closed. Unix-socket reporter transport
-is still pending.
+authenticated report, advances the task cursor and closed E0 lifecycle, and enqueues a stable
+Comis delivery identity at the same global state version. Pending deliveries survive restart and
+remain eligible for exact-identity resend until the store records the host's matching sequence and
+retention acknowledgement. Identical task/report IDs replay the original receipt across restart;
+altered payloads, acknowledgements, and ambiguous decision keys fail closed. The control-socket
+forwarder and Unix-socket reporter transport are still pending.
 
 The deterministic fixture worker runs synchronously from a verified brief, emits authenticated
 progress, requests exactly one keyed decision, records its resolution, and ends by reporting only

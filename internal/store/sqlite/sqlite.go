@@ -114,6 +114,22 @@ INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 `
 
+const comisReportOutboxMigration = `
+CREATE TABLE comis_report_outbox (
+    operation_id TEXT PRIMARY KEY,
+    task_handle TEXT NOT NULL,
+    local_report_id TEXT NOT NULL,
+    service_report_id TEXT NOT NULL UNIQUE,
+    accepted_sequence INTEGER,
+    retained_until TEXT,
+    delivered_at TEXT,
+    UNIQUE(task_handle, local_report_id),
+    FOREIGN KEY(task_handle, local_report_id) REFERENCES reports(task_handle, local_report_id)
+);
+CREATE INDEX comis_report_outbox_pending_idx
+ON comis_report_outbox(delivered_at, task_handle, local_report_id);
+`
+
 const busyTimeoutMilliseconds = 500
 
 // Store owns one SQLite connection pool. The service composition root is the
@@ -198,22 +214,85 @@ func (store *Store) Close() error {
 }
 
 func (store *Store) migrate(ctx context.Context) error {
-	if err := store.applyMigration(ctx, initialMigration); err != nil {
-		return err
+	migrations := []struct {
+		version int
+		script  string
+	}{
+		{script: initialMigration}, {script: recordMigration},
+		{version: 3, script: taskContractMigration}, {version: 4, script: taskBindingMigration},
+		{version: 5, script: reportMigration}, {version: 6, script: managedRunPreparationMigration},
 	}
-	if err := store.applyMigration(ctx, recordMigration); err != nil {
-		return err
+	for _, migration := range migrations {
+		var err error
+		if migration.version == 0 {
+			err = store.applyMigration(ctx, migration.script)
+		} else {
+			err = store.applyVersionedMigration(ctx, migration.version, migration.script)
+		}
+		if err != nil {
+			return err
+		}
 	}
-	if err := store.applyVersionedMigration(ctx, 3, taskContractMigration); err != nil {
-		return err
+	return store.applyComisReportOutboxMigration(ctx)
+}
+
+func (store *Store) applyComisReportOutboxMigration(ctx context.Context) error {
+	var applied int
+	if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations WHERE version = 7").Scan(&applied); err != nil {
+		return fmt.Errorf("inspect SQLite migration 7: %w", err)
 	}
-	if err := store.applyVersionedMigration(ctx, 4, taskBindingMigration); err != nil {
-		return err
+	if applied == 1 {
+		return nil
 	}
-	if err := store.applyVersionedMigration(ctx, 5, reportMigration); err != nil {
-		return err
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin SQLite migration 7: %w", err)
 	}
-	return store.applyVersionedMigration(ctx, 6, managedRunPreparationMigration)
+	defer func() { _ = transaction.Rollback() }()
+	if _, err := transaction.ExecContext(ctx, comisReportOutboxMigration); err != nil {
+		return fmt.Errorf("apply SQLite migration 7: %w", err)
+	}
+	type priorReport struct{ taskHandle, localReportID, subjectDigest, managedRunID, workspaceLeaseID string }
+	rows, err := transaction.QueryContext(ctx, `SELECT
+        r.task_handle, r.local_report_id, r.subject_digest, t.managed_run_id, t.workspace_lease_id
+    FROM reports r JOIN tasks t ON t.handle = r.task_handle
+    ORDER BY r.task_handle, r.local_report_id`)
+	if err != nil {
+		return fmt.Errorf("read migration 7 reports: %w", err)
+	}
+	var reports []priorReport
+	for rows.Next() {
+		var report priorReport
+		if err := rows.Scan(&report.taskHandle, &report.localReportID, &report.subjectDigest, &report.managedRunID, &report.workspaceLeaseID); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan migration 7 report: %w", err)
+		}
+		reports = append(reports, report)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("read migration 7 reports: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close migration 7 reports: %w", err)
+	}
+	for _, report := range reports {
+		if report.managedRunID == "" || report.workspaceLeaseID == "" {
+			return errors.New("backfill migration 7 report: exact task binding is unavailable")
+		}
+		operationID, serviceReportID := comisReportIDs(report.taskHandle, report.localReportID, report.subjectDigest)
+		if err := insertComisReportIdentity(ctx, transaction, operationID, report.taskHandle, report.localReportID, serviceReportID); err != nil {
+			return fmt.Errorf("backfill migration 7 report: %w", err)
+		}
+	}
+	if _, err := transaction.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at)
+        VALUES (7, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`); err != nil {
+		return fmt.Errorf("record SQLite migration 7: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit SQLite migration 7: %w", err)
+	}
+	return nil
 }
 
 func (store *Store) applyVersionedMigration(ctx context.Context, version int, migration string) error {
