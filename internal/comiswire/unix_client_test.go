@@ -3,6 +3,7 @@ package comiswire
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -13,6 +14,49 @@ import (
 	"testing"
 	"time"
 )
+
+func TestAuthenticatedUnixClientAddsProtectedBearerToGeneratedHandshake(t *testing.T) {
+	const bearer = "fixture_bearer_000000000000000000000001"
+	server := startWireServer(t, 1, func(request string) string {
+		var frame map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(request), &frame); err != nil {
+			t.Fatalf("decode authenticated frame: %v", err)
+		}
+		var gotBearer string
+		if err := json.Unmarshal(frame["bearer"], &gotBearer); err != nil || gotBearer != bearer {
+			t.Fatalf("authenticated bearer = %q, %v", gotBearer, err)
+		}
+		if len(frame) != 5 {
+			t.Fatalf("authenticated frame fields = %d, want bearer plus exact generated request", len(frame))
+		}
+		return handshakeResponse(requestID(request))
+	})
+	client, err := NewAuthenticatedUnixClient(server.path, bearer, time.Second)
+	if err != nil {
+		t.Fatalf("NewAuthenticatedUnixClient() error = %v", err)
+	}
+	result, err := client.Handshake(context.Background(), HandshakeRequestParams{
+		ProtocolID: ProtocolID, BundleDigest: BundleDigest, OperationID: "operation_authenticated_handshake",
+		ServiceInstanceID: "service-instance_a", RequestedScopes: []ServiceScope{ServiceScopeHealth, ServiceScopeReport},
+	})
+	if err != nil || result.ProtocolID != ProtocolID || result.BundleDigest != BundleDigest {
+		t.Fatalf("Handshake() = %#v, %v, want exact pinned authority", result, err)
+	}
+	server.wait(t)
+}
+
+func TestAuthenticatedUnixClientRejectsUnsafeCredentialAndDecodesCredentialFailure(t *testing.T) {
+	directory := newCanonicalTempDirectory(t)
+	if _, err := NewAuthenticatedUnixClient(filepath.Join(directory, "capability.sock"), "short", time.Second); err == nil {
+		t.Fatal("NewAuthenticatedUnixClient(short credential) error = nil")
+	}
+	contents := []byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32019,"kind":"unauthorized_instance","retryable":false,"message":"authentication failed","hint":"use configured credential"}}`)
+	err := decodeWireResponse(contents, "operation_wrong_credential", &HandshakeResponse{})
+	var remote RPCError
+	if !errors.As(err, &remote) || remote.Kind != ErrorKindUnauthorizedInstance {
+		t.Fatalf("credential failure = %#v, %v, want unauthorized_instance", remote, err)
+	}
+}
 
 func TestNewUnixClientRejectsUnsafeEndpointConfiguration(t *testing.T) {
 	canonicalDirectory := newCanonicalTempDirectory(t)
@@ -299,6 +343,10 @@ func (server *wireServer) wait(t *testing.T) {
 
 func validHealthParams(operationID OperationID) HealthRequestParams {
 	return HealthRequestParams{BundleDigest: BundleDigest, OperationID: operationID, ProtocolID: ProtocolID, ServiceInstanceID: "service-instance_a"}
+}
+
+func handshakeResponse(operationID string) string {
+	return fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"result":{"protocolId":%q,"bundleDigest":%q,"serviceInstanceId":"service-instance_a","activeScopes":["health","report"],"limits":{"maxEvidenceBytes":1048576,"maxInFlightRequests":32,"maxLineBytes":65536,"maxReportBytes":16384,"maxRequestBytes":65536,"maxResponseBytes":65536,"reportRetentionDays":30}}}`, operationID, ProtocolID, BundleDigest)
 }
 
 func healthResponse(operationID string) string {
