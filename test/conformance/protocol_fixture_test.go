@@ -28,7 +28,8 @@ type fixtureStep struct {
 }
 
 type semanticBoundary struct {
-	operations map[string]string
+	operations   map[string]string
+	preparations map[string]bool
 }
 
 func TestGeneratedBoundaryMatchesEveryPinnedFixtureStep(t *testing.T) {
@@ -182,6 +183,18 @@ func (boundary *semanticBoundary) validate(target comiswire.PayloadTarget, paylo
 		if err := comiswire.ValidatePayload(target, payload); err != nil {
 			return errorKind(comiswire.ErrorKindInvalidParams)
 		}
+		if target == comiswire.PayloadMCPManagedRunResult {
+			preparation := decodeObjectValue(payload)
+			externalRunRef, ok := preparation["externalRunRef"].(string)
+			if !ok {
+				return errorKind(comiswire.ErrorKindInvalidParams)
+			}
+			if boundary.preparations == nil {
+				boundary.preparations = make(map[string]bool)
+			}
+			_, requestedWorkspace := preparation["requestedWorkspace"]
+			boundary.preparations[externalRunRef] = requestedWorkspace
+		}
 		return nil
 	}
 	envelope := decodeObjectValue(payload)
@@ -208,6 +221,14 @@ func (boundary *semanticBoundary) validate(target comiswire.PayloadTarget, paylo
 	}
 	if err := comiswire.ValidatePayload(target, payload); err != nil {
 		return errorKind(comiswire.ErrorKindInvalidParams)
+	}
+	if method == string(comiswire.MethodManagedRunsActivate) {
+		externalRunRef, externalOK := params["externalRunRef"].(string)
+		requestedWorkspace, prepared := boundary.preparations[externalRunRef]
+		_, hasWorkspaceLease := params["workspaceLeaseId"]
+		if !externalOK || (prepared && requestedWorkspace != hasWorkspaceLease) {
+			return errorKind(comiswire.ErrorKindInvalidParams)
+		}
 	}
 	id, idOK := envelope["id"].(string)
 	operationID, operationOK := params["operationId"].(string)

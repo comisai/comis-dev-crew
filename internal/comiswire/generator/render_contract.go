@@ -39,6 +39,7 @@ func renderContract(manifest bundle.Manifest, schemas []schemaSpec) (string, err
 		schema string
 		path   []string
 	}{
+		{name: "AbandonDisposition", schema: "schemas/abandon.request.schema.json", path: []string{"params", "disposition"}},
 		{name: "AbandonReason", schema: "schemas/abandon.request.schema.json", path: []string{"params", "reason"}},
 		{name: "HealthStatus", schema: "schemas/health.response.schema.json", path: []string{"result", "status"}},
 		{name: "ReportKind", schema: "schemas/report.request.schema.json", path: []string{"params", "kind"}},
@@ -55,6 +56,22 @@ func renderContract(manifest bundle.Manifest, schemas []schemaSpec) (string, err
 		if err := renderEnum(&output, enum.name, values); err != nil {
 			return "", err
 		}
+	}
+	terminalTransition, err := findNode(
+		schemas,
+		"schemas/abandon.response.schema.json",
+		"result",
+		"terminalTransition",
+	)
+	if err != nil {
+		return "", err
+	}
+	terminalTransitionValue, err := rawString(terminalTransition.Const)
+	if err != nil {
+		return "", fmt.Errorf("read AbandonTerminalTransition value: %w", err)
+	}
+	if err := renderEnum(&output, "AbandonTerminalTransition", []string{terminalTransitionValue}); err != nil {
+		return "", err
 	}
 
 	output.WriteString("func (failure RPCError) Error() string { return failure.Message }\n\n")

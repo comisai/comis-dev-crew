@@ -120,6 +120,22 @@ func TestGeneratedClientRejectsResponseIdentityAndAuthorityDrift(t *testing.T) {
 	}
 }
 
+func TestGeneratedClientRejectsSupersededBundleDigest(t *testing.T) {
+	const supersededDigest = "e87e69511ea9e01ea2383cd211f9946233fdbe1ce8edf016e76ce55eae683297"
+	if BundleDigest == supersededDigest {
+		t.Fatal("generated client still accepts the superseded bundle digest")
+	}
+	transport := &recordingTransport{}
+	_, err := newClient(transport).Handshake(context.Background(), HandshakeRequestParams{
+		ProtocolID: ProtocolID, BundleDigest: supersededDigest,
+		OperationID: "operation_superseded_digest", ServiceInstanceID: "service-instance_a",
+		RequestedScopes: []ServiceScope{ServiceScopeHealth, ServiceScopeReport},
+	})
+	if err == nil || transport.request != nil {
+		t.Fatalf("Handshake(superseded digest) error = %v, request = %#v", err, transport.request)
+	}
+}
+
 func validHandshakeResponse(mutate func(*HandshakeResponse)) HandshakeResponse {
 	response := HandshakeResponse{
 		JSONRPC: JSONRPCVersion,

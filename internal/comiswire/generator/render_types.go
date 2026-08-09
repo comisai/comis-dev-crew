@@ -20,6 +20,7 @@ func renderTypes(schemas []schemaSpec) (string, error) {
 		"type OperationID string\n",
 		"type ManagedRunID string\n",
 		"type ManagedRunGroupID string\n",
+		"type WorkspaceLeaseID string\n",
 		"type RegistrationNonce string\n",
 		"type ServiceReportID string\n",
 		"type ArtifactRef string\n",
@@ -167,6 +168,8 @@ func specialFieldType(parent, property string) string {
 		return "ManagedRunID"
 	case "managedRunGroupId":
 		return "ManagedRunGroupID"
+	case "workspaceLeaseId":
+		return "WorkspaceLeaseID"
 	case "externalRunRef":
 		return "ExternalRunRef"
 	case "registrationNonce":
@@ -178,6 +181,14 @@ func specialFieldType(parent, property string) string {
 	case "reason":
 		if parent == "AbandonRequestParams" {
 			return "AbandonReason"
+		}
+	case "disposition":
+		if parent == "AbandonRequestParams" || parent == "AbandonResponseResult" {
+			return "AbandonDisposition"
+		}
+	case "terminalTransition":
+		if parent == "AbandonResponseResult" {
+			return "AbandonTerminalTransition"
 		}
 	case "kind":
 		if parent == "ReportRequestParams" {

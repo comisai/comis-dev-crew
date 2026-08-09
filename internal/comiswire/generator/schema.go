@@ -115,6 +115,7 @@ func exportedName(value string) string {
 		"serviceReportId":     "ServiceReportID",
 		"traceId":             "TraceID",
 		"workspacePolicyHash": "WorkspacePolicyHash",
+		"workspaceLeaseId":    "WorkspaceLeaseID",
 	}[value]; exists {
 		return name
 	}

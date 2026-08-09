@@ -27,7 +27,7 @@ func (stub controlHandlerStub) Activate(ctx context.Context, params ActivateRequ
 
 func (stub controlHandlerStub) Abandon(ctx context.Context, params AbandonRequestParams) (AbandonResponseResult, error) {
 	if stub.abandon == nil {
-		return AbandonResponseResult{ExternalRunRef: params.ExternalRunRef, State: ManagedRunStateAbandoned}, nil
+		return abandonResult(params), nil
 	}
 	return stub.abandon(ctx, params)
 }
@@ -71,6 +71,7 @@ func TestControlSessionDispatchesAbandonAndFailsClosed(t *testing.T) {
 		Params: AbandonRequestParams{
 			OperationID: "operation_abandon_a", ExternalRunRef: "task-0001",
 			RegistrationNonce: "registration-nonce_a", Reason: AbandonReasonOwnerCancelled,
+			Disposition: AbandonDispositionPreserve,
 		},
 	}
 	t.Run("success", func(t *testing.T) {
@@ -81,7 +82,7 @@ func TestControlSessionDispatchesAbandonAndFailsClosed(t *testing.T) {
 		if err := json.Unmarshal(response, &abandoned); err != nil {
 			t.Fatal(err)
 		}
-		if abandoned.Result.ExternalRunRef != valid.Params.ExternalRunRef || abandoned.Result.State != ManagedRunStateAbandoned {
+		if abandoned.Result != abandonResult(valid.Params) {
 			t.Fatalf("abandon response = %#v", abandoned)
 		}
 	})
@@ -120,6 +121,14 @@ func TestControlSessionDispatchesAbandonAndFailsClosed(t *testing.T) {
 		})
 		assertControlFailure(t, response, ErrorKindMethodNotFound)
 	})
+}
+
+func abandonResult(params AbandonRequestParams) AbandonResponseResult {
+	return AbandonResponseResult{
+		Disposition: params.Disposition, ExternalRunRef: params.ExternalRunRef,
+		State:              ManagedRunStateAbandoned,
+		TerminalTransition: AbandonTerminalTransitionUnboundPreparationAbandoned,
+	}
 }
 
 func TestControlSessionDispatchesActivationFailuresWithoutBroadeningScope(t *testing.T) {

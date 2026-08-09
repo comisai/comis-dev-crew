@@ -36,7 +36,7 @@ func (handler *durableControlHandler) Activate(_ context.Context, params Activat
 }
 
 func (handler *durableControlHandler) Abandon(_ context.Context, params AbandonRequestParams) (AbandonResponseResult, error) {
-	return AbandonResponseResult{ExternalRunRef: params.ExternalRunRef, State: ManagedRunStateAbandoned}, nil
+	return abandonResult(params), nil
 }
 
 func (handler *durableControlHandler) effectCount() int {

@@ -8,7 +8,7 @@ import (
 )
 
 const ProtocolID = "comis.capability-service/1"
-const BundleDigest = "e87e69511ea9e01ea2383cd211f9946233fdbe1ce8edf016e76ce55eae683297"
+const BundleDigest = "5c97aa4773b2a5a3d2f790d8bf1556542bb271ec7773bf4d29b6da808b252725"
 const JSONRPCVersion = "2.0"
 
 const MaxEvidenceBytes = 1048576
@@ -66,6 +66,22 @@ const (
 func (value ManagedRunState) Valid() bool {
 	switch value {
 	case ManagedRunStateAbandoned, ManagedRunStateActive, ManagedRunStatePrepared:
+		return true
+	default:
+		return false
+	}
+}
+
+type AbandonDisposition string
+
+const (
+	AbandonDispositionReapSafe AbandonDisposition = "reap_safe"
+	AbandonDispositionPreserve AbandonDisposition = "preserve"
+)
+
+func (value AbandonDisposition) Valid() bool {
+	switch value {
+	case AbandonDispositionReapSafe, AbandonDispositionPreserve:
 		return true
 	default:
 		return false
@@ -143,13 +159,28 @@ func (value ServiceScope) Valid() bool {
 	}
 }
 
+type AbandonTerminalTransition string
+
+const (
+	AbandonTerminalTransitionUnboundPreparationAbandoned AbandonTerminalTransition = "unbound_preparation_abandoned"
+)
+
+func (value AbandonTerminalTransition) Valid() bool {
+	switch value {
+	case AbandonTerminalTransitionUnboundPreparationAbandoned:
+		return true
+	default:
+		return false
+	}
+}
+
 func (failure RPCError) Error() string { return failure.Message }
 
-const schemaAbandonRequest = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/abandon.request.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"method\": {\n      \"const\": \"managedRuns.abandon\",\n      \"type\": \"string\"\n    },\n    \"params\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"externalRunRef\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"operationId\": {\n          \"maxLength\": 128,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"reason\": {\n          \"enum\": [\n            \"activation_rejected\",\n            \"owner_cancelled\",\n            \"registration_expired\",\n            \"service_unavailable\"\n          ],\n          \"type\": \"string\"\n        },\n        \"registrationNonce\": {\n          \"maxLength\": 256,\n          \"minLength\": 16,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"operationId\",\n        \"externalRunRef\",\n        \"registrationNonce\",\n        \"reason\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"method\",\n    \"params\"\n  ],\n  \"type\": \"object\"\n}\n"
+const schemaAbandonRequest = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/abandon.request.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"method\": {\n      \"const\": \"managedRuns.abandon\",\n      \"type\": \"string\"\n    },\n    \"params\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"disposition\": {\n          \"enum\": [\n            \"reap_safe\",\n            \"preserve\"\n          ],\n          \"type\": \"string\"\n        },\n        \"externalRunRef\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"operationId\": {\n          \"maxLength\": 128,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"reason\": {\n          \"enum\": [\n            \"activation_rejected\",\n            \"owner_cancelled\",\n            \"registration_expired\",\n            \"service_unavailable\"\n          ],\n          \"type\": \"string\"\n        },\n        \"registrationNonce\": {\n          \"maxLength\": 256,\n          \"minLength\": 16,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"operationId\",\n        \"externalRunRef\",\n        \"registrationNonce\",\n        \"reason\",\n        \"disposition\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"method\",\n    \"params\"\n  ],\n  \"type\": \"object\"\n}\n"
 
-const schemaAbandonResponse = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/abandon.response.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"result\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"externalRunRef\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"state\": {\n          \"const\": \"abandoned\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"externalRunRef\",\n        \"state\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"result\"\n  ],\n  \"type\": \"object\"\n}\n"
+const schemaAbandonResponse = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/abandon.response.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"result\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"disposition\": {\n          \"enum\": [\n            \"reap_safe\",\n            \"preserve\"\n          ],\n          \"type\": \"string\"\n        },\n        \"externalRunRef\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"state\": {\n          \"const\": \"abandoned\",\n          \"type\": \"string\"\n        },\n        \"terminalTransition\": {\n          \"const\": \"unbound_preparation_abandoned\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"externalRunRef\",\n        \"state\",\n        \"disposition\",\n        \"terminalTransition\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"result\"\n  ],\n  \"type\": \"object\"\n}\n"
 
-const schemaActivateRequest = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/activate.request.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"method\": {\n      \"const\": \"managedRuns.activate\",\n      \"type\": \"string\"\n    },\n    \"params\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"externalRunRef\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"managedRunId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"operationId\": {\n          \"maxLength\": 128,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"registrationNonce\": {\n          \"maxLength\": 256,\n          \"minLength\": 16,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"operationId\",\n        \"managedRunId\",\n        \"externalRunRef\",\n        \"registrationNonce\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"method\",\n    \"params\"\n  ],\n  \"type\": \"object\"\n}\n"
+const schemaActivateRequest = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/activate.request.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"method\": {\n      \"const\": \"managedRuns.activate\",\n      \"type\": \"string\"\n    },\n    \"params\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"externalRunRef\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"managedRunId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"operationId\": {\n          \"maxLength\": 128,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"registrationNonce\": {\n          \"maxLength\": 256,\n          \"minLength\": 16,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"workspaceLeaseId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"operationId\",\n        \"managedRunId\",\n        \"externalRunRef\",\n        \"registrationNonce\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"method\",\n    \"params\"\n  ],\n  \"type\": \"object\"\n}\n"
 
 const schemaActivateResponse = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/activate.response.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"result\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"activatedAtMs\": {\n          \"maximum\": 9007199254740991,\n          \"minimum\": 0,\n          \"type\": \"integer\"\n        },\n        \"externalRunRef\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"managedRunId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"state\": {\n          \"const\": \"active\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"managedRunId\",\n        \"externalRunRef\",\n        \"state\",\n        \"activatedAtMs\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"result\"\n  ],\n  \"type\": \"object\"\n}\n"
 
@@ -178,6 +209,7 @@ const schemaServiceInstanceID = "{\n  \"$id\": \"https://schemas.comis.ai/capabi
 type OperationID string
 type ManagedRunID string
 type ManagedRunGroupID string
+type WorkspaceLeaseID string
 type RegistrationNonce string
 type ServiceReportID string
 type ArtifactRef string
@@ -190,10 +222,11 @@ type AbandonRequest struct {
 }
 
 type AbandonRequestParams struct {
-	ExternalRunRef    ExternalRunRef    `json:"externalRunRef"`
-	OperationID       OperationID       `json:"operationId"`
-	Reason            AbandonReason     `json:"reason"`
-	RegistrationNonce RegistrationNonce `json:"registrationNonce"`
+	Disposition       AbandonDisposition `json:"disposition"`
+	ExternalRunRef    ExternalRunRef     `json:"externalRunRef"`
+	OperationID       OperationID        `json:"operationId"`
+	Reason            AbandonReason      `json:"reason"`
+	RegistrationNonce RegistrationNonce  `json:"registrationNonce"`
 }
 
 type AbandonResponse struct {
@@ -203,8 +236,10 @@ type AbandonResponse struct {
 }
 
 type AbandonResponseResult struct {
-	ExternalRunRef ExternalRunRef  `json:"externalRunRef"`
-	State          ManagedRunState `json:"state"`
+	Disposition        AbandonDisposition        `json:"disposition"`
+	ExternalRunRef     ExternalRunRef            `json:"externalRunRef"`
+	State              ManagedRunState           `json:"state"`
+	TerminalTransition AbandonTerminalTransition `json:"terminalTransition"`
 }
 
 type ActivateRequest struct {
@@ -219,6 +254,7 @@ type ActivateRequestParams struct {
 	ManagedRunID      ManagedRunID      `json:"managedRunId"`
 	OperationID       OperationID       `json:"operationId"`
 	RegistrationNonce RegistrationNonce `json:"registrationNonce"`
+	WorkspaceLeaseID  *WorkspaceLeaseID `json:"workspaceLeaseId,omitempty"`
 }
 
 type ActivateResponse struct {
