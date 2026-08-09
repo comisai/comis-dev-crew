@@ -1,10 +1,10 @@
 package comiswire
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -89,7 +89,6 @@ func TestControlConnectionPersistsAcrossBidirectionalTrafficAndReplaysAfterRecon
 			serverDone <- err
 			return
 		}
-		close(firstReady)
 		if err := writeAuthenticatedFrame(first, activate, controlTestBearer); err != nil {
 			serverDone <- err
 			return
@@ -100,9 +99,10 @@ func TestControlConnectionPersistsAcrossBidirectionalTrafficAndReplaysAfterRecon
 			return
 		}
 		if activated.Result != activateResult(activate.Params) {
-			serverDone <- errors.New("first activation acknowledgement differs")
+			serverDone <- fmt.Errorf("first activation acknowledgement differs: %#v", activated)
 			return
 		}
+		close(firstReady)
 		var report authenticatedReportRequest
 		if err := readControlFrame(first, &report); err != nil {
 			serverDone <- err
@@ -163,6 +163,11 @@ func TestControlConnectionPersistsAcrossBidirectionalTrafficAndReplaysAfterRecon
 		ServiceReportID: "service-report_a", Kind: ReportKindProgress, Summary: "bounded progress",
 	})
 	if err != nil {
+		select {
+		case serverErr := <-serverDone:
+			t.Fatalf("Report() error = %v; server error = %v", err, serverErr)
+		default:
+		}
 		t.Fatalf("Report() error = %v", err)
 	}
 	if reportResult.AcceptedSequence != 1 || reportResult.ServiceReportID != "service-report_a" {
@@ -242,7 +247,12 @@ func activateResult(params ActivateRequestParams) ActivateResponseResult {
 
 func controlTestListener(t *testing.T) (string, *net.UnixListener) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "control.sock")
+	directory, err := os.MkdirTemp("/private/tmp", "dc-ctl-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	path := filepath.Join(directory, "control.sock")
 	address, err := net.ResolveUnixAddr("unix", path)
 	if err != nil {
 		t.Fatal(err)
@@ -291,9 +301,16 @@ func writeControlFrame(connection net.Conn, payload any) error {
 }
 
 func readControlFrame(connection net.Conn, destination any) error {
-	line, err := bufio.NewReader(connection).ReadBytes('\n')
-	if err != nil {
-		return err
+	line := make([]byte, 0, 1024)
+	for len(line) <= MaxLineBytes {
+		var next [1]byte
+		if _, err := connection.Read(next[:]); err != nil {
+			return err
+		}
+		if next[0] == '\n' {
+			return json.Unmarshal(line, destination)
+		}
+		line = append(line, next[0])
 	}
-	return json.Unmarshal(line, destination)
+	return errors.New("control test frame exceeds line limit")
 }

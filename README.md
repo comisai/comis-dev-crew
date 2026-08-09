@@ -25,6 +25,13 @@ CLI, and an authenticated Comis protocol pin with generated DTO, validation, and
 client support. The protocol-foundation join gate is implemented. End-to-end Comis host
 production integration, public mutation transport, and real worker capability are not claimed yet.
 
+The Comis adapter now also contains the supervised persistent bidirectional connection used by
+the next service composition step. It authenticates the exact pinned handshake, dispatches only
+`managedRuns.activate` and `managedRuns.abandon`, carries `managedRuns.report` on the same socket,
+and reconnects with bounded backoff. Wrong credentials, altered operation envelopes, unknown
+fields, excess concurrency, and forged run references fail before handler authority. The adapter
+does not retry an uncertain report itself, and it is not yet wired into `devcrew-service`.
+
 Task records persist bounded acceptance criteria and constraints with the exact brief revision
 hash. Any changed contract field invalidates the pin, and incomplete lifecycle reconciliation
 can become only `unknown` until verified evidence selects a known E0 state.
