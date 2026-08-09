@@ -8,10 +8,63 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
+	"github.com/comisai/comis-dev-crew/internal/localapi"
 )
+
+func TestRun_PrepareTaskReadsStrictJSONAndUsesStableOperation(t *testing.T) {
+	client := fixtureClient()
+	preparation := application.ManagedRunPreparation{
+		ExternalRunRef: "task-prepare-cli", RegistrationNonce: "registration-nonce_cli",
+		ExpiresAt: time.Date(2026, time.August, 9, 21, 0, 0, 0, time.UTC),
+	}
+	client.prepared = localapi.PrepareTaskResult{
+		SchemaVersion: 1, OperationID: "operation-prepare-cli", TaskHandle: "task-prepare-cli",
+		State: domain.TaskPrepared, StateVersion: 9, SideEffect: localapi.SideEffectMutate,
+		ManagedRun: preparation,
+	}
+	contract := `{"shape":"scout","repositoryId":"product-api","baseRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","acceptanceCriteria":["Return one report."],"constraints":["Do not deliver."],"validationProfile":"go-default","deliveryMode":"report","workerProfileId":"fixture-worker"}`
+	config := testConfig(client)
+	config.Stdin = strings.NewReader(contract)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := Run(context.Background(), []string{
+		"task", "prepare", "--input", "-", "--operation", "operation-prepare-cli", "--format", "json",
+	}, &stdout, &stderr, config)
+	if exitCode != ExitSuccess {
+		t.Fatalf("Run() exit = %d, stderr = %q", exitCode, stderr.String())
+	}
+	if len(client.calls) != 1 || client.calls[0] != "prepare:product-api" || client.operationID != "operation-prepare-cli" {
+		t.Fatalf("client calls/operation = %v/%q", client.calls, client.operationID)
+	}
+	var result localapi.PrepareTaskResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("prepare JSON = %q: %v", stdout.String(), err)
+	}
+	if result != client.prepared {
+		t.Fatalf("prepare JSON = %#v, want %#v", result, client.prepared)
+	}
+}
+
+func TestRun_PrepareTaskRejectsAuthorityFieldsBeforeConnecting(t *testing.T) {
+	config := testConfig(fixtureClient())
+	config.Stdin = strings.NewReader(`{"shape":"scout","repositoryId":"product-api","baseRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","acceptanceCriteria":["Return one report."],"constraints":[],"validationProfile":"go-default","deliveryMode":"report","workerProfileId":"fixture-worker","serviceInstanceId":"forged"}`)
+	called := false
+	config.NewClient = func(string) (ReadClient, error) {
+		called = true
+		return fixtureClient(), nil
+	}
+	var stderr bytes.Buffer
+	if exit := Run(context.Background(), []string{"task", "prepare", "--input", "-", "--format", "json"}, io.Discard, &stderr, config); exit != ExitUsage {
+		t.Fatalf("Run() exit = %d, stderr = %q", exit, stderr.String())
+	}
+	if called {
+		t.Fatal("client factory called for forged task contract")
+	}
+}
 
 func TestRun_HelpAndVersionDoNotConnect(t *testing.T) {
 	for _, test := range []struct {
@@ -232,9 +285,15 @@ type fakeClient struct {
 	detail      application.TaskDetail
 	explanation application.TaskExplanation
 	operation   application.OperationView
+	prepared    localapi.PrepareTaskResult
 	err         error
 	calls       []string
 	operationID string
+}
+
+func (client *fakeClient) PrepareTask(_ context.Context, operationID string, input localapi.PrepareTaskInput) (localapi.PrepareTaskResult, error) {
+	client.record(operationID, "prepare:"+input.RepositoryID)
+	return client.prepared, client.err
 }
 
 func (client *fakeClient) record(operationID, call string) {
