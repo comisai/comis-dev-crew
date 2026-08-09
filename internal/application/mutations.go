@@ -54,7 +54,7 @@ func (mutations *Mutations) PrepareTask(ctx context.Context, command PrepareTask
 		return MutationResult{}, mutationValidationFailure("prepare subject cannot be encoded")
 	}
 	if replay, found, err := mutations.store.ReplayMutation(ctx, command.OperationID, commandPrepareTask, subjectDigest); err != nil {
-		return MutationResult{}, err
+		return MutationResult{}, mutationReplayFailure(err)
 	} else if found {
 		return replay, nil
 	}
@@ -131,7 +131,7 @@ func (mutations *Mutations) AcknowledgeBinding(ctx context.Context, command Ackn
 		return MutationResult{}, mutationValidationFailure("binding subject cannot be encoded")
 	}
 	if replay, found, err := mutations.store.ReplayMutation(ctx, command.OperationID, commandAcknowledgeBinding, subjectDigest); err != nil {
-		return MutationResult{}, err
+		return MutationResult{}, mutationReplayFailure(err)
 	} else if found {
 		return replay, nil
 	}
@@ -158,7 +158,7 @@ func (mutations *Mutations) StartTask(ctx context.Context, command StartTaskComm
 		return MutationResult{}, mutationValidationFailure("start subject cannot be encoded")
 	}
 	if replay, found, err := mutations.store.ReplayMutation(ctx, command.OperationID, commandStartTask, subjectDigest); err != nil {
-		return MutationResult{}, err
+		return MutationResult{}, mutationReplayFailure(err)
 	} else if found {
 		return replay, nil
 	}
@@ -187,6 +187,22 @@ func mutationValidationFailure(message string) error {
 	failure, err := domain.NewFailure(domain.ErrorInvalidArgument, false, message, "correct the bounded command fields", nil)
 	if err != nil {
 		return errors.New("mutation validation failed")
+	}
+	return failure
+}
+
+func mutationReplayFailure(cause error) error {
+	if !errors.Is(cause, ErrConflict) {
+		return cause
+	}
+	failure, err := domain.NewFailure(
+		domain.ErrorConflict, false,
+		"stable operation subject conflicts with its original request",
+		"reuse the original command or choose a new operation identity",
+		cause,
+	)
+	if err != nil {
+		return errors.New("mutation replay conflict")
 	}
 	return failure
 }

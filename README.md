@@ -69,6 +69,12 @@ trigger one bounded operation reconciliation and, after a completed durable outc
 idempotent replay. The `devcrew-mcp` executable now runs this facade on the SDK stdio transport,
 requires the exact service instance out of band, and connects only to its dedicated local socket.
 
+The adapter parity fixture drives one real service and database through the typed client, CLI JSON,
+and official-SDK MCP transport. Preparation produces the same normalized task, operation, state
+version, and `mutate` classification across all three paths; repeated calls create one task, and an
+altered stable operation remains the same non-retryable `conflict`. List, get, and explain return
+identical versioned projections through all adapters and retain their `read` classification.
+
 The repository registry resolves only operator-configured opaque IDs. It validates canonical
 primary checkouts and dedicated worktree roots beneath approved roots, pins the primary Git
 common-directory filesystem identity, and accepts a task worktree only when a real Git query
@@ -144,7 +150,7 @@ configured by the production command, the current service reports the mutation a
 rather than opening an alternate writer. The SDK facade package is implemented and tested over its
 official in-memory transport before the command root uses the production stdio transport. The MCP
 command defaults to a separate `mcp.sock` and validates the out-of-band service instance against
-every private call context.
+every private call context. Tagged integration tests include the full direct/CLI/MCP parity matrix.
 
 ## Development
 
