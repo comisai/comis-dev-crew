@@ -53,7 +53,7 @@ func TestMutations_PrepareBuildsOnePinnedServiceMintedTask(t *testing.T) {
 	}
 }
 
-func TestMutations_AcknowledgeBindingBuildsExactReplaySubject(t *testing.T) {
+func TestMutations_ActivateManagedRunBuildsExactPrivateReplaySubject(t *testing.T) {
 	clock := time.Date(2026, time.August, 9, 12, 31, 0, 0, time.UTC)
 	store := &mutationStore{}
 	mutations, err := NewMutations(MutationConfig{
@@ -65,16 +65,127 @@ func TestMutations_AcknowledgeBindingBuildsExactReplaySubject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMutations() error = %v", err)
 	}
-	command := AcknowledgeBindingCommand{
-		OperationID: "op-bind-0001", TaskHandle: "task-0001",
+	command := ActivateManagedRunCommand{
+		OperationID: "op-bind-0001", ServiceInstanceID: "service-instance-0001",
+		ExternalRunRef: "task-0001", RegistrationNonce: "registration-nonce_0001",
 		ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001",
 	}
-	if _, err := mutations.AcknowledgeBinding(context.Background(), command); err != nil {
-		t.Fatalf("AcknowledgeBinding() error = %v", err)
+	if _, err := mutations.ActivateManagedRun(context.Background(), command); err != nil {
+		t.Fatalf("ActivateManagedRun() error = %v", err)
 	}
-	if store.binding.TaskHandle != command.TaskHandle || store.binding.Binding.ManagedRunID != command.ManagedRunID ||
-		store.binding.Binding.WorkspaceLeaseID != command.WorkspaceLeaseID || len(store.binding.SubjectDigest) != 64 || store.binding.At != clock {
-		t.Fatalf("binding mutation = %#v, want exact stable subject", store.binding)
+	if store.activation.ExternalRunRef != command.ExternalRunRef ||
+		store.activation.RegistrationNonce != command.RegistrationNonce ||
+		store.activation.Binding.ManagedRunID != command.ManagedRunID ||
+		store.activation.Binding.WorkspaceLeaseID != command.WorkspaceLeaseID ||
+		len(store.activation.SubjectDigest) != 64 || store.activation.At != clock {
+		t.Fatalf("activation mutation = %#v, want exact stable private subject", store.activation)
+	}
+}
+
+func TestMutations_ActivateAndAbandonValidateClosedInputsAndCommitFailures(t *testing.T) {
+	clock := time.Date(2026, time.August, 9, 12, 31, 0, 0, time.UTC)
+	newMutations := func(store *mutationStore) *Mutations {
+		mutations, err := NewMutations(MutationConfig{
+			Store: store, Repositories: &repositoryCatalog{},
+			TaskIDs:            func() (string, error) { return "task-unused", nil },
+			RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour,
+			Clock: func() time.Time { return clock },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return mutations
+	}
+	validActivation := ActivateManagedRunCommand{
+		OperationID: "operation-activate", ServiceInstanceID: "service-instance-0001",
+		ManagedRunID: "managed-run-0001", ExternalRunRef: "task-0001",
+		RegistrationNonce: "registration-nonce_0001", WorkspaceLeaseID: "workspace-lease-0001",
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*ActivateManagedRunCommand)
+	}{
+		{name: "operation", mutate: func(command *ActivateManagedRunCommand) { command.OperationID = "bad id" }},
+		{name: "service", mutate: func(command *ActivateManagedRunCommand) { command.ServiceInstanceID = "bad id" }},
+		{name: "external ref", mutate: func(command *ActivateManagedRunCommand) { command.ExternalRunRef = "../task" }},
+		{name: "nonce", mutate: func(command *ActivateManagedRunCommand) { command.RegistrationNonce = "short" }},
+		{name: "binding", mutate: func(command *ActivateManagedRunCommand) { command.ManagedRunID = "" }},
+		{name: "partial binding", mutate: func(command *ActivateManagedRunCommand) { command.WorkspaceLeaseID = ""; command.ManagedRunID = "" }},
+	} {
+		t.Run("activate "+test.name, func(t *testing.T) {
+			command := validActivation
+			test.mutate(&command)
+			if _, err := newMutations(&mutationStore{}).ActivateManagedRun(context.Background(), command); err == nil {
+				t.Fatal("ActivateManagedRun() error = nil")
+			}
+		})
+	}
+	//lint:ignore SA1012 The application boundary explicitly rejects a nil context.
+	if _, err := newMutations(&mutationStore{}).ActivateManagedRun(nil, validActivation); err == nil {
+		t.Fatal("ActivateManagedRun(nil) error = nil")
+	}
+	for _, test := range []struct {
+		cause error
+		code  domain.ErrorCode
+	}{
+		{cause: ErrInvalidInput, code: domain.ErrorInvalidArgument},
+		{cause: ErrPrecondition, code: domain.ErrorPrecondition},
+		{cause: ErrNotFound, code: domain.ErrorPrecondition},
+		{cause: domain.ErrInvalidTransition, code: domain.ErrorPrecondition},
+		{cause: ErrConflict, code: domain.ErrorConflict},
+	} {
+		store := &mutationStore{activationErr: test.cause}
+		_, err := newMutations(store).ActivateManagedRun(context.Background(), validActivation)
+		var failure *domain.Failure
+		if !errors.As(err, &failure) || failure.Code != test.code {
+			t.Fatalf("ActivateManagedRun(%v) error = %v, want %s", test.cause, err, test.code)
+		}
+	}
+	privateFailure := errors.New("private activation store failure")
+	if _, err := newMutations(&mutationStore{activationErr: privateFailure}).ActivateManagedRun(context.Background(), validActivation); !errors.Is(err, privateFailure) {
+		t.Fatalf("ActivateManagedRun(private) error = %v", err)
+	}
+
+	validAbandon := AbandonManagedRunCommand{
+		OperationID: "operation-abandon", ServiceInstanceID: "service-instance-0001",
+		ExternalRunRef: "task-0001", RegistrationNonce: "registration-nonce_0001",
+		Reason: AbandonReasonOwnerCancelled, Disposition: AbandonDispositionPreserve,
+	}
+	store := &mutationStore{}
+	if _, err := newMutations(store).AbandonManagedRun(context.Background(), validAbandon); err != nil {
+		t.Fatal(err)
+	}
+	if store.abandon.ExternalRunRef != validAbandon.ExternalRunRef || store.abandon.Reason != validAbandon.Reason ||
+		store.abandon.Disposition != validAbandon.Disposition || len(store.abandon.SubjectDigest) != 64 {
+		t.Fatalf("abandon mutation = %#v", store.abandon)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*AbandonManagedRunCommand)
+	}{
+		{name: "operation", mutate: func(command *AbandonManagedRunCommand) { command.OperationID = "bad id" }},
+		{name: "service", mutate: func(command *AbandonManagedRunCommand) { command.ServiceInstanceID = "bad id" }},
+		{name: "external ref", mutate: func(command *AbandonManagedRunCommand) { command.ExternalRunRef = "../task" }},
+		{name: "nonce", mutate: func(command *AbandonManagedRunCommand) { command.RegistrationNonce = "short" }},
+		{name: "reason", mutate: func(command *AbandonManagedRunCommand) { command.Reason = "invented" }},
+		{name: "disposition", mutate: func(command *AbandonManagedRunCommand) { command.Disposition = "invented" }},
+	} {
+		t.Run("abandon "+test.name, func(t *testing.T) {
+			command := validAbandon
+			test.mutate(&command)
+			if _, err := newMutations(&mutationStore{}).AbandonManagedRun(context.Background(), command); err == nil {
+				t.Fatal("AbandonManagedRun() error = nil")
+			}
+		})
+	}
+	//lint:ignore SA1012 The application boundary explicitly rejects a nil context.
+	if _, err := newMutations(&mutationStore{}).AbandonManagedRun(nil, validAbandon); err == nil {
+		t.Fatal("AbandonManagedRun(nil) error = nil")
+	}
+	_, err := newMutations(&mutationStore{abandonErr: ErrPrecondition}).AbandonManagedRun(context.Background(), validAbandon)
+	var failure *domain.Failure
+	if !errors.As(err, &failure) || failure.Code != domain.ErrorPrecondition {
+		t.Fatalf("AbandonManagedRun(precondition) error = %v", err)
 	}
 }
 
@@ -215,6 +326,7 @@ func TestMutations_ValidatesRequiredDependenciesAndCancellation(t *testing.T) {
 		func(config *MutationConfig) { config.RegistrationNonces = nil },
 		func(config *MutationConfig) { config.PreparationTTL = 0 },
 		func(config *MutationConfig) { config.PreparationTTL = 25 * time.Hour },
+		func(config *MutationConfig) { config.RequestedWorkspaceRoot = "relative/workspace" },
 		func(config *MutationConfig) { config.Clock = nil },
 	} {
 		config := valid
@@ -275,16 +387,43 @@ func TestMutations_RejectsInvalidRegistrationIdentityWithoutCommit(t *testing.T)
 	}).Validate(clock); err == nil {
 		t.Fatal("ManagedRunPreparation.Validate(expired) error = nil")
 	}
+	closedAt := clock.Add(time.Minute)
+	validClosed := ManagedRunPreparation{
+		ExternalRunRef: "task-0001", RegistrationNonce: "registration-nonce_0001",
+		RequestedWorkspaceRoot: "/approved/workspaces/task-0001",
+		ExpiresAt:              clock.Add(time.Hour), State: PreparationAbandoned,
+		AbandonReason: AbandonReasonOwnerCancelled, Disposition: AbandonDispositionPreserve,
+		ClosedAt: &closedAt,
+	}
+	if err := validClosed.Validate(clock); err != nil {
+		t.Fatalf("ManagedRunPreparation.Validate(closed) error = %v", err)
+	}
+	for _, mutate := range []func(*ManagedRunPreparation){
+		func(preparation *ManagedRunPreparation) { preparation.RequestedWorkspaceRoot = "relative/workspace" },
+		func(preparation *ManagedRunPreparation) { preparation.State = "invented" },
+		func(preparation *ManagedRunPreparation) { preparation.AbandonReason = "invented" },
+		func(preparation *ManagedRunPreparation) { preparation.Disposition = "invented" },
+		func(preparation *ManagedRunPreparation) { preparation.ClosedAt = nil },
+	} {
+		invalid := validClosed
+		mutate(&invalid)
+		if err := invalid.Validate(clock); err == nil {
+			t.Fatalf("ManagedRunPreparation.Validate(%#v) error = nil", invalid)
+		}
+	}
 }
 
 type mutationStore struct {
-	prepared     PreparedTaskMutation
-	binding      TaskBindingMutation
-	start        TaskStartMutation
-	prepareCalls int
-	replayResult MutationResult
-	replayFound  bool
-	replayErr    error
+	prepared      PreparedTaskMutation
+	activation    ManagedRunActivationMutation
+	abandon       ManagedRunAbandonMutation
+	start         TaskStartMutation
+	prepareCalls  int
+	replayResult  MutationResult
+	replayFound   bool
+	replayErr     error
+	activationErr error
+	abandonErr    error
 }
 
 func (store *mutationStore) ReplayMutation(context.Context, string, string, string) (MutationResult, bool, error) {
@@ -297,9 +436,14 @@ func (store *mutationStore) CommitPreparedTask(_ context.Context, mutation Prepa
 	return MutationResult{}, nil
 }
 
-func (store *mutationStore) CommitTaskBinding(_ context.Context, mutation TaskBindingMutation) (MutationResult, error) {
-	store.binding = mutation
-	return MutationResult{}, nil
+func (store *mutationStore) CommitManagedRunActivation(_ context.Context, mutation ManagedRunActivationMutation) (MutationResult, error) {
+	store.activation = mutation
+	return MutationResult{}, store.activationErr
+}
+
+func (store *mutationStore) CommitManagedRunAbandon(_ context.Context, mutation ManagedRunAbandonMutation) (MutationResult, error) {
+	store.abandon = mutation
+	return MutationResult{}, store.abandonErr
 }
 
 func (store *mutationStore) CommitTaskStart(_ context.Context, mutation TaskStartMutation) (MutationResult, error) {

@@ -194,8 +194,9 @@ func (harness *restartHarness) open(t *testing.T) {
 	}
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: matrixRepositoryCatalog{}, TaskIDs: harness.taskIDs.next,
-		RegistrationNonces: func() (string, error) { return "registration-nonce_matrix", nil },
-		PreparationTTL:     time.Hour, Clock: func() time.Time { return harness.now },
+		RegistrationNonces:     func() (string, error) { return "registration-nonce_matrix", nil },
+		RequestedWorkspaceRoot: filepath.Join(harness.root, "fixture-workspace"),
+		PreparationTTL:         time.Hour, Clock: func() time.Time { return harness.now },
 	})
 	if err != nil {
 		_ = store.Close()
@@ -264,8 +265,8 @@ func (harness *restartHarness) seedPrerequisites(t *testing.T, boundary matrixBo
 		return
 	}
 	harness.advance()
-	if _, err := harness.mutations.AcknowledgeBinding(context.Background(), matrixBindCommand()); err != nil {
-		t.Fatalf("seed AcknowledgeBinding() error = %v", err)
+	if _, err := harness.mutations.ActivateManagedRun(context.Background(), matrixBindCommand()); err != nil {
+		t.Fatalf("seed ActivateManagedRun() error = %v", err)
 	}
 	harness.advance()
 	if _, err := harness.mutations.StartTask(context.Background(), matrixStartCommand()); err != nil {
@@ -288,7 +289,7 @@ func (harness *restartHarness) perform(t *testing.T, ctx context.Context, bounda
 		}
 		return matrixOutcome{Mutation: &result}, err
 	case boundaryBind:
-		result, err := harness.mutations.AcknowledgeBinding(ctx, matrixBindCommand())
+		result, err := harness.mutations.ActivateManagedRun(ctx, matrixBindCommand())
 		return matrixOutcome{Mutation: &result}, err
 	case boundaryReport:
 		receipt, err := harness.reportClient(t).Report(ctx, matrixProgressReport(harness.task(t)))
@@ -406,7 +407,7 @@ func (harness *restartHarness) assertAlteredReplayRejected(t *testing.T, boundar
 	case boundaryBind:
 		altered := matrixBindCommand()
 		altered.WorkspaceLeaseID = "workspace-lease-altered"
-		_, err = harness.mutations.AcknowledgeBinding(context.Background(), altered)
+		_, err = harness.mutations.ActivateManagedRun(context.Background(), altered)
 	case boundaryReport:
 		altered := matrixProgressReport(harness.task(t))
 		altered.Summary = "altered report must not replace durable evidence"
@@ -509,9 +510,10 @@ func matrixPrepareCommand() application.PrepareTaskCommand {
 	}
 }
 
-func matrixBindCommand() application.AcknowledgeBindingCommand {
-	return application.AcknowledgeBindingCommand{
-		OperationID: "op-bind-restart", TaskHandle: matrixTaskHandle,
+func matrixBindCommand() application.ActivateManagedRunCommand {
+	return application.ActivateManagedRunCommand{
+		OperationID: "op-bind-restart", ServiceInstanceID: "service-instance-restart",
+		ExternalRunRef: matrixTaskHandle, RegistrationNonce: "registration-nonce_matrix",
 		ManagedRunID: "managed-run-restart", WorkspaceLeaseID: "workspace-lease-restart",
 	}
 }

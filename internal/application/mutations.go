@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"time"
 
@@ -14,12 +15,13 @@ import (
 
 // Mutations owns canonical E0 prepare and bind command construction.
 type Mutations struct {
-	store          MutationStore
-	repositories   RepositoryCatalog
-	taskIDs        TaskIDSource
-	nonces         RegistrationNonceSource
-	preparationTTL time.Duration
-	clock          Clock
+	store                  MutationStore
+	repositories           RepositoryCatalog
+	taskIDs                TaskIDSource
+	nonces                 RegistrationNonceSource
+	preparationTTL         time.Duration
+	requestedWorkspaceRoot string
+	clock                  Clock
 }
 
 var registrationNoncePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._~-]{15,255}$`)
@@ -33,10 +35,15 @@ func NewMutations(config MutationConfig) (*Mutations, error) {
 	if config.PreparationTTL <= 0 || config.PreparationTTL > 24*time.Hour {
 		return nil, errors.New("create mutations: preparation TTL must be within 24 hours")
 	}
+	if config.RequestedWorkspaceRoot != "" &&
+		(!filepath.IsAbs(config.RequestedWorkspaceRoot) || filepath.Clean(config.RequestedWorkspaceRoot) != config.RequestedWorkspaceRoot) {
+		return nil, errors.New("create mutations: requested workspace root must be absolute and canonical")
+	}
 	return &Mutations{
 		store: config.Store, repositories: config.Repositories,
 		taskIDs: config.TaskIDs, nonces: config.RegistrationNonces,
-		preparationTTL: config.PreparationTTL, clock: config.Clock,
+		preparationTTL: config.PreparationTTL, requestedWorkspaceRoot: config.RequestedWorkspaceRoot,
+		clock: config.Clock,
 	}, nil
 }
 
@@ -85,7 +92,8 @@ func (mutations *Mutations) PrepareTask(ctx context.Context, command PrepareTask
 	}
 	preparation := ManagedRunPreparation{
 		ExternalRunRef: task.Handle, RegistrationNonce: nonce,
-		ExpiresAt: now.Add(mutations.preparationTTL).UTC(),
+		RequestedWorkspaceRoot: mutations.requestedWorkspaceRoot,
+		ExpiresAt:              now.Add(mutations.preparationTTL).UTC(), State: PreparationOpen,
 	}
 	if err := preparation.Validate(now); err != nil {
 		return MutationResult{}, mutationValidationFailure("managed-run preparation is invalid")
@@ -107,38 +115,117 @@ func (preparation ManagedRunPreparation) Validate(createdAt time.Time) error {
 	if preparation.ExpiresAt.Location() != time.UTC || !preparation.ExpiresAt.After(createdAt) {
 		return errors.New("preparation expiry is invalid")
 	}
+	if preparation.RequestedWorkspaceRoot != "" &&
+		(!filepath.IsAbs(preparation.RequestedWorkspaceRoot) || filepath.Clean(preparation.RequestedWorkspaceRoot) != preparation.RequestedWorkspaceRoot) {
+		return errors.New("requested workspace root is invalid")
+	}
+	switch preparation.State {
+	case PreparationOpen:
+		if preparation.AbandonReason != "" || preparation.Disposition != "" || preparation.ClosedAt != nil {
+			return errors.New("open preparation carries terminal fields")
+		}
+	case PreparationAbandoned:
+		if !preparation.AbandonReason.valid() || !preparation.Disposition.valid() || preparation.ClosedAt == nil ||
+			preparation.ClosedAt.Location() != time.UTC || preparation.ClosedAt.Before(createdAt) {
+			return errors.New("abandoned preparation closure is invalid")
+		}
+	default:
+		return errors.New("preparation state is invalid")
+	}
 	return nil
 }
 
-// AcknowledgeBinding validates exact host references and delegates one atomic
-// prepared-to-ready task/operation commit.
-func (mutations *Mutations) AcknowledgeBinding(ctx context.Context, command AcknowledgeBindingCommand) (MutationResult, error) {
+func (reason AbandonReason) valid() bool {
+	switch reason {
+	case AbandonReasonActivationRejected, AbandonReasonOwnerCancelled,
+		AbandonReasonRegistrationExpired, AbandonReasonServiceUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+func (disposition AbandonDisposition) valid() bool {
+	return disposition == AbandonDispositionReapSafe || disposition == AbandonDispositionPreserve
+}
+
+// ActivateManagedRun validates the complete host join and delegates one atomic
+// private-preparation check plus prepared-to-ready commit.
+func (mutations *Mutations) ActivateManagedRun(ctx context.Context, command ActivateManagedRunCommand) (MutationResult, error) {
 	if err := validMutationContext(ctx); err != nil {
 		return MutationResult{}, err
 	}
 	if err := domain.ValidateOperationID(command.OperationID); err != nil {
 		return MutationResult{}, mutationValidationFailure("operation ID is invalid")
 	}
-	if err := domain.ValidateTaskHandle(command.TaskHandle); err != nil {
-		return MutationResult{}, mutationValidationFailure("task handle is invalid")
+	if err := domain.ValidateAuthorityReference("serviceInstanceId", command.ServiceInstanceID); err != nil {
+		return MutationResult{}, mutationValidationFailure("service instance identity is invalid")
+	}
+	if err := domain.ValidateTaskHandle(command.ExternalRunRef); err != nil {
+		return MutationResult{}, mutationValidationFailure("external run reference is invalid")
+	}
+	if !registrationNoncePattern.MatchString(command.RegistrationNonce) {
+		return MutationResult{}, mutationValidationFailure("registration nonce is invalid")
 	}
 	binding := domain.TaskBinding{ManagedRunID: command.ManagedRunID, WorkspaceLeaseID: command.WorkspaceLeaseID}
-	if err := binding.Validate(); err != nil {
+	if command.WorkspaceLeaseID != "" {
+		if err := binding.Validate(); err != nil {
+			return MutationResult{}, mutationValidationFailure("task binding is invalid")
+		}
+	} else if err := domain.ValidateAuthorityReference("managedRunId", command.ManagedRunID); err != nil {
 		return MutationResult{}, mutationValidationFailure("task binding is invalid")
 	}
 	subjectDigest, err := digestMutationSubject(command)
 	if err != nil {
-		return MutationResult{}, mutationValidationFailure("binding subject cannot be encoded")
+		return MutationResult{}, mutationValidationFailure("activation subject cannot be encoded")
 	}
-	if replay, found, err := mutations.store.ReplayMutation(ctx, command.OperationID, commandAcknowledgeBinding, subjectDigest); err != nil {
+	if replay, found, err := mutations.store.ReplayMutation(ctx, command.OperationID, commandActivateManagedRun, subjectDigest); err != nil {
 		return MutationResult{}, mutationReplayFailure(err)
 	} else if found {
 		return replay, nil
 	}
-	return mutations.store.CommitTaskBinding(ctx, TaskBindingMutation{
-		TaskHandle: command.TaskHandle, Binding: binding, OperationID: command.OperationID,
+	result, err := mutations.store.CommitManagedRunActivation(ctx, ManagedRunActivationMutation{
+		ServiceInstanceID: command.ServiceInstanceID, ExternalRunRef: command.ExternalRunRef,
+		RegistrationNonce: command.RegistrationNonce, Binding: binding,
+		OperationID: command.OperationID, SubjectDigest: subjectDigest, At: mutations.clock(),
+	})
+	return result, mutationCommitFailure(err)
+}
+
+// AbandonManagedRun durably closes one exact unbound preparation. Preserve
+// retains prepared task state; reap-safe enters the reversible cleanup path.
+func (mutations *Mutations) AbandonManagedRun(ctx context.Context, command AbandonManagedRunCommand) (MutationResult, error) {
+	if err := validMutationContext(ctx); err != nil {
+		return MutationResult{}, err
+	}
+	if err := domain.ValidateOperationID(command.OperationID); err != nil {
+		return MutationResult{}, mutationValidationFailure("operation ID is invalid")
+	}
+	if err := domain.ValidateAuthorityReference("serviceInstanceId", command.ServiceInstanceID); err != nil {
+		return MutationResult{}, mutationValidationFailure("service instance identity is invalid")
+	}
+	if err := domain.ValidateTaskHandle(command.ExternalRunRef); err != nil {
+		return MutationResult{}, mutationValidationFailure("external run reference is invalid")
+	}
+	if !registrationNoncePattern.MatchString(command.RegistrationNonce) || !command.Reason.valid() || !command.Disposition.valid() {
+		return MutationResult{}, mutationValidationFailure("abandonment fields are invalid")
+	}
+	subjectDigest, err := digestMutationSubject(command)
+	if err != nil {
+		return MutationResult{}, mutationValidationFailure("abandonment subject cannot be encoded")
+	}
+	if replay, found, err := mutations.store.ReplayMutation(ctx, command.OperationID, commandAbandonManagedRun, subjectDigest); err != nil {
+		return MutationResult{}, mutationReplayFailure(err)
+	} else if found {
+		return replay, nil
+	}
+	result, err := mutations.store.CommitManagedRunAbandon(ctx, ManagedRunAbandonMutation{
+		ServiceInstanceID: command.ServiceInstanceID, ExternalRunRef: command.ExternalRunRef,
+		RegistrationNonce: command.RegistrationNonce, Reason: command.Reason,
+		Disposition: command.Disposition, OperationID: command.OperationID,
 		SubjectDigest: subjectDigest, At: mutations.clock(),
 	})
+	return result, mutationCommitFailure(err)
 }
 
 // StartTask durably records launch intent before any fixture worker can emit a
@@ -203,6 +290,33 @@ func mutationReplayFailure(cause error) error {
 	)
 	if err != nil {
 		return errors.New("mutation replay conflict")
+	}
+	return failure
+}
+
+func mutationCommitFailure(cause error) error {
+	if cause == nil {
+		return nil
+	}
+	var code domain.ErrorCode
+	var message, hint string
+	switch {
+	case errors.Is(cause, ErrConflict):
+		return mutationReplayFailure(cause)
+	case errors.Is(cause, ErrInvalidInput):
+		code, message, hint = domain.ErrorInvalidArgument,
+			"activation fields differ from the prepared workspace request",
+			"send the lease exactly when the preparation requested a workspace"
+	case errors.Is(cause, ErrNotFound), errors.Is(cause, ErrPrecondition), errors.Is(cause, domain.ErrInvalidTransition):
+		code, message, hint = domain.ErrorPrecondition,
+			"managed-run preparation cannot accept this transition",
+			"reconcile the exact private preparation before retrying"
+	default:
+		return cause
+	}
+	failure, err := domain.NewFailure(code, false, message, hint, cause)
+	if err != nil {
+		return errors.New("mutation commit failure classification failed")
 	}
 	return failure
 }

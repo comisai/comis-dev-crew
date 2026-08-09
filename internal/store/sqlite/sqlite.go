@@ -130,6 +130,26 @@ CREATE INDEX comis_report_outbox_pending_idx
 ON comis_report_outbox(delivered_at, task_handle, local_report_id);
 `
 
+const managedRunLifecycleMigration = `
+ALTER TABLE task_preparations ADD COLUMN requested_workspace_root TEXT NOT NULL DEFAULT '';
+ALTER TABLE task_preparations ADD COLUMN state TEXT NOT NULL DEFAULT 'open';
+ALTER TABLE task_preparations ADD COLUMN abandon_reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE task_preparations ADD COLUMN disposition TEXT NOT NULL DEFAULT '';
+ALTER TABLE task_preparations ADD COLUMN closed_at TEXT;
+CREATE TABLE operation_replay_conflicts (
+    conflict_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    operation_id TEXT NOT NULL,
+    original_command TEXT NOT NULL,
+    original_subject_digest TEXT NOT NULL,
+    presented_command TEXT NOT NULL,
+    presented_subject_digest TEXT NOT NULL
+);
+CREATE INDEX operation_replay_conflicts_operation_idx
+ON operation_replay_conflicts(operation_id, conflict_id);
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (8, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+`
+
 const busyTimeoutMilliseconds = 500
 
 // Store owns one SQLite connection pool. The service composition root is the
@@ -233,7 +253,10 @@ func (store *Store) migrate(ctx context.Context) error {
 			return err
 		}
 	}
-	return store.applyComisReportOutboxMigration(ctx)
+	if err := store.applyComisReportOutboxMigration(ctx); err != nil {
+		return err
+	}
+	return store.applyVersionedMigration(ctx, 8, managedRunLifecycleMigration)
 }
 
 func (store *Store) applyComisReportOutboxMigration(ctx context.Context) error {

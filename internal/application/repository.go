@@ -13,6 +13,10 @@ var (
 	ErrNotFound = errors.New("record not found")
 	// ErrConflict means a stable record identity is already in use.
 	ErrConflict = errors.New("record identity conflict")
+	// ErrPrecondition means current durable state cannot authorize the request.
+	ErrPrecondition = errors.New("durable precondition failed")
+	// ErrInvalidInput means a state-dependent closed request invariant failed.
+	ErrInvalidInput = errors.New("mutation input is invalid")
 )
 
 // Repository is the consumer-owned durable port used by canonical handlers.

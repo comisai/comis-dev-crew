@@ -29,7 +29,7 @@ func TestServerClient_PrepareTaskUsesCanonicalMutationAndPrivateRegistration(t *
 	now := time.Now().UTC()
 	preparation := application.ManagedRunPreparation{
 		ExternalRunRef: "task-0001", RegistrationNonce: "registration-nonce_localapi",
-		ExpiresAt: now.Add(time.Hour),
+		ExpiresAt: now.Add(time.Hour), State: application.PreparationOpen,
 	}
 	mutations := &apiMutations{result: application.MutationResult{
 		Task:        domain.Task{Handle: "task-0001", State: domain.TaskPrepared, StateVersion: 8},

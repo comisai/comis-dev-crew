@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -27,6 +28,9 @@ func (store *Store) ReplayMutation(
 		return application.MutationResult{}, false, err
 	}
 	if operation.Command != command || operation.SubjectDigest != subjectDigest {
+		if auditErr := insertReplayConflict(ctx, store.db, operation, command, subjectDigest); auditErr != nil {
+			return application.MutationResult{}, false, fmt.Errorf("audit operation altered replay: %w", auditErr)
+		}
 		return application.MutationResult{}, false, fmt.Errorf("operation altered replay: %w", application.ErrConflict)
 	}
 	if operation.ResultRef == "" {
@@ -52,7 +56,7 @@ func (store *Store) CommitPreparedTask(ctx context.Context, mutation application
 	defer func() { _ = transaction.Rollback() }()
 
 	if replay, found, err := mutationReplay(ctx, transaction, mutation.OperationID, commandPrepareTask, mutation.SubjectDigest); err != nil {
-		return application.MutationResult{}, err
+		return application.MutationResult{}, commitReplayConflict(transaction, err)
 	} else if found {
 		return replayResult(ctx, transaction, replay)
 	}
@@ -88,27 +92,48 @@ func (store *Store) CommitPreparedTask(ctx context.Context, mutation application
 	return application.MutationResult{Task: task, Operation: operation, Preparation: &preparation}, nil
 }
 
-// CommitTaskBinding atomically records exact host authority, advances the task
-// to ready, and persists its replay outcome at one state version.
-func (store *Store) CommitTaskBinding(ctx context.Context, mutation application.TaskBindingMutation) (application.MutationResult, error) {
+// CommitManagedRunActivation atomically validates the private preparation,
+// records exact host authority, and advances the task to ready.
+func (store *Store) CommitManagedRunActivation(ctx context.Context, mutation application.ManagedRunActivationMutation) (application.MutationResult, error) {
 	transaction, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
-		return application.MutationResult{}, fmt.Errorf("begin task binding mutation: %w", err)
+		return application.MutationResult{}, fmt.Errorf("begin managed-run activation: %w", err)
 	}
 	defer func() { _ = transaction.Rollback() }()
 
-	if replay, found, err := mutationReplay(ctx, transaction, mutation.OperationID, commandAcknowledgeBinding, mutation.SubjectDigest); err != nil {
-		return application.MutationResult{}, err
+	if replay, found, err := mutationReplay(ctx, transaction, mutation.OperationID, commandActivateManagedRun, mutation.SubjectDigest); err != nil {
+		return application.MutationResult{}, commitReplayConflict(transaction, err)
 	} else if found {
 		return replayResult(ctx, transaction, replay)
 	}
-	task, err := getTask(ctx, transaction, mutation.TaskHandle)
+	task, err := getTask(ctx, transaction, mutation.ExternalRunRef)
 	if err != nil {
 		return application.MutationResult{}, err
 	}
+	preparation, err := getManagedRunPreparation(ctx, transaction, task)
+	if err != nil {
+		return application.MutationResult{}, fmt.Errorf("read managed-run activation preparation: %w", err)
+	}
+	if task.ServiceInstanceID != mutation.ServiceInstanceID || preparation.ExternalRunRef != mutation.ExternalRunRef ||
+		subtle.ConstantTimeCompare([]byte(preparation.RegistrationNonce), []byte(mutation.RegistrationNonce)) != 1 ||
+		preparation.State != application.PreparationOpen || mutation.At.Location() != time.UTC ||
+		!mutation.At.Before(preparation.ExpiresAt) {
+		return application.MutationResult{}, fmt.Errorf("managed-run activation join: %w", application.ErrPrecondition)
+	}
+	requestedWorkspace := preparation.RequestedWorkspaceRoot != ""
+	hasWorkspaceLease := mutation.Binding.WorkspaceLeaseID != ""
+	if requestedWorkspace != hasWorkspaceLease {
+		return application.MutationResult{}, fmt.Errorf("managed-run activation lease invariant: %w", application.ErrInvalidInput)
+	}
+	if !requestedWorkspace {
+		return application.MutationResult{}, fmt.Errorf("managed-run activation requires a DevCrew workspace: %w", application.ErrPrecondition)
+	}
+	if task.State != domain.TaskPrepared || task.ManagedRunID != "" || task.WorkspaceLeaseID != "" {
+		return application.MutationResult{}, fmt.Errorf("managed-run activation task state: %w", application.ErrPrecondition)
+	}
 	bound, err := task.AcknowledgeBinding(mutation.Binding, mutation.At)
 	if err != nil {
-		return application.MutationResult{}, fmt.Errorf("apply task binding: %w", err)
+		return application.MutationResult{}, fmt.Errorf("apply managed-run activation: %w", err)
 	}
 	stateVersion, err := nextMutationStateVersion(ctx, transaction)
 	if err != nil {
@@ -119,7 +144,7 @@ func (store *Store) CommitTaskBinding(ctx context.Context, mutation application.
 		return application.MutationResult{}, fmt.Errorf("validate bound task: %w", err)
 	}
 	operation := completedMutationOperation(
-		mutation.OperationID, commandAcknowledgeBinding, mutation.SubjectDigest,
+		mutation.OperationID, commandActivateManagedRun, mutation.SubjectDigest,
 		bound.Handle, stateVersion, mutation.At,
 	)
 	const update = `UPDATE tasks
@@ -138,14 +163,82 @@ func (store *Store) CommitTaskBinding(ctx context.Context, mutation application.
 	}
 	if err := insertOperation(ctx, transaction, operation); err != nil {
 		if isConstraintError(err) {
-			return application.MutationResult{}, fmt.Errorf("insert binding operation: %w", application.ErrConflict)
+			return application.MutationResult{}, fmt.Errorf("insert activation operation: %w", application.ErrConflict)
 		}
-		return application.MutationResult{}, fmt.Errorf("insert binding operation: %w", err)
+		return application.MutationResult{}, fmt.Errorf("insert activation operation: %w", err)
 	}
 	if err := transaction.Commit(); err != nil {
-		return application.MutationResult{}, fmt.Errorf("commit task binding mutation: %w", err)
+		return application.MutationResult{}, fmt.Errorf("commit managed-run activation: %w", err)
 	}
 	return application.MutationResult{Task: bound, Operation: operation}, nil
+}
+
+// CommitManagedRunAbandon closes one exact unbound preparation and records the
+// preserve or reversible-cleanup task posture at one state version.
+func (store *Store) CommitManagedRunAbandon(ctx context.Context, mutation application.ManagedRunAbandonMutation) (application.MutationResult, error) {
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return application.MutationResult{}, fmt.Errorf("begin managed-run abandon: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	if replay, found, err := mutationReplay(ctx, transaction, mutation.OperationID, commandAbandonManagedRun, mutation.SubjectDigest); err != nil {
+		return application.MutationResult{}, commitReplayConflict(transaction, err)
+	} else if found {
+		return replayResult(ctx, transaction, replay)
+	}
+	task, err := getTask(ctx, transaction, mutation.ExternalRunRef)
+	if err != nil {
+		return application.MutationResult{}, err
+	}
+	preparation, err := getManagedRunPreparation(ctx, transaction, task)
+	if err != nil {
+		return application.MutationResult{}, fmt.Errorf("read managed-run abandon preparation: %w", err)
+	}
+	if task.ServiceInstanceID != mutation.ServiceInstanceID || preparation.ExternalRunRef != mutation.ExternalRunRef ||
+		subtle.ConstantTimeCompare([]byte(preparation.RegistrationNonce), []byte(mutation.RegistrationNonce)) != 1 ||
+		preparation.State != application.PreparationOpen || mutation.At.Location() != time.UTC {
+		return application.MutationResult{}, fmt.Errorf("managed-run abandon join: %w", application.ErrPrecondition)
+	}
+	transition := domain.TransitionPreparationPreserved
+	if mutation.Disposition == application.AbandonDispositionReapSafe {
+		transition = domain.TransitionPreparationAbandoned
+	} else if mutation.Disposition != application.AbandonDispositionPreserve {
+		return application.MutationResult{}, fmt.Errorf("managed-run abandon disposition: %w", application.ErrInvalidInput)
+	}
+	updated, err := task.ApplyTransition(transition, mutation.At)
+	if err != nil {
+		return application.MutationResult{}, fmt.Errorf("apply managed-run abandon: %w", err)
+	}
+	stateVersion, err := nextMutationStateVersion(ctx, transaction)
+	if err != nil {
+		return application.MutationResult{}, err
+	}
+	updated.StateVersion = stateVersion
+	if err := updateTaskState(ctx, transaction, updated); err != nil {
+		return application.MutationResult{}, err
+	}
+	closedAt := mutation.At
+	preparation.State = application.PreparationAbandoned
+	preparation.AbandonReason = mutation.Reason
+	preparation.Disposition = mutation.Disposition
+	preparation.ClosedAt = &closedAt
+	if err := updateManagedRunPreparation(ctx, transaction, updated, preparation); err != nil {
+		return application.MutationResult{}, err
+	}
+	operation := completedMutationOperation(
+		mutation.OperationID, commandAbandonManagedRun, mutation.SubjectDigest,
+		updated.Handle, stateVersion, mutation.At,
+	)
+	if err := insertOperation(ctx, transaction, operation); err != nil {
+		if isConstraintError(err) {
+			return application.MutationResult{}, fmt.Errorf("insert abandon operation: %w", application.ErrConflict)
+		}
+		return application.MutationResult{}, fmt.Errorf("insert abandon operation: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return application.MutationResult{}, fmt.Errorf("commit managed-run abandon: %w", err)
+	}
+	return application.MutationResult{Task: updated, Operation: operation, Preparation: &preparation}, nil
 }
 
 // CommitTaskStart atomically records launch intent and its replay outcome
@@ -158,7 +251,7 @@ func (store *Store) CommitTaskStart(ctx context.Context, mutation application.Ta
 	defer func() { _ = transaction.Rollback() }()
 
 	if replay, found, err := mutationReplay(ctx, transaction, mutation.OperationID, commandStartTask, mutation.SubjectDigest); err != nil {
-		return application.MutationResult{}, err
+		return application.MutationResult{}, commitReplayConflict(transaction, err)
 	} else if found {
 		return replayResult(ctx, transaction, replay)
 	}
@@ -193,7 +286,8 @@ func (store *Store) CommitTaskStart(ctx context.Context, mutation application.Ta
 
 const (
 	commandPrepareTask        = "PrepareTask"
-	commandAcknowledgeBinding = "AcknowledgeBinding"
+	commandActivateManagedRun = "ActivateManagedRun"
+	commandAbandonManagedRun  = "AbandonManagedRun"
 	commandStartTask          = "StartTask"
 )
 
@@ -226,6 +320,9 @@ func mutationReplay(
 		return domain.OperationRecord{}, false, err
 	}
 	if existing.Command != command || existing.SubjectDigest != subjectDigest {
+		if err := insertReplayConflict(ctx, transaction, existing, command, subjectDigest); err != nil {
+			return domain.OperationRecord{}, false, fmt.Errorf("audit operation altered replay: %w", err)
+		}
 		return domain.OperationRecord{}, false, fmt.Errorf("operation altered replay: %w", application.ErrConflict)
 	}
 	if existing.ResultRef == "" {
@@ -248,7 +345,7 @@ func mutationResult(ctx context.Context, source queryer, operation domain.Operat
 		return application.MutationResult{}, fmt.Errorf("read operation replay task: %w", err)
 	}
 	result := application.MutationResult{Task: task, Operation: operation}
-	if operation.Command != commandPrepareTask {
+	if operation.Command != commandPrepareTask && operation.Command != commandAbandonManagedRun {
 		return result, nil
 	}
 	preparation, err := getManagedRunPreparation(ctx, source, task)
@@ -267,20 +364,27 @@ func insertManagedRunPreparation(
 	createdAt time.Time,
 ) error {
 	const statement = `INSERT INTO task_preparations (
-        task_handle, external_run_ref, registration_nonce, expires_at, created_at
-    ) VALUES (?, ?, ?, ?, ?)`
+		task_handle, external_run_ref, registration_nonce, expires_at, created_at,
+		requested_workspace_root, state, abandon_reason, disposition, closed_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := target.ExecContext(ctx, statement, taskHandle, preparation.ExternalRunRef,
-		preparation.RegistrationNonce, formatTime(preparation.ExpiresAt), formatTime(createdAt))
+		preparation.RegistrationNonce, formatTime(preparation.ExpiresAt), formatTime(createdAt),
+		preparation.RequestedWorkspaceRoot, preparation.State, preparation.AbandonReason,
+		preparation.Disposition, nil)
 	return err
 }
 
 func getManagedRunPreparation(ctx context.Context, source queryer, task domain.Task) (application.ManagedRunPreparation, error) {
-	const query = `SELECT external_run_ref, registration_nonce, expires_at
+	const query = `SELECT external_run_ref, registration_nonce, expires_at,
+		requested_workspace_root, state, abandon_reason, disposition, closed_at
         FROM task_preparations WHERE task_handle = ?`
 	var preparation application.ManagedRunPreparation
 	var expiresAt string
+	var closedAt sql.NullString
 	if err := source.QueryRowContext(ctx, query, task.Handle).Scan(
 		&preparation.ExternalRunRef, &preparation.RegistrationNonce, &expiresAt,
+		&preparation.RequestedWorkspaceRoot, &preparation.State, &preparation.AbandonReason,
+		&preparation.Disposition, &closedAt,
 	); err != nil {
 		return application.ManagedRunPreparation{}, err
 	}
@@ -289,10 +393,76 @@ func getManagedRunPreparation(ctx context.Context, source queryer, task domain.T
 	if err != nil {
 		return application.ManagedRunPreparation{}, err
 	}
+	if closedAt.Valid {
+		parsed, err := parseTime(closedAt.String)
+		if err != nil {
+			return application.ManagedRunPreparation{}, err
+		}
+		preparation.ClosedAt = &parsed
+	}
 	if err := preparation.Validate(task.CreatedAt); err != nil || preparation.ExternalRunRef != task.Handle {
 		return application.ManagedRunPreparation{}, errors.New("stored managed-run preparation is invalid")
 	}
 	return preparation, nil
+}
+
+// GetManagedRunPreparation returns the private durable join for service-owned
+// reconciliation and bounded diagnostics.
+func (store *Store) GetManagedRunPreparation(ctx context.Context, taskHandle string) (application.ManagedRunPreparation, error) {
+	task, err := getTask(ctx, store.db, taskHandle)
+	if err != nil {
+		return application.ManagedRunPreparation{}, err
+	}
+	return getManagedRunPreparation(ctx, store.db, task)
+}
+
+func updateManagedRunPreparation(
+	ctx context.Context,
+	target execer,
+	task domain.Task,
+	preparation application.ManagedRunPreparation,
+) error {
+	if err := preparation.Validate(task.CreatedAt); err != nil || preparation.ExternalRunRef != task.Handle || preparation.ClosedAt == nil {
+		return errors.New("update managed-run preparation: invalid closure")
+	}
+	const statement = `UPDATE task_preparations
+		SET state = ?, abandon_reason = ?, disposition = ?, closed_at = ?
+		WHERE task_handle = ? AND state = ?`
+	result, err := target.ExecContext(ctx, statement, preparation.State, preparation.AbandonReason,
+		preparation.Disposition, formatTime(*preparation.ClosedAt), task.Handle, application.PreparationOpen)
+	if err != nil {
+		return fmt.Errorf("update managed-run preparation: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return fmt.Errorf("update managed-run preparation: %w", application.ErrPrecondition)
+	}
+	return nil
+}
+
+func insertReplayConflict(
+	ctx context.Context,
+	target execer,
+	original domain.OperationRecord,
+	presentedCommand, presentedDigest string,
+) error {
+	const statement = `INSERT INTO operation_replay_conflicts (
+		operation_id, original_command, original_subject_digest,
+		presented_command, presented_subject_digest
+	) VALUES (?, ?, ?, ?, ?)`
+	_, err := target.ExecContext(ctx, statement, original.ID, original.Command,
+		original.SubjectDigest, presentedCommand, presentedDigest)
+	return err
+}
+
+func commitReplayConflict(transaction *sql.Tx, cause error) error {
+	if !errors.Is(cause, application.ErrConflict) {
+		return cause
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit replay-conflict audit: %w", err)
+	}
+	return cause
 }
 
 func nextMutationStateVersion(ctx context.Context, transaction *sql.Tx) (int64, error) {

@@ -77,7 +77,7 @@ func TestFacade_RejectsInvalidArgumentsAndLocalResultsWithoutPrivateMetadata(t *
 		State: domain.TaskPrepared, StateVersion: 1, SideEffect: localapi.SideEffectMutate,
 		ManagedRun: application.ManagedRunPreparation{
 			ExternalRunRef: "different-task", RegistrationNonce: "registration-nonce_private",
-			ExpiresAt: time.Now().UTC().Add(time.Hour),
+			ExpiresAt: time.Now().UTC().Add(time.Hour), State: application.PreparationOpen,
 		},
 	}}
 	result, err = session.CallTool(context.Background(), &mcp.CallToolParams{

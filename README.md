@@ -35,7 +35,14 @@ maps the closed worker vocabulary to the pinned Comis report vocabulary, and ret
 outcomes with the same operation and service-report identities until it can durably record an exact
 host acknowledgement. The service lifecycle can now supervise exactly one supplied control
 connection and that forwarder alongside both local endpoints, cancelling and joining all of them
-if any component fails. The installed command does not yet configure the control connection.
+if any component fails. Authenticated inbound activation is backed by the same durable mutation
+coordinator: the stored external reference, registration nonce, service instance, UTC expiry, and
+workspace-request invariant are checked in the transaction that commits the exact managed run and
+workspace lease. Inbound abandonment durably closes the private preparation; `preserve` retains
+the prepared task with its closed reason, while `reap_safe` enters the unbound reversible
+cancellation/cleanup path. Exact operation replay returns the original wire acknowledgement and
+altered reuse is rejected with a content-free durable conflict audit. The installed command does
+not yet configure the control connection.
 
 Task records persist bounded acceptance criteria and constraints with the exact brief revision
 hash. Any changed contract field invalidates the pin, and incomplete lifecycle reconciliation
@@ -47,13 +54,14 @@ runtime may have been active become `unknown`, as do operations left merely `acc
 terminal task evidence and completed or already-unknown operations are preserved, and a repeated
 restart is idempotent.
 
-The first mutation boundary prepares a service-minted task and later acknowledges the exact
+The first mutation boundary prepares a service-minted task and later activates it with the exact
 host-managed run and workspace lease. Each change commits the task and its completed operation
 at one global state version. Identical operation replays recover the original task across a
 service restart; altered subjects fail closed, and concurrent identical preparation creates one
 logical task. Preparation also atomically stores the private external reference, registration
-nonce, and bounded UTC expiry needed for the Comis two-phase join; exact replay returns that same
-private registration instead of minting another. A separate durable start command records `ready` to `launching` intent and its
+nonce, bounded UTC expiry, requested workspace root, and open/abandoned posture needed for the
+Comis two-phase join; exact replay returns that same private registration instead of minting
+another. A separate durable start command records `ready` to `launching` intent and its
 operation outcome before the deterministic fixture may emit progress or begin work.
 
 The typed local client and strict handler now expose `PrepareTask` as the first canonical mutation.
@@ -82,7 +90,9 @@ identical versioned projections through all adapters and retain their `read` cla
 A tagged integration test also builds and kills the real stdio `devcrew-mcp` process, replaces it,
 and proves the prepared task, completed operation, exact private extension, and one logical replay
 remain intact; a forged managed-run metadata hint changes no task authority. Extending this proof
-through an active fixture and its reports still depends on the blocked host activation join.
+through an active fixture and its reports now depends only on the installed executable composition
+that supplies the repository/workspace, service identities, authenticated Comis connection, and
+fixture-worker configuration.
 
 The repository registry resolves only operator-configured opaque IDs. It validates canonical
 primary checkouts and dedicated worktree roots beneath approved roots, pins the primary Git

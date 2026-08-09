@@ -17,6 +17,8 @@ type TaskTransition string
 
 const (
 	TransitionBindAcknowledged         TaskTransition = "bind_acknowledged"
+	TransitionPreparationPreserved     TaskTransition = "preparation_preserved"
+	TransitionPreparationAbandoned     TaskTransition = "preparation_abandoned"
 	TransitionLaunchRequested          TaskTransition = "launch_requested"
 	TransitionWorkerAcknowledged       TaskTransition = "worker_acknowledged"
 	TransitionDecisionRequested        TaskTransition = "decision_requested"
@@ -109,6 +111,10 @@ func nextTaskState(current TaskState, transition TaskTransition) (TaskState, boo
 	switch transition {
 	case TransitionBindAcknowledged:
 		return requiredTaskState(current, TaskPrepared, TaskReady)
+	case TransitionPreparationPreserved:
+		return requiredTaskState(current, TaskPrepared, TaskPrepared)
+	case TransitionPreparationAbandoned:
+		return requiredTaskState(current, TaskPrepared, TaskCancelled)
 	case TransitionLaunchRequested:
 		return requiredTaskState(current, TaskReady, TaskLaunching)
 	case TransitionWorkerAcknowledged:

@@ -19,7 +19,7 @@ func TestRun_PrepareTaskReadsStrictJSONAndUsesStableOperation(t *testing.T) {
 	client := fixtureClient()
 	preparation := application.ManagedRunPreparation{
 		ExternalRunRef: "task-prepare-cli", RegistrationNonce: "registration-nonce_cli",
-		ExpiresAt: time.Date(2026, time.August, 9, 21, 0, 0, 0, time.UTC),
+		ExpiresAt: time.Date(2026, time.August, 9, 21, 0, 0, 0, time.UTC), State: application.PreparationOpen,
 	}
 	client.prepared = localapi.PrepareTaskResult{
 		SchemaVersion: 1, OperationID: "operation-prepare-cli", TaskHandle: "task-prepare-cli",

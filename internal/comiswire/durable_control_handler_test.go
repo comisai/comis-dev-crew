@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,27 +57,28 @@ func TestDurableControlHandler_ActivationReplaysAcrossRestartAndRejectsAlteratio
 func TestDurableControlHandler_ActivationValidatesPrivateJoinAndLeaseInvariant(t *testing.T) {
 	tests := []struct {
 		name   string
+		id     string
 		mutate func(*durableControlHarness, *comiswire.ActivateRequestParams)
 		kind   comiswire.ErrorKind
 	}{
-		{name: "nonce", mutate: func(_ *durableControlHarness, params *comiswire.ActivateRequestParams) {
+		{name: "nonce", id: "nonce", mutate: func(_ *durableControlHarness, params *comiswire.ActivateRequestParams) {
 			params.RegistrationNonce = "registration-nonce-wrong"
 		}, kind: comiswire.ErrorKindPreconditionFailed},
-		{name: "expired", mutate: func(harness *durableControlHarness, _ *comiswire.ActivateRequestParams) {
+		{name: "expired", id: "expired", mutate: func(harness *durableControlHarness, _ *comiswire.ActivateRequestParams) {
 			harness.now = harness.now.Add(2 * time.Hour)
 		}, kind: comiswire.ErrorKindPreconditionFailed},
-		{name: "missing workspace lease", mutate: func(_ *durableControlHarness, params *comiswire.ActivateRequestParams) {
+		{name: "missing workspace lease", id: "missing-lease", mutate: func(_ *durableControlHarness, params *comiswire.ActivateRequestParams) {
 			params.WorkspaceLeaseID = nil
 		}, kind: comiswire.ErrorKindInvalidParams},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			harness := newDurableControlHarness(t, "task-"+test.name)
-			prepared := harness.prepare(t, "operation-prepare-"+test.name)
-			lease := comiswire.WorkspaceLeaseID("workspace-lease-" + test.name)
+			harness := newDurableControlHarness(t, "task-"+test.id)
+			prepared := harness.prepare(t, "operation-prepare-"+test.id)
+			lease := comiswire.WorkspaceLeaseID("workspace-lease-" + test.id)
 			params := comiswire.ActivateRequestParams{
-				OperationID:       comiswire.OperationID("operation-activate-" + test.name),
-				ManagedRunID:      comiswire.ManagedRunID("managed-run-" + test.name),
+				OperationID:       comiswire.OperationID("operation-activate-" + test.id),
+				ManagedRunID:      comiswire.ManagedRunID("managed-run-" + test.id),
 				ExternalRunRef:    comiswire.ExternalRunRef(prepared.ExternalRunRef),
 				RegistrationNonce: comiswire.RegistrationNonce(prepared.RegistrationNonce),
 				WorkspaceLeaseID:  &lease,
@@ -102,11 +104,12 @@ func TestDurableControlHandler_AbandonDispositionIsDurableAndClosed(t *testing.T
 		{disposition: comiswire.AbandonDispositionReapSafe, wantState: domain.TaskCancelled},
 	} {
 		t.Run(string(test.disposition), func(t *testing.T) {
-			harness := newDurableControlHarness(t, "task-abandon-"+string(test.disposition))
-			prepared := harness.prepare(t, "operation-prepare-"+string(test.disposition))
+			id := strings.ReplaceAll(string(test.disposition), "_", "-")
+			harness := newDurableControlHarness(t, "task-abandon-"+id)
+			prepared := harness.prepare(t, "operation-prepare-"+id)
 			harness.now = harness.now.Add(time.Minute)
 			params := comiswire.AbandonRequestParams{
-				OperationID:       comiswire.OperationID("operation-abandon-" + string(test.disposition)),
+				OperationID:       comiswire.OperationID("operation-abandon-" + id),
 				ExternalRunRef:    comiswire.ExternalRunRef(prepared.ExternalRunRef),
 				RegistrationNonce: comiswire.RegistrationNonce(prepared.RegistrationNonce),
 				Reason:            comiswire.AbandonReasonOwnerCancelled, Disposition: test.disposition,
@@ -146,7 +149,7 @@ func TestDurableControlHandler_AbandonDispositionIsDurableAndClosed(t *testing.T
 
 			lease := comiswire.WorkspaceLeaseID("workspace-lease-after-abandon")
 			_, activateErr := harness.handler.Activate(context.Background(), comiswire.ActivateRequestParams{
-				OperationID:  comiswire.OperationID("operation-activate-after-" + string(test.disposition)),
+				OperationID:  comiswire.OperationID("operation-activate-after-" + id),
 				ManagedRunID: "managed-run-after-abandon", ExternalRunRef: params.ExternalRunRef,
 				RegistrationNonce: params.RegistrationNonce, WorkspaceLeaseID: &lease,
 			})

@@ -126,7 +126,7 @@ func (task Task) Validate() error {
 	if !task.State.valid() {
 		return &ValidationError{Field: "state", Reason: "must be a known E0 task state"}
 	}
-	if task.State != TaskPrepared && task.State != TaskReconciling && task.State != TaskUnknown && !hasRun {
+	if !task.State.allowsUnboundPreparation() && !hasRun {
 		return &ValidationError{Field: "binding", Reason: "active and terminal task states require exact host binding"}
 	}
 	if !task.Shape.valid() {
@@ -170,4 +170,13 @@ func (task Task) Validate() error {
 		return &ValidationError{Field: "stateVersion", Reason: "must be positive"}
 	}
 	return validateTimes(task.CreatedAt, task.UpdatedAt)
+}
+
+func (state TaskState) allowsUnboundPreparation() bool {
+	switch state {
+	case TaskPrepared, TaskReconciling, TaskUnknown, TaskCancelled, TaskCleanupHeld, TaskCleaned:
+		return true
+	default:
+		return false
+	}
 }

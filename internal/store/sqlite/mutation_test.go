@@ -57,28 +57,31 @@ func TestMutations_PrepareAndBindReplayAcrossRestartWithoutDuplicateTask(t *test
 		t.Fatalf("PrepareTask(altered replay) error = %v, want ErrConflict", err)
 	}
 
-	bound, err := replayedMutations.AcknowledgeBinding(context.Background(), application.AcknowledgeBindingCommand{
-		OperationID: "op-bind-0001", TaskHandle: prepared.Task.Handle,
+	bound, err := replayedMutations.ActivateManagedRun(context.Background(), application.ActivateManagedRunCommand{
+		OperationID: "op-bind-0001", ServiceInstanceID: prepared.Task.ServiceInstanceID,
+		ExternalRunRef: prepared.Task.Handle, RegistrationNonce: prepared.Preparation.RegistrationNonce,
 		ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001",
 	})
 	if err != nil {
-		t.Fatalf("AcknowledgeBinding() error = %v", err)
+		t.Fatalf("ActivateManagedRun() error = %v", err)
 	}
 	if bound.Task.State != domain.TaskReady || bound.Task.StateVersion != 2 || bound.Operation.StateVersion != 2 {
 		t.Fatalf("bound result = %#v, want atomic ready state version 2", bound)
 	}
-	boundReplay, err := replayedMutations.AcknowledgeBinding(context.Background(), application.AcknowledgeBindingCommand{
-		OperationID: "op-bind-0001", TaskHandle: prepared.Task.Handle,
+	boundReplay, err := replayedMutations.ActivateManagedRun(context.Background(), application.ActivateManagedRunCommand{
+		OperationID: "op-bind-0001", ServiceInstanceID: prepared.Task.ServiceInstanceID,
+		ExternalRunRef: prepared.Task.Handle, RegistrationNonce: prepared.Preparation.RegistrationNonce,
 		ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001",
 	})
 	if err != nil || boundReplay.Task.StateVersion != 2 {
 		t.Fatalf("binding replay = %#v, %v, want original version 2", boundReplay, err)
 	}
-	if _, err := replayedMutations.AcknowledgeBinding(context.Background(), application.AcknowledgeBindingCommand{
-		OperationID: "op-bind-0001", TaskHandle: prepared.Task.Handle,
+	if _, err := replayedMutations.ActivateManagedRun(context.Background(), application.ActivateManagedRunCommand{
+		OperationID: "op-bind-0001", ServiceInstanceID: prepared.Task.ServiceInstanceID,
+		ExternalRunRef: prepared.Task.Handle, RegistrationNonce: prepared.Preparation.RegistrationNonce,
 		ManagedRunID: "managed-run-altered", WorkspaceLeaseID: "workspace-lease-0001",
 	}); !errors.Is(err, application.ErrConflict) {
-		t.Fatalf("AcknowledgeBinding(altered replay) error = %v, want ErrConflict", err)
+		t.Fatalf("ActivateManagedRun(altered replay) error = %v, want ErrConflict", err)
 	}
 
 	tasks, err := reopened.ListTasks(context.Background())
@@ -158,7 +161,8 @@ func TestMutationStore_DirectReplayAndInvalidMutationsFailClosed(t *testing.T) {
 		Task: storeTask("task-direct-0001", 1), OperationID: "op-direct-prepare-0001",
 		Preparation: application.ManagedRunPreparation{
 			ExternalRunRef: "task-direct-0001", RegistrationNonce: "registration-nonce_direct",
-			ExpiresAt: preparedAt.Add(time.Hour),
+			RequestedWorkspaceRoot: "/approved/workspaces/task-direct-0001",
+			ExpiresAt:              preparedAt.Add(time.Hour), State: application.PreparationOpen,
 		},
 		SubjectDigest: strings.Repeat("a", 64), At: preparedAt,
 	}
@@ -210,35 +214,37 @@ func TestMutationStore_DirectReplayAndInvalidMutationsFailClosed(t *testing.T) {
 		t.Fatalf("GetTask(rolled back invalid outcome) error = %v, want ErrNotFound", err)
 	}
 
-	missingBinding := application.TaskBindingMutation{
-		TaskHandle: "task-missing", Binding: domain.TaskBinding{ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001"},
-		OperationID: "op-bind-missing", SubjectDigest: strings.Repeat("d", 64), At: preparedAt.Add(time.Minute),
+	missingBinding := application.ManagedRunActivationMutation{
+		ServiceInstanceID: "service-instance-0001", ExternalRunRef: "task-missing",
+		RegistrationNonce: "registration-nonce_direct",
+		Binding:           domain.TaskBinding{ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001"},
+		OperationID:       "op-bind-missing", SubjectDigest: strings.Repeat("d", 64), At: preparedAt.Add(time.Minute),
 	}
-	if _, err := store.CommitTaskBinding(ctx, missingBinding); !errors.Is(err, application.ErrNotFound) {
-		t.Fatalf("CommitTaskBinding(missing) error = %v, want ErrNotFound", err)
+	if _, err := store.CommitManagedRunActivation(ctx, missingBinding); !errors.Is(err, application.ErrNotFound) {
+		t.Fatalf("CommitManagedRunActivation(missing) error = %v, want ErrNotFound", err)
 	}
 	invalidBinding := missingBinding
-	invalidBinding.TaskHandle = prepared.Task.Handle
+	invalidBinding.ExternalRunRef = prepared.Task.Handle
 	invalidBinding.OperationID = "op-bind-invalid"
 	invalidBinding.Binding.WorkspaceLeaseID = ""
-	if _, err := store.CommitTaskBinding(ctx, invalidBinding); err == nil {
-		t.Fatal("CommitTaskBinding(invalid) error = nil")
+	if _, err := store.CommitManagedRunActivation(ctx, invalidBinding); err == nil {
+		t.Fatal("CommitManagedRunActivation(invalid) error = nil")
 	}
 	binding := missingBinding
-	binding.TaskHandle = prepared.Task.Handle
+	binding.ExternalRunRef = prepared.Task.Handle
 	binding.OperationID = "op-direct-bind-0001"
-	bound, err := store.CommitTaskBinding(ctx, binding)
+	bound, err := store.CommitManagedRunActivation(ctx, binding)
 	if err != nil {
-		t.Fatalf("CommitTaskBinding() error = %v", err)
+		t.Fatalf("CommitManagedRunActivation() error = %v", err)
 	}
-	boundReplay, err := store.CommitTaskBinding(ctx, binding)
+	boundReplay, err := store.CommitManagedRunActivation(ctx, binding)
 	if err != nil || !reflect.DeepEqual(boundReplay, bound) {
-		t.Fatalf("CommitTaskBinding(replay) = %#v, %v, want %#v", boundReplay, err, bound)
+		t.Fatalf("CommitManagedRunActivation(replay) = %#v, %v, want %#v", boundReplay, err, bound)
 	}
 	alteredBinding := binding
 	alteredBinding.SubjectDigest = strings.Repeat("e", 64)
-	if _, err := store.CommitTaskBinding(ctx, alteredBinding); !errors.Is(err, application.ErrConflict) {
-		t.Fatalf("CommitTaskBinding(altered replay) error = %v, want ErrConflict", err)
+	if _, err := store.CommitManagedRunActivation(ctx, alteredBinding); !errors.Is(err, application.ErrConflict) {
+		t.Fatalf("CommitManagedRunActivation(altered replay) error = %v, want ErrConflict", err)
 	}
 }
 
@@ -326,7 +332,7 @@ func TestMutationStore_RejectsExhaustedVersionAndClosedDatabase(t *testing.T) {
 		Task: storeTask("task-exhausted", 1), OperationID: "op-after-exhaustion",
 		Preparation: application.ManagedRunPreparation{
 			ExternalRunRef: "task-exhausted", RegistrationNonce: "registration-nonce_exhausted",
-			ExpiresAt: now.Add(time.Hour),
+			ExpiresAt: now.Add(time.Hour), State: application.PreparationOpen,
 		},
 		SubjectDigest: strings.Repeat("a", 64), At: now,
 	}
@@ -343,12 +349,14 @@ func TestMutationStore_RejectsExhaustedVersionAndClosedDatabase(t *testing.T) {
 	if _, err := store.CommitPreparedTask(context.Background(), prepared); err == nil {
 		t.Fatal("CommitPreparedTask(closed) error = nil")
 	}
-	binding := application.TaskBindingMutation{
-		TaskHandle: prepared.Task.Handle, Binding: domain.TaskBinding{ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001"},
-		OperationID: "op-bind-closed", SubjectDigest: strings.Repeat("b", 64), At: now,
+	binding := application.ManagedRunActivationMutation{
+		ServiceInstanceID: prepared.Task.ServiceInstanceID, ExternalRunRef: prepared.Task.Handle,
+		RegistrationNonce: prepared.Preparation.RegistrationNonce,
+		Binding:           domain.TaskBinding{ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001"},
+		OperationID:       "op-bind-closed", SubjectDigest: strings.Repeat("b", 64), At: now,
 	}
-	if _, err := store.CommitTaskBinding(context.Background(), binding); err == nil {
-		t.Fatal("CommitTaskBinding(closed) error = nil")
+	if _, err := store.CommitManagedRunActivation(context.Background(), binding); err == nil {
+		t.Fatal("CommitManagedRunActivation(closed) error = nil")
 	}
 }
 
@@ -463,8 +471,9 @@ func sqliteMutations(t *testing.T, store *Store, ids *sequenceIDs, now time.Time
 	t.Helper()
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: configuredCatalog{}, TaskIDs: ids.next,
-		RegistrationNonces: func() (string, error) { return "registration-nonce_0001", nil },
-		PreparationTTL:     time.Hour, Clock: func() time.Time { return now },
+		RegistrationNonces:     func() (string, error) { return "registration-nonce_0001", nil },
+		RequestedWorkspaceRoot: "/approved/workspaces/task-fixture",
+		PreparationTTL:         time.Hour, Clock: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatalf("NewMutations() error = %v", err)

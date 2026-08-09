@@ -52,6 +52,11 @@ func preparationMetadata(operationID string, prepared localapi.PrepareTaskResult
 		RegistrationNonce: comiswire.RegistrationNonce(prepared.ManagedRun.RegistrationNonce),
 		ExpiresAt:         prepared.ManagedRun.ExpiresAt.Format(time.RFC3339Nano),
 	}
+	if prepared.ManagedRun.RequestedWorkspaceRoot != "" {
+		extension.RequestedWorkspace = &comiswire.MCPManagedRunResultRequestedWorkspace{
+			RootHint: prepared.ManagedRun.RequestedWorkspaceRoot,
+		}
+	}
 	encoded, err := json.Marshal(extension)
 	if err != nil || comiswire.ValidatePayload(comiswire.PayloadMCPManagedRunResult, encoded) != nil {
 		return nil, internalResultFailure()

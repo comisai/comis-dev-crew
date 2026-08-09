@@ -42,7 +42,7 @@ func TestFacade_OfficialSDKCatalogAndPrivatePreparation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, private := range []string{"managedRun", "registration-nonce_private", "expiresAt"} {
+	for _, private := range []string{"managedRun", "registration-nonce_private", "expiresAt", "/approved/workspaces/task-0001"} {
 		if strings.Contains(string(visible), private) {
 			t.Fatalf("visible result leaked %q: %s", private, visible)
 		}
@@ -57,6 +57,11 @@ func TestFacade_OfficialSDKCatalogAndPrivatePreparation(t *testing.T) {
 	encodedExtension, err := json.Marshal(extension)
 	if err != nil || comiswire.ValidatePayload(comiswire.PayloadMCPManagedRunResult, encodedExtension) != nil {
 		t.Fatalf("managed-run extension = %s, %v", encodedExtension, err)
+	}
+	var prepared comiswire.MCPManagedRunResult
+	if err := json.Unmarshal(encodedExtension, &prepared); err != nil || prepared.RequestedWorkspace == nil ||
+		prepared.RequestedWorkspace.RootHint != "/approved/workspaces/task-0001" {
+		t.Fatalf("managed-run requested workspace = %#v, %v", prepared.RequestedWorkspace, err)
 	}
 	if got := strings.Join(client.calls, ","); got != "prepare:prepare-0001" {
 		t.Fatalf("local calls = %q, want one canonical prepare", got)
@@ -230,7 +235,8 @@ func preparedResult() localapi.PrepareTaskResult {
 		State: domain.TaskPrepared, StateVersion: 7, SideEffect: localapi.SideEffectMutate,
 		ManagedRun: application.ManagedRunPreparation{
 			ExternalRunRef: "task-0001", RegistrationNonce: "registration-nonce_private",
-			ExpiresAt: time.Date(2026, time.August, 10, 0, 0, 0, 0, time.UTC),
+			RequestedWorkspaceRoot: "/approved/workspaces/task-0001",
+			ExpiresAt:              time.Date(2026, time.August, 10, 0, 0, 0, 0, time.UTC), State: application.PreparationOpen,
 		},
 	}
 }
