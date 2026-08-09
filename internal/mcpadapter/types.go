@@ -1,0 +1,89 @@
+// Package mcpadapter implements the stateless official-SDK MCP facade.
+package mcpadapter
+
+import (
+	"context"
+	"time"
+
+	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
+	"github.com/comisai/comis-dev-crew/internal/localapi"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+const (
+	ToolPrepareTask = "prepare_task"
+	ToolListTasks   = "list_tasks"
+	ToolGetTask     = "get_task"
+	ToolExplainTask = "explain_task"
+
+	CallContextMetaKey      = "comis.callContext"
+	ManagedRunResultMetaKey = "comis.managedRun"
+)
+
+// Client is the sole canonical local-service surface used by the facade.
+type Client interface {
+	PrepareTask(context.Context, string, localapi.PrepareTaskInput) (localapi.PrepareTaskResult, error)
+	ListTasks(context.Context, string) (application.TaskList, error)
+	ShowTask(context.Context, string, string) (application.TaskDetail, error)
+	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
+	Operation(context.Context, string, string) (application.OperationView, error)
+}
+
+// Config injects the local client and bounded reconciliation dependencies.
+type Config struct {
+	Client            Client
+	ServiceInstanceID string
+	Version           string
+	NewOperationID    func() (string, error)
+	ReconcileTimeout  time.Duration
+}
+
+// EmptyInput is the closed argument object for list_tasks.
+type EmptyInput struct{}
+
+// TaskInput selects one service-owned opaque task reference.
+type TaskInput struct {
+	TaskHandle string `json:"taskHandle" jsonschema:"opaque task handle"`
+}
+
+// PrepareTaskInput is the public model-visible task contract.
+type PrepareTaskInput struct {
+	Shape              domain.TaskShape    `json:"shape"`
+	RepositoryID       string              `json:"repositoryId"`
+	BaseRevision       string              `json:"baseRevision"`
+	AcceptanceCriteria []string            `json:"acceptanceCriteria"`
+	Constraints        []string            `json:"constraints"`
+	ValidationProfile  string              `json:"validationProfile"`
+	DeliveryMode       domain.DeliveryMode `json:"deliveryMode"`
+	WorkerProfileID    string              `json:"workerProfileId"`
+}
+
+func (input PrepareTaskInput) local() localapi.PrepareTaskInput {
+	return localapi.PrepareTaskInput{
+		Shape: input.Shape, RepositoryID: input.RepositoryID, BaseRevision: input.BaseRevision,
+		AcceptanceCriteria: append([]string(nil), input.AcceptanceCriteria...),
+		Constraints:        append([]string(nil), input.Constraints...),
+		ValidationProfile:  input.ValidationProfile, DeliveryMode: input.DeliveryMode,
+		WorkerProfileID: input.WorkerProfileID,
+	}
+}
+
+// PrepareTaskOutput is deliberately free of private Comis registration data.
+type PrepareTaskOutput struct {
+	SchemaVersion int                      `json:"schemaVersion"`
+	OperationID   string                   `json:"operationId"`
+	TaskHandle    string                   `json:"taskHandle"`
+	State         domain.TaskState         `json:"state"`
+	StateVersion  int64                    `json:"stateVersion"`
+	SideEffect    localapi.SideEffectClass `json:"sideEffect"`
+}
+
+// Facade owns no durable state; it binds typed handlers to one SDK server.
+type Facade struct {
+	client            Client
+	serviceInstanceID string
+	newOperationID    func() (string, error)
+	reconcileTimeout  time.Duration
+	server            *mcp.Server
+}

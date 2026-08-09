@@ -162,7 +162,9 @@ func TestFacade_UncertainPreparationReconcilesBeforeOneExactRetry(t *testing.T) 
 		t.Fatal(err)
 	}
 	request := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Meta: callMeta("prepare-0001", "service-instance-0001")}}
-	result, output, err := facade.prepareTask(context.Background(), request, prepareInput())
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	result, output, err := facade.prepareTask(canceled, request, prepareInput())
 	if err != nil || result == nil || output.TaskHandle != "task-0001" {
 		t.Fatalf("prepareTask() = %#v, %#v, %v", result, output, err)
 	}
@@ -228,7 +230,7 @@ func preparedResult() localapi.PrepareTaskResult {
 		State: domain.TaskPrepared, StateVersion: 7, SideEffect: localapi.SideEffectMutate,
 		ManagedRun: application.ManagedRunPreparation{
 			ExternalRunRef: "task-0001", RegistrationNonce: "registration-nonce_private",
-			ExpiresAt: time.Date(2026, time.August, 10, 0, 0, 0, time.UTC),
+			ExpiresAt: time.Date(2026, time.August, 10, 0, 0, 0, 0, time.UTC),
 		},
 	}
 }
@@ -238,6 +240,7 @@ type fakeClient struct {
 	prepareResults []localapi.PrepareTaskResult
 	prepareErrors  []error
 	operation      application.OperationView
+	operationError error
 }
 
 func (client *fakeClient) PrepareTask(_ context.Context, operationID string, _ localapi.PrepareTaskInput) (localapi.PrepareTaskResult, error) {
@@ -274,5 +277,5 @@ func (client *fakeClient) ExplainTask(_ context.Context, operationID, taskHandle
 
 func (client *fakeClient) Operation(_ context.Context, operationID, target string) (application.OperationView, error) {
 	client.calls = append(client.calls, "operation:"+operationID+":"+target)
-	return client.operation, nil
+	return client.operation, client.operationError
 }

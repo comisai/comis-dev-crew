@@ -8,6 +8,7 @@
     "internal/service",
     "internal/store/sqlite",
     "internal/localapi",
+    "internal/mcpadapter",
     "internal/git",
     "internal/reporter",
     "internal/workers",

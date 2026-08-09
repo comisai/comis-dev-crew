@@ -60,6 +60,14 @@ endpoint while retaining a separate operator endpoint, and both servers cancel a
 The installed service command still lacks repository and identity-source configuration, so its
 default runtime remains read-only even though the CLI preparation adapter is present.
 
+The stateless MCP adapter now uses the exact-pinned official Go SDK and defines only four tools:
+`prepare_task`, `list_tasks`, `get_task`, and `explain_task`. Every call must carry a generated-schema
+valid `comis.callContext`; the configured service identity must match, while optional managed-run
+references grant no task authority. Preparation returns its visible task outcome separately from
+the private schema-validated `comis.managedRun` result metadata. Only retryable uncertain mutations
+trigger one bounded operation reconciliation and, after a completed durable outcome, one exact
+idempotent replay. The `devcrew-mcp` executable is still a scaffold pending stdio composition.
+
 The repository registry resolves only operator-configured opaque IDs. It validates canonical
 primary checkouts and dedicated worktree roots beneath approved roots, pins the primary Git
 common-directory filesystem identity, and accepts a task worktree only when a real Git query
@@ -91,7 +99,7 @@ binding ratification record.
 
 - `devcrew-service` — long-lived store and local read-API authority
 - `devcrew` — operator control console over the typed local client
-- `devcrew-mcp` — thin MCP facade composition root (scaffold only)
+- `devcrew-mcp` — thin MCP facade composition root (stdio composition pending)
 - `devcrew-report` — restricted worker reporter composition root (scaffold only)
 
 All four commands support `--help` and `--version`. Build them with `make build`.
@@ -131,7 +139,8 @@ unknown authority fields, and uses either the explicit stable operation ID or on
 request ID. Service-side mutation composition requires an explicit repository catalog, task and
 registration identity sources, service instance, expiry, and dedicated MCP socket. Until those are
 configured by the production command, the current service reports the mutation as unavailable
-rather than opening an alternate writer.
+rather than opening an alternate writer. The SDK facade package is implemented and tested over its
+official in-memory transport; the command root does not start it yet.
 
 ## Development
 
