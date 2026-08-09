@@ -357,6 +357,33 @@ func TestRun_ControlFailureCancelsAndJoinsLocalEndpoint(t *testing.T) {
 	}
 }
 
+func TestRun_UnexpectedCleanControlStopFailsClosed(t *testing.T) {
+	root := shortTempDir(t)
+	control := &serviceComisControl{
+		reports: make(chan comiswire.ReportRequestParams, 1), failRun: make(chan error, 1),
+	}
+	ready := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(context.Background(), Config{
+			DatabasePath: filepath.Join(root, "state", "devcrew.db"),
+			SocketPath:   filepath.Join(root, "run", "devcrew.sock"),
+			ComisControl: control, Clock: serviceForwarderClock, Ready: func() { close(ready) },
+		})
+	}()
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("Run() before ready error = %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() did not advertise ready")
+	}
+	control.failRun <- nil
+	if err := <-done; err == nil {
+		t.Fatal("Run(clean control stop) error = nil")
+	}
+}
+
 func seedServiceReports(t *testing.T, databasePath string) {
 	t.Helper()
 	store, err := sqlite.Open(context.Background(), databasePath)

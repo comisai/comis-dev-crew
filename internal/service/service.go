@@ -8,9 +8,23 @@ import (
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/comiswire"
 	"github.com/comisai/comis-dev-crew/internal/localapi"
 	"github.com/comisai/comis-dev-crew/internal/store/sqlite"
 )
+
+const (
+	comisReportPollInterval   = 250 * time.Millisecond
+	comisReportMinimumBackoff = 100 * time.Millisecond
+	comisReportMaximumBackoff = 5 * time.Second
+)
+
+// ComisControl is the single persistent authenticated connection supervised
+// by the service. The concrete control adapter also carries durable reports.
+type ComisControl interface {
+	comiswire.ReportSender
+	Run(context.Context) error
+}
 
 // Config identifies the service-owned database and operator endpoint.
 type Config struct {
@@ -23,6 +37,7 @@ type Config struct {
 	RegistrationNonces application.RegistrationNonceSource
 	PreparationTTL     time.Duration
 	Clock              application.Clock
+	ComisControl       ComisControl
 	Ready              func()
 }
 
@@ -89,10 +104,21 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		defer func() { resultErr = errors.Join(resultErr, mcpServer.Close()) }()
 		servers = append(servers, mcpServer)
 	}
-	if config.Ready != nil {
-		config.Ready()
+	if config.ComisControl == nil {
+		if config.Ready != nil {
+			config.Ready()
+		}
+		return serveLocalEndpoints(ctx, servers)
 	}
-	return serveLocalEndpoints(ctx, servers)
+	forwarder, err := comiswire.NewReportForwarder(comiswire.ReportForwarderConfig{
+		Outbox: store, Sender: config.ComisControl, Clock: clock,
+		PollInterval: comisReportPollInterval, MinimumBackoff: comisReportMinimumBackoff,
+		MaximumBackoff: comisReportMaximumBackoff,
+	})
+	if err != nil {
+		return fmt.Errorf("run service Comis report forwarder: %w", err)
+	}
+	return serveComisComponents(ctx, servers, config.ComisControl, forwarder, config.Ready)
 }
 
 func composeMutations(config Config, store *sqlite.Store, clock application.Clock) (*application.Mutations, error) {
@@ -132,6 +158,43 @@ func serveLocalEndpoints(ctx context.Context, servers []*localapi.Server) error 
 	for range servers {
 		err := <-results
 		resultErr = errors.Join(resultErr, err)
+		cancel()
+		for _, server := range servers {
+			resultErr = errors.Join(resultErr, server.Close())
+		}
+	}
+	return resultErr
+}
+
+func serveComisComponents(
+	ctx context.Context,
+	servers []*localapi.Server,
+	control ComisControl,
+	forwarder *comiswire.ReportForwarder,
+	ready func(),
+) error {
+	runContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	components := []func(context.Context) error{
+		func(componentContext context.Context) error { return serveLocalEndpoints(componentContext, servers) },
+		control.Run,
+		forwarder.Run,
+	}
+	results := make(chan error, len(components))
+	for _, component := range components {
+		go func(run func(context.Context) error) { results <- run(runContext) }(component)
+	}
+	if ready != nil {
+		ready()
+	}
+	var resultErr error
+	for range components {
+		err := <-results
+		if err == nil && ctx.Err() == nil && runContext.Err() == nil {
+			resultErr = errors.Join(resultErr, errors.New("service component stopped unexpectedly"))
+		} else if err != nil && !(errors.Is(err, context.Canceled) && runContext.Err() != nil) {
+			resultErr = errors.Join(resultErr, err)
+		}
 		cancel()
 		for _, server := range servers {
 			resultErr = errors.Join(resultErr, server.Close())

@@ -33,7 +33,9 @@ fields, excess concurrency, and forged run references fail before handler author
 does not retry an uncertain report itself. A separate stateless forwarder polls the durable outbox,
 maps the closed worker vocabulary to the pinned Comis report vocabulary, and retries uncertain
 outcomes with the same operation and service-report identities until it can durably record an exact
-host acknowledgement. The connection and forwarder are not yet wired into `devcrew-service`.
+host acknowledgement. The service lifecycle can now supervise exactly one supplied control
+connection and that forwarder alongside both local endpoints, cancelling and joining all of them
+if any component fails. The installed command does not yet configure the control connection.
 
 Task records persist bounded acceptance criteria and constraints with the exact brief revision
 hash. Any changed contract field invalidates the pin, and incomplete lifecycle reconciliation
@@ -92,8 +94,9 @@ Comis delivery identity at the same global state version. Pending deliveries sur
 remain eligible for exact-identity resend until the store records the host's matching sequence and
 retention acknowledgement. Identical task/report IDs replay the original receipt across restart;
 altered payloads, acknowledgements, and ambiguous decision keys fail closed. The control-socket
-forwarder is implemented as an independently supervised adapter; production service composition
-and Unix-socket reporter transport are still pending.
+forwarder is implemented as an independently supervised adapter and participates in the service
+lifecycle when a control connection is supplied; installed control configuration and Unix-socket
+reporter transport are still pending.
 
 The deterministic fixture worker runs synchronously from a verified brief, emits authenticated
 progress, requests exactly one keyed decision, records its resolution, and ends by reporting only
