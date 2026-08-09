@@ -16,6 +16,9 @@ func TestUnder_DerivesSharedServiceAndCLIPaths(t *testing.T) {
 	if paths.Socket != filepath.Join(string(filepath.Separator), "private", "config", "comis-dev-crew", "run", "devcrew.sock") {
 		t.Fatalf("socket path = %q", paths.Socket)
 	}
+	if paths.MCPSocket != filepath.Join(string(filepath.Separator), "private", "config", "comis-dev-crew", "run", "mcp.sock") {
+		t.Fatalf("MCP socket path = %q", paths.MCPSocket)
+	}
 	nonCanonical := string(filepath.Separator) + "private" + string(filepath.Separator) + "nested" + string(filepath.Separator) + ".." + string(filepath.Separator) + "config"
 	for _, root := range []string{"", "relative", nonCanonical} {
 		if _, err := Under(root); err == nil {
