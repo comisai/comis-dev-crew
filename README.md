@@ -90,12 +90,14 @@ restart; altered payloads and ambiguous decision keys fail closed. Unix-socket r
 is still pending.
 
 The deterministic fixture worker runs synchronously from a verified brief, emits authenticated
-progress, requests exactly one keyed decision, records its resolution, and supports explicit
-fault stops before or after each durable-report boundary. The restart matrix independently cancels
+progress, requests exactly one keyed decision, records its resolution, and ends by reporting only
+a validation candidate. It supports explicit fault stops before or after each durable-report
+boundary. The restart matrix independently cancels
 the service and requesting context before and after prepare, binding acknowledgement, and report
 acceptance. Stable identities replay one logical effect; an interrupted runtime becomes `unknown`
 without relaunch or false success. The fixture launches no subprocess and exists to prove these
-properties before the first real coding-worker adapter.
+properties before the first real coding-worker adapter. Candidate completion advances only to
+`validating`; it never claims validation, delivery, or terminal success.
 
 The design authority lives in the private `comisai/planning` repository
 (`comis-companion-ecosystem/`), including the implementation design, the common

@@ -28,11 +28,12 @@ const (
 	FaultAfterProgress   FaultPoint = "after_progress"
 	FaultAfterDecision   FaultPoint = "after_decision"
 	FaultAfterResolution FaultPoint = "after_resolution"
+	FaultAfterCandidate  FaultPoint = "after_candidate"
 )
 
 func (point FaultPoint) valid() bool {
 	switch point {
-	case FaultNone, FaultBeforeProgress, FaultAfterProgress, FaultAfterDecision, FaultAfterResolution:
+	case FaultNone, FaultBeforeProgress, FaultAfterProgress, FaultAfterDecision, FaultAfterResolution, FaultAfterCandidate:
 		return true
 	default:
 		return false
@@ -86,7 +87,7 @@ func NewFixture(config FixtureConfig) (*Fixture, error) {
 	if config.Reporter == nil || config.Decisions == nil || config.Clock == nil {
 		return nil, errors.New("create fixture worker: reporter, decisions, and clock are required")
 	}
-	for _, suffix := range []string{"progress", "decision", "resolution"} {
+	for _, suffix := range []string{"progress", "decision", "resolution", "candidate"} {
 		if err := domain.ValidateLocalReportID(config.ReportIDPrefix + "-" + suffix); err != nil {
 			return nil, errors.New("create fixture worker: report ID prefix is invalid")
 		}
@@ -104,8 +105,8 @@ func NewFixture(config FixtureConfig) (*Fixture, error) {
 	}, nil
 }
 
-// Run emits the canonical progress/decision/resolution sequence and exits at
-// the selected deterministic boundary.
+// Run emits the canonical progress/decision/resolution/candidate sequence and
+// exits at the selected deterministic boundary without making a delivery claim.
 func (fixture *Fixture) Run(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("run fixture worker: context is required")
@@ -138,7 +139,13 @@ func (fixture *Fixture) Run(ctx context.Context) error {
 	if err := fixture.emit(ctx, domain.ReportResolution, "resolution", "fixture received one decision response", fixture.decisionKey); err != nil {
 		return err
 	}
-	return fixture.stopAt(FaultAfterResolution)
+	if err := fixture.stopAt(FaultAfterResolution); err != nil {
+		return err
+	}
+	if err := fixture.emit(ctx, domain.ReportCandidateComplete, "candidate", "fixture produced a validation candidate", ""); err != nil {
+		return err
+	}
+	return fixture.stopAt(FaultAfterCandidate)
 }
 
 func (fixture *Fixture) emit(ctx context.Context, kind domain.WorkerReportKind, suffix, summary, externalKey string) error {
