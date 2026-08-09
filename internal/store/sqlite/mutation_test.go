@@ -29,6 +29,10 @@ func TestMutations_PrepareAndBindReplayAcrossRestartWithoutDuplicateTask(t *test
 	if prepared.Task.State != domain.TaskPrepared || prepared.Task.StateVersion != 1 || prepared.Operation.StateVersion != 1 {
 		t.Fatalf("prepared result = %#v, want atomic state version 1", prepared)
 	}
+	if prepared.Preparation == nil || prepared.Preparation.ExternalRunRef != prepared.Task.Handle ||
+		prepared.Preparation.RegistrationNonce != "registration-nonce_0001" {
+		t.Fatalf("prepared registration = %#v, want exact durable preparation", prepared.Preparation)
+	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
@@ -43,7 +47,8 @@ func TestMutations_PrepareAndBindReplayAcrossRestartWithoutDuplicateTask(t *test
 	if err != nil {
 		t.Fatalf("PrepareTask(replay) error = %v", err)
 	}
-	if replayed.Task.Handle != prepared.Task.Handle || replayed.Operation != prepared.Operation {
+	if replayed.Task.Handle != prepared.Task.Handle || replayed.Operation != prepared.Operation ||
+		!reflect.DeepEqual(replayed.Preparation, prepared.Preparation) {
 		t.Fatalf("prepare replay = %#v, want original %#v", replayed, prepared)
 	}
 	altered := sqlitePrepareCommand()

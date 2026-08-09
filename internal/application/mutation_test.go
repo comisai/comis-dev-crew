@@ -16,8 +16,10 @@ func TestMutations_PrepareBuildsOnePinnedServiceMintedTask(t *testing.T) {
 	repositories := &repositoryCatalog{}
 	mutations, err := NewMutations(MutationConfig{
 		Store: store, Repositories: repositories,
-		TaskIDs: func() (string, error) { return "task-0001", nil },
-		Clock:   func() time.Time { return clock },
+		TaskIDs:            func() (string, error) { return "task-0001", nil },
+		RegistrationNonces: func() (string, error) { return "registration-nonce_0001", nil },
+		PreparationTTL:     15 * time.Minute,
+		Clock:              func() time.Time { return clock },
 	})
 	if err != nil {
 		t.Fatalf("NewMutations() error = %v", err)
@@ -39,6 +41,11 @@ func TestMutations_PrepareBuildsOnePinnedServiceMintedTask(t *testing.T) {
 	}
 	if mutation.OperationID != command.OperationID || len(mutation.SubjectDigest) != 64 || mutation.At != clock {
 		t.Fatalf("prepared operation = %#v, want stable ID, SHA-256 subject, and injected time", mutation)
+	}
+	if mutation.Preparation.ExternalRunRef != mutation.Task.Handle ||
+		mutation.Preparation.RegistrationNonce != "registration-nonce_0001" ||
+		!mutation.Preparation.ExpiresAt.Equal(clock.Add(15*time.Minute)) {
+		t.Fatalf("managed-run preparation = %#v, want durable exact join", mutation.Preparation)
 	}
 	if repositories.calls != 1 || repositories.repositoryID != command.RepositoryID {
 		t.Fatalf("repository validation calls/id = %d/%q", repositories.calls, repositories.repositoryID)
