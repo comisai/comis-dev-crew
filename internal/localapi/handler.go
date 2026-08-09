@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
@@ -14,19 +15,29 @@ const unknownRequestID = "request-unknown"
 
 // Handler authenticates, validates, and dispatches canonical local requests.
 type Handler struct {
-	queries ReadQueries
-	clock   application.Clock
+	queries           ReadQueries
+	mutations         TaskMutations
+	serviceInstanceID string
+	clock             application.Clock
 }
 
+var localServiceInstancePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._~-]{0,255}$`)
+
 // NewHandler binds the canonical queries and an injected deadline clock.
-func NewHandler(queries ReadQueries, clock application.Clock) (*Handler, error) {
-	if queries == nil {
+func NewHandler(config HandlerConfig) (*Handler, error) {
+	if config.Queries == nil {
 		return nil, errors.New("create local API handler: queries are required")
 	}
-	if clock == nil {
+	if config.Clock == nil {
 		return nil, errors.New("create local API handler: clock is required")
 	}
-	return &Handler{queries: queries, clock: clock}, nil
+	if config.Mutations != nil && !localServiceInstancePattern.MatchString(config.ServiceInstanceID) {
+		return nil, errors.New("create local API handler: service instance identity is required for mutations")
+	}
+	return &Handler{
+		queries: config.Queries, mutations: config.Mutations,
+		serviceInstanceID: config.ServiceInstanceID, clock: config.Clock,
+	}, nil
 }
 
 func (handler *Handler) handle(ctx context.Context, caller CallerClass, data []byte) Outcome {
@@ -99,9 +110,44 @@ func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 		}
 		result, err := handler.queries.Operation(ctx, payload.OperationID)
 		return queryOutcome(request.OperationID, result.StateVersion, result, err)
+	case MethodPrepareTask:
+		var input PrepareTaskInput
+		if err := decodeObject(request.Payload, &input); err != nil {
+			return invalidPayload(request.OperationID, err)
+		}
+		if handler.mutations == nil {
+			return rejectedOutcome(request.OperationID, domain.ErrorUnavailable, true, "mutation service is unavailable", "inspect service configuration", nil)
+		}
+		result, err := handler.mutations.PrepareTask(ctx, application.PrepareTaskCommand{
+			OperationID: request.OperationID, ServiceInstanceID: handler.serviceInstanceID,
+			Shape: input.Shape, RepositoryID: input.RepositoryID, BaseRevision: input.BaseRevision,
+			AcceptanceCriteria: input.AcceptanceCriteria, Constraints: input.Constraints,
+			ValidationProfile: input.ValidationProfile, DeliveryMode: input.DeliveryMode,
+			WorkerProfileID: input.WorkerProfileID,
+		})
+		return handler.prepareOutcome(request.OperationID, result, err)
 	default:
 		return rejectedOutcome(request.OperationID, domain.ErrorInvalidArgument, false, "unknown local API method", "use a method from the closed catalog", nil)
 	}
+}
+
+func (handler *Handler) prepareOutcome(operationID string, mutation application.MutationResult, err error) Outcome {
+	if err != nil {
+		return outcomeFromError(operationID, err)
+	}
+	if mutation.Preparation == nil || mutation.Task.Handle != mutation.Preparation.ExternalRunRef ||
+		mutation.Task.State != domain.TaskPrepared || mutation.Task.StateVersion <= 0 ||
+		mutation.Operation.ID != operationID || mutation.Operation.Status != domain.OperationCompleted ||
+		mutation.Operation.StateVersion != mutation.Task.StateVersion ||
+		mutation.Preparation.Validate(handler.clock()) != nil {
+		return rejectedOutcome(operationID, domain.ErrorInternal, false, "mutation outcome is incomplete", "inspect durable service state", nil)
+	}
+	result := PrepareTaskResult{
+		SchemaVersion: 1, OperationID: operationID, TaskHandle: mutation.Task.Handle,
+		State: mutation.Task.State, StateVersion: mutation.Task.StateVersion,
+		SideEffect: MethodPrepareTask.SideEffect(), ManagedRun: *mutation.Preparation,
+	}
+	return queryOutcome(operationID, result.StateVersion, result, nil)
 }
 
 func methodAllowed(caller CallerClass, method Method) bool {

@@ -37,7 +37,7 @@ func (caller CallerClass) valid() bool {
 	}
 }
 
-// Method is the closed read-only method catalog available before mutation binding.
+// Method is the closed canonical local command and query catalog.
 type Method string
 
 const (
@@ -47,15 +47,33 @@ const (
 	MethodShowTask    Method = "ShowTask"
 	MethodExplainTask Method = "ExplainTask"
 	MethodOperation   Method = "GetOperation"
+	MethodPrepareTask Method = "PrepareTask"
 )
 
 func (method Method) valid() bool {
 	switch method {
-	case MethodDiagnose, MethodFleet, MethodListTasks, MethodShowTask, MethodExplainTask, MethodOperation:
+	case MethodDiagnose, MethodFleet, MethodListTasks, MethodShowTask, MethodExplainTask, MethodOperation, MethodPrepareTask:
 		return true
 	default:
 		return false
 	}
+}
+
+// SideEffectClass is the closed parity classification shared by local clients
+// and adapter metadata.
+type SideEffectClass string
+
+const (
+	SideEffectRead   SideEffectClass = "read"
+	SideEffectMutate SideEffectClass = "mutate"
+)
+
+// SideEffect returns the authoritative method classification.
+func (method Method) SideEffect() SideEffectClass {
+	if method == MethodPrepareTask {
+		return SideEffectMutate
+	}
+	return SideEffectRead
 }
 
 // Request is one strict newline-delimited local service request.
@@ -93,6 +111,44 @@ type ReadQueries interface {
 	ShowTask(context.Context, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string) (application.TaskExplanation, error)
 	Operation(context.Context, string) (application.OperationView, error)
+}
+
+// TaskMutations is the sole canonical mutation surface used by the local API.
+type TaskMutations interface {
+	PrepareTask(context.Context, application.PrepareTaskCommand) (application.MutationResult, error)
+}
+
+// HandlerConfig binds local endpoint authority to canonical application seams.
+type HandlerConfig struct {
+	Queries           ReadQueries
+	Mutations         TaskMutations
+	ServiceInstanceID string
+	Clock             application.Clock
+}
+
+// PrepareTaskInput is the strict public task contract. Service identity and
+// operation identity are derived from the endpoint and request envelope.
+type PrepareTaskInput struct {
+	Shape              domain.TaskShape    `json:"shape"`
+	RepositoryID       string              `json:"repositoryId"`
+	BaseRevision       string              `json:"baseRevision"`
+	AcceptanceCriteria []string            `json:"acceptanceCriteria"`
+	Constraints        []string            `json:"constraints"`
+	ValidationProfile  string              `json:"validationProfile"`
+	DeliveryMode       domain.DeliveryMode `json:"deliveryMode"`
+	WorkerProfileID    string              `json:"workerProfileId"`
+}
+
+// PrepareTaskResult is the stable local mutation projection. ManagedRun stays
+// private when an MCP adapter renders the model-visible result.
+type PrepareTaskResult struct {
+	SchemaVersion int                               `json:"schemaVersion"`
+	OperationID   string                            `json:"operationId"`
+	TaskHandle    string                            `json:"taskHandle"`
+	State         domain.TaskState                  `json:"state"`
+	StateVersion  int64                             `json:"stateVersion"`
+	SideEffect    SideEffectClass                   `json:"sideEffect"`
+	ManagedRun    application.ManagedRunPreparation `json:"managedRun"`
 }
 
 type emptyPayload struct{}

@@ -131,7 +131,7 @@ func TestServer_DeadlineCancelsCanonicalHandler(t *testing.T) {
 }
 
 func TestListen_RejectsUnsafeSocketPathsAndLiveEndpointReplacement(t *testing.T) {
-	handler, err := NewHandler(&apiQueries{}, time.Now)
+	handler, err := NewHandler(HandlerConfig{Queries: &apiQueries{}, Clock: time.Now})
 	if err != nil {
 		t.Fatalf("NewHandler() error = %v", err)
 	}
@@ -208,7 +208,7 @@ func (queries *apiQueries) Operation(context.Context, string) (application.Opera
 
 func startAPIServer(t *testing.T, queries ReadQueries, caller CallerClass, clock application.Clock) (string, func()) {
 	t.Helper()
-	handler, err := NewHandler(queries, clock)
+	handler, err := NewHandler(HandlerConfig{Queries: queries, Clock: clock})
 	if err != nil {
 		t.Fatalf("NewHandler() error = %v", err)
 	}

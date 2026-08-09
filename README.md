@@ -51,6 +51,13 @@ nonce, and bounded UTC expiry needed for the Comis two-phase join; exact replay 
 private registration instead of minting another. A separate durable start command records `ready` to `launching` intent and its
 operation outcome before the deterministic fixture may emit progress or begin work.
 
+The typed local client and strict handler now expose `PrepareTask` as the first canonical mutation.
+Its public payload contains only task-contract fields: the stable operation ID comes from the
+request envelope and the configured service instance comes from endpoint composition. The result
+classifies the operation as `mutate` and carries the private durable registration for the later MCP
+adapter. Production service and CLI composition are still pending, so the installed command surface
+remains read-only at this point.
+
 The repository registry resolves only operator-configured opaque IDs. It validates canonical
 primary checkouts and dedicated worktree roots beneath approved roots, pins the primary Git
 common-directory filesystem identity, and accepts a task worktree only when a real Git query

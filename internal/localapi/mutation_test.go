@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -25,19 +26,19 @@ func (mutations *apiMutations) PrepareTask(_ context.Context, command applicatio
 }
 
 func TestServerClient_PrepareTaskUsesCanonicalMutationAndPrivateRegistration(t *testing.T) {
-	now := time.Date(2026, time.August, 9, 20, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 	preparation := application.ManagedRunPreparation{
 		ExternalRunRef: "task-0001", RegistrationNonce: "registration-nonce_localapi",
 		ExpiresAt: now.Add(time.Hour),
 	}
 	mutations := &apiMutations{result: application.MutationResult{
 		Task:        domain.Task{Handle: "task-0001", State: domain.TaskPrepared, StateVersion: 8},
-		Operation:   domain.OperationRecord{ID: "operation_prepare_local", Status: domain.OperationCompleted, StateVersion: 8},
+		Operation:   domain.OperationRecord{ID: "operation-prepare-local", Status: domain.OperationCompleted, StateVersion: 8},
 		Preparation: &preparation,
 	}}
 	handler, err := NewHandler(HandlerConfig{
 		Queries: &apiQueries{}, Mutations: mutations,
-		ServiceInstanceID: "service-instance_a", Clock: func() time.Time { return now },
+		ServiceInstanceID: "service-instance_a", Clock: time.Now,
 	})
 	if err != nil {
 		t.Fatalf("NewHandler() error = %v", err)
@@ -53,7 +54,7 @@ func TestServerClient_PrepareTaskUsesCanonicalMutationAndPrivateRegistration(t *
 		AcceptanceCriteria: []string{"Return one bounded report."}, Constraints: []string{"Do not deliver."},
 		ValidationProfile: "go-default", DeliveryMode: domain.DeliveryReport, WorkerProfileID: "fixture-worker",
 	}
-	result, err := client.PrepareTask(context.Background(), "operation_prepare_local", input)
+	result, err := client.PrepareTask(context.Background(), "operation-prepare-local", input)
 	if err != nil {
 		t.Fatalf("PrepareTask() error = %v", err)
 	}
@@ -62,7 +63,7 @@ func TestServerClient_PrepareTaskUsesCanonicalMutationAndPrivateRegistration(t *
 		!reflect.DeepEqual(result.ManagedRun, preparation) {
 		t.Fatalf("PrepareTask() = %#v", result)
 	}
-	if mutations.command.OperationID != "operation_prepare_local" ||
+	if mutations.command.OperationID != "operation-prepare-local" ||
 		mutations.command.ServiceInstanceID != "service-instance_a" ||
 		mutations.command.RepositoryID != input.RepositoryID ||
 		mutations.command.Shape != input.Shape {
@@ -80,7 +81,7 @@ func TestPrepareTaskCallerAndPayloadCannotSelectAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := `{"protocolVersion":"devcrew.local.v1","operationId":"operation_prepare_local","method":"PrepareTask","payload":{"shape":"scout","repositoryId":"product-api","baseRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","acceptanceCriteria":["Return one report."],"constraints":[],"validationProfile":"go-default","deliveryMode":"report","workerProfileId":"fixture-worker","serviceInstanceId":"forged-instance"}}`
+	request := `{"protocolVersion":"devcrew.local.v1","operationId":"operation-prepare-local","method":"PrepareTask","payload":{"shape":"scout","repositoryId":"product-api","baseRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","acceptanceCriteria":["Return one report."],"constraints":[],"validationProfile":"go-default","deliveryMode":"report","workerProfileId":"fixture-worker","serviceInstanceId":"forged-instance"}}`
 	for _, caller := range []CallerClass{CallerMCPFacade, CallerWorkerReport, CallerComisControl} {
 		outcome := handler.handle(context.Background(), caller, []byte(request))
 		if outcome.Status != domain.OperationRejected || outcome.Error == nil {
@@ -92,9 +93,44 @@ func TestPrepareTaskCallerAndPayloadCannotSelectAuthority(t *testing.T) {
 	}
 }
 
+func TestPrepareTaskDefensiveConfigurationAndIncompleteOutcome(t *testing.T) {
+	if _, err := NewHandler(HandlerConfig{
+		Queries: &apiQueries{}, Mutations: &apiMutations{},
+		ServiceInstanceID: "bad instance", Clock: time.Now,
+	}); err == nil {
+		t.Fatal("NewHandler(invalid service instance) error = nil")
+	}
+	readOnly, err := NewHandler(HandlerConfig{Queries: &apiQueries{}, Clock: time.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{"protocolVersion":"devcrew.local.v1","operationId":"operation-prepare-local","method":"PrepareTask","payload":{"shape":"scout","repositoryId":"product-api","baseRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","acceptanceCriteria":["Return one report."],"constraints":[],"validationProfile":"go-default","deliveryMode":"report","workerProfileId":"fixture-worker"}}`)
+	if outcome := readOnly.handle(context.Background(), CallerMCPFacade, payload); outcome.Error == nil || outcome.Error.Code != domain.ErrorUnavailable {
+		t.Fatalf("read-only prepare outcome = %#v", outcome)
+	}
+	incomplete, err := NewHandler(HandlerConfig{
+		Queries: &apiQueries{}, Mutations: &apiMutations{result: application.MutationResult{}},
+		ServiceInstanceID: "service-instance_a", Clock: time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome := incomplete.handle(context.Background(), CallerOperatorCLI, payload); outcome.Error == nil || outcome.Error.Code != domain.ErrorInternal {
+		t.Fatalf("incomplete prepare outcome = %#v", outcome)
+	}
+	if MethodListTasks.SideEffect() != SideEffectRead || MethodPrepareTask.SideEffect() != SideEffectMutate {
+		t.Fatal("method side-effect classification drifted")
+	}
+}
+
 func startHandlerServer(t *testing.T, handler *Handler, caller CallerClass) string {
 	t.Helper()
-	socketPath := filepath.Join(canonicalTempDir(t), "runtime", "mutation.sock")
+	directory, err := os.MkdirTemp("/private/tmp", "dc-api-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	socketPath := filepath.Join(directory, "mutation.sock")
 	server, err := Listen(socketPath, caller, handler)
 	if err != nil {
 		t.Fatal(err)

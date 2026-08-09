@@ -54,7 +54,7 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if err != nil {
 		return fmt.Errorf("run service queries: %w", err)
 	}
-	handler, err := localapi.NewHandler(queries, clock)
+	handler, err := localapi.NewHandler(localapi.HandlerConfig{Queries: queries, Clock: clock})
 	if err != nil {
 		return fmt.Errorf("run service local handler: %w", err)
 	}

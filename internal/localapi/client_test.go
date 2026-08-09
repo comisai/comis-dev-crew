@@ -189,10 +189,10 @@ func TestCodec_RejectsNestedDuplicatesAndNonObjectPayloads(t *testing.T) {
 }
 
 func TestHandler_DefensiveConstructionAuthorizationAndErrorPaths(t *testing.T) {
-	if _, err := NewHandler(nil, time.Now); err == nil {
+	if _, err := NewHandler(HandlerConfig{Clock: time.Now}); err == nil {
 		t.Fatal("NewHandler(nil queries) error = nil")
 	}
-	if _, err := NewHandler(&apiQueries{}, nil); err == nil {
+	if _, err := NewHandler(HandlerConfig{Queries: &apiQueries{}}); err == nil {
 		t.Fatal("NewHandler(nil clock) error = nil")
 	}
 	for _, test := range []struct {
@@ -216,7 +216,7 @@ func TestHandler_DefensiveConstructionAuthorizationAndErrorPaths(t *testing.T) {
 	if outcome := outcomeFromError("read-0001", errors.New("private")); outcome.Error == nil || outcome.Error.Code != domain.ErrorInternal {
 		t.Fatalf("outcomeFromError(untyped) = %#v, want internal rejection", outcome)
 	}
-	handler, err := NewHandler(&apiQueries{}, time.Now)
+	handler, err := NewHandler(HandlerConfig{Queries: &apiQueries{}, Clock: time.Now})
 	if err != nil {
 		t.Fatalf("NewHandler() error = %v", err)
 	}
@@ -264,7 +264,7 @@ func startResponseServer(t *testing.T, response string) (string, func()) {
 }
 
 func TestServer_DefensivePathAndLifecycleBranches(t *testing.T) {
-	handler, err := NewHandler(&apiQueries{}, time.Now)
+	handler, err := NewHandler(HandlerConfig{Queries: &apiQueries{}, Clock: time.Now})
 	if err != nil {
 		t.Fatalf("NewHandler() error = %v", err)
 	}
@@ -372,7 +372,7 @@ func TestServer_RejectsRequestWithoutNewline(t *testing.T) {
 }
 
 func TestServer_ClosePreservesAReplacementWithDifferentIdentity(t *testing.T) {
-	handler, err := NewHandler(&apiQueries{}, time.Now)
+	handler, err := NewHandler(HandlerConfig{Queries: &apiQueries{}, Clock: time.Now})
 	if err != nil {
 		t.Fatalf("NewHandler() error = %v", err)
 	}

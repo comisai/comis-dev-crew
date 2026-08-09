@@ -78,6 +78,13 @@ func (client *Client) Operation(ctx context.Context, operationID, targetOperatio
 	return result, err
 }
 
+// PrepareTask executes one canonical idempotent task preparation.
+func (client *Client) PrepareTask(ctx context.Context, operationID string, input PrepareTaskInput) (PrepareTaskResult, error) {
+	var result PrepareTaskResult
+	err := client.call(ctx, operationID, MethodPrepareTask, input, &result)
+	return result, err
+}
+
 func (client *Client) call(ctx context.Context, operationID string, method Method, payload any, result any) error {
 	if ctx == nil {
 		return errors.New("call local API: context is required")
@@ -154,6 +161,8 @@ func projectedStateVersion(result any) (int64, bool) {
 	case *application.TaskExplanation:
 		return projection.Summary.StateVersion, true
 	case *application.OperationView:
+		return projection.StateVersion, true
+	case *PrepareTaskResult:
 		return projection.StateVersion, true
 	default:
 		return 0, false
