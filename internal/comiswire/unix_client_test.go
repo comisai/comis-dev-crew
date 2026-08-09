@@ -50,7 +50,7 @@ func TestAuthenticatedUnixClientRejectsUnsafeCredentialAndDecodesCredentialFailu
 	if _, err := NewAuthenticatedUnixClient(filepath.Join(directory, "capability.sock"), "short", time.Second); err == nil {
 		t.Fatal("NewAuthenticatedUnixClient(short credential) error = nil")
 	}
-	contents := []byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32019,"kind":"unauthorized_instance","retryable":false,"message":"authentication failed","hint":"use configured credential"}}`)
+	contents := []byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32013,"kind":"unauthorized_instance","retryable":false,"message":"authentication failed","hint":"use configured credential"}}`)
 	err := decodeWireResponse(contents, "operation_wrong_credential", &HandshakeResponse{})
 	var remote RPCError
 	if !errors.As(err, &remote) || remote.Kind != ErrorKindUnauthorizedInstance {

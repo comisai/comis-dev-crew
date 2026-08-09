@@ -31,7 +31,8 @@ func TestComisFixtureHost_RealSocketHandshakeAndAuthentication(t *testing.T) {
 		t.Fatalf("COMIS_FIXTURE_HOST_ROOT must be an existing canonical absolute path: %v", err)
 	}
 	fixtureDirectory := integrationShortTempDir(t)
-	command := exec.Command("pnpm", "capability-service-fixture-host", "--directory", fixtureDirectory, "--service-instance-id", "service-instance_go")
+	entryPath := filepath.Join(comisRoot, "packages", "daemon", "src", "__tests__", "capability-service-protocol-fixture-host-entry.ts")
+	command := exec.Command("node", "--import", "tsx", entryPath, "--directory", fixtureDirectory, "--service-instance-id", "service-instance_go")
 	command.Dir = comisRoot
 	stdout, err := command.StdoutPipe()
 	if err != nil {
@@ -77,7 +78,7 @@ func TestComisFixtureHost_RealSocketHandshakeAndAuthentication(t *testing.T) {
 		t.Fatalf("read fixture credential source: %v", err)
 	}
 	credential := strings.TrimSpace(string(credentialBytes))
-	if credential == "" || bytes.Contains(readyLine, credentialBytes) {
+	if credential == "" || bytes.Contains(readyLine, []byte(credential)) {
 		t.Fatal("fixture readiness exposed or omitted the protected credential")
 	}
 
@@ -87,11 +88,11 @@ func TestComisFixtureHost_RealSocketHandshakeAndAuthentication(t *testing.T) {
 	}
 	result, err := client.Handshake(context.Background(), comiswire.HandshakeRequestParams{
 		ProtocolID: comiswire.ProtocolID, BundleDigest: comiswire.BundleDigest,
-		OperationID: "operation_go_handshake", ServiceInstanceID: ready.ServiceInstanceID,
+		OperationID: "operation_go_handshake", ServiceInstanceID: comiswire.ServiceInstanceID(ready.ServiceInstanceID),
 		RequestedScopes: []comiswire.ServiceScope{comiswire.ServiceScopeHealth, comiswire.ServiceScopeReport},
 	})
 	if err != nil || result.ProtocolID != comiswire.ProtocolID || result.BundleDigest != comiswire.BundleDigest ||
-		result.ServiceInstanceID != ready.ServiceInstanceID {
+		result.ServiceInstanceID != comiswire.ServiceInstanceID(ready.ServiceInstanceID) {
 		t.Fatalf("generated Handshake() = %#v, %v, want exact host authority", result, err)
 	}
 
@@ -99,12 +100,12 @@ func TestComisFixtureHost_RealSocketHandshakeAndAuthentication(t *testing.T) {
 		JSONRPC: comiswire.JSONRPCVersion, ID: "operation_go_altered_digest", Method: comiswire.MethodCapabilityServicesHandshake,
 		Params: comiswire.HandshakeRequestParams{
 			ProtocolID: comiswire.ProtocolID, BundleDigest: strings.Repeat("0", 64),
-			OperationID: "operation_go_altered_digest", ServiceInstanceID: ready.ServiceInstanceID,
+			OperationID: "operation_go_altered_digest", ServiceInstanceID: comiswire.ServiceInstanceID(ready.ServiceInstanceID),
 			RequestedScopes: []comiswire.ServiceScope{comiswire.ServiceScopeHealth},
 		},
 	}
 	alteredResponse := callAuthenticatedHandshake(t, ready.SocketPath, credential, alteredRequest)
-	if alteredResponse.Error == nil || alteredResponse.Error.Kind != comiswire.ErrorKindBundleDigestMismatch {
+	if alteredResponse.Error.Kind != comiswire.ErrorKindBundleDigestMismatch {
 		t.Fatalf("altered digest response = %#v, want bundle_digest_mismatch", alteredResponse)
 	}
 
@@ -114,7 +115,7 @@ func TestComisFixtureHost_RealSocketHandshakeAndAuthentication(t *testing.T) {
 	}
 	_, err = wrongClient.Handshake(context.Background(), comiswire.HandshakeRequestParams{
 		ProtocolID: comiswire.ProtocolID, BundleDigest: comiswire.BundleDigest,
-		OperationID: "operation_go_wrong_credential", ServiceInstanceID: ready.ServiceInstanceID,
+		OperationID: "operation_go_wrong_credential", ServiceInstanceID: comiswire.ServiceInstanceID(ready.ServiceInstanceID),
 		RequestedScopes: []comiswire.ServiceScope{comiswire.ServiceScopeHealth},
 	})
 	var remote comiswire.RPCError

@@ -11,14 +11,33 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 )
 
 const maximumUnixSocketPathBytes = 103
 
+var instanceCredentialPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{32,256}$`)
+
 type unixRoundTripper struct {
 	socketPath string
+	bearer     string
 	timeout    time.Duration
+}
+
+type authenticatedHandshakeRequest struct {
+	HandshakeRequest
+	Bearer string `json:"bearer"`
+}
+
+type authenticatedHealthRequest struct {
+	HealthRequest
+	Bearer string `json:"bearer"`
+}
+
+type authenticatedReportRequest struct {
+	ReportRequest
+	Bearer string `json:"bearer"`
 }
 
 type responseEnvelope struct {
@@ -30,6 +49,20 @@ type responseEnvelope struct {
 
 // NewUnixClient creates the closed capability-service client for an owner-only socket.
 func NewUnixClient(socketPath string, timeout time.Duration) (*Client, error) {
+	return newUnixClient(socketPath, "", timeout)
+}
+
+// NewAuthenticatedUnixClient creates the closed capability-service client and
+// adds one protected instance bearer at the transport boundary. The generated
+// protocol request DTO remains unchanged.
+func NewAuthenticatedUnixClient(socketPath, instanceCredential string, timeout time.Duration) (*Client, error) {
+	if !instanceCredentialPattern.MatchString(instanceCredential) {
+		return nil, fmt.Errorf("create authenticated Comis wire client: instance credential shape is invalid")
+	}
+	return newUnixClient(socketPath, instanceCredential, timeout)
+}
+
+func newUnixClient(socketPath, bearer string, timeout time.Duration) (*Client, error) {
 	if !filepath.IsAbs(socketPath) || filepath.Clean(socketPath) != socketPath {
 		return nil, fmt.Errorf("create Comis wire client: socket path must be absolute and canonical")
 	}
@@ -46,7 +79,7 @@ func NewUnixClient(socketPath string, timeout time.Duration) (*Client, error) {
 	if timeout <= 0 {
 		return nil, fmt.Errorf("create Comis wire client: timeout must be positive")
 	}
-	return newClient(&unixRoundTripper{socketPath: socketPath, timeout: timeout}), nil
+	return newClient(&unixRoundTripper{socketPath: socketPath, bearer: bearer, timeout: timeout}), nil
 }
 
 func (transport *unixRoundTripper) roundTrip(ctx context.Context, request, response any) (resultErr error) {
@@ -84,7 +117,11 @@ func (transport *unixRoundTripper) roundTrip(ctx context.Context, request, respo
 			return fmt.Errorf("set Comis capability socket deadline: %w", err)
 		}
 	}
-	encoded, err := json.Marshal(request)
+	outbound, err := addInstanceCredential(request, transport.bearer)
+	if err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(outbound)
 	if err != nil {
 		return fmt.Errorf("encode Comis wire request: %w", err)
 	}
@@ -104,6 +141,22 @@ func (transport *unixRoundTripper) roundTrip(ctx context.Context, request, respo
 		return contextOrTransportError(callContext, "read Comis wire response", err)
 	}
 	return decodeWireResponse(line[:len(line)-1], expectedID, response)
+}
+
+func addInstanceCredential(request any, bearer string) (any, error) {
+	if bearer == "" {
+		return request, nil
+	}
+	switch envelope := request.(type) {
+	case HandshakeRequest:
+		return authenticatedHandshakeRequest{HandshakeRequest: envelope, Bearer: bearer}, nil
+	case HealthRequest:
+		return authenticatedHealthRequest{HealthRequest: envelope, Bearer: bearer}, nil
+	case ReportRequest:
+		return authenticatedReportRequest{ReportRequest: envelope, Bearer: bearer}, nil
+	default:
+		return nil, fmt.Errorf("unsupported authenticated Comis wire request %T", request)
+	}
 }
 
 func outboundOperationID(request any) (OperationID, error) {
@@ -145,14 +198,17 @@ func decodeWireResponse(contents []byte, expectedID OperationID, response any) e
 	if err != nil {
 		return fmt.Errorf("decode Comis wire response ID: %w", err)
 	}
-	responseID, ok := decodedID.(string)
-	if !ok || OperationID(responseID) != expectedID {
-		return fmt.Errorf("comis wire response operation ID differs")
-	}
 	hasResult := len(envelope.Result) > 0
 	hasError := len(envelope.Error) > 0
 	if hasResult == hasError {
 		return fmt.Errorf("comis wire response must contain exactly one of result or error")
+	}
+	responseID, stringID := decodedID.(string)
+	if hasResult && (!stringID || OperationID(responseID) != expectedID) {
+		return fmt.Errorf("comis wire response operation ID differs")
+	}
+	if hasError && decodedID != nil && (!stringID || OperationID(responseID) != expectedID) {
+		return fmt.Errorf("comis wire error response operation ID differs")
 	}
 	if hasError {
 		if err := validateGeneratedJSON(schemaErrorResponse, contents); err != nil {

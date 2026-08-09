@@ -6,8 +6,9 @@ protocol foundation pins an exact Comis capability-service bundle and generates 
 adapter. The durable-work wave now includes the closed E0 task transition authority and one
 canonical task contract whose deterministic worker brief is pinned by a stored SHA-256 revision
 hash. The application now commits replay-safe task preparation and exact host binding atomically
-with their durable operation outcomes. Worker execution, public mutation transport, and
-end-to-end Comis runtime wiring are not implemented yet.
+with their durable operation outcomes. A tagged cross-repository integration test now proves the
+generated client handshake against Comis's standalone fixture host. Real worker execution, public
+mutation transport, and end-to-end production Comis runtime wiring are not implemented yet.
 
 `comis-dev-crew` is a companion product for the [Comis](https://github.com/comisai/comis)
 agent platform: a long-lived Go service (`devcrew-service`), an independent operator CLI
@@ -22,7 +23,7 @@ E0 domain records, a pure-Go SQLite store, canonical read application handlers, 
 newline-delimited local protocol over an owner-only Unix socket, the first read-only operator
 CLI, and an authenticated Comis protocol pin with generated DTO, validation, and Unix control
 client support. The protocol-foundation join gate is implemented. End-to-end Comis host
-integration, public mutation transport, and real worker capability are not claimed yet.
+production integration, public mutation transport, and real worker capability are not claimed yet.
 
 Task records persist bounded acceptance criteria and constraints with the exact brief revision
 hash. Any changed contract field invalidates the pin, and incomplete lifecycle reconciliation
@@ -99,9 +100,11 @@ devcrew [--socket PATH] task operation OPERATION [--format text|json]
 ```
 
 JSON outputs are stable versioned projections. Human and YAML views are presentation only
-and carry no authority. Host integration remains explicitly unavailable until the adapter is
-wired to a runnable Comis capability-service host; the pinned source exposes only a test fixture
-host. The CLI never opens SQLite as a normal-operation fallback.
+and carry no authority. The generated authenticated client is verified against Comis's standalone
+test-only capability-service host over a real owner-only Unix socket, including exact protocol and
+digest agreement plus altered-digest and wrong-credential rejection. This is conformance evidence,
+not a claim that the production host lifecycle is wired. The CLI never opens SQLite as a
+normal-operation fallback.
 
 ## Development
 
