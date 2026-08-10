@@ -309,6 +309,27 @@ func TestStoreBoundaryHelpersRejectInvalidReportScopesAndUnavailableState(t *tes
 	if terminalLossChangesTask(domain.TaskReady) {
 		t.Fatal("terminalLossChangesTask(ready) = true")
 	}
+	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	transaction, err := store.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := transaction.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := insertComisReportIdentity(
+		context.Background(), transaction, "operation-closed-transaction", "task-closed-transaction",
+		"report-closed-transaction", "service-report-closed-transaction",
+	); err == nil {
+		t.Fatal("insertComisReportIdentity(closed transaction) error = nil")
+	}
+	if err := updateReportedTask(context.Background(), transaction, storeTask("task-closed-transaction", 1)); err == nil {
+		t.Fatal("updateReportedTask(closed transaction) error = nil")
+	}
 }
 
 func reportClient(t *testing.T, store *Store, task domain.Task, acceptedAt time.Time) *reporter.Client {
