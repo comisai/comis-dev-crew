@@ -34,12 +34,14 @@ type PrepareTaskCommand struct {
 // ActivateManagedRunCommand supplies the complete private activation join and
 // exact host-owned authority identities for one prepared task.
 type ActivateManagedRunCommand struct {
-	OperationID       string
-	ServiceInstanceID string
-	ManagedRunID      string
-	ExternalRunRef    string
-	RegistrationNonce string
-	WorkspaceLeaseID  string
+	OperationID           string
+	ServiceInstanceID     string
+	ManagedRunID          string
+	ExternalRunRef        string
+	RegistrationNonce     string
+	WorkspaceLeaseID      string
+	ExecutionAttachmentID string
+	AttachmentTargetName  string
 }
 
 // AbandonManagedRunCommand closes one unbound private preparation without
@@ -112,13 +114,15 @@ type PreparedTaskMutation struct {
 // ManagedRunActivationMutation is the fully validated activation transaction
 // input. The store rechecks the private join and expiry under the write lock.
 type ManagedRunActivationMutation struct {
-	ServiceInstanceID string
-	ExternalRunRef    string
-	RegistrationNonce string
-	Binding           domain.TaskBinding
-	OperationID       string
-	SubjectDigest     string
-	At                time.Time
+	ServiceInstanceID     string
+	ExternalRunRef        string
+	RegistrationNonce     string
+	Binding               domain.TaskBinding
+	ExecutionAttachmentID string
+	AttachmentTargetName  string
+	OperationID           string
+	SubjectDigest         string
+	At                    time.Time
 }
 
 // ManagedRunAbandonMutation is the fully validated preparation-close

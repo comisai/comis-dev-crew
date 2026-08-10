@@ -27,6 +27,7 @@ type Mutations struct {
 }
 
 var registrationNoncePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._~-]{15,255}$`)
+var attachmentTargetNamePattern = regexp.MustCompile(`^attachment-[a-f0-9]{32}\.sock$`)
 
 // NewMutations creates the sole application mutation coordinator.
 func NewMutations(config MutationConfig) (*Mutations, error) {
@@ -205,6 +206,10 @@ func (mutations *Mutations) ActivateManagedRun(ctx context.Context, command Acti
 	if !registrationNoncePattern.MatchString(command.RegistrationNonce) {
 		return MutationResult{}, mutationValidationFailure("registration nonce is invalid")
 	}
+	if domain.ValidateAuthorityReference("executionAttachmentId", command.ExecutionAttachmentID) != nil ||
+		!attachmentTargetNamePattern.MatchString(command.AttachmentTargetName) {
+		return MutationResult{}, mutationValidationFailure("execution attachment binding is invalid")
+	}
 	binding := domain.TaskBinding{ManagedRunID: command.ManagedRunID, WorkspaceLeaseID: command.WorkspaceLeaseID}
 	if command.WorkspaceLeaseID != "" {
 		if err := binding.Validate(); err != nil {
@@ -220,14 +225,38 @@ func (mutations *Mutations) ActivateManagedRun(ctx context.Context, command Acti
 	if replay, found, err := mutations.store.ReplayMutation(ctx, command.OperationID, commandActivateManagedRun, subjectDigest); err != nil {
 		return MutationResult{}, mutationReplayFailure(err)
 	} else if found {
+		if err := mutations.bindRuntimeAttachment(ctx, command); err != nil {
+			return MutationResult{}, err
+		}
 		return replay, nil
 	}
 	result, err := mutations.store.CommitManagedRunActivation(ctx, ManagedRunActivationMutation{
 		ServiceInstanceID: command.ServiceInstanceID, ExternalRunRef: command.ExternalRunRef,
 		RegistrationNonce: command.RegistrationNonce, Binding: binding,
+		ExecutionAttachmentID: command.ExecutionAttachmentID, AttachmentTargetName: command.AttachmentTargetName,
 		OperationID: command.OperationID, SubjectDigest: subjectDigest, At: mutations.clock(),
 	})
-	return result, mutationCommitFailure(err)
+	if err != nil {
+		return result, mutationCommitFailure(err)
+	}
+	if err := mutations.bindRuntimeAttachment(ctx, command); err != nil {
+		return MutationResult{}, err
+	}
+	return result, nil
+}
+
+func (mutations *Mutations) bindRuntimeAttachment(ctx context.Context, command ActivateManagedRunCommand) error {
+	operationDigest := fmt.Sprintf("%x", sha256.Sum256([]byte("runtime-launch-ack\x00"+command.ExternalRunRef)))
+	err := mutations.attachments.BindRuntimeAttachment(ctx, RuntimeAttachmentBindingRequest{
+		TaskHandle: command.ExternalRunRef, ManagedRunID: command.ManagedRunID,
+		WorkspaceLeaseID: command.WorkspaceLeaseID, ExecutionAttachmentID: command.ExecutionAttachmentID,
+		AttachmentTargetName: command.AttachmentTargetName,
+		LaunchOperationID:    "launch-ack-" + operationDigest[:32], Acknowledger: mutations,
+	})
+	if err != nil {
+		return &dependencyFailure{message: "runtime attachment activation binding failed", cause: err}
+	}
+	return nil
 }
 
 // AbandonManagedRun durably closes one exact unbound preparation. Preserve

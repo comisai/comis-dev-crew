@@ -113,6 +113,8 @@ func TestMutations_ActivateAndAbandonValidateClosedInputsAndCommitFailures(t *te
 		OperationID: "operation-activate", ServiceInstanceID: "service-instance-0001",
 		ManagedRunID: "managed-run-0001", ExternalRunRef: "task-0001",
 		RegistrationNonce: "registration-nonce_0001", WorkspaceLeaseID: "workspace-lease-0001",
+		ExecutionAttachmentID: "execution-attachment-0001",
+		AttachmentTargetName:  "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
 	}
 	for _, test := range []struct {
 		name   string
