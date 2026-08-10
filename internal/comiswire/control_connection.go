@@ -153,7 +153,7 @@ func controlHandshake(config ControlConnectionConfig) HandshakeRequest {
 		Params: HandshakeRequestParams{
 			ProtocolID: ProtocolID, BundleDigest: BundleDigest,
 			OperationID: config.HandshakeOperationID, ServiceInstanceID: config.ServiceInstanceID,
-			RequestedScopes: []ServiceScope{ServiceScopeHealth, ServiceScopeReport},
+			RequestedScopes: requiredControlScopes(),
 		},
 	}
 }

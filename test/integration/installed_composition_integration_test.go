@@ -284,7 +284,7 @@ func acceptInstalledControl(listener *net.UnixListener, ready chan<- installedCo
 		Result: comiswire.HandshakeResponseResult{
 			ProtocolID: comiswire.ProtocolID, BundleDigest: comiswire.BundleDigest,
 			ServiceInstanceID: handshake.Params.ServiceInstanceID,
-			ActiveScopes:      []comiswire.ServiceScope{comiswire.ServiceScopeHealth, comiswire.ServiceScopeReport},
+			ActiveScopes:      append([]comiswire.ServiceScope(nil), handshake.Params.RequestedScopes...),
 			Limits: comiswire.ProtocolLimits{
 				MaxEvidenceBytes: comiswire.MaxEvidenceBytes, MaxInFlightRequests: comiswire.MaxInFlightRequests,
 				MaxLineBytes: comiswire.MaxLineBytes, MaxReportBytes: comiswire.MaxReportBytes,

@@ -358,7 +358,26 @@ func validateBaseRequest(request any) error {
 }
 
 func sameControlScopes(scopes []ServiceScope) bool {
-	return len(scopes) == 2 && scopes[0] == ServiceScopeHealth && scopes[1] == ServiceScopeReport
+	required := requiredControlScopes()
+	if len(scopes) != len(required) {
+		return false
+	}
+	for index := range required {
+		if scopes[index] != required[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func requiredControlScopes() []ServiceScope {
+	return []ServiceScope{
+		ServiceScopeHealth,
+		ServiceScopeReport,
+		ServiceScopeWorkspaceLease,
+		ServiceScopeTerminalEvents,
+		ServiceScopeExecutionAttachment,
+	}
 }
 
 func readControlLine(reader *bufio.Reader) ([]byte, error) {

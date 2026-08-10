@@ -285,6 +285,7 @@ func serveHandshake(connection net.Conn) error {
 	return writeControlFrame(connection, validHandshakeResponse(func(response *HandshakeResponse) {
 		response.ID = request.ID
 		response.Result.ServiceInstanceID = request.Params.ServiceInstanceID
+		response.Result.ActiveScopes = append([]ServiceScope(nil), request.Params.RequestedScopes...)
 	}))
 }
 
