@@ -11,7 +11,7 @@ import (
 
 const (
 	expectedProtocolID   = "comis.capability-service/1"
-	expectedBundleDigest = "5c97aa4773b2a5a3d2f790d8bf1556542bb271ec7773bf4d29b6da808b252725"
+	expectedBundleDigest = "ffbe9fe2b15f0dfdda280705d5a3d5cf5787f4be74a2fe4341b3839d0f12d5b1"
 )
 
 // Generate verifies the exact pin and deterministically renders its Go DTOs and client.

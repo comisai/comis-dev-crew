@@ -8,7 +8,7 @@ import (
 )
 
 const ProtocolID = "comis.capability-service/1"
-const BundleDigest = "5c97aa4773b2a5a3d2f790d8bf1556542bb271ec7773bf4d29b6da808b252725"
+const BundleDigest = "ffbe9fe2b15f0dfdda280705d5a3d5cf5787f4be74a2fe4341b3839d0f12d5b1"
 const JSONRPCVersion = "2.0"
 
 const MaxEvidenceBytes = 1048576
@@ -27,6 +27,7 @@ const (
 	MethodManagedRunsAbandon          Method = "managedRuns.abandon"
 	MethodManagedRunsActivate         Method = "managedRuns.activate"
 	MethodManagedRunsReport           Method = "managedRuns.report"
+	MethodManagedRunsTerminalEvent    Method = "managedRuns.terminalEvent"
 )
 
 type ErrorKind string
@@ -143,6 +144,28 @@ func (value ReportKind) Valid() bool {
 	}
 }
 
+type CapabilityTerminalTransition string
+
+const (
+	CapabilityTerminalTransitionCreated     CapabilityTerminalTransition = "created"
+	CapabilityTerminalTransitionRunning     CapabilityTerminalTransition = "running"
+	CapabilityTerminalTransitionInputNeeded CapabilityTerminalTransition = "input_needed"
+	CapabilityTerminalTransitionStuck       CapabilityTerminalTransition = "stuck"
+	CapabilityTerminalTransitionExited      CapabilityTerminalTransition = "exited"
+	CapabilityTerminalTransitionLost        CapabilityTerminalTransition = "lost"
+	CapabilityTerminalTransitionRecovered   CapabilityTerminalTransition = "recovered"
+	CapabilityTerminalTransitionReleased    CapabilityTerminalTransition = "released"
+)
+
+func (value CapabilityTerminalTransition) Valid() bool {
+	switch value {
+	case CapabilityTerminalTransitionCreated, CapabilityTerminalTransitionRunning, CapabilityTerminalTransitionInputNeeded, CapabilityTerminalTransitionStuck, CapabilityTerminalTransitionExited, CapabilityTerminalTransitionLost, CapabilityTerminalTransitionRecovered, CapabilityTerminalTransitionReleased:
+		return true
+	default:
+		return false
+	}
+}
+
 type ServiceScope string
 
 const (
@@ -206,10 +229,15 @@ const schemaReportResponse = "{\n  \"$id\": \"https://schemas.comis.ai/capabilit
 
 const schemaServiceInstanceID = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/service-instance-id.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"maxLength\": 256,\n  \"minLength\": 1,\n  \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n  \"type\": \"string\"\n}\n"
 
+const schemaTerminalEventRequest = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/terminalEvent.request.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"method\": {\n      \"const\": \"managedRuns.terminalEvent\",\n      \"type\": \"string\"\n    },\n    \"params\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"managedRunId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"operationId\": {\n          \"maxLength\": 128,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"terminalSessionId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"transition\": {\n          \"enum\": [\n            \"created\",\n            \"running\",\n            \"input_needed\",\n            \"stuck\",\n            \"exited\",\n            \"lost\",\n            \"recovered\",\n            \"released\"\n          ],\n          \"type\": \"string\"\n        },\n        \"workspaceLeaseId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"operationId\",\n        \"managedRunId\",\n        \"workspaceLeaseId\",\n        \"terminalSessionId\",\n        \"transition\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"method\",\n    \"params\"\n  ],\n  \"type\": \"object\"\n}\n"
+
+const schemaTerminalEventResponse = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/terminalEvent.response.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"result\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"managedRunId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"terminalSessionId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"transition\": {\n          \"enum\": [\n            \"created\",\n            \"running\",\n            \"input_needed\",\n            \"stuck\",\n            \"exited\",\n            \"lost\",\n            \"recovered\",\n            \"released\"\n          ],\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"managedRunId\",\n        \"terminalSessionId\",\n        \"transition\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"result\"\n  ],\n  \"type\": \"object\"\n}\n"
+
 type OperationID string
 type ManagedRunID string
 type ManagedRunGroupID string
 type WorkspaceLeaseID string
+type TerminalSessionID string
 type RegistrationNonce string
 type ServiceReportID string
 type ArtifactRef string
@@ -412,6 +440,33 @@ type ReportResponseResult struct {
 }
 
 type ServiceInstanceID string
+
+type TerminalEventRequest struct {
+	ID      OperationID                `json:"id"`
+	JSONRPC string                     `json:"jsonrpc"`
+	Method  Method                     `json:"method"`
+	Params  TerminalEventRequestParams `json:"params"`
+}
+
+type TerminalEventRequestParams struct {
+	ManagedRunID      ManagedRunID                 `json:"managedRunId"`
+	OperationID       OperationID                  `json:"operationId"`
+	TerminalSessionId TerminalSessionID            `json:"terminalSessionId"`
+	Transition        CapabilityTerminalTransition `json:"transition"`
+	WorkspaceLeaseID  WorkspaceLeaseID             `json:"workspaceLeaseId"`
+}
+
+type TerminalEventResponse struct {
+	ID      OperationID                 `json:"id"`
+	JSONRPC string                      `json:"jsonrpc"`
+	Result  TerminalEventResponseResult `json:"result"`
+}
+
+type TerminalEventResponseResult struct {
+	ManagedRunID      ManagedRunID                 `json:"managedRunId"`
+	TerminalSessionId TerminalSessionID            `json:"terminalSessionId"`
+	Transition        CapabilityTerminalTransition `json:"transition"`
+}
 
 type roundTripper interface {
 	roundTrip(context.Context, any, any) error

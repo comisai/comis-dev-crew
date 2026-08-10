@@ -43,6 +43,7 @@ func renderContract(manifest bundle.Manifest, schemas []schemaSpec) (string, err
 		{name: "AbandonReason", schema: "schemas/abandon.request.schema.json", path: []string{"params", "reason"}},
 		{name: "HealthStatus", schema: "schemas/health.response.schema.json", path: []string{"result", "status"}},
 		{name: "ReportKind", schema: "schemas/report.request.schema.json", path: []string{"params", "kind"}},
+		{name: "CapabilityTerminalTransition", schema: "schemas/terminalEvent.request.schema.json", path: []string{"params", "transition"}},
 		{name: "ServiceScope", schema: "schemas/handshake.request.schema.json", path: []string{"params", "requestedScopes", "items"}},
 	} {
 		node, err := findNode(schemas, enum.schema, enum.path...)

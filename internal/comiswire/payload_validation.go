@@ -9,15 +9,16 @@ import (
 type PayloadTarget string
 
 const (
-	PayloadRequest             PayloadTarget = "request"
-	PayloadAbandonResponse     PayloadTarget = "abandon-response"
-	PayloadActivateResponse    PayloadTarget = "activate-response"
-	PayloadErrorResponse       PayloadTarget = "error-response"
-	PayloadHandshakeResponse   PayloadTarget = "handshake-response"
-	PayloadHealthResponse      PayloadTarget = "health-response"
-	PayloadReportResponse      PayloadTarget = "report-response"
-	PayloadMCPCallContext      PayloadTarget = "mcp-call-context"
-	PayloadMCPManagedRunResult PayloadTarget = "mcp-managed-run-result"
+	PayloadRequest               PayloadTarget = "request"
+	PayloadAbandonResponse       PayloadTarget = "abandon-response"
+	PayloadActivateResponse      PayloadTarget = "activate-response"
+	PayloadErrorResponse         PayloadTarget = "error-response"
+	PayloadHandshakeResponse     PayloadTarget = "handshake-response"
+	PayloadHealthResponse        PayloadTarget = "health-response"
+	PayloadReportResponse        PayloadTarget = "report-response"
+	PayloadTerminalEventResponse PayloadTarget = "terminal-event-response"
+	PayloadMCPCallContext        PayloadTarget = "mcp-call-context"
+	PayloadMCPManagedRunResult   PayloadTarget = "mcp-managed-run-result"
 )
 
 type requestHeader struct {
@@ -32,7 +33,7 @@ func (target PayloadTarget) Valid() bool {
 	switch target {
 	case PayloadRequest, PayloadAbandonResponse, PayloadActivateResponse, PayloadErrorResponse,
 		PayloadHandshakeResponse, PayloadHealthResponse, PayloadReportResponse,
-		PayloadMCPCallContext, PayloadMCPManagedRunResult:
+		PayloadTerminalEventResponse, PayloadMCPCallContext, PayloadMCPManagedRunResult:
 		return true
 	default:
 		return false
@@ -98,6 +99,8 @@ func payloadContract(target PayloadTarget, contents []byte) (string, any, error)
 		return schemaHealthResponse, &HealthResponse{}, nil
 	case PayloadReportResponse:
 		return schemaReportResponse, &ReportResponse{}, nil
+	case PayloadTerminalEventResponse:
+		return schemaTerminalEventResponse, &TerminalEventResponse{}, nil
 	case PayloadMCPCallContext:
 		return schemaMCPCallContext, &MCPCallContext{}, nil
 	case PayloadMCPManagedRunResult:
@@ -123,6 +126,8 @@ func requestContract(contents []byte) (string, any, error) {
 		return schemaActivateRequest, &ActivateRequest{}, nil
 	case MethodManagedRunsReport:
 		return schemaReportRequest, &ReportRequest{}, nil
+	case MethodManagedRunsTerminalEvent:
+		return schemaTerminalEventRequest, &TerminalEventRequest{}, nil
 	default:
 		return "", nil, fmt.Errorf("unknown comis request method %q", header.Method)
 	}

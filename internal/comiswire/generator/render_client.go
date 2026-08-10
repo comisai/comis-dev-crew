@@ -14,6 +14,7 @@ func renderClient(manifest bundle.Manifest) (string, error) {
 		"managedRuns.abandon":          false,
 		"managedRuns.activate":         false,
 		"managedRuns.report":           false,
+		"managedRuns.terminalEvent":    false,
 	}
 	for _, method := range manifest.MethodCatalog {
 		if _, exists := expected[method.Name]; !exists {

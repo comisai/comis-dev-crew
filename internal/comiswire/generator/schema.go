@@ -77,8 +77,8 @@ func loadSchemas(pin bundle.PinnedBundle) ([]schemaSpec, error) {
 		})
 	}
 	sort.Slice(schemas, func(left, right int) bool { return schemas[left].Path < schemas[right].Path })
-	if len(schemas) != 15 {
-		return nil, fmt.Errorf("expected 15 pinned schemas, found %d", len(schemas))
+	if len(schemas) != 17 {
+		return nil, fmt.Errorf("expected 17 pinned schemas, found %d", len(schemas))
 	}
 	return schemas, nil
 }
