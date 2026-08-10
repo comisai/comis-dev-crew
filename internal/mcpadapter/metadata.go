@@ -57,6 +57,13 @@ func preparationMetadata(operationID string, prepared localapi.PrepareTaskResult
 			RootHint: prepared.ManagedRun.RequestedWorkspaceRoot,
 		}
 	}
+	if err := prepared.ManagedRun.RequestedAttachment.Validate(); err != nil {
+		return nil, internalResultFailure()
+	}
+	extension.RequestedAttachment = &comiswire.MCPManagedRunResultRequestedAttachment{
+		Kind:       comiswire.ExecutionAttachmentKind(prepared.ManagedRun.RequestedAttachment.Kind),
+		SourcePath: prepared.ManagedRun.RequestedAttachment.SourcePath,
+	}
 	encoded, err := json.Marshal(extension)
 	if err != nil || comiswire.ValidatePayload(comiswire.PayloadMCPManagedRunResult, encoded) != nil {
 		return nil, internalResultFailure()
