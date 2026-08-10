@@ -267,16 +267,6 @@ func (server *RuntimeServer) acknowledgeLaunch(ctx context.Context, request runt
 	return RuntimeOutcome{Version: runtimeProtocolVersion, Acknowledgement: &acknowledged}
 }
 
-func (server *RuntimeServer) launchBinding() *RuntimeLaunchConfig {
-	server.launchMu.RLock()
-	defer server.launchMu.RUnlock()
-	if server.launch == nil {
-		return nil
-	}
-	binding := *server.launch
-	return &binding
-}
-
 // RuntimeClient is the worker-side narrow brief/read and report/append client.
 type RuntimeClient struct {
 	socketPath string

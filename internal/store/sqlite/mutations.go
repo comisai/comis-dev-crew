@@ -490,7 +490,6 @@ func nextMutationStateVersion(ctx context.Context, transaction *sql.Tx) (int64, 
 	}
 	return current + 1, nil
 }
-
 func completedMutationOperation(id, command, digest, resultRef string, stateVersion int64, at time.Time) domain.OperationRecord {
 	return domain.OperationRecord{
 		SchemaVersion: 1, ID: id, Command: command, SubjectDigest: digest,
