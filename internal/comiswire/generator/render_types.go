@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,6 +23,8 @@ func renderTypes(schemas []schemaSpec) (string, error) {
 		"type ManagedRunGroupID string\n",
 		"type WorkspaceLeaseID string\n",
 		"type TerminalSessionID string\n",
+		"type ExecutionAttachmentID string\n",
+		"type AttachmentTargetName string\n",
 		"type RegistrationNonce string\n",
 		"type ServiceReportID string\n",
 		"type ArtifactRef string\n",
@@ -45,6 +48,13 @@ func (renderer *typeRenderer) renderNamed(name string, node schemaNode) error {
 	if name == "ErrorResponse" {
 		return renderer.renderErrorResponse(node)
 	}
+	if objectVariantUnion(node) {
+		var err error
+		node, err = mergeObjectVariants(node)
+		if err != nil {
+			return err
+		}
+	}
 	switch node.Type {
 	case "string":
 		fmt.Fprintf(&renderer.buffer, "type %s string\n\n", name)
@@ -57,6 +67,13 @@ func (renderer *typeRenderer) renderNamed(name string, node schemaNode) error {
 }
 
 func (renderer *typeRenderer) renderStruct(name string, node schemaNode) error {
+	if objectVariantUnion(node) {
+		var err error
+		node, err = mergeObjectVariants(node)
+		if err != nil {
+			return err
+		}
+	}
 	if node.AdditionalProperties == nil || *node.AdditionalProperties {
 		return fmt.Errorf("object %s is not closed", name)
 	}
@@ -97,7 +114,7 @@ func (renderer *typeRenderer) renderStruct(name string, node schemaNode) error {
 			}
 			continue
 		}
-		if child.Type == "object" {
+		if child.Type == "object" || objectVariantUnion(child) {
 			if err := renderer.renderNamed(childName, child); err != nil {
 				return err
 			}
@@ -119,6 +136,9 @@ func (renderer *typeRenderer) renderErrorResponse(node schemaNode) error {
 func (renderer *typeRenderer) fieldType(parent, property, childName string, node schemaNode) (string, error) {
 	if special := specialFieldType(parent, property); special != "" {
 		return special, nil
+	}
+	if objectVariantUnion(node) {
+		return childName, nil
 	}
 	if len(node.AnyOf) > 0 {
 		for _, candidate := range node.AnyOf {
@@ -171,6 +191,10 @@ func specialFieldType(parent, property string) string {
 		return "ManagedRunGroupID"
 	case "workspaceLeaseId":
 		return "WorkspaceLeaseID"
+	case "executionAttachmentId":
+		return "ExecutionAttachmentID"
+	case "attachmentTargetName":
+		return "AttachmentTargetName"
 	case "terminalSessionId":
 		return "TerminalSessionID"
 	case "externalRunRef":
@@ -201,6 +225,9 @@ func specialFieldType(parent, property string) string {
 		if parent == "ReportRequestParams" {
 			return "ReportKind"
 		}
+		if parent == "MCPManagedRunResultRequestedAttachment" {
+			return "ExecutionAttachmentKind"
+		}
 	case "status":
 		if parent == "HealthResponseResult" {
 			return "HealthStatus"
@@ -217,6 +244,60 @@ func specialFieldType(parent, property string) string {
 		}
 	}
 	return ""
+}
+
+func objectVariantUnion(node schemaNode) bool {
+	if len(node.AnyOf) < 2 {
+		return false
+	}
+	for _, variant := range node.AnyOf {
+		if variant.Type != "object" {
+			return false
+		}
+	}
+	return true
+}
+
+func mergeObjectVariants(node schemaNode) (schemaNode, error) {
+	if !objectVariantUnion(node) {
+		return schemaNode{}, fmt.Errorf("schema is not a closed object variant union")
+	}
+	closed := false
+	merged := schemaNode{
+		Type:                 "object",
+		AdditionalProperties: &closed,
+		Properties:           make(map[string]schemaNode),
+	}
+	requiredCounts := make(map[string]int)
+	for _, variant := range node.AnyOf {
+		if variant.AdditionalProperties == nil || *variant.AdditionalProperties {
+			return schemaNode{}, fmt.Errorf("object union variant is not closed")
+		}
+		for property, child := range variant.Properties {
+			if previous, exists := merged.Properties[property]; exists && !reflect.DeepEqual(previous, child) {
+				return schemaNode{}, fmt.Errorf("object union property %s has conflicting schemas", property)
+			}
+			merged.Properties[property] = child
+		}
+		seenRequired := make(map[string]struct{}, len(variant.Required))
+		for _, property := range variant.Required {
+			if _, exists := variant.Properties[property]; !exists {
+				return schemaNode{}, fmt.Errorf("object union requires absent property %s", property)
+			}
+			if _, duplicate := seenRequired[property]; duplicate {
+				return schemaNode{}, fmt.Errorf("object union repeats required property %s", property)
+			}
+			seenRequired[property] = struct{}{}
+			requiredCounts[property]++
+		}
+	}
+	for property, count := range requiredCounts {
+		if count == len(node.AnyOf) {
+			merged.Required = append(merged.Required, property)
+		}
+	}
+	sort.Strings(merged.Required)
+	return merged, nil
 }
 
 func nestedTypeName(parent, field string) string {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/comisai/comis-dev-crew/internal/comiswire/bundle"
@@ -120,4 +121,82 @@ func TestGeneratorHelpersCoverSupportedPrimitiveShapes(t *testing.T) {
 	if _, err := Generate(filepath.Join(t.TempDir(), "missing")); err == nil {
 		t.Fatal("expected missing protocol root rejection")
 	}
+}
+
+func TestMergeObjectVariantsKeepsSharedRequirementsAndOptionalVariantFields(t *testing.T) {
+	closed := false
+	shared := schemaNode{Type: "string", MinLength: intPointer(1)}
+	attachmentID := schemaNode{Type: "string", MaxLength: intPointer(256)}
+	merged, err := mergeObjectVariants(schemaNode{AnyOf: []schemaNode{
+		{
+			Type:                 "object",
+			AdditionalProperties: &closed,
+			Properties: map[string]schemaNode{
+				"operationId":           shared,
+				"executionAttachmentId": attachmentID,
+			},
+			Required: []string{"operationId", "executionAttachmentId"},
+		},
+		{
+			Type:                 "object",
+			AdditionalProperties: &closed,
+			Properties:           map[string]schemaNode{"operationId": shared},
+			Required:             []string{"operationId"},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("merge object variants: %v", err)
+	}
+	if got, want := merged.Required, []string{"operationId"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("merged required = %v, want %v", got, want)
+	}
+	if !reflect.DeepEqual(merged.Properties["executionAttachmentId"], attachmentID) {
+		t.Fatal("variant-only attachment field was not preserved")
+	}
+	if merged.AdditionalProperties == nil || *merged.AdditionalProperties {
+		t.Fatal("merged object union must remain closed")
+	}
+	typeName, err := (&typeRenderer{}).fieldType("Root", "params", "RootParams", schemaNode{AnyOf: []schemaNode{
+		{Type: "object", AdditionalProperties: &closed},
+		{Type: "object", AdditionalProperties: &closed},
+	}})
+	if err != nil || typeName != "RootParams" {
+		t.Fatalf("object variant field type = %q, %v", typeName, err)
+	}
+}
+
+func TestMergeObjectVariantsRejectsUnsafeShapes(t *testing.T) {
+	closed := false
+	open := true
+	stringNode := schemaNode{Type: "string"}
+	for _, test := range []struct {
+		name string
+		node schemaNode
+	}{
+		{name: "not an object union", node: schemaNode{AnyOf: []schemaNode{{Type: "object"}, {Type: "null"}}}},
+		{name: "open variant", node: schemaNode{AnyOf: []schemaNode{{Type: "object", AdditionalProperties: &closed}, {Type: "object", AdditionalProperties: &open}}}},
+		{name: "missing closed declaration", node: schemaNode{AnyOf: []schemaNode{{Type: "object", AdditionalProperties: &closed}, {Type: "object"}}}},
+		{name: "conflicting property", node: schemaNode{AnyOf: []schemaNode{
+			{Type: "object", AdditionalProperties: &closed, Properties: map[string]schemaNode{"value": stringNode}},
+			{Type: "object", AdditionalProperties: &closed, Properties: map[string]schemaNode{"value": {Type: "integer"}}},
+		}}},
+		{name: "required absent property", node: schemaNode{AnyOf: []schemaNode{
+			{Type: "object", AdditionalProperties: &closed, Required: []string{"missing"}},
+			{Type: "object", AdditionalProperties: &closed},
+		}}},
+		{name: "duplicate required property", node: schemaNode{AnyOf: []schemaNode{
+			{Type: "object", AdditionalProperties: &closed, Properties: map[string]schemaNode{"value": stringNode}, Required: []string{"value", "value"}},
+			{Type: "object", AdditionalProperties: &closed, Properties: map[string]schemaNode{"value": stringNode}},
+		}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := mergeObjectVariants(test.node); err == nil {
+				t.Fatal("expected object union rejection")
+			}
+		})
+	}
+}
+
+func intPointer(value int) *int {
+	return &value
 }

@@ -44,6 +44,7 @@ func renderContract(manifest bundle.Manifest, schemas []schemaSpec) (string, err
 		{name: "HealthStatus", schema: "schemas/health.response.schema.json", path: []string{"result", "status"}},
 		{name: "ReportKind", schema: "schemas/report.request.schema.json", path: []string{"params", "kind"}},
 		{name: "CapabilityTerminalTransition", schema: "schemas/terminalEvent.request.schema.json", path: []string{"params", "transition"}},
+		{name: "ExecutionAttachmentKind", schema: "schemas/mcp-managed-run-result.schema.json", path: []string{"requestedAttachment", "kind"}},
 		{name: "ServiceScope", schema: "schemas/handshake.request.schema.json", path: []string{"params", "requestedScopes", "items"}},
 	} {
 		node, err := findNode(schemas, enum.schema, enum.path...)

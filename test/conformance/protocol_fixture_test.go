@@ -29,7 +29,12 @@ type fixtureStep struct {
 
 type semanticBoundary struct {
 	operations   map[string]string
-	preparations map[string]bool
+	preparations map[string]preparationRequirements
+}
+
+type preparationRequirements struct {
+	workspace  bool
+	attachment bool
 }
 
 func TestGeneratedBoundaryMatchesEveryPinnedFixtureStep(t *testing.T) {
@@ -81,12 +86,22 @@ func TestCanonicalFixtureExamplesRoundTripByteExactly(t *testing.T) {
 
 func TestSemanticBoundaryAcceptsIdenticalReplayAndRejectsAlteration(t *testing.T) {
 	scenario := fixtureByClass(t, "altered-replay")
-	if len(scenario.Steps) != 2 {
-		t.Fatalf("altered replay step count = %d", len(scenario.Steps))
+	var requests []fixtureStep
+	for _, step := range scenario.Steps {
+		if step.Target == comiswire.PayloadRequest {
+			requests = append(requests, step)
+		}
+	}
+	if len(requests) != 2 {
+		t.Fatalf("altered replay request count = %d", len(requests))
 	}
 	boundary := semanticBoundary{operations: make(map[string]string)}
-	original := materializeFixturePayload(t, scenario.Steps[0].Payload)
-	altered := materializeFixturePayload(t, scenario.Steps[1].Payload)
+	preparation := materializeFixturePayload(t, scenario.Steps[0].Payload)
+	if kind := boundary.validate(scenario.Steps[0].Target, preparation); kind != nil {
+		t.Fatalf("replay preparation rejected: %q", *kind)
+	}
+	original := materializeFixturePayload(t, requests[0].Payload)
+	altered := materializeFixturePayload(t, requests[1].Payload)
 	if kind := boundary.validate(comiswire.PayloadRequest, original); kind != nil {
 		t.Fatalf("original request rejected: %q", *kind)
 	}
@@ -190,10 +205,13 @@ func (boundary *semanticBoundary) validate(target comiswire.PayloadTarget, paylo
 				return errorKind(comiswire.ErrorKindInvalidParams)
 			}
 			if boundary.preparations == nil {
-				boundary.preparations = make(map[string]bool)
+				boundary.preparations = make(map[string]preparationRequirements)
 			}
 			_, requestedWorkspace := preparation["requestedWorkspace"]
-			boundary.preparations[externalRunRef] = requestedWorkspace
+			_, requestedAttachment := preparation["requestedAttachment"]
+			boundary.preparations[externalRunRef] = preparationRequirements{
+				workspace: requestedWorkspace, attachment: requestedAttachment,
+			}
 		}
 		return nil
 	}
@@ -224,9 +242,12 @@ func (boundary *semanticBoundary) validate(target comiswire.PayloadTarget, paylo
 	}
 	if method == string(comiswire.MethodManagedRunsActivate) {
 		externalRunRef, externalOK := params["externalRunRef"].(string)
-		requestedWorkspace, prepared := boundary.preparations[externalRunRef]
+		requirements, prepared := boundary.preparations[externalRunRef]
 		_, hasWorkspaceLease := params["workspaceLeaseId"]
-		if !externalOK || (prepared && requestedWorkspace != hasWorkspaceLease) {
+		_, hasAttachmentID := params["executionAttachmentId"]
+		_, hasAttachmentTarget := params["attachmentTargetName"]
+		if !externalOK || hasAttachmentID != hasAttachmentTarget ||
+			(prepared && (requirements.workspace != hasWorkspaceLease || requirements.attachment != hasAttachmentID)) {
 			return errorKind(comiswire.ErrorKindInvalidParams)
 		}
 	}
