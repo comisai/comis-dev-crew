@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -103,6 +104,19 @@ func TestRunCommand_AcknowledgesCanonicalWorkingDirectoryWithoutAuthoritySelecto
 			t.Fatalf("RunCommand(%q) = %d, want invalid command", args, got)
 		}
 	}
+	privateFailure := errors.New("private launch detail")
+	for _, config := range []reporter.CommandConfig{
+		{Capability: capability},
+		{Capability: capability, WorkingDirectory: func() (string, error) { return "", privateFailure }},
+		{Capability: &commandCapability{acknowledgeErr: privateFailure}, WorkingDirectory: func() (string, error) { return "/canonical/task-worktree", nil }},
+	} {
+		stdout.Reset()
+		stderr.Reset()
+		if got := reporter.RunCommand(context.Background(), []string{"acknowledge"}, &stdout, &stderr, config); got != 1 ||
+			strings.Contains(stderr.String(), privateFailure.Error()) {
+			t.Fatalf("RunCommand(acknowledge failure) = %d stdout=%q stderr=%q", got, stdout.String(), stderr.String())
+		}
+	}
 }
 
 func TestRunCommand_RejectsMalformedCommandsAndDependencyFailures(t *testing.T) {
@@ -155,6 +169,7 @@ type commandCapability struct {
 	reportCalls      int
 	acknowledgeCalls int
 	workingDirectory string
+	acknowledgeErr   error
 }
 
 func (capability *commandCapability) Brief(context.Context) (domain.WorkerBrief, error) {
@@ -171,7 +186,7 @@ func (capability *commandCapability) Report(_ context.Context, report domain.Wor
 func (capability *commandCapability) Acknowledge(_ context.Context, workingDirectory string) error {
 	capability.acknowledgeCalls++
 	capability.workingDirectory = workingDirectory
-	return nil
+	return capability.acknowledgeErr
 }
 
 func commandBrief() domain.WorkerBrief {

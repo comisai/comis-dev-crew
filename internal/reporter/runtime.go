@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
@@ -31,42 +32,53 @@ type RuntimeError struct {
 
 // RuntimeOutcome is the closed protected-attachment response envelope.
 type RuntimeOutcome struct {
-	Version string                `json:"version"`
-	Brief   *domain.WorkerBrief   `json:"brief,omitempty"`
-	Receipt *domain.ReportReceipt `json:"receipt,omitempty"`
-	Error   *RuntimeError         `json:"error,omitempty"`
+	Version         string                             `json:"version"`
+	Brief           *domain.WorkerBrief                `json:"brief,omitempty"`
+	Receipt         *domain.ReportReceipt              `json:"receipt,omitempty"`
+	Acknowledgement *application.LaunchAcknowledgement `json:"acknowledgement,omitempty"`
+	Error           *RuntimeError                      `json:"error,omitempty"`
 }
 
 type runtimeRequest struct {
-	Version string               `json:"version"`
-	Kind    string               `json:"kind"`
-	Report  *domain.WorkerReport `json:"report,omitempty"`
+	Version         string                             `json:"version"`
+	Kind            string                             `json:"kind"`
+	Report          *domain.WorkerReport               `json:"report,omitempty"`
+	Acknowledgement *application.LaunchAcknowledgement `json:"acknowledgement,omitempty"`
 }
 
 // RuntimeServerConfig binds one socket capability to one exact brief and
 // already-authenticated in-process reporter client.
 type RuntimeServerConfig struct {
-	SocketPath string
-	Brief      domain.WorkerBrief
-	Reporter   *Client
+	SocketPath         string
+	Brief              domain.WorkerBrief
+	Reporter           *Client
+	LaunchOperationID  string
+	ExpectedLaunch     application.LaunchAcknowledgement
+	LaunchAcknowledger application.WorkerLaunchAcknowledger
 }
 
 // RuntimeServer serves a single task capability on one owner-only Unix socket.
 type RuntimeServer struct {
-	listener   *net.UnixListener
-	socketPath string
-	socketInfo os.FileInfo
-	brief      domain.WorkerBrief
-	reporter   *Client
-	closeOnce  sync.Once
-	closeErr   error
-	waitGroup  sync.WaitGroup
+	listener           *net.UnixListener
+	socketPath         string
+	socketInfo         os.FileInfo
+	brief              domain.WorkerBrief
+	reporter           *Client
+	launchOperationID  string
+	expectedLaunch     application.LaunchAcknowledgement
+	launchAcknowledger application.WorkerLaunchAcknowledger
+	closeOnce          sync.Once
+	closeErr           error
+	waitGroup          sync.WaitGroup
 }
 
 // ListenRuntime creates a new attachment without replacing an existing path.
 func ListenRuntime(config RuntimeServerConfig) (*RuntimeServer, error) {
 	if err := config.Brief.Validate(); err != nil || config.Reporter == nil {
 		return nil, errors.New("listen runtime attachment: pinned brief and reporter are required")
+	}
+	if err := validateRuntimeLaunchConfig(config); err != nil {
+		return nil, err
 	}
 	if err := validateRuntimeSocketTarget(config.SocketPath); err != nil {
 		return nil, err
@@ -90,6 +102,8 @@ func ListenRuntime(config RuntimeServerConfig) (*RuntimeServer, error) {
 	return &RuntimeServer{
 		listener: listener, socketPath: config.SocketPath, socketInfo: info,
 		brief: config.Brief, reporter: config.Reporter,
+		launchOperationID: config.LaunchOperationID, expectedLaunch: config.ExpectedLaunch,
+		launchAcknowledger: config.LaunchAcknowledger,
 	}, nil
 }
 
@@ -170,24 +184,50 @@ func (server *RuntimeServer) serveConnection(ctx context.Context, connection *ne
 	var outcome RuntimeOutcome
 	switch request.Kind {
 	case "brief":
-		if request.Report != nil {
+		if request.Report != nil || request.Acknowledgement != nil {
 			outcome = runtimeRejected("malformed_request")
 		} else {
 			brief := server.brief
 			outcome = RuntimeOutcome{Version: runtimeProtocolVersion, Brief: &brief}
 		}
 	case "report":
-		if request.Report == nil {
+		if request.Report == nil || request.Acknowledgement != nil {
 			outcome = runtimeRejected("malformed_request")
 		} else if receipt, err := server.reporter.Report(ctx, *request.Report); err != nil {
 			outcome = runtimeRejected("report_rejected")
 		} else {
 			outcome = RuntimeOutcome{Version: runtimeProtocolVersion, Receipt: &receipt}
 		}
+	case "launch":
+		if request.Report != nil || request.Acknowledgement != nil {
+			outcome = runtimeRejected("malformed_request")
+		} else if server.launchAcknowledger == nil {
+			outcome = runtimeRejected("launch_unavailable")
+		} else {
+			expected := server.expectedLaunch
+			outcome = RuntimeOutcome{Version: runtimeProtocolVersion, Acknowledgement: &expected}
+		}
+	case "acknowledge":
+		outcome = server.acknowledgeLaunch(ctx, request)
 	default:
 		outcome = runtimeRejected("unknown_request")
 	}
 	return writeRuntimeOutcome(connection, outcome)
+}
+
+func (server *RuntimeServer) acknowledgeLaunch(ctx context.Context, request runtimeRequest) RuntimeOutcome {
+	if request.Report != nil || request.Acknowledgement == nil || server.launchAcknowledger == nil ||
+		*request.Acknowledgement != server.expectedLaunch {
+		return runtimeRejected("acknowledgement_rejected")
+	}
+	result, err := server.launchAcknowledger.AcknowledgeWorkerLaunch(ctx, application.AcknowledgeWorkerLaunchCommand{
+		OperationID: server.launchOperationID, Acknowledgement: server.expectedLaunch,
+	})
+	if err != nil || !validLaunchAcknowledgementResult(result, server.launchOperationID, server.expectedLaunch) {
+		return runtimeRejected("acknowledgement_rejected")
+	}
+	acknowledged := server.expectedLaunch
+	return RuntimeOutcome{Version: runtimeProtocolVersion, Acknowledgement: &acknowledged}
 }
 
 // RuntimeClient is the worker-side narrow brief/read and report/append client.
@@ -218,7 +258,7 @@ func (client *RuntimeClient) Brief(ctx context.Context) (domain.WorkerBrief, err
 	if err != nil {
 		return domain.WorkerBrief{}, err
 	}
-	if outcome.Error != nil || outcome.Brief == nil || outcome.Receipt != nil {
+	if outcome.Error != nil || outcome.Brief == nil || outcome.Receipt != nil || outcome.Acknowledgement != nil {
 		return domain.WorkerBrief{}, errors.New("read runtime brief: attachment rejected the request")
 	}
 	if err := outcome.Brief.Validate(); err != nil {
@@ -233,7 +273,7 @@ func (client *RuntimeClient) Report(ctx context.Context, report domain.WorkerRep
 	if err != nil {
 		return domain.ReportReceipt{}, err
 	}
-	if outcome.Error != nil || outcome.Receipt == nil || outcome.Brief != nil {
+	if outcome.Error != nil || outcome.Receipt == nil || outcome.Brief != nil || outcome.Acknowledgement != nil {
 		return domain.ReportReceipt{}, errors.New("submit runtime report: attachment rejected the request")
 	}
 	if err := domain.ValidateTaskHandle(outcome.Receipt.TaskHandle); err != nil ||
@@ -242,6 +282,47 @@ func (client *RuntimeClient) Report(ctx context.Context, report domain.WorkerRep
 		return domain.ReportReceipt{}, errors.New("submit runtime report: attachment returned an invalid receipt")
 	}
 	return *outcome.Receipt, nil
+}
+
+// Acknowledge verifies the protected launch identity, current canonical cwd,
+// and pinned brief before echoing the complete launch fact to the service.
+func (client *RuntimeClient) Acknowledge(ctx context.Context, workingDirectory string) error {
+	resolved, err := filepath.EvalSymlinks(workingDirectory)
+	if err != nil || !filepath.IsAbs(workingDirectory) || filepath.Clean(workingDirectory) != workingDirectory || resolved != workingDirectory {
+		return errors.New("acknowledge runtime launch: working directory is invalid")
+	}
+	launch, err := client.launchAcknowledgement(ctx)
+	if err != nil {
+		return err
+	}
+	brief, err := client.Brief(ctx)
+	if err != nil || launch.WorkingDirectory != workingDirectory ||
+		launch.BriefRevision != brief.Revision || launch.BriefRevisionHash != brief.RevisionHash {
+		return errors.New("acknowledge runtime launch: protected binding differs")
+	}
+	outcome, err := client.call(ctx, runtimeRequest{
+		Version: runtimeProtocolVersion, Kind: "acknowledge", Acknowledgement: &launch,
+	})
+	if err != nil {
+		return err
+	}
+	if outcome.Error != nil || outcome.Acknowledgement == nil || outcome.Brief != nil || outcome.Receipt != nil ||
+		*outcome.Acknowledgement != launch {
+		return errors.New("acknowledge runtime launch: attachment rejected the operation")
+	}
+	return nil
+}
+
+func (client *RuntimeClient) launchAcknowledgement(ctx context.Context) (application.LaunchAcknowledgement, error) {
+	outcome, err := client.call(ctx, runtimeRequest{Version: runtimeProtocolVersion, Kind: "launch"})
+	if err != nil {
+		return application.LaunchAcknowledgement{}, err
+	}
+	if outcome.Error != nil || outcome.Acknowledgement == nil || outcome.Brief != nil || outcome.Receipt != nil ||
+		outcome.Acknowledgement.Validate() != nil {
+		return application.LaunchAcknowledgement{}, errors.New("read runtime launch: attachment returned an invalid binding")
+	}
+	return *outcome.Acknowledgement, nil
 }
 
 func (client *RuntimeClient) call(ctx context.Context, request runtimeRequest) (RuntimeOutcome, error) {
@@ -297,6 +378,38 @@ func writeRuntimeOutcome(connection net.Conn, outcome RuntimeOutcome) error {
 
 func runtimeRejected(code string) RuntimeOutcome {
 	return RuntimeOutcome{Version: runtimeProtocolVersion, Error: &RuntimeError{Code: code}}
+}
+
+func validateRuntimeLaunchConfig(config RuntimeServerConfig) error {
+	empty := application.LaunchAcknowledgement{}
+	configured := config.LaunchOperationID != "" || config.ExpectedLaunch != empty || config.LaunchAcknowledger != nil
+	if !configured {
+		return nil
+	}
+	canonicalWorkspace, workspaceErr := filepath.EvalSymlinks(config.ExpectedLaunch.WorkingDirectory)
+	if domain.ValidateOperationID(config.LaunchOperationID) != nil || config.ExpectedLaunch.Validate() != nil || config.LaunchAcknowledger == nil ||
+		workspaceErr != nil || canonicalWorkspace != config.ExpectedLaunch.WorkingDirectory ||
+		config.ExpectedLaunch.BriefRevision != config.Brief.Revision || config.ExpectedLaunch.BriefRevisionHash != config.Brief.RevisionHash {
+		return errors.New("listen runtime attachment: launch acknowledgement binding is invalid")
+	}
+	if config.Reporter.endpoint == nil || config.Reporter.endpoint.taskHandle != config.ExpectedLaunch.TaskHandle ||
+		config.Reporter.endpoint.briefRevision != config.ExpectedLaunch.BriefRevision ||
+		config.Reporter.endpoint.briefRevisionHash != config.ExpectedLaunch.BriefRevisionHash {
+		return errors.New("listen runtime attachment: launch and report scopes differ")
+	}
+	return nil
+}
+
+func validLaunchAcknowledgementResult(
+	result application.MutationResult,
+	operationID string,
+	expected application.LaunchAcknowledgement,
+) bool {
+	return result.Operation.ID == operationID && result.Operation.Status == domain.OperationCompleted &&
+		(result.Task.State == domain.TaskLaunching || result.Task.State == domain.TaskWorking) &&
+		result.Task.Handle == expected.TaskHandle && result.Task.ManagedRunID == expected.ManagedRunID &&
+		result.Task.WorkspaceLeaseID == expected.WorkspaceLeaseID && result.Task.BriefRevision == expected.BriefRevision &&
+		result.Task.BriefRevisionHash == expected.BriefRevisionHash
 }
 
 func validateRuntimeSocketTarget(path string) error {

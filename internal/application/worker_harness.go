@@ -60,12 +60,12 @@ type WorkerLaunchRequest struct {
 // LaunchAcknowledgement is the complete terminal fact required before a task
 // may move from launching to working.
 type LaunchAcknowledgement struct {
-	TaskHandle        string
-	ManagedRunID      string
-	WorkspaceLeaseID  string
-	WorkingDirectory  string
-	BriefRevision     int64
-	BriefRevisionHash string
+	TaskHandle        string `json:"taskHandle"`
+	ManagedRunID      string `json:"managedRunId"`
+	WorkspaceLeaseID  string `json:"workspaceLeaseId"`
+	WorkingDirectory  string `json:"workingDirectory"`
+	BriefRevision     int64  `json:"briefRevision"`
+	BriefRevisionHash string `json:"briefRevisionHash"`
 }
 
 // Validate rejects any partial or non-canonical launch echo.
@@ -86,6 +86,12 @@ func (acknowledgement LaunchAcknowledgement) Validate() error {
 		return errors.New("launch acknowledgement brief pin is invalid")
 	}
 	return nil
+}
+
+// WorkerLaunchAcknowledger is the application-owned protected wrapper sink.
+// Implementations durably deduplicate the service-selected operation ID.
+type WorkerLaunchAcknowledger interface {
+	AcknowledgeWorkerLaunch(context.Context, AcknowledgeWorkerLaunchCommand) (MutationResult, error)
 }
 
 // WorkerLaunchDescriptor is a no-shell executable/argv contract plus protected

@@ -55,6 +55,12 @@ func TestRuntimeConstructionRejectsUnsafeOrAmbiguousTargets(t *testing.T) {
 	if _, err := ListenRuntime(RuntimeServerConfig{}); err == nil {
 		t.Fatal("ListenRuntime accepted an empty config")
 	}
+	if _, err := ListenRuntime(RuntimeServerConfig{
+		SocketPath: "relative/attachment.sock", Brief: brief, Reporter: &Client{},
+		LaunchOperationID: "operation-partial-launch",
+	}); err == nil {
+		t.Fatal("ListenRuntime accepted a partial launch binding")
+	}
 	if _, err := ListenRuntime(RuntimeServerConfig{SocketPath: "relative/attachment.sock", Brief: brief, Reporter: &Client{}}); err == nil {
 		t.Fatal("ListenRuntime accepted a relative target")
 	}

@@ -17,6 +17,7 @@ import (
 type RuntimeCapability interface {
 	Brief(context.Context) (domain.WorkerBrief, error)
 	Report(context.Context, domain.WorkerReport) (domain.ReportReceipt, error)
+	Acknowledge(context.Context, string) error
 }
 
 // CommandConfig supplies composition-root dependencies without exposing them
@@ -25,6 +26,7 @@ type CommandConfig struct {
 	Capability       RuntimeCapability
 	Clock            func() time.Time
 	NewLocalReportID func() (string, error)
+	WorkingDirectory func() (string, error)
 	Version          string
 }
 
@@ -65,6 +67,23 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 			return 1
 		}
 		_, _ = io.WriteString(stdout, brief.Content)
+		return 0
+	}
+	if args[0] == "acknowledge" {
+		if len(args) != 1 {
+			writeInvalidCommand(stderr)
+			return 2
+		}
+		if config.Capability == nil || config.WorkingDirectory == nil {
+			writeRuntimeFailure(stderr)
+			return 1
+		}
+		workingDirectory, err := config.WorkingDirectory()
+		if err != nil || config.Capability.Acknowledge(ctx, workingDirectory) != nil {
+			writeRuntimeFailure(stderr)
+			return 1
+		}
+		fmt.Fprintln(stdout, "acknowledged launch")
 		return 0
 	}
 
@@ -179,7 +198,7 @@ func readCommandBrief(ctx context.Context, capability RuntimeCapability) (domain
 
 func writeCommandUsage(output io.Writer) {
 	fmt.Fprintln(output, "Usage: devcrew-report <command> [options]")
-	fmt.Fprintln(output, "Commands: brief, progress, decision, blocked, paused, candidate-complete, failed, resolved")
+	fmt.Fprintln(output, "Commands: acknowledge, brief, progress, decision, blocked, paused, candidate-complete, failed, resolved")
 	fmt.Fprintln(output, "Reports accept only bounded content fields; task authority comes from the protected runtime attachment.")
 }
 

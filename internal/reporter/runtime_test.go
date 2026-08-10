@@ -66,6 +66,29 @@ func TestRuntimeAttachment_RejectsCrossTaskAndOversizedWireRequests(t *testing.T
 		t.Fatalf("cross-task wire request = %#v, sink calls=%d", outcome, harness.sink.calls)
 	}
 
+	forged := harness.expectedLaunch
+	forged.TaskHandle = "task-runtime-0002"
+	encoded, err := json.Marshal(map[string]any{
+		"version": "devcrew.runtime.v1", "kind": "acknowledge", "acknowledgement": forged,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err = net.DialUnix("unix", nil, &net.UnixAddr{Name: harness.socketPath, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Write(append(encoded, '\n')); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewDecoder(bufio.NewReader(connection)).Decode(&outcome); err != nil {
+		t.Fatal(err)
+	}
+	_ = connection.Close()
+	if outcome.Error == nil || harness.acknowledger.calls != 0 {
+		t.Fatalf("forged launch acknowledgement = %#v, mutation calls=%d", outcome, harness.acknowledger.calls)
+	}
+
 	connection, err = net.DialUnix("unix", nil, &net.UnixAddr{Name: harness.socketPath, Net: "unix"})
 	if err != nil {
 		t.Fatal(err)
@@ -151,6 +174,9 @@ func newRuntimeHarness(t *testing.T, taskHandle, localReportID string) runtimeHa
 		t.Fatal(err)
 	}
 	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	expectedLaunch := application.LaunchAcknowledgement{
 		TaskHandle: taskHandle, ManagedRunID: "managed-run-" + taskHandle,
 		WorkspaceLeaseID: "workspace-lease-" + taskHandle, WorkingDirectory: workspace,
