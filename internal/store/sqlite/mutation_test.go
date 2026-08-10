@@ -61,17 +61,21 @@ func TestMutations_PrepareAndBindReplayAcrossRestartWithoutDuplicateTask(t *test
 		OperationID: "op-bind-0001", ServiceInstanceID: prepared.Task.ServiceInstanceID,
 		ExternalRunRef: prepared.Task.Handle, RegistrationNonce: prepared.Preparation.RegistrationNonce,
 		ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001",
+		ExecutionAttachmentID: "execution-attachment-0001", AttachmentTargetName: "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
 	})
 	if err != nil {
 		t.Fatalf("ActivateManagedRun() error = %v", err)
 	}
-	if bound.Task.State != domain.TaskReady || bound.Task.StateVersion != 2 || bound.Operation.StateVersion != 2 {
+	if bound.Task.State != domain.TaskReady || bound.Task.StateVersion != 2 || bound.Operation.StateVersion != 2 ||
+		bound.Task.ExecutionAttachmentID != "execution-attachment-0001" ||
+		bound.Task.AttachmentTargetName != "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock" {
 		t.Fatalf("bound result = %#v, want atomic ready state version 2", bound)
 	}
 	boundReplay, err := replayedMutations.ActivateManagedRun(context.Background(), application.ActivateManagedRunCommand{
 		OperationID: "op-bind-0001", ServiceInstanceID: prepared.Task.ServiceInstanceID,
 		ExternalRunRef: prepared.Task.Handle, RegistrationNonce: prepared.Preparation.RegistrationNonce,
 		ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001",
+		ExecutionAttachmentID: "execution-attachment-0001", AttachmentTargetName: "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
 	})
 	if err != nil || boundReplay.Task.StateVersion != 2 {
 		t.Fatalf("binding replay = %#v, %v, want original version 2", boundReplay, err)
@@ -80,6 +84,7 @@ func TestMutations_PrepareAndBindReplayAcrossRestartWithoutDuplicateTask(t *test
 		OperationID: "op-bind-0001", ServiceInstanceID: prepared.Task.ServiceInstanceID,
 		ExternalRunRef: prepared.Task.Handle, RegistrationNonce: prepared.Preparation.RegistrationNonce,
 		ManagedRunID: "managed-run-altered", WorkspaceLeaseID: "workspace-lease-0001",
+		ExecutionAttachmentID: "execution-attachment-0001", AttachmentTargetName: "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
 	}); !errors.Is(err, application.ErrConflict) {
 		t.Fatalf("ActivateManagedRun(altered replay) error = %v, want ErrConflict", err)
 	}
@@ -88,7 +93,9 @@ func TestMutations_PrepareAndBindReplayAcrossRestartWithoutDuplicateTask(t *test
 	if err != nil {
 		t.Fatalf("ListTasks() error = %v", err)
 	}
-	if len(tasks) != 1 || tasks[0].ManagedRunID != "managed-run-0001" || tasks[0].WorkspaceLeaseID != "workspace-lease-0001" {
+	if len(tasks) != 1 || tasks[0].ManagedRunID != "managed-run-0001" || tasks[0].WorkspaceLeaseID != "workspace-lease-0001" ||
+		tasks[0].ExecutionAttachmentID != "execution-attachment-0001" ||
+		tasks[0].AttachmentTargetName != "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock" {
 		t.Fatalf("durable tasks = %#v, want one exactly bound task", tasks)
 	}
 	started, err := replayedMutations.StartTask(context.Background(), application.StartTaskCommand{
