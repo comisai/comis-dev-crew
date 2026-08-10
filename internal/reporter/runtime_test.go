@@ -131,6 +131,39 @@ func TestRuntimeAttachment_AcknowledgesOnlyExactProtectedLaunchBinding(t *testin
 	}
 }
 
+func TestRuntimeAttachment_BindsActivationLaunchWithoutReplacingPreparedSocket(t *testing.T) {
+	harness := newRuntimeHarnessWithLaunch(t, "task-runtime-late-0001", "report-runtime-late-0001", false)
+	before, err := os.Lstat(harness.socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := harness.client.Acknowledge(context.Background(), harness.workspace); err == nil {
+		t.Fatal("Acknowledge(before activation binding) error = nil")
+	}
+	binding := reporter.RuntimeLaunchConfig{
+		OperationID: harness.launchOperationID, Expected: harness.expectedLaunch,
+		Acknowledger: harness.acknowledger,
+	}
+	if err := harness.server.BindLaunch(binding); err != nil {
+		t.Fatalf("BindLaunch() error = %v", err)
+	}
+	after, err := os.Lstat(harness.socketPath)
+	if err != nil || !os.SameFile(before, after) {
+		t.Fatalf("prepared socket identity changed: %v", err)
+	}
+	if err := harness.client.Acknowledge(context.Background(), harness.workspace); err != nil {
+		t.Fatalf("Acknowledge(after activation binding) error = %v", err)
+	}
+	if err := harness.server.BindLaunch(binding); err != nil {
+		t.Fatalf("BindLaunch(identical replay) error = %v", err)
+	}
+	altered := binding
+	altered.OperationID = "operation-launch-ack-altered"
+	if err := harness.server.BindLaunch(altered); err == nil {
+		t.Fatal("BindLaunch(altered replay) error = nil")
+	}
+}
+
 type runtimeHarness struct {
 	server            *reporter.RuntimeServer
 	client            *reporter.RuntimeClient
@@ -144,6 +177,10 @@ type runtimeHarness struct {
 }
 
 func newRuntimeHarness(t *testing.T, taskHandle, localReportID string) runtimeHarness {
+	return newRuntimeHarnessWithLaunch(t, taskHandle, localReportID, true)
+}
+
+func newRuntimeHarnessWithLaunch(t *testing.T, taskHandle, localReportID string, bindLaunch bool) runtimeHarness {
 	t.Helper()
 	root, err := os.MkdirTemp("/tmp", "devcrew-runtime-")
 	if err != nil {
@@ -185,11 +222,13 @@ func newRuntimeHarness(t *testing.T, taskHandle, localReportID string) runtimeHa
 	launchOperationID := "operation-launch-ack-" + taskHandle
 	acknowledger := &recordingLaunchAcknowledger{}
 	socketPath := filepath.Join(root, "attachment.sock")
-	server, err := reporter.ListenRuntime(reporter.RuntimeServerConfig{
-		SocketPath: socketPath, Brief: brief, Reporter: reportClient,
-		LaunchOperationID: launchOperationID, ExpectedLaunch: expectedLaunch,
-		LaunchAcknowledger: acknowledger,
-	})
+	config := reporter.RuntimeServerConfig{SocketPath: socketPath, Brief: brief, Reporter: reportClient}
+	if bindLaunch {
+		config.LaunchOperationID = launchOperationID
+		config.ExpectedLaunch = expectedLaunch
+		config.LaunchAcknowledger = acknowledger
+	}
+	server, err := reporter.ListenRuntime(config)
 	if err != nil {
 		t.Fatal(err)
 	}
