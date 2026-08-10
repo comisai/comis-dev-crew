@@ -21,7 +21,7 @@ func TestQueries_ProduceStablePartialFleetAndDiagnosticSnapshots(t *testing.T) {
 		},
 		stateVersion: 2,
 	}
-	queries, err := NewQueries(repository, func() time.Time { return now })
+	queries, err := NewQueries(QueryConfig{Repository: repository, Clock: func() time.Time { return now }})
 	if err != nil {
 		t.Fatalf("NewQueries() error = %v", err)
 	}
@@ -63,7 +63,7 @@ func TestQueries_ListShowExplainAndOperationShareCanonicalProjections(t *testing
 	task := queryTask("task-0001", domain.TaskBlocked, 4)
 	operation := queryOperation("op-0001", 5)
 	repository := &queryRepository{tasks: []domain.Task{task}, operation: operation, stateVersion: 5}
-	queries, err := NewQueries(repository, func() time.Time { return now })
+	queries, err := NewQueries(QueryConfig{Repository: repository, Clock: func() time.Time { return now }})
 	if err != nil {
 		t.Fatalf("NewQueries() error = %v", err)
 	}
@@ -231,7 +231,7 @@ func TestQueries_RejectInvalidRefsAndTranslateRepositoryFailuresSafely(t *testin
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			repository := &queryRepository{readErr: test.repoErr}
-			queries, err := NewQueries(repository, time.Now)
+			queries, err := NewQueries(QueryConfig{Repository: repository, Clock: time.Now})
 			if err != nil {
 				t.Fatalf("NewQueries() error = %v", err)
 			}
@@ -251,10 +251,10 @@ func TestQueries_RejectInvalidRefsAndTranslateRepositoryFailuresSafely(t *testin
 }
 
 func TestNewQueries_RejectsMissingDependencies(t *testing.T) {
-	if _, err := NewQueries(nil, time.Now); err == nil {
+	if _, err := NewQueries(QueryConfig{Clock: time.Now}); err == nil {
 		t.Fatal("NewQueries(nil repository) error = nil")
 	}
-	if _, err := NewQueries(&queryRepository{}, nil); err == nil {
+	if _, err := NewQueries(QueryConfig{Repository: &queryRepository{}}); err == nil {
 		t.Fatal("NewQueries(nil clock) error = nil")
 	}
 }
@@ -263,7 +263,7 @@ func TestQueries_FailureBranchesAndClosedStateExplanations(t *testing.T) {
 	privateCause := errors.New("private adapter detail")
 
 	t.Run("diagnostic read failure", func(t *testing.T) {
-		queries, err := NewQueries(&queryRepository{readErr: privateCause}, time.Now)
+		queries, err := NewQueries(QueryConfig{Repository: &queryRepository{readErr: privateCause}, Clock: time.Now})
 		if err != nil {
 			t.Fatalf("NewQueries() error = %v", err)
 		}
@@ -273,7 +273,7 @@ func TestQueries_FailureBranchesAndClosedStateExplanations(t *testing.T) {
 	})
 
 	t.Run("fleet list failure", func(t *testing.T) {
-		queries, err := NewQueries(&queryRepository{readErr: privateCause}, time.Now)
+		queries, err := NewQueries(QueryConfig{Repository: &queryRepository{readErr: privateCause}, Clock: time.Now})
 		if err != nil {
 			t.Fatalf("NewQueries() error = %v", err)
 		}
@@ -283,7 +283,7 @@ func TestQueries_FailureBranchesAndClosedStateExplanations(t *testing.T) {
 	})
 
 	t.Run("state version failure", func(t *testing.T) {
-		queries, err := NewQueries(&queryRepository{stateVersionErr: privateCause}, time.Now)
+		queries, err := NewQueries(QueryConfig{Repository: &queryRepository{stateVersionErr: privateCause}, Clock: time.Now})
 		if err != nil {
 			t.Fatalf("NewQueries() error = %v", err)
 		}
@@ -293,7 +293,7 @@ func TestQueries_FailureBranchesAndClosedStateExplanations(t *testing.T) {
 	})
 
 	t.Run("operation read failure", func(t *testing.T) {
-		queries, err := NewQueries(&queryRepository{readErr: ErrNotFound}, time.Now)
+		queries, err := NewQueries(QueryConfig{Repository: &queryRepository{readErr: ErrNotFound}, Clock: time.Now})
 		if err != nil {
 			t.Fatalf("NewQueries() error = %v", err)
 		}
@@ -306,7 +306,7 @@ func TestQueries_FailureBranchesAndClosedStateExplanations(t *testing.T) {
 		now := time.Date(2026, time.August, 8, 20, 0, 0, 0, time.UTC)
 		task := queryTask("task-0001", domain.TaskPrepared, 1)
 		task.CreatedAt = now.Add(time.Hour)
-		queries, err := NewQueries(&queryRepository{tasks: []domain.Task{task}}, func() time.Time { return now })
+		queries, err := NewQueries(QueryConfig{Repository: &queryRepository{tasks: []domain.Task{task}}, Clock: func() time.Time { return now }})
 		if err != nil {
 			t.Fatalf("NewQueries() error = %v", err)
 		}
@@ -394,9 +394,9 @@ func (adapter *queryHarnessAdapter) BuildLaunchDescriptor(_ context.Context, req
 	return WorkerLaunchDescriptor{
 		ProfileID: request.ProfileID, Harness: "codex", Executable: "/usr/local/bin/codex",
 		Arguments: []string{"--model", "reviewed-model"}, WorkingDirectory: request.WorkingDirectory,
-		EnvironmentKeys: []string{"DEV_CREW_ATTACHMENT"},
+		EnvironmentKeys:     []string{"DEV_CREW_ATTACHMENT"},
 		EnvironmentBindings: map[string]string{"DEV_CREW_ATTACHMENT": request.Attachment.MountSocketPath},
-		TerminalAllowEntry: "terminal-codex-reviewed", Attachment: request.Attachment,
+		TerminalAllowEntry:  "terminal-codex-reviewed", Attachment: request.Attachment,
 		ExpectedAcknowledgement: LaunchAcknowledgement{
 			TaskHandle: request.TaskHandle, ManagedRunID: request.ManagedRunID,
 			WorkspaceLeaseID: request.WorkspaceLeaseID, WorkingDirectory: request.WorkingDirectory,

@@ -172,3 +172,9 @@ type WorkerHarnessAdapter interface {
 	BuildLaunchDescriptor(context.Context, WorkerLaunchRequest) (WorkerLaunchDescriptor, error)
 	ClassifySemanticActivity(HarnessObservation) SemanticActivityResult
 }
+
+// WorkerHarnessResolver returns only the exact operator-reviewed adapter for a
+// selected profile. It never ranks profiles or falls back to another harness.
+type WorkerHarnessResolver interface {
+	ResolveWorkerHarness(string) (WorkerHarnessAdapter, error)
+}

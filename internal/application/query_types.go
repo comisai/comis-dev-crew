@@ -168,3 +168,22 @@ type OperationView struct {
 	CreatedAtMs   int64                  `json:"createdAtMs"`
 	UpdatedAtMs   int64                  `json:"updatedAtMs"`
 }
+
+// LaunchPlan is the safe reviewed launch-requirements projection. Executable,
+// argv, environment, working-directory, and host attachment source fields are
+// deliberately absent.
+type LaunchPlan struct {
+	SchemaVersion        int              `json:"schemaVersion"`
+	CapturedAtMs         int64            `json:"capturedAtMs"`
+	StateVersion         int64            `json:"stateVersion"`
+	Completeness         Completeness     `json:"completeness"`
+	TaskHandle           string           `json:"taskHandle"`
+	State                domain.TaskState `json:"state"`
+	StateSource          StateSource      `json:"stateSource"`
+	StateConfidence      Confidence       `json:"stateConfidence"`
+	Freshness            Freshness        `json:"freshness"`
+	WorkerProfileID      string           `json:"workerProfileId"`
+	TerminalAllowEntryID string           `json:"terminalAllowEntryId"`
+	BriefRevisionHash    string           `json:"briefRevisionHash"`
+	AttachmentTargetName string           `json:"attachmentTargetName"`
+}

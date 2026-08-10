@@ -110,7 +110,7 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if _, err := reconciler.Reconcile(ctx); err != nil {
 		return fmt.Errorf("run service startup reconciliation: %w", err)
 	}
-	queries, err := application.NewQueries(store, clock)
+	queries, err := application.NewQueries(application.QueryConfig{Repository: store, Clock: clock})
 	if err != nil {
 		return fmt.Errorf("run service queries: %w", err)
 	}

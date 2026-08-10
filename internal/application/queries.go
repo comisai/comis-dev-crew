@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -15,18 +16,27 @@ type Clock func() time.Time
 // Queries owns every canonical read-only application handler.
 type Queries struct {
 	repository Repository
+	harnesses  WorkerHarnessResolver
 	clock      Clock
 }
 
+// QueryConfig supplies durable read authority and the reviewed worker adapter
+// registry. Harnesses may be absent only for the legacy read-only service mode.
+type QueryConfig struct {
+	Repository Repository
+	Harnesses  WorkerHarnessResolver
+	Clock      Clock
+}
+
 // NewQueries validates and binds the read-side dependencies.
-func NewQueries(repository Repository, clock Clock) (*Queries, error) {
-	if repository == nil {
+func NewQueries(config QueryConfig) (*Queries, error) {
+	if config.Repository == nil {
 		return nil, errors.New("create queries: repository is required")
 	}
-	if clock == nil {
+	if config.Clock == nil {
 		return nil, errors.New("create queries: clock is required")
 	}
-	return &Queries{repository: repository, clock: clock}, nil
+	return &Queries{repository: config.Repository, harnesses: config.Harnesses, clock: config.Clock}, nil
 }
 
 // Diagnose returns bounded readiness without treating absent host integration as healthy.
@@ -156,6 +166,85 @@ func (queries *Queries) Operation(ctx context.Context, id string) (OperationView
 		CreatedAtMs:   operation.CreatedAt.UnixMilli(),
 		UpdatedAtMs:   operation.UpdatedAt.UnixMilli(),
 	}, nil
+}
+
+// GetLaunchPlan builds the exact configured harness descriptor from durable
+// activation authority, then returns only the reviewed non-executable fields.
+func (queries *Queries) GetLaunchPlan(ctx context.Context, handle string) (LaunchPlan, error) {
+	if err := domain.ValidateTaskHandle(handle); err != nil {
+		return LaunchPlan{}, invalidReferenceFailure("task handle", err)
+	}
+	task, err := queries.repository.GetTask(ctx, handle)
+	if err != nil {
+		return LaunchPlan{}, translateReadError(err, "task")
+	}
+	if task.State != domain.TaskReady || task.ManagedRunID == "" || task.WorkspaceLeaseID == "" ||
+		task.ExecutionAttachmentID == "" || task.AttachmentTargetName == "" {
+		return LaunchPlan{}, newSafeFailure(
+			domain.ErrorPrecondition, false, "task is not ready for launch",
+			"wait for exact managed-run activation before requesting launch requirements", nil,
+		)
+	}
+	if queries.harnesses == nil {
+		return LaunchPlan{}, launchAdapterFailure(nil)
+	}
+	preparation, err := queries.repository.GetManagedRunPreparation(ctx, handle)
+	if err != nil {
+		return LaunchPlan{}, translateReadError(err, "task launch preparation")
+	}
+	adapter, err := queries.harnesses.ResolveWorkerHarness(task.WorkerProfileID)
+	if err != nil || adapter == nil {
+		return LaunchPlan{}, launchAdapterFailure(err)
+	}
+	attachment := RuntimeSocketAttachment{
+		ExecutionAttachmentID: task.ExecutionAttachmentID,
+		AttachmentTargetName:  task.AttachmentTargetName,
+		MountSocketPath:       filepath.Join("/run/comis/attachments", task.AttachmentTargetName),
+	}
+	request := WorkerLaunchRequest{
+		ProfileID: task.WorkerProfileID, Shape: task.Shape,
+		WorkingDirectory: preparation.RequestedWorkspaceRoot,
+		TaskHandle:       task.Handle, ManagedRunID: task.ManagedRunID, WorkspaceLeaseID: task.WorkspaceLeaseID,
+		BriefRevision: task.BriefRevision, BriefRevisionHash: task.BriefRevisionHash,
+		Attachment: attachment,
+	}
+	descriptor, err := adapter.BuildLaunchDescriptor(ctx, request)
+	if err != nil {
+		return LaunchPlan{}, launchAdapterFailure(err)
+	}
+	if !launchDescriptorMatches(descriptor, request) {
+		return LaunchPlan{}, newSafeFailure(
+			domain.ErrorInternal, false, "reviewed launch descriptor is inconsistent",
+			"inspect the configured worker profile before retrying", nil,
+		)
+	}
+	return LaunchPlan{
+		SchemaVersion: 1, CapturedAtMs: queries.now().UnixMilli(), StateVersion: task.StateVersion,
+		Completeness: CompletenessComplete, TaskHandle: task.Handle, State: task.State,
+		StateSource: StateSourceStore, StateConfidence: ConfidenceVerified, Freshness: FreshnessCurrent,
+		WorkerProfileID: task.WorkerProfileID, TerminalAllowEntryID: descriptor.TerminalAllowEntry,
+		BriefRevisionHash: task.BriefRevisionHash, AttachmentTargetName: task.AttachmentTargetName,
+	}, nil
+}
+
+func launchDescriptorMatches(descriptor WorkerLaunchDescriptor, request WorkerLaunchRequest) bool {
+	return descriptor.ProfileID == request.ProfileID && descriptor.TerminalAllowEntry != "" &&
+		descriptor.Attachment == request.Attachment &&
+		descriptor.ExpectedAcknowledgement == (LaunchAcknowledgement{
+			TaskHandle: request.TaskHandle, ManagedRunID: request.ManagedRunID,
+			WorkspaceLeaseID: request.WorkspaceLeaseID, WorkingDirectory: request.WorkingDirectory,
+			BriefRevision: request.BriefRevision, BriefRevisionHash: request.BriefRevisionHash,
+		})
+}
+
+func launchAdapterFailure(cause error) error {
+	if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
+		return newSafeFailure(domain.ErrorDeadlineExceeded, true, "launch-plan query did not complete", "retry the read request", cause)
+	}
+	return newSafeFailure(
+		domain.ErrorUnavailable, true, "reviewed worker profile is unavailable",
+		"inspect the configured worker profile and exact harness version", cause,
+	)
 }
 
 func (queries *Queries) taskSnapshot(ctx context.Context) ([]domain.Task, int64, error) {

@@ -27,6 +27,7 @@ type Repository interface {
 	ListTasks(context.Context) ([]domain.Task, error)
 	TaskSnapshot(context.Context) ([]domain.Task, int64, error)
 	GetTask(context.Context, string) (domain.Task, error)
+	GetManagedRunPreparation(context.Context, string) (ManagedRunPreparation, error)
 	GetOperation(context.Context, string) (domain.OperationRecord, error)
 	CurrentStateVersion(context.Context) (int64, error)
 }
