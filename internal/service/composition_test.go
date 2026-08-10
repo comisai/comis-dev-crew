@@ -50,6 +50,11 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 		descriptor.Unattended || descriptor.DegradedReason != application.HarnessReasonLifecycleSignalUnknown {
 		t.Fatalf("installed Codex launch posture = %#v", descriptor)
 	}
+	if len(descriptor.EnvironmentBindings) != 2 ||
+		descriptor.EnvironmentBindings["DEV_CREW_ATTACHMENT"] != descriptor.Attachment.MountSocketPath ||
+		descriptor.EnvironmentBindings["DEV_CREW_ATTACHMENT_TARGET_NAME"] != descriptor.Attachment.AttachmentTargetName {
+		t.Fatalf("installed Codex attachment bindings = %#v", descriptor.EnvironmentBindings)
+	}
 	taskID, err := configured.TaskIDs("operation-installed-stable")
 	if err != nil || !strings.HasPrefix(taskID, "task-") || len(taskID) != len("task-")+24 {
 		t.Fatalf("installed task identity = %q, %v", taskID, err)

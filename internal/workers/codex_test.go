@@ -287,6 +287,23 @@ func TestCodexAdapter_RejectsInvalidConfigurationProbeAndLaunchBoundaries(t *tes
 	if _, err := noAttachment.BuildLaunchDescriptor(context.Background(), valid); err == nil {
 		t.Fatal("BuildLaunchDescriptor(no attachment allowlist) error = nil")
 	}
+
+	pathOnlyProfile := profile
+	pathOnlyProfile.ID = "codex-path-only"
+	pathOnlyCatalog, err := workers.NewProfileCatalog([]workers.StaticProfile{pathOnlyProfile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pathOnly, err := workers.NewCodexAdapter(workers.CodexAdapterConfig{
+		Profiles: pathOnlyCatalog, ProfileID: pathOnlyProfile.ID, ExpectedVersion: "codex-cli 0.147.0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid.ProfileID = pathOnlyProfile.ID
+	if _, err := pathOnly.BuildLaunchDescriptor(context.Background(), valid); err == nil {
+		t.Fatal("BuildLaunchDescriptor(path-only attachment allowlist) error = nil")
+	}
 }
 
 func probedCodexProfile(t *testing.T, id string) workers.StaticProfile {
