@@ -68,6 +68,9 @@ func TestFixture_StopsAtControlledFaultBoundaries(t *testing.T) {
 			if !errors.Is(err, workers.ErrInjectedFault) {
 				t.Fatalf("Run() error = %v, want ErrInjectedFault", err)
 			}
+			if !strings.Contains(err.Error(), string(test.fault)) {
+				t.Fatalf("Run() error = %q, want fault point", err)
+			}
 			if len(harness.sink.reports) != test.wantReports || harness.decisions.calls != test.wantDecisions {
 				t.Fatalf("reports/decisions = %d/%d, want %d/%d", len(harness.sink.reports), harness.decisions.calls, test.wantReports, test.wantDecisions)
 			}

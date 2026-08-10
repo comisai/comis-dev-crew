@@ -70,6 +70,9 @@ func TestProfileCatalog_ReturnsExactUnavailableUnknownAndShapeErrorsWithoutFallb
 		availability.Reason != workers.AvailabilityReasonAuthentication {
 		t.Fatalf("unavailable profile error = %#v / %v", availability, err)
 	}
+	if got := err.Error(); got != "worker profile codex-auth-missing is unavailable: authentication_unavailable" {
+		t.Fatalf("unavailable profile diagnostic = %q", got)
+	}
 	request.ProfileID = unknown.ID
 	if _, err := catalog.BuildLaunchDescriptor(request); !errors.As(err, &availability) ||
 		availability.Availability != workers.AvailabilityUnknown || availability.Reason != workers.AvailabilityReasonNotProbed {
@@ -86,6 +89,36 @@ func TestProfileCatalog_ReturnsExactUnavailableUnknownAndShapeErrorsWithoutFallb
 	}
 }
 
+func TestProfileCatalog_RejectsUnavailableCatalogAndUnsafeWorkingDirectories(t *testing.T) {
+	var unavailable *workers.ProfileCatalog
+	if _, err := unavailable.ResolveProfile("codex-reviewed", domain.ShapeShip); err == nil {
+		t.Fatal("ResolveProfile(unavailable catalog) error = nil")
+	}
+	profile := availableCodexProfile(codexFixtureExecutable(t), "codex-reviewed")
+	catalog, err := workers.NewProfileCatalog([]workers.StaticProfile{profile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := canonicalWorkerTempDir(t)
+	regular := filepath.Join(root, "regular")
+	if err := os.WriteFile(regular, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(root, "linked")
+	if err := os.Symlink(root, linked); err != nil {
+		t.Fatal(err)
+	}
+	for _, workingDirectory := range []string{
+		"relative", regular, linked, filepath.Join(root, "missing"), root + "\n",
+	} {
+		if _, err := catalog.BuildLaunchDescriptor(workers.LaunchRequest{
+			ProfileID: profile.ID, Shape: domain.ShapeShip, WorkingDirectory: workingDirectory,
+		}); err == nil {
+			t.Fatalf("BuildLaunchDescriptor(%q) error = nil", workingDirectory)
+		}
+	}
+}
+
 func TestProfileCatalog_RejectsUnsafeOrAmbiguousStaticProfiles(t *testing.T) {
 	executable := codexFixtureExecutable(t)
 	valid := availableCodexProfile(executable, "codex-reviewed")
@@ -99,12 +132,26 @@ func TestProfileCatalog_RejectsUnsafeOrAmbiguousStaticProfiles(t *testing.T) {
 	}{
 		{name: "none"},
 		{name: "duplicate", profiles: []workers.StaticProfile{valid, valid}},
+		{name: "unknown harness", profiles: mutateProfile(valid, func(profile *workers.StaticProfile) { profile.Harness = "other" })},
+		{name: "unknown shape", profiles: mutateProfile(valid, func(profile *workers.StaticProfile) { profile.AllowedShapes = []domain.TaskShape{"review"} })},
 		{name: "relative executable", profiles: mutateProfile(valid, func(profile *workers.StaticProfile) { profile.Executable = "codex" })},
 		{name: "symlink executable", profiles: mutateProfile(valid, func(profile *workers.StaticProfile) { profile.Executable = symlink })},
 		{name: "shell executable", profiles: mutateProfile(valid, func(profile *workers.StaticProfile) { profile.Executable = "/bin/sh" })},
 		{name: "invalid arguments", profiles: mutateProfile(valid, func(profile *workers.StaticProfile) { profile.Arguments = []string{"exec\nrm"} })},
+		{name: "too many arguments", profiles: mutateProfile(valid, func(profile *workers.StaticProfile) {
+			profile.Arguments = make([]string, 33)
+			for index := range profile.Arguments {
+				profile.Arguments[index] = "arg"
+			}
+		})},
 		{name: "duplicate environment", profiles: mutateProfile(valid, func(profile *workers.StaticProfile) { profile.EnvironmentKeys = []string{"PATH", "PATH"} })},
 		{name: "invalid environment", profiles: mutateProfile(valid, func(profile *workers.StaticProfile) { profile.EnvironmentKeys = []string{"PATH=value"} })},
+		{name: "too many environment keys", profiles: mutateProfile(valid, func(profile *workers.StaticProfile) {
+			profile.EnvironmentKeys = make([]string, 33)
+			for index := range profile.EnvironmentKeys {
+				profile.EnvironmentKeys[index] = "KEY_" + string(rune('A'+index))
+			}
+		})},
 		{name: "missing model", profiles: mutateProfile(valid, func(profile *workers.StaticProfile) { profile.Model = "" })},
 		{name: "invalid availability", profiles: mutateProfile(valid, func(profile *workers.StaticProfile) { profile.Availability = "ready" })},
 		{name: "available with reason", profiles: mutateProfile(valid, func(profile *workers.StaticProfile) { profile.AvailabilityReason = workers.AvailabilityReasonNotProbed })},
