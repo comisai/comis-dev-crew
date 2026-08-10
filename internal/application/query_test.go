@@ -172,6 +172,65 @@ func TestQueries_GetLaunchPlanRejectsUnactivatedTaskWithoutCallingHarness(t *tes
 	}
 }
 
+func TestQueries_GetLaunchPlanFailsClosedAcrossReadAndAdapterBoundaries(t *testing.T) {
+	privateCause := errors.New("private launch adapter and workspace detail")
+	readyTask := queryTask("task-launch-failures", domain.TaskReady, 8)
+	readyTask.ExecutionAttachmentID = "execution-attachment-0002"
+	readyTask.AttachmentTargetName = "attachment-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.sock"
+	preparation := ManagedRunPreparation{ExternalRunRef: readyTask.Handle, RequestedWorkspaceRoot: t.TempDir(), State: PreparationOpen}
+	tests := []struct {
+		name       string
+		handle     string
+		repository *queryRepository
+		harnesses  WorkerHarnessResolver
+		wantCode   domain.ErrorCode
+	}{
+		{name: "invalid handle", handle: "../redirect", repository: &queryRepository{}, wantCode: domain.ErrorInvalidArgument},
+		{name: "missing task", handle: readyTask.Handle, repository: &queryRepository{readErr: ErrNotFound}, wantCode: domain.ErrorNotFound},
+		{name: "missing harness registry", handle: readyTask.Handle, repository: &queryRepository{tasks: []domain.Task{readyTask}}, wantCode: domain.ErrorUnavailable},
+		{
+			name: "private preparation failure", handle: readyTask.Handle,
+			repository: &queryRepository{tasks: []domain.Task{readyTask}, preparationErr: privateCause},
+			harnesses:  &queryHarnesses{adapter: &queryHarnessAdapter{}}, wantCode: domain.ErrorInternal,
+		},
+		{
+			name: "profile resolution failure", handle: readyTask.Handle,
+			repository: &queryRepository{tasks: []domain.Task{readyTask}, preparation: preparation},
+			harnesses:  &queryHarnesses{err: privateCause}, wantCode: domain.ErrorUnavailable,
+		},
+		{
+			name: "descriptor construction failure", handle: readyTask.Handle,
+			repository: &queryRepository{tasks: []domain.Task{readyTask}, preparation: preparation},
+			harnesses:  &queryHarnesses{adapter: &queryHarnessAdapter{err: privateCause}}, wantCode: domain.ErrorUnavailable,
+		},
+		{
+			name: "descriptor deadline", handle: readyTask.Handle,
+			repository: &queryRepository{tasks: []domain.Task{readyTask}, preparation: preparation},
+			harnesses:  &queryHarnesses{adapter: &queryHarnessAdapter{err: context.DeadlineExceeded}}, wantCode: domain.ErrorDeadlineExceeded,
+		},
+		{
+			name: "inconsistent descriptor", handle: readyTask.Handle,
+			repository: &queryRepository{tasks: []domain.Task{readyTask}, preparation: preparation},
+			harnesses:  &queryHarnesses{adapter: &queryHarnessAdapter{descriptor: &WorkerLaunchDescriptor{}}}, wantCode: domain.ErrorInternal,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			queries, err := NewQueries(QueryConfig{Repository: test.repository, Harnesses: test.harnesses, Clock: time.Now})
+			if err != nil {
+				t.Fatalf("NewQueries() error = %v", err)
+			}
+			_, err = queries.GetLaunchPlan(context.Background(), test.handle)
+			if failureCode(err) != test.wantCode {
+				t.Fatalf("GetLaunchPlan() error = %v, want %s", err, test.wantCode)
+			}
+			if strings.Contains(err.Error(), privateCause.Error()) {
+				t.Fatalf("GetLaunchPlan() leaked private cause: %q", err)
+			}
+		})
+	}
+}
+
 func TestQueries_RejectInvalidRefsAndTranslateRepositoryFailuresSafely(t *testing.T) {
 	privateCause := errors.New("private database path and row detail")
 	tests := []struct {
@@ -353,6 +412,7 @@ type queryRepository struct {
 	tasks           []domain.Task
 	operation       domain.OperationRecord
 	preparation     ManagedRunPreparation
+	preparationErr  error
 	stateVersion    int64
 	stateVersionErr error
 	readErr         error
@@ -364,6 +424,9 @@ func (repository *queryRepository) GetManagedRunPreparation(context.Context, str
 	repository.readCalled = true
 	if repository.readErr != nil {
 		return ManagedRunPreparation{}, repository.readErr
+	}
+	if repository.preparationErr != nil {
+		return ManagedRunPreparation{}, repository.preparationErr
 	}
 	return repository.preparation, nil
 }
@@ -378,8 +441,10 @@ func (harnesses *queryHarnesses) ResolveWorkerHarness(string) (WorkerHarnessAdap
 }
 
 type queryHarnessAdapter struct {
-	request WorkerLaunchRequest
-	called  bool
+	request    WorkerLaunchRequest
+	called     bool
+	err        error
+	descriptor *WorkerLaunchDescriptor
 }
 
 func (*queryHarnessAdapter) ID() string { return "codex" }
@@ -391,6 +456,12 @@ func (*queryHarnessAdapter) ProbeVersion(context.Context) (HarnessVersionProbe, 
 func (adapter *queryHarnessAdapter) BuildLaunchDescriptor(_ context.Context, request WorkerLaunchRequest) (WorkerLaunchDescriptor, error) {
 	adapter.called = true
 	adapter.request = request
+	if adapter.err != nil {
+		return WorkerLaunchDescriptor{}, adapter.err
+	}
+	if adapter.descriptor != nil {
+		return *adapter.descriptor, nil
+	}
 	return WorkerLaunchDescriptor{
 		ProfileID: request.ProfileID, Harness: "codex", Executable: "/usr/local/bin/codex",
 		Arguments: []string{"--model", "reviewed-model"}, WorkingDirectory: request.WorkingDirectory,

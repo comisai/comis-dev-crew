@@ -178,6 +178,23 @@ func TestRunCommand_RejectsPartialInstalledCompositionWithoutLeakingValues(t *te
 	if strings.Contains(stdout.String()+stderr.String(), privateValue) {
 		t.Fatalf("partial-composition diagnostic leaked private value: %q", stderr.String())
 	}
+	stdout.Reset()
+	stderr.Reset()
+	exitCode = RunCommand(context.Background(), []string{
+		"--database", "/private/state/devcrew.db", "--socket", "/private/run/operator.sock",
+		"--mcp-socket", "/private/run/mcp.sock", "--runtime-root", "/private/run/tasks",
+		"--service-instance", "service-instance-reviewed", "--git-executable", "/usr/bin/git",
+		"--approved-root", "/private/repositories", "--repository-id", "product-api",
+		"--repository-primary", "/private/repositories/product-api", "--worktree-root", "/private/repositories/worktrees",
+		"--repository-default-branch", "main", "--comis-socket", "/private/run/comis.sock",
+		"--comis-credential-file", "/private/config/comis.credential", "--comis-handshake-operation", "handshake-reviewed",
+		"--codex-profile", "codex-reviewed", "--codex-executable", "/opt/codex/bin/codex",
+		"--codex-version", "codex-cli 0.147.0", "--codex-model", "gpt-5.5-codex",
+		"--codex-terminal-allow-entry", "codex-confined", "--codex-network", "restricted", "--codex-concurrency", "2",
+	}, &stdout, &stderr, CommandConfig{})
+	if exitCode != 2 || !strings.Contains(stderr.String(), "installed composition is incomplete") {
+		t.Fatalf("RunCommand(missing effort) = %d, stderr=%q", exitCode, stderr.String())
+	}
 }
 
 func TestRunCommand_SuccessAndDiagnosticWriterFailures(t *testing.T) {

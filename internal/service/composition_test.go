@@ -29,6 +29,9 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 	if err != nil {
 		t.Fatalf("ResolveWorkerHarness() error = %v", err)
 	}
+	if _, err := configured.WorkerHarnesses.ResolveWorkerHarness("codex-unreviewed"); err == nil {
+		t.Fatal("ResolveWorkerHarness(unreviewed) error = nil")
+	}
 	descriptor, err := adapter.BuildLaunchDescriptor(context.Background(), application.WorkerLaunchRequest{
 		ProfileID: "codex-reviewed", Shape: domain.ShapeShip, WorkingDirectory: configuration.RepositoryComposition.PrimaryCheckout,
 		TaskHandle: "task-installed-plan", ManagedRunID: "managed-run-installed-plan",
@@ -120,6 +123,16 @@ func TestInstalledRuntime_RejectsPartialMixedAndUnverifiedConfiguration(t *testi
 	configuration.CodexComposition.ExpectedVersion = "codex-cli 9.9.9"
 	if _, err := composeInstalledRuntime(context.Background(), configuration); err == nil {
 		t.Fatal("composeInstalledRuntime(version mismatch) error = nil")
+	}
+	configuration = installedServiceConfig(t, shortTempDir(t))
+	configuration.CodexComposition.Network = workers.NetworkPosture("redirected")
+	if _, err := composeInstalledRuntime(context.Background(), configuration); err == nil {
+		t.Fatal("composeInstalledRuntime(invalid profile) error = nil")
+	}
+	configuration = installedServiceConfig(t, shortTempDir(t))
+	configuration.CodexComposition.ExpectedVersion = "unreviewed-version"
+	if _, err := composeInstalledRuntime(context.Background(), configuration); err == nil {
+		t.Fatal("composeInstalledRuntime(invalid version pin) error = nil")
 	}
 	configuration = installedServiceConfig(t, shortTempDir(t))
 	configuration.RepositoryComposition.DefaultBranch = "missing"
