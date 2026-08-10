@@ -153,6 +153,37 @@ func TestQueries_GetLaunchPlanBuildsAndSafelyProjectsReviewedDescriptor(t *testi
 	}
 }
 
+func TestQueries_GetLaunchPlanAllowsLaunchingRecoveryReread(t *testing.T) {
+	now := time.Date(2026, time.August, 10, 9, 45, 0, 0, time.UTC)
+	workspace := t.TempDir()
+	task := queryTask("task-launch-plan-recovery", domain.TaskLaunching, 8)
+	task.ExecutionAttachmentID = "execution-attachment-recovery"
+	task.AttachmentTargetName = "attachment-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.sock"
+	adapter := &queryHarnessAdapter{}
+	queries, err := NewQueries(QueryConfig{
+		Repository: &queryRepository{
+			tasks: []domain.Task{task},
+			preparation: ManagedRunPreparation{
+				ExternalRunRef: task.Handle, RequestedWorkspaceRoot: workspace,
+				State: PreparationOpen,
+			},
+		},
+		Harnesses: &queryHarnesses{adapter: adapter},
+		Clock:     func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := queries.GetLaunchPlan(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("GetLaunchPlan(launching recovery) error = %v", err)
+	}
+	if plan.State != domain.TaskLaunching || plan.StateVersion != task.StateVersion ||
+		adapter.request.ManagedRunID != task.ManagedRunID || adapter.request.WorkspaceLeaseID != task.WorkspaceLeaseID {
+		t.Fatalf("GetLaunchPlan(launching recovery) = %#v, request %#v", plan, adapter.request)
+	}
+}
+
 func TestQueries_GetLaunchPlanRejectsUnactivatedTaskWithoutCallingHarness(t *testing.T) {
 	task := queryTask("task-not-activated", domain.TaskPrepared, 3)
 	adapter := &queryHarnessAdapter{}

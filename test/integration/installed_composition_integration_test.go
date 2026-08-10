@@ -21,6 +21,7 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/comiswire"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 	"github.com/comisai/comis-dev-crew/internal/mcpadapter"
+	"github.com/comisai/comis-dev-crew/internal/reporter"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -183,6 +184,69 @@ func TestInstalledComposition_JoinsMCPActivationAndReviewedCodexLaunchPlan(t *te
 			t.Fatalf("installed launch plan leaked %q: %s", forbidden, visible)
 		}
 	}
+	terminalSessionID := comiswire.TerminalSessionID("terminal-session-installed")
+	created := comiswire.TerminalEventRequest{
+		JSONRPC: comiswire.JSONRPCVersion, ID: "installed-terminal-created-0001", Method: comiswire.MethodManagedRunsTerminalEvent,
+		Params: comiswire.TerminalEventRequestParams{
+			OperationID: "installed-terminal-created-0001", ManagedRunID: activation.Params.ManagedRunID,
+			WorkspaceLeaseID: lease, TerminalSessionID: terminalSessionID,
+			Transition: comiswire.CapabilityTerminalTransitionCreated,
+		},
+	}
+	createdResponse := installedTerminalEvent(t, peer, created)
+	if createdResponse.Result.ManagedRunID != activation.Params.ManagedRunID ||
+		createdResponse.Result.TerminalSessionID != terminalSessionID ||
+		createdResponse.Result.Transition != comiswire.CapabilityTerminalTransitionCreated {
+		t.Fatalf("installed created acknowledgement = %#v", createdResponse)
+	}
+	if state := installedTaskState(t, mcpSession, "installed-task-launching-0001", string(registration.ExternalRunRef)); state != domain.TaskLaunching {
+		t.Fatalf("installed task after created = %q, want launching", state)
+	}
+	recoveryPlanResult, err := mcpSession.CallTool(context.Background(), &mcp.CallToolParams{
+		Meta: parityCallMeta("installed-launch-plan-recovery-0001"), Name: mcpadapter.ToolGetLaunchPlan,
+		Arguments: mcpadapter.TaskInput{TaskHandle: string(registration.ExternalRunRef)},
+	})
+	if err != nil || recoveryPlanResult.IsError {
+		t.Fatalf("installed launching get_launch_plan = %#v, %v", recoveryPlanResult, err)
+	}
+	var recoveryPlan application.LaunchPlan
+	decodeStructured(t, recoveryPlanResult.StructuredContent, &recoveryPlan)
+	if recoveryPlan.State != domain.TaskLaunching || recoveryPlan.TaskHandle != string(registration.ExternalRunRef) {
+		t.Fatalf("installed launching recovery plan = %#v", recoveryPlan)
+	}
+
+	alteredCreated := created
+	alteredCreated.Params.WorkspaceLeaseID = "workspace-lease-altered"
+	alteredResponse := installedTerminalError(t, peer, alteredCreated)
+	if alteredResponse.Error.Kind != comiswire.ErrorKindReplayConflict {
+		t.Fatalf("installed altered created replay = %#v, want replay conflict", alteredResponse)
+	}
+
+	running := comiswire.TerminalEventRequest{
+		JSONRPC: comiswire.JSONRPCVersion, ID: "installed-terminal-running-0001", Method: comiswire.MethodManagedRunsTerminalEvent,
+		Params: comiswire.TerminalEventRequestParams{
+			OperationID: "installed-terminal-running-0001", ManagedRunID: activation.Params.ManagedRunID,
+			WorkspaceLeaseID: lease, TerminalSessionID: terminalSessionID,
+			Transition: comiswire.CapabilityTerminalTransitionRunning,
+		},
+	}
+	installedTerminalEvent(t, peer, running)
+	if state := installedTaskState(t, mcpSession, "installed-task-running-0001", string(registration.ExternalRunRef)); state != domain.TaskLaunching {
+		t.Fatalf("installed task after running without wrapper acknowledgement = %q, want launching", state)
+	}
+	if registration.RequestedAttachment == nil {
+		t.Fatal("installed preparation omitted the reporter attachment")
+	}
+	runtimeClient, err := reporter.NewRuntimeClient(registration.RequestedAttachment.SourcePath, time.Second)
+	if err != nil {
+		t.Fatalf("open installed runtime attachment: %v", err)
+	}
+	if err := runtimeClient.Acknowledge(context.Background(), workspace); err != nil {
+		t.Fatalf("acknowledge installed worker wrapper: %v", err)
+	}
+	if state := installedTaskState(t, mcpSession, "installed-task-working-0001", string(registration.ExternalRunRef)); state != domain.TaskWorking {
+		t.Fatalf("installed task after joined launch evidence = %q, want working", state)
+	}
 
 	if err := mcpSession.Close(); err != nil {
 		t.Fatal(err)
@@ -215,6 +279,11 @@ type installedAuthenticatedHandshake struct {
 
 type installedAuthenticatedActivate struct {
 	comiswire.ActivateRequest
+	Bearer string `json:"bearer"`
+}
+
+type installedAuthenticatedTerminalEvent struct {
+	comiswire.TerminalEventRequest
 	Bearer string `json:"bearer"`
 }
 
@@ -273,6 +342,58 @@ func writeInstalledFrame(connection net.Conn, value any) error {
 	encoded = append(encoded, '\n')
 	_, err = connection.Write(encoded)
 	return err
+}
+
+func installedTerminalEvent(t *testing.T, peer installedControlPeer, request comiswire.TerminalEventRequest) comiswire.TerminalEventResponse {
+	t.Helper()
+	if err := writeInstalledFrame(peer.connection, installedAuthenticatedTerminalEvent{
+		TerminalEventRequest: request, Bearer: installedCredential,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	line, err := peer.reader.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("read installed terminal response: %v", err)
+	}
+	var response comiswire.TerminalEventResponse
+	decodeJSON(t, line, &response)
+	if response.ID != request.ID {
+		t.Fatalf("installed terminal response = %s", line)
+	}
+	return response
+}
+
+func installedTerminalError(t *testing.T, peer installedControlPeer, request comiswire.TerminalEventRequest) comiswire.ErrorResponse {
+	t.Helper()
+	if err := writeInstalledFrame(peer.connection, installedAuthenticatedTerminalEvent{
+		TerminalEventRequest: request, Bearer: installedCredential,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	line, err := peer.reader.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("read installed terminal error: %v", err)
+	}
+	var response comiswire.ErrorResponse
+	decodeJSON(t, line, &response)
+	if response.ID == nil || *response.ID != request.ID {
+		t.Fatalf("installed terminal error = %s", line)
+	}
+	return response
+}
+
+func installedTaskState(t *testing.T, session *mcp.ClientSession, operationID, taskHandle string) domain.TaskState {
+	t.Helper()
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Meta: parityCallMeta(operationID), Name: mcpadapter.ToolGetTask,
+		Arguments: mcpadapter.TaskInput{TaskHandle: taskHandle},
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("installed get_task = %#v, %v", result, err)
+	}
+	var detail application.TaskDetail
+	decodeStructured(t, result.StructuredContent, &detail)
+	return detail.Summary.State
 }
 
 func buildInstalledBinary(t *testing.T, name string) string {
