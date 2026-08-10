@@ -233,6 +233,8 @@ type boundaryCapability struct {
 	receipt domain.ReportReceipt
 }
 
+func (capability *boundaryCapability) Acknowledge(context.Context, string) error { return nil }
+
 func (capability *boundaryCapability) Brief(context.Context) (domain.WorkerBrief, error) {
 	return capability.brief, nil
 }

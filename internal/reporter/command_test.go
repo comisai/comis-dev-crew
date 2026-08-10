@@ -83,6 +83,28 @@ func TestRunCommand_BriefHelpAndVersionExposeNoAuthoritySelector(t *testing.T) {
 	}
 }
 
+func TestRunCommand_AcknowledgesCanonicalWorkingDirectoryWithoutAuthoritySelectors(t *testing.T) {
+	capability := &commandCapability{}
+	var stdout, stderr bytes.Buffer
+	exit := reporter.RunCommand(context.Background(), []string{"acknowledge"}, &stdout, &stderr, reporter.CommandConfig{
+		Capability:       capability,
+		WorkingDirectory: func() (string, error) { return "/canonical/task-worktree", nil },
+	})
+	if exit != 0 || stderr.Len() != 0 || capability.acknowledgeCalls != 1 ||
+		capability.workingDirectory != "/canonical/task-worktree" || !strings.Contains(stdout.String(), "acknowledged") {
+		t.Fatalf("RunCommand(acknowledge) = %d stdout=%q stderr=%q capability=%#v", exit, stdout.String(), stderr.String(), capability)
+	}
+	for _, args := range [][]string{
+		{"acknowledge", "extra"},
+		{"acknowledge", "--task", "task-other"},
+		{"acknowledge", "--cwd", "/other"},
+	} {
+		if got := reporter.RunCommand(context.Background(), args, &stdout, &stderr, reporter.CommandConfig{Capability: capability}); got != 2 {
+			t.Fatalf("RunCommand(%q) = %d, want invalid command", args, got)
+		}
+	}
+}
+
 func TestRunCommand_RejectsMalformedCommandsAndDependencyFailures(t *testing.T) {
 	brief := commandBrief()
 	tests := [][]string{
@@ -124,13 +146,15 @@ func TestRunCommand_RejectsMalformedCommandsAndDependencyFailures(t *testing.T) 
 }
 
 type commandCapability struct {
-	brief       domain.WorkerBrief
-	receipt     domain.ReportReceipt
-	report      domain.WorkerReport
-	briefErr    error
-	reportErr   error
-	briefCalls  int
-	reportCalls int
+	brief            domain.WorkerBrief
+	receipt          domain.ReportReceipt
+	report           domain.WorkerReport
+	briefErr         error
+	reportErr        error
+	briefCalls       int
+	reportCalls      int
+	acknowledgeCalls int
+	workingDirectory string
 }
 
 func (capability *commandCapability) Brief(context.Context) (domain.WorkerBrief, error) {
@@ -142,6 +166,12 @@ func (capability *commandCapability) Report(_ context.Context, report domain.Wor
 	capability.reportCalls++
 	capability.report = report
 	return capability.receipt, capability.reportErr
+}
+
+func (capability *commandCapability) Acknowledge(_ context.Context, workingDirectory string) error {
+	capability.acknowledgeCalls++
+	capability.workingDirectory = workingDirectory
+	return nil
 }
 
 func commandBrief() domain.WorkerBrief {

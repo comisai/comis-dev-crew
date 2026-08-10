@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 	"github.com/comisai/comis-dev-crew/internal/reporter"
 )
@@ -81,12 +82,42 @@ func TestRuntimeAttachment_RejectsCrossTaskAndOversizedWireRequests(t *testing.T
 	}
 }
 
+func TestRuntimeAttachment_AcknowledgesOnlyExactProtectedLaunchBinding(t *testing.T) {
+	first := newRuntimeHarness(t, "task-runtime-ack-0001", "report-runtime-ack-0001")
+	second := newRuntimeHarness(t, "task-runtime-ack-0002", "report-runtime-ack-0002")
+
+	if err := first.client.Acknowledge(context.Background(), first.workspace); err != nil {
+		t.Fatalf("Acknowledge(first) error = %v", err)
+	}
+	if first.acknowledger.calls != 1 || second.acknowledger.calls != 0 ||
+		first.acknowledger.command.OperationID != first.launchOperationID ||
+		first.acknowledger.command.Acknowledgement != first.expectedLaunch {
+		t.Fatalf("protected acknowledgement = first:%#v second calls:%d", first.acknowledger, second.acknowledger.calls)
+	}
+	if err := first.client.Acknowledge(context.Background(), filepath.Join(first.workspace, "other")); err == nil {
+		t.Fatal("Acknowledge(wrong cwd) error = nil")
+	}
+	if first.acknowledger.calls != 1 {
+		t.Fatalf("wrong cwd reached mutation authority: calls=%d", first.acknowledger.calls)
+	}
+	if err := first.server.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.client.Acknowledge(context.Background(), second.workspace); err != nil || second.acknowledger.calls != 1 {
+		t.Fatalf("stopping first affected second acknowledgement: %v calls=%d", err, second.acknowledger.calls)
+	}
+}
+
 type runtimeHarness struct {
-	server     *reporter.RuntimeServer
-	client     *reporter.RuntimeClient
-	sink       *recordingSink
-	brief      domain.WorkerBrief
-	socketPath string
+	server            *reporter.RuntimeServer
+	client            *reporter.RuntimeClient
+	sink              *recordingSink
+	brief             domain.WorkerBrief
+	socketPath        string
+	workspace         string
+	expectedLaunch    application.LaunchAcknowledgement
+	launchOperationID string
+	acknowledger      *recordingLaunchAcknowledger
 }
 
 func newRuntimeHarness(t *testing.T, taskHandle, localReportID string) runtimeHarness {
@@ -119,9 +150,19 @@ func newRuntimeHarness(t *testing.T, taskHandle, localReportID string) runtimeHa
 	if err != nil {
 		t.Fatal(err)
 	}
+	workspace := filepath.Join(root, "workspace")
+	expectedLaunch := application.LaunchAcknowledgement{
+		TaskHandle: taskHandle, ManagedRunID: "managed-run-" + taskHandle,
+		WorkspaceLeaseID: "workspace-lease-" + taskHandle, WorkingDirectory: workspace,
+		BriefRevision: brief.Revision, BriefRevisionHash: brief.RevisionHash,
+	}
+	launchOperationID := "operation-launch-ack-" + taskHandle
+	acknowledger := &recordingLaunchAcknowledger{}
 	socketPath := filepath.Join(root, "attachment.sock")
 	server, err := reporter.ListenRuntime(reporter.RuntimeServerConfig{
 		SocketPath: socketPath, Brief: brief, Reporter: reportClient,
+		LaunchOperationID: launchOperationID, ExpectedLaunch: expectedLaunch,
+		LaunchAcknowledger: acknowledger,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -140,7 +181,33 @@ func newRuntimeHarness(t *testing.T, taskHandle, localReportID string) runtimeHa
 	if err != nil {
 		t.Fatal(err)
 	}
-	return runtimeHarness{server: server, client: client, sink: sink, brief: brief, socketPath: socketPath}
+	return runtimeHarness{
+		server: server, client: client, sink: sink, brief: brief, socketPath: socketPath,
+		workspace: workspace, expectedLaunch: expectedLaunch,
+		launchOperationID: launchOperationID, acknowledger: acknowledger,
+	}
+}
+
+type recordingLaunchAcknowledger struct {
+	command application.AcknowledgeWorkerLaunchCommand
+	calls   int
+}
+
+func (acknowledger *recordingLaunchAcknowledger) AcknowledgeWorkerLaunch(
+	_ context.Context,
+	command application.AcknowledgeWorkerLaunchCommand,
+) (application.MutationResult, error) {
+	acknowledger.command = command
+	acknowledger.calls++
+	return application.MutationResult{
+		Task: domain.Task{
+			Handle: command.Acknowledgement.TaskHandle, ManagedRunID: command.Acknowledgement.ManagedRunID,
+			WorkspaceLeaseID: command.Acknowledgement.WorkspaceLeaseID, State: domain.TaskWorking,
+			BriefRevision:     command.Acknowledgement.BriefRevision,
+			BriefRevisionHash: command.Acknowledgement.BriefRevisionHash,
+		},
+		Operation: domain.OperationRecord{ID: command.OperationID, Status: domain.OperationCompleted},
+	}, nil
 }
 
 func runtimeReport(brief domain.WorkerBrief, localReportID string) domain.WorkerReport {

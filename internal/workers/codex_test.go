@@ -100,7 +100,10 @@ func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(
 			t.Fatalf("Codex process input leaked task authority %q", secret)
 		}
 	}
-	if !strings.Contains(string(descriptor.StandardInput), "devcrew-report brief") ||
+	bootstrap := string(descriptor.StandardInput)
+	if !strings.Contains(bootstrap, "devcrew-report acknowledge") ||
+		!strings.Contains(bootstrap, "devcrew-report brief") ||
+		strings.Index(bootstrap, "devcrew-report acknowledge") > strings.Index(bootstrap, "devcrew-report brief") ||
 		!containsString(descriptor.EnvironmentKeys, "DEV_CREW_ATTACHMENT") {
 		t.Fatalf("Codex bootstrap does not use protected attachment: %#v", descriptor)
 	}
