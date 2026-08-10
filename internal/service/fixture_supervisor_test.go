@@ -23,10 +23,10 @@ func TestFixtureSupervisor_ConsumesPinnedReadyTaskExactlyOnce(t *testing.T) {
 	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: serviceRepositoryCatalog{},
-		TaskIDs:                func() (string, error) { return "task-fixture-supervised", nil },
-		RegistrationNonces:     func() (string, error) { return "registration-nonce_supervised", nil },
-		RequestedWorkspaceRoot: "/private/worktrees/managed-run-fixture",
-		PreparationTTL:         time.Hour, Clock: func() time.Time { return now },
+		Workspaces:         serviceWorkspacePreparer{root: "/private/worktrees/managed-run-fixture"},
+		TaskIDs:            func(string) (string, error) { return "task-fixture-supervised", nil },
+		RegistrationNonces: func() (string, error) { return "registration-nonce_supervised", nil },
+		PreparationTTL:     time.Hour, Clock: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatal(err)

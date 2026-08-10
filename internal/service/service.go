@@ -32,21 +32,21 @@ type ComisControl interface {
 
 // Config identifies the service-owned database and operator endpoint.
 type Config struct {
-	DatabasePath           string
-	SocketPath             string
-	MCPSocketPath          string
-	ServiceInstanceID      string
-	Repositories           application.RepositoryCatalog
-	TaskIDs                application.TaskIDSource
-	RegistrationNonces     application.RegistrationNonceSource
-	RequestedWorkspaceRoot string
-	PreparationTTL         time.Duration
-	Clock                  application.Clock
-	ComisControl           ComisControl
-	RepositoryComposition  *RepositoryComposition
-	ComisComposition       *ComisComposition
-	FixtureComposition     *FixtureComposition
-	Ready                  func()
+	DatabasePath          string
+	SocketPath            string
+	MCPSocketPath         string
+	ServiceInstanceID     string
+	Repositories          application.RepositoryCatalog
+	Workspaces            application.WorkspacePreparer
+	TaskIDs               application.TaskIDSource
+	RegistrationNonces    application.RegistrationNonceSource
+	PreparationTTL        time.Duration
+	Clock                 application.Clock
+	ComisControl          ComisControl
+	RepositoryComposition *RepositoryComposition
+	ComisComposition      *ComisComposition
+	FixtureComposition    *FixtureComposition
+	Ready                 func()
 }
 
 // RepositoryComposition is the installed single-repository fixture lane.
@@ -57,7 +57,6 @@ type RepositoryComposition struct {
 	PrimaryCheckout string
 	WorktreeRoot    string
 	DefaultBranch   string
-	WorkspaceRoot   string
 }
 
 // ComisComposition identifies the installed authenticated control lane without
@@ -182,8 +181,8 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 }
 
 func composeMutations(config Config, store *sqlite.Store, clock application.Clock) (*application.Mutations, error) {
-	configured := config.Repositories != nil || config.TaskIDs != nil || config.RegistrationNonces != nil ||
-		config.RequestedWorkspaceRoot != "" || config.PreparationTTL != 0 || config.ServiceInstanceID != ""
+	configured := config.Repositories != nil || config.Workspaces != nil || config.TaskIDs != nil ||
+		config.RegistrationNonces != nil || config.PreparationTTL != 0 || config.ServiceInstanceID != ""
 	if !configured {
 		if config.MCPSocketPath != "" {
 			return nil, errors.New("run service: MCP endpoint requires mutation configuration")
@@ -191,10 +190,10 @@ func composeMutations(config Config, store *sqlite.Store, clock application.Cloc
 		return nil, nil
 	}
 	mutations, err := application.NewMutations(application.MutationConfig{
-		Store: store, Repositories: config.Repositories, TaskIDs: config.TaskIDs,
-		RegistrationNonces: config.RegistrationNonces, RequestedWorkspaceRoot: config.RequestedWorkspaceRoot,
-		PreparationTTL: config.PreparationTTL,
-		Clock:          clock,
+		Store: store, Repositories: config.Repositories, Workspaces: config.Workspaces, TaskIDs: config.TaskIDs,
+		RegistrationNonces: config.RegistrationNonces,
+		PreparationTTL:     config.PreparationTTL,
+		Clock:              clock,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("run service mutation coordinator: %w", err)

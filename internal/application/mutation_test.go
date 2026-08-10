@@ -16,8 +16,8 @@ func TestMutations_PrepareBuildsOnePinnedServiceMintedTask(t *testing.T) {
 	store := &mutationStore{}
 	repositories := &repositoryCatalog{}
 	mutations, err := NewMutations(MutationConfig{
-		Store: store, Repositories: repositories,
-		TaskIDs:            func() (string, error) { return "task-0001", nil },
+		Store: store, Repositories: repositories, Workspaces: testWorkspacePreparer(),
+		TaskIDs:            func(string) (string, error) { return "task-0001", nil },
 		RegistrationNonces: func() (string, error) { return "registration-nonce_0001", nil },
 		PreparationTTL:     15 * time.Minute,
 		Clock:              func() time.Time { return clock },
@@ -57,8 +57,8 @@ func TestMutations_ActivateManagedRunBuildsExactPrivateReplaySubject(t *testing.
 	clock := time.Date(2026, time.August, 9, 12, 31, 0, 0, time.UTC)
 	store := &mutationStore{}
 	mutations, err := NewMutations(MutationConfig{
-		Store: store, Repositories: &repositoryCatalog{},
-		TaskIDs:            func() (string, error) { return "task-0001", nil },
+		Store: store, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(),
+		TaskIDs:            func(string) (string, error) { return "task-0001", nil },
 		RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour,
 		Clock: func() time.Time { return clock },
 	})
@@ -86,8 +86,8 @@ func TestMutations_ActivateAndAbandonValidateClosedInputsAndCommitFailures(t *te
 	clock := time.Date(2026, time.August, 9, 12, 31, 0, 0, time.UTC)
 	newMutations := func(store *mutationStore) *Mutations {
 		mutations, err := NewMutations(MutationConfig{
-			Store: store, Repositories: &repositoryCatalog{},
-			TaskIDs:            func() (string, error) { return "task-unused", nil },
+			Store: store, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(),
+			TaskIDs:            func(string) (string, error) { return "task-unused", nil },
 			RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour,
 			Clock: func() time.Time { return clock },
 		})
@@ -193,8 +193,8 @@ func TestMutations_StartTaskBuildsExactReplaySubject(t *testing.T) {
 	clock := time.Date(2026, time.August, 9, 16, 10, 0, 0, time.UTC)
 	store := &mutationStore{}
 	mutations, err := NewMutations(MutationConfig{
-		Store: store, Repositories: &repositoryCatalog{},
-		TaskIDs:            func() (string, error) { return "task-unused", nil },
+		Store: store, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(),
+		TaskIDs:            func(string) (string, error) { return "task-unused", nil },
 		RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour,
 		Clock: func() time.Time { return clock },
 	})
@@ -213,8 +213,8 @@ func TestMutations_StartTaskBuildsExactReplaySubject(t *testing.T) {
 func TestMutations_StartTaskRejectsInvalidCancelledAndAlteredReplay(t *testing.T) {
 	store := &mutationStore{}
 	mutations, err := NewMutations(MutationConfig{
-		Store: store, Repositories: &repositoryCatalog{},
-		TaskIDs:            func() (string, error) { return "task-unused", nil },
+		Store: store, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(),
+		TaskIDs:            func(string) (string, error) { return "task-unused", nil },
 		RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour, Clock: time.Now,
 	})
 	if err != nil {
@@ -250,8 +250,8 @@ func TestMutations_StartTaskRejectsInvalidCancelledAndAlteredReplay(t *testing.T
 func TestMutations_ClassifiesStableReplayConflictForEveryAdapter(t *testing.T) {
 	store := &mutationStore{replayErr: fmt.Errorf("private store replay detail: %w", ErrConflict)}
 	mutations, err := NewMutations(MutationConfig{
-		Store: store, Repositories: &repositoryCatalog{},
-		TaskIDs:            func() (string, error) { return "task-unused", nil },
+		Store: store, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(),
+		TaskIDs:            func(string) (string, error) { return "task-unused", nil },
 		RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour,
 		Clock: func() time.Time { return time.Date(2026, time.August, 9, 12, 30, 0, 0, time.UTC) },
 	})
@@ -289,8 +289,8 @@ func TestMutations_RejectsInvalidCommandsAndDependencyFailuresBeforeCommit(t *te
 			store := &mutationStore{}
 			repositories := &repositoryCatalog{}
 			mutations, err := NewMutations(MutationConfig{
-				Store: store, Repositories: repositories,
-				TaskIDs:            func() (string, error) { return "task-0001", nil },
+				Store: store, Repositories: repositories, Workspaces: testWorkspacePreparer(),
+				TaskIDs:            func(string) (string, error) { return "task-0001", nil },
 				RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour,
 				Clock: func() time.Time { return time.Date(2026, time.August, 9, 12, 30, 0, 0, time.UTC) },
 			})
@@ -315,18 +315,18 @@ func TestMutations_RejectsInvalidCommandsAndDependencyFailuresBeforeCommit(t *te
 
 func TestMutations_ValidatesRequiredDependenciesAndCancellation(t *testing.T) {
 	valid := MutationConfig{
-		Store: &mutationStore{}, Repositories: &repositoryCatalog{},
-		TaskIDs:            func() (string, error) { return "task-0001", nil },
+		Store: &mutationStore{}, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(),
+		TaskIDs:            func(string) (string, error) { return "task-0001", nil },
 		RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour, Clock: time.Now,
 	}
 	for _, mutate := range []func(*MutationConfig){
 		func(config *MutationConfig) { config.Store = nil },
 		func(config *MutationConfig) { config.Repositories = nil },
+		func(config *MutationConfig) { config.Workspaces = nil },
 		func(config *MutationConfig) { config.TaskIDs = nil },
 		func(config *MutationConfig) { config.RegistrationNonces = nil },
 		func(config *MutationConfig) { config.PreparationTTL = 0 },
 		func(config *MutationConfig) { config.PreparationTTL = 25 * time.Hour },
-		func(config *MutationConfig) { config.RequestedWorkspaceRoot = "relative/workspace" },
 		func(config *MutationConfig) { config.Clock = nil },
 	} {
 		config := valid
@@ -360,8 +360,8 @@ func TestMutations_RejectsInvalidRegistrationIdentityWithoutCommit(t *testing.T)
 		t.Run(test.name, func(t *testing.T) {
 			store := &mutationStore{}
 			mutations, err := NewMutations(MutationConfig{
-				Store: store, Repositories: &repositoryCatalog{},
-				TaskIDs:            func() (string, error) { return "task-0001", nil },
+				Store: store, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(),
+				TaskIDs:            func(string) (string, error) { return "task-0001", nil },
 				RegistrationNonces: test.nonce, PreparationTTL: time.Hour,
 				Clock: func() time.Time { return clock },
 			})
@@ -473,3 +473,7 @@ func validPrepareCommand() PrepareTaskCommand {
 }
 
 func testRegistrationNonceSource() (string, error) { return "registration-nonce_0001", nil }
+
+func testWorkspacePreparer() *workspacePreparer {
+	return &workspacePreparer{prepared: PreparedWorkspace{CanonicalRoot: "/approved/workspaces/task-0001"}}
+}

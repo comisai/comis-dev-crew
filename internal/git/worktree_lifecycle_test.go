@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	devgit "github.com/comisai/comis-dev-crew/internal/git"
 )
 
@@ -45,6 +46,13 @@ func TestRegistry_PrepareWorktreeCreatesAndAdoptsOneOperationBoundWorkspace(t *t
 	}
 	if !reflect.DeepEqual(adopted, created) {
 		t.Fatalf("idempotent adoption differs: created=%#v adopted=%#v", created, adopted)
+	}
+	throughPort, err := registry.PrepareWorkspace(context.Background(), application.WorkspacePreparationRequest{
+		OperationID: request.OperationID, TaskHandle: request.TaskHandle,
+		RepositoryID: request.RepositoryID, BaseRevision: request.BaseRevision,
+	})
+	if err != nil || throughPort.CanonicalRoot != created.CanonicalPath {
+		t.Fatalf("PrepareWorkspace(port) = %#v, %v", throughPort, err)
 	}
 }
 

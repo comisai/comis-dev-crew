@@ -327,10 +327,10 @@ func lifecycleStore(t *testing.T, withWorkspace bool) (*Store, application.Mutat
 	}
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: configuredCatalog{},
-		TaskIDs:                func() (string, error) { return "task-lifecycle", nil },
-		RegistrationNonces:     func() (string, error) { return "registration-nonce-lifecycle", nil },
-		RequestedWorkspaceRoot: workspace, PreparationTTL: time.Hour,
-		Clock: func() time.Time { return now },
+		Workspaces:         configuredWorkspacePreparer{root: workspace},
+		TaskIDs:            func(string) (string, error) { return "task-lifecycle", nil },
+		RegistrationNonces: func() (string, error) { return "registration-nonce-lifecycle", nil },
+		PreparationTTL:     time.Hour, Clock: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatal(err)

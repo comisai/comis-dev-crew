@@ -193,10 +193,11 @@ func (harness *restartHarness) open(t *testing.T) {
 		t.Fatalf("open restart store: %v", err)
 	}
 	mutations, err := application.NewMutations(application.MutationConfig{
-		Store: store, Repositories: matrixRepositoryCatalog{}, TaskIDs: harness.taskIDs.next,
-		RegistrationNonces:     func() (string, error) { return "registration-nonce_matrix", nil },
-		RequestedWorkspaceRoot: filepath.Join(harness.root, "fixture-workspace"),
-		PreparationTTL:         time.Hour, Clock: func() time.Time { return harness.now },
+		Store: store, Repositories: matrixRepositoryCatalog{},
+		Workspaces:         parityWorkspacePreparer{root: filepath.Join(harness.root, "fixture-workspace")},
+		TaskIDs:            harness.taskIDs.next,
+		RegistrationNonces: func() (string, error) { return "registration-nonce_matrix", nil },
+		PreparationTTL:     time.Hour, Clock: func() time.Time { return harness.now },
 	})
 	if err != nil {
 		_ = store.Close()
@@ -476,7 +477,7 @@ type matrixTaskIDs struct {
 	remaining []string
 }
 
-func (source *matrixTaskIDs) next() (string, error) {
+func (source *matrixTaskIDs) next(string) (string, error) {
 	source.mu.Lock()
 	defer source.mu.Unlock()
 	if len(source.remaining) == 0 {

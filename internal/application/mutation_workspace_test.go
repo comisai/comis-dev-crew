@@ -54,7 +54,8 @@ func TestMutations_PrepareRefusesWorkspaceFailureBeforeNonceOrStoreCommit(t *tes
 			nonceCalls++
 			return "registration-nonce_0001", nil
 		},
-		PreparationTTL: time.Hour, Clock: time.Now,
+		PreparationTTL: time.Hour,
+		Clock:          func() time.Time { return time.Date(2026, time.August, 10, 9, 0, 0, 0, time.UTC) },
 	})
 	if err != nil {
 		t.Fatal(err)

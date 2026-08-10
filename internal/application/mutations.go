@@ -15,35 +15,30 @@ import (
 
 // Mutations owns canonical E0 prepare and bind command construction.
 type Mutations struct {
-	store                  MutationStore
-	repositories           RepositoryCatalog
-	taskIDs                TaskIDSource
-	nonces                 RegistrationNonceSource
-	preparationTTL         time.Duration
-	requestedWorkspaceRoot string
-	clock                  Clock
+	store          MutationStore
+	repositories   RepositoryCatalog
+	workspaces     WorkspacePreparer
+	taskIDs        TaskIDSource
+	nonces         RegistrationNonceSource
+	preparationTTL time.Duration
+	clock          Clock
 }
 
 var registrationNoncePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._~-]{15,255}$`)
 
 // NewMutations creates the sole application mutation coordinator.
 func NewMutations(config MutationConfig) (*Mutations, error) {
-	if config.Store == nil || config.Repositories == nil || config.TaskIDs == nil ||
+	if config.Store == nil || config.Repositories == nil || config.Workspaces == nil || config.TaskIDs == nil ||
 		config.RegistrationNonces == nil || config.Clock == nil {
-		return nil, errors.New("create mutations: store, repositories, task IDs, registration nonces, and clock are required")
+		return nil, errors.New("create mutations: store, repositories, workspaces, task IDs, registration nonces, and clock are required")
 	}
 	if config.PreparationTTL <= 0 || config.PreparationTTL > 24*time.Hour {
 		return nil, errors.New("create mutations: preparation TTL must be within 24 hours")
 	}
-	if config.RequestedWorkspaceRoot != "" &&
-		(!filepath.IsAbs(config.RequestedWorkspaceRoot) || filepath.Clean(config.RequestedWorkspaceRoot) != config.RequestedWorkspaceRoot) {
-		return nil, errors.New("create mutations: requested workspace root must be absolute and canonical")
-	}
 	return &Mutations{
-		store: config.Store, repositories: config.Repositories,
+		store: config.Store, repositories: config.Repositories, workspaces: config.Workspaces,
 		taskIDs: config.TaskIDs, nonces: config.RegistrationNonces,
-		preparationTTL: config.PreparationTTL, requestedWorkspaceRoot: config.RequestedWorkspaceRoot,
-		clock: config.Clock,
+		preparationTTL: config.PreparationTTL, clock: config.Clock,
 	}, nil
 }
 
@@ -65,7 +60,7 @@ func (mutations *Mutations) PrepareTask(ctx context.Context, command PrepareTask
 	} else if found {
 		return replay, nil
 	}
-	taskHandle, err := mutations.taskIDs()
+	taskHandle, err := mutations.taskIDs(command.OperationID)
 	if err != nil {
 		return MutationResult{}, &dependencyFailure{message: "task identity source failed", cause: err}
 	}
@@ -86,13 +81,24 @@ func (mutations *Mutations) PrepareTask(ctx context.Context, command PrepareTask
 	if err := mutations.repositories.ValidateRepository(ctx, command.RepositoryID); err != nil {
 		return MutationResult{}, &dependencyFailure{message: "repository validation failed", cause: err}
 	}
+	workspace, err := mutations.workspaces.PrepareWorkspace(ctx, WorkspacePreparationRequest{
+		OperationID: command.OperationID, TaskHandle: task.Handle,
+		RepositoryID: command.RepositoryID, BaseRevision: command.BaseRevision,
+	})
+	if err != nil {
+		return MutationResult{}, &dependencyFailure{message: "workspace preparation failed", cause: err}
+	}
+	if workspace.CanonicalRoot != "" &&
+		(!filepath.IsAbs(workspace.CanonicalRoot) || filepath.Clean(workspace.CanonicalRoot) != workspace.CanonicalRoot) {
+		return MutationResult{}, &dependencyFailure{message: "workspace preparation returned an invalid root"}
+	}
 	nonce, err := mutations.nonces()
 	if err != nil {
 		return MutationResult{}, &dependencyFailure{message: "registration identity source failed", cause: err}
 	}
 	preparation := ManagedRunPreparation{
 		ExternalRunRef: task.Handle, RegistrationNonce: nonce,
-		RequestedWorkspaceRoot: mutations.requestedWorkspaceRoot,
+		RequestedWorkspaceRoot: workspace.CanonicalRoot,
 		ExpiresAt:              now.Add(mutations.preparationTTL).UTC(), State: PreparationOpen,
 	}
 	if err := preparation.Validate(now); err != nil {

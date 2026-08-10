@@ -189,7 +189,9 @@ func newParityHarness(t *testing.T) *parityHarness {
 		done <- service.Run(ctx, service.Config{
 			DatabasePath: filepath.Join(root, "state", "devcrew.db"),
 			SocketPath:   operatorSocket, MCPSocketPath: mcpSocket, ServiceInstanceID: parityServiceID,
-			Repositories: parityRepositoryCatalog{}, TaskIDs: func() (string, error) { return "task-parity-0001", nil },
+			Repositories:       parityRepositoryCatalog{},
+			Workspaces:         parityWorkspacePreparer{root: filepath.Join(root, "worktrees", "task-parity-0001")},
+			TaskIDs:            func(string) (string, error) { return "task-parity-0001", nil },
 			RegistrationNonces: func() (string, error) { return "registration-nonce_parity", nil },
 			PreparationTTL:     time.Hour, Clock: clock, Ready: func() { close(ready) },
 		})
@@ -373,3 +375,12 @@ func pointerTo(value any) any {
 type parityRepositoryCatalog struct{}
 
 func (parityRepositoryCatalog) ValidateRepository(context.Context, string) error { return nil }
+
+type parityWorkspacePreparer struct{ root string }
+
+func (preparer parityWorkspacePreparer) PrepareWorkspace(
+	context.Context,
+	application.WorkspacePreparationRequest,
+) (application.PreparedWorkspace, error) {
+	return application.PreparedWorkspace{CanonicalRoot: preparer.root}, nil
+}

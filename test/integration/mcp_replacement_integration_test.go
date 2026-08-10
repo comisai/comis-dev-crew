@@ -119,7 +119,9 @@ func startReplacementService(t *testing.T) (string, string) {
 		done <- service.Run(ctx, service.Config{
 			DatabasePath: filepath.Join(root, "state", "devcrew.db"),
 			SocketPath:   operatorSocket, MCPSocketPath: mcpSocket, ServiceInstanceID: parityServiceID,
-			Repositories: parityRepositoryCatalog{}, TaskIDs: func() (string, error) { return "task-replacement-0001", nil },
+			Repositories:       parityRepositoryCatalog{},
+			Workspaces:         parityWorkspacePreparer{root: filepath.Join(root, "worktrees", "task-replacement-0001")},
+			TaskIDs:            func(string) (string, error) { return "task-replacement-0001", nil },
 			RegistrationNonces: func() (string, error) { return "registration-nonce_replacement", nil },
 			PreparationTTL:     time.Hour, Clock: func() time.Time { return now }, Ready: func() { close(ready) },
 		})

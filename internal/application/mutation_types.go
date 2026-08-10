@@ -122,8 +122,28 @@ type RepositoryCatalog interface {
 	ValidateRepository(context.Context, string) error
 }
 
-// TaskIDSource mints one opaque service-local task handle.
-type TaskIDSource func() (string, error)
+// WorkspacePreparationRequest binds allocation to the stable preparation
+// operation and the already-validated immutable task contract.
+type WorkspacePreparationRequest struct {
+	OperationID  string
+	TaskHandle   string
+	RepositoryID string
+	BaseRevision string
+}
+
+// PreparedWorkspace is the verified canonical root that Comis must lease.
+type PreparedWorkspace struct {
+	CanonicalRoot string
+}
+
+// WorkspacePreparer allocates or exactly adopts the operation-bound workspace.
+type WorkspacePreparer interface {
+	PrepareWorkspace(context.Context, WorkspacePreparationRequest) (PreparedWorkspace, error)
+}
+
+// TaskIDSource deterministically derives one opaque service-local task handle
+// from a stable preparation operation.
+type TaskIDSource func(string) (string, error)
 
 // RegistrationNonceSource mints one private expiring activation join secret.
 type RegistrationNonceSource func() (string, error)
@@ -170,11 +190,11 @@ const (
 
 // MutationConfig supplies every deterministic dependency.
 type MutationConfig struct {
-	Store                  MutationStore
-	Repositories           RepositoryCatalog
-	TaskIDs                TaskIDSource
-	RegistrationNonces     RegistrationNonceSource
-	RequestedWorkspaceRoot string
-	PreparationTTL         time.Duration
-	Clock                  Clock
+	Store              MutationStore
+	Repositories       RepositoryCatalog
+	Workspaces         WorkspacePreparer
+	TaskIDs            TaskIDSource
+	RegistrationNonces RegistrationNonceSource
+	PreparationTTL     time.Duration
+	Clock              Clock
 }

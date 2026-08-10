@@ -29,7 +29,7 @@ const installedCredential = "installed_fixture_bearer_0123456789abcdef"
 func TestInstalledComposition_JoinsMCPActivationFixtureAndReports(t *testing.T) {
 	root := integrationShortTempDir(t)
 	gitExecutable := installedGitExecutable(t)
-	approvedRoot, primary, worktreeRoot, workspace, baseRevision := installedRepository(t, root)
+	approvedRoot, primary, worktreeRoot, baseRevision := installedRepository(t, root)
 	runRoot := filepath.Join(root, "run")
 	if err := os.MkdirAll(runRoot, 0o700); err != nil {
 		t.Fatal(err)
@@ -69,7 +69,7 @@ func TestInstalledComposition_JoinsMCPActivationFixtureAndReports(t *testing.T) 
 		"--service-instance", parityServiceID,
 		"--git-executable", gitExecutable, "--approved-root", approvedRoot,
 		"--repository-id", "product-api", "--repository-primary", primary,
-		"--worktree-root", worktreeRoot, "--repository-default-branch", "main", "--workspace-root", workspace,
+		"--worktree-root", worktreeRoot, "--repository-default-branch", "main",
 		"--comis-socket", controlSocket, "--comis-credential-file", credentialFile,
 		"--comis-handshake-operation", "installed-handshake-0001",
 		"--preparation-ttl", "10m", "--fixture-worker",
@@ -125,9 +125,13 @@ func TestInstalledComposition_JoinsMCPActivationFixtureAndReports(t *testing.T) 
 	}
 	var registration comiswire.MCPManagedRunResult
 	decodeJSON(t, encodeJSON(t, prepared.Meta[mcpadapter.ManagedRunResultMetaKey]), &registration)
+	workspace := filepath.Join(worktreeRoot, string(registration.ExternalRunRef))
 	if registration.RequestedWorkspace == nil || registration.RequestedWorkspace.RootHint != workspace ||
 		registration.State != comiswire.ManagedRunStatePrepared {
 		t.Fatalf("installed preparation metadata = %#v", registration)
+	}
+	if marker, err := os.Lstat(filepath.Join(workspace, ".git")); err != nil || !marker.Mode().IsRegular() {
+		t.Fatalf("installed preparation did not create a linked worktree: %v, %v", marker, err)
 	}
 
 	lease := comiswire.WorkspaceLeaseID("workspace-lease-installed")
@@ -335,7 +339,7 @@ func installedGitExecutable(t *testing.T) string {
 	return canonical
 }
 
-func installedRepository(t *testing.T, root string) (string, string, string, string, string) {
+func installedRepository(t *testing.T, root string) (string, string, string, string) {
 	t.Helper()
 	approvedRoot := filepath.Join(root, "repositories")
 	primary := filepath.Join(approvedRoot, "product-api")
@@ -355,9 +359,7 @@ func installedRepository(t *testing.T, root string) (string, string, string, str
 	runGit(t, primary, "add", "README.md")
 	runGit(t, primary, "commit", "-m", "fixture")
 	baseRevision := strings.TrimSpace(runGit(t, primary, "rev-parse", "HEAD"))
-	workspace := filepath.Join(worktreeRoot, "managed-run-installed")
-	runGit(t, primary, "worktree", "add", "-b", "installed-fixture", workspace, baseRevision)
-	return approvedRoot, primary, worktreeRoot, workspace, baseRevision
+	return approvedRoot, primary, worktreeRoot, baseRevision
 }
 
 func waitForInstalledSocket(t *testing.T, path string, command *exec.Cmd, stderr *bytes.Buffer) {

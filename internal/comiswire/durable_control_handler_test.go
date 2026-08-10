@@ -202,10 +202,10 @@ func (harness *durableControlHarness) open(t *testing.T) {
 	}
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: acceptingCatalog{},
-		TaskIDs:                func() (string, error) { return harness.nextTaskID, nil },
-		RegistrationNonces:     func() (string, error) { return harness.nextNonce, nil },
-		RequestedWorkspaceRoot: harness.workspaceRoot,
-		PreparationTTL:         time.Hour, Clock: func() time.Time { return harness.now },
+		Workspaces:         acceptingWorkspace{root: harness.workspaceRoot},
+		TaskIDs:            func(string) (string, error) { return harness.nextTaskID, nil },
+		RegistrationNonces: func() (string, error) { return harness.nextNonce, nil },
+		PreparationTTL:     time.Hour, Clock: func() time.Time { return harness.now },
 	})
 	if err != nil {
 		_ = store.Close()
@@ -247,6 +247,15 @@ func (harness *durableControlHarness) restart(t *testing.T) {
 type acceptingCatalog struct{}
 
 func (acceptingCatalog) ValidateRepository(context.Context, string) error { return nil }
+
+type acceptingWorkspace struct{ root string }
+
+func (workspace acceptingWorkspace) PrepareWorkspace(
+	context.Context,
+	application.WorkspacePreparationRequest,
+) (application.PreparedWorkspace, error) {
+	return application.PreparedWorkspace{CanonicalRoot: workspace.root}, nil
+}
 
 func wireErrorKind(err error, want comiswire.ErrorKind) bool {
 	var failure comiswire.RPCError

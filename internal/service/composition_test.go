@@ -20,12 +20,16 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 	if err != nil {
 		t.Fatalf("composeInstalledRuntime() error = %v", err)
 	}
-	if configured.Repositories == nil || configured.RequestedWorkspaceRoot != configuration.RepositoryComposition.WorkspaceRoot {
+	if configured.Repositories == nil || configured.Workspaces == nil {
 		t.Fatalf("installed repository configuration = %#v", configured)
 	}
-	taskID, err := configured.TaskIDs()
+	taskID, err := configured.TaskIDs("operation-installed-stable")
 	if err != nil || !strings.HasPrefix(taskID, "task-") || len(taskID) != len("task-")+24 {
 		t.Fatalf("installed task identity = %q, %v", taskID, err)
+	}
+	replayedTaskID, err := configured.TaskIDs("operation-installed-stable")
+	if err != nil || replayedTaskID != taskID {
+		t.Fatalf("replayed task identity = %q, %v, want %q", replayedTaskID, err, taskID)
 	}
 	nonce, err := configured.RegistrationNonces()
 	if err != nil || !strings.HasPrefix(nonce, "registration-nonce-") || len(nonce) != len("registration-nonce-")+32 {
@@ -37,10 +41,9 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	mutations, err := application.NewMutations(application.MutationConfig{
-		Store: store, Repositories: configured.Repositories, TaskIDs: configured.TaskIDs,
-		RegistrationNonces:     configured.RegistrationNonces,
-		RequestedWorkspaceRoot: configured.RequestedWorkspaceRoot,
-		PreparationTTL:         configured.PreparationTTL, Clock: func() time.Time { return time.Now().UTC() },
+		Store: store, Repositories: configured.Repositories, Workspaces: configured.Workspaces,
+		TaskIDs: configured.TaskIDs, RegistrationNonces: configured.RegistrationNonces,
+		PreparationTTL: configured.PreparationTTL, Clock: func() time.Time { return time.Now().UTC() },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -94,9 +97,9 @@ func TestInstalledRuntime_RejectsPartialMixedAndUnverifiedConfiguration(t *testi
 		t.Fatal("composeInstalledRuntime(untrimmed decision) error = nil")
 	}
 	configuration = installedServiceConfig(t, shortTempDir(t))
-	configuration.RepositoryComposition.WorkspaceRoot = configuration.RepositoryComposition.PrimaryCheckout
+	configuration.RepositoryComposition.DefaultBranch = "missing"
 	if _, err := composeInstalledRuntime(context.Background(), configuration); err == nil {
-		t.Fatal("composeInstalledRuntime(unverified workspace) error = nil")
+		t.Fatal("composeInstalledRuntime(unverified default branch) error = nil")
 	}
 	configuration = installedServiceConfig(t, shortTempDir(t))
 	configuration.RepositoryComposition.GitExecutable = "relative-git"
@@ -143,8 +146,8 @@ func TestComposeMutations_RejectsIncompleteMCPAndAuthorityConfiguration(t *testi
 		t.Fatal("composeMutations(MCP only) error = nil")
 	}
 	configuration := Config{
-		Repositories:       serviceRepositoryCatalog{},
-		TaskIDs:            func() (string, error) { return "task-composition", nil },
+		Repositories: serviceRepositoryCatalog{}, Workspaces: serviceWorkspacePreparer{root: "/approved/worktrees/task-composition"},
+		TaskIDs:            func(string) (string, error) { return "task-composition", nil },
 		RegistrationNonces: func() (string, error) { return "registration-nonce_composition", nil },
 		PreparationTTL:     time.Minute,
 	}
@@ -237,8 +240,6 @@ func installedServiceConfig(t *testing.T, root string) Config {
 	}
 	runServiceGit(t, primary, "add", "README.md")
 	runServiceGit(t, primary, "commit", "-m", "fixture")
-	workspace := filepath.Join(worktreeRoot, "managed-run")
-	runServiceGit(t, primary, "worktree", "add", "-b", "service-fixture", workspace)
 	credentialFile := filepath.Join(root, "config", "comis.credential")
 	writeServiceCredential(t, credentialFile, "installed_service_bearer_0123456789abcdef", 0o600)
 	return Config{
@@ -247,7 +248,7 @@ func installedServiceConfig(t *testing.T, root string) Config {
 		PreparationTTL: 10 * time.Minute,
 		RepositoryComposition: &RepositoryComposition{
 			GitExecutable: gitExecutable, ApprovedRoot: approvedRoot, RepositoryID: "product-api",
-			PrimaryCheckout: primary, WorktreeRoot: worktreeRoot, DefaultBranch: "main", WorkspaceRoot: workspace,
+			PrimaryCheckout: primary, WorktreeRoot: worktreeRoot, DefaultBranch: "main",
 		},
 		ComisComposition: &ComisComposition{
 			SocketPath: filepath.Join(root, "comis.sock"), CredentialFile: credentialFile,

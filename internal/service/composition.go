@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -24,8 +25,8 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 		config.MCPSocketPath == "" || config.ServiceInstanceID == "" {
 		return Config{}, errors.New("run service: installed composition is incomplete")
 	}
-	if config.Repositories != nil || config.TaskIDs != nil || config.RegistrationNonces != nil ||
-		config.RequestedWorkspaceRoot != "" || config.ComisControl != nil {
+	if config.Repositories != nil || config.Workspaces != nil || config.TaskIDs != nil ||
+		config.RegistrationNonces != nil || config.ComisControl != nil {
 		return Config{}, errors.New("run service: installed and injected composition cannot be combined")
 	}
 	repositoryConfig := config.RepositoryComposition
@@ -40,18 +41,22 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	if err != nil {
 		return Config{}, fmt.Errorf("run service repository composition: %w", err)
 	}
-	if _, err := registry.ValidateWorktree(ctx, repositoryConfig.RepositoryID, repositoryConfig.WorkspaceRoot); err != nil {
-		return Config{}, fmt.Errorf("run service fixture workspace: %w", err)
-	}
 	decision := config.FixtureComposition.Decision
 	if strings.TrimSpace(decision) == "" || strings.TrimSpace(decision) != decision || len([]byte(decision)) > 1024 {
 		return Config{}, errors.New("run service: fixture decision is invalid")
 	}
 	config.Repositories = registry
-	config.TaskIDs = func() (string, error) { return randomIdentity("task", 12) }
+	config.Workspaces = registry
+	config.TaskIDs = func(operationID string) (string, error) {
+		return stableTaskIdentity(config.ServiceInstanceID, operationID), nil
+	}
 	config.RegistrationNonces = func() (string, error) { return randomIdentity("registration-nonce", 16) }
-	config.RequestedWorkspaceRoot = repositoryConfig.WorkspaceRoot
 	return config, nil
+}
+
+func stableTaskIdentity(serviceInstanceID, operationID string) string {
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(serviceInstanceID+"\x00"+operationID)))
+	return "task-" + digest[:24]
 }
 
 func composeComisControl(config Config, mutations comiswire.DurableControlMutations) (ComisControl, error) {

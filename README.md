@@ -157,8 +157,9 @@ under the operating system's user configuration directory.
 For the runnable Comis fixture lane, first place the 32–256 character instance bearer in an
 owner-private (`0600`) regular file. The Comis control socket must already exist as an owner-only
 Unix socket. The primary checkout and worktree parent must be separate canonical directories
-under the approved root, and `--workspace-root` must name an existing linked Git worktree beneath
-that parent. Then launch the installed service without hand-editing generated or runtime files:
+under the approved root. Task preparation creates or exactly adopts its operation-bound linked
+Git worktree beneath that parent before requesting the Comis workspace lease. Then launch the
+installed service without hand-editing generated or runtime files:
 
 ```text
 devcrew-service \
@@ -172,7 +173,6 @@ devcrew-service \
   --repository-primary /absolute/repositories/product-api \
   --worktree-root /absolute/repositories/worktrees \
   --repository-default-branch main \
-  --workspace-root /absolute/repositories/worktrees/managed-run-devcrew \
   --comis-socket /absolute/private/run/comis-control.sock \
   --comis-credential-file /absolute/private/comis.credential \
   --comis-handshake-operation handshake-devcrew-0001 \

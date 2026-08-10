@@ -456,7 +456,7 @@ type sequenceIDs struct {
 	ids []string
 }
 
-func (source *sequenceIDs) next() (string, error) {
+func (source *sequenceIDs) next(string) (string, error) {
 	source.mu.Lock()
 	defer source.mu.Unlock()
 	if len(source.ids) == 0 {
@@ -470,15 +470,25 @@ func (source *sequenceIDs) next() (string, error) {
 func sqliteMutations(t *testing.T, store *Store, ids *sequenceIDs, now time.Time) *application.Mutations {
 	t.Helper()
 	mutations, err := application.NewMutations(application.MutationConfig{
-		Store: store, Repositories: configuredCatalog{}, TaskIDs: ids.next,
-		RegistrationNonces:     func() (string, error) { return "registration-nonce_0001", nil },
-		RequestedWorkspaceRoot: "/approved/workspaces/task-fixture",
-		PreparationTTL:         time.Hour, Clock: func() time.Time { return now },
+		Store: store, Repositories: configuredCatalog{},
+		Workspaces:         configuredWorkspacePreparer{root: "/approved/workspaces/task-fixture"},
+		TaskIDs:            ids.next,
+		RegistrationNonces: func() (string, error) { return "registration-nonce_0001", nil },
+		PreparationTTL:     time.Hour, Clock: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatalf("NewMutations() error = %v", err)
 	}
 	return mutations
+}
+
+type configuredWorkspacePreparer struct{ root string }
+
+func (preparer configuredWorkspacePreparer) PrepareWorkspace(
+	context.Context,
+	application.WorkspacePreparationRequest,
+) (application.PreparedWorkspace, error) {
+	return application.PreparedWorkspace{CanonicalRoot: preparer.root}, nil
 }
 
 func sqlitePrepareCommand() application.PrepareTaskCommand {

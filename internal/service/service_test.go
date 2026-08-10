@@ -31,7 +31,8 @@ func TestRun_ComposesCanonicalMutationOnDedicatedMCPEndpoint(t *testing.T) {
 		done <- Run(ctx, Config{
 			DatabasePath: databasePath, SocketPath: operatorSocket, MCPSocketPath: mcpSocket,
 			ServiceInstanceID: "service-instance_a", Repositories: serviceRepositoryCatalog{},
-			TaskIDs:            func() (string, error) { return "task-service-prepare", nil },
+			Workspaces:         serviceWorkspacePreparer{root: "/approved/worktrees/task-service-prepare"},
+			TaskIDs:            func(string) (string, error) { return "task-service-prepare", nil },
 			RegistrationNonces: func() (string, error) { return "registration-nonce_service", nil },
 			PreparationTTL:     time.Hour, Ready: func() { close(ready) },
 		})
@@ -76,6 +77,17 @@ type serviceRepositoryCatalog struct{}
 func (serviceRepositoryCatalog) ValidateRepository(context.Context, string) error { return nil }
 
 var _ application.RepositoryCatalog = serviceRepositoryCatalog{}
+
+type serviceWorkspacePreparer struct{ root string }
+
+func (preparer serviceWorkspacePreparer) PrepareWorkspace(
+	_ context.Context,
+	_ application.WorkspacePreparationRequest,
+) (application.PreparedWorkspace, error) {
+	return application.PreparedWorkspace{CanonicalRoot: preparer.root}, nil
+}
+
+var _ application.WorkspacePreparer = serviceWorkspacePreparer{}
 
 func TestRun_ServesPersistedQueriesAndRestartsCleanly(t *testing.T) {
 	root := shortTempDir(t)
