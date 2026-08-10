@@ -10,7 +10,7 @@ import (
 )
 
 const serviceUsage = `Usage: devcrew-service [--database PATH] [--socket PATH]
-       devcrew-service --database PATH --socket PATH --mcp-socket PATH
+       devcrew-service --database PATH --socket PATH --mcp-socket PATH --runtime-root PATH
          --service-instance ID --git-executable PATH --approved-root PATH
          --repository-id ID --repository-primary PATH --worktree-root PATH
          --repository-default-branch BRANCH
@@ -23,6 +23,7 @@ Options:
   --database PATH                 Owner-private SQLite database path
   --socket PATH                   Owner-only operator Unix socket path
   --mcp-socket PATH               Owner-only MCP facade Unix socket path
+  --runtime-root PATH             Owner-only per-task attachment root
   --service-instance ID           Exact Comis capability-service instance identity
   --git-executable PATH           Absolute Git executable path
   --approved-root PATH            Root containing configured repository paths
@@ -58,6 +59,7 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	databasePath := config.DefaultDatabasePath
 	socketPath := config.DefaultSocketPath
 	var mcpSocketPath string
+	var runtimeRoot string
 	var serviceInstanceID string
 	var gitExecutable string
 	var approvedRoot string
@@ -76,6 +78,7 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	flags.StringVar(&databasePath, "database", databasePath, "owner-private SQLite database path")
 	flags.StringVar(&socketPath, "socket", socketPath, "owner-only operator Unix socket path")
 	flags.StringVar(&mcpSocketPath, "mcp-socket", "", "owner-only MCP facade Unix socket path")
+	flags.StringVar(&runtimeRoot, "runtime-root", "", "owner-only per-task attachment root")
 	flags.StringVar(&serviceInstanceID, "service-instance", "", "exact Comis service instance identity")
 	flags.StringVar(&gitExecutable, "git-executable", "", "absolute Git executable path")
 	flags.StringVar(&approvedRoot, "approved-root", "", "approved repository root")
@@ -115,7 +118,7 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 		return writeServiceDiagnostic(stderr, "devcrew-service: service paths are not configured\n", 2)
 	}
 	installedValues := []string{
-		mcpSocketPath, serviceInstanceID, gitExecutable, approvedRoot, repositoryID, repositoryPrimary,
+		mcpSocketPath, runtimeRoot, serviceInstanceID, gitExecutable, approvedRoot, repositoryID, repositoryPrimary,
 		worktreeRoot, repositoryDefaultBranch, comisSocketPath, comisCredentialFile, comisHandshakeOperationID,
 		fixtureDecision,
 	}
@@ -140,6 +143,7 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	serviceConfig := Config{DatabasePath: databasePath, SocketPath: socketPath}
 	if installed {
 		serviceConfig.MCPSocketPath = mcpSocketPath
+		serviceConfig.RuntimeRoot = runtimeRoot
 		serviceConfig.ServiceInstanceID = serviceInstanceID
 		serviceConfig.PreparationTTL = preparationTTL
 		serviceConfig.RepositoryComposition = &RepositoryComposition{
