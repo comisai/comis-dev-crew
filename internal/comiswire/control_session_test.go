@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -72,6 +73,28 @@ func TestControlConnectionRejectsInvalidConfiguration(t *testing.T) {
 	}
 	if _, err := NewControlConnection(valid); err != nil {
 		t.Fatalf("NewControlConnection(valid) error = %v", err)
+	}
+}
+
+func TestControlHandshakeRequestsCompleteRequiredScopeSet(t *testing.T) {
+	request := controlHandshake(ControlConnectionConfig{
+		ServiceInstanceID: "service-instance_scope", HandshakeOperationID: "operation_handshake_scope",
+	})
+	want := []ServiceScope{
+		ServiceScopeHealth,
+		ServiceScopeReport,
+		ServiceScopeWorkspaceLease,
+		ServiceScopeTerminalEvents,
+		ServiceScopeExecutionAttachment,
+	}
+	if !slices.Equal(request.Params.RequestedScopes, want) {
+		t.Fatalf("requested scopes = %v, want %v", request.Params.RequestedScopes, want)
+	}
+	if !sameControlScopes(want) {
+		t.Fatal("complete required scope set was rejected")
+	}
+	if sameControlScopes(want[:len(want)-1]) {
+		t.Fatal("missing execution attachment scope was accepted")
 	}
 }
 
