@@ -56,8 +56,9 @@ func TestMutations_PrepareBuildsOnePinnedServiceMintedTask(t *testing.T) {
 func TestMutations_ActivateManagedRunBuildsExactPrivateReplaySubject(t *testing.T) {
 	clock := time.Date(2026, time.August, 9, 12, 31, 0, 0, time.UTC)
 	store := &mutationStore{}
+	attachments := testRuntimeAttachments()
 	mutations, err := NewMutations(MutationConfig{
-		Store: store, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(), RuntimeAttachments: testRuntimeAttachments(),
+		Store: store, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(), RuntimeAttachments: attachments,
 		TaskIDs:            func(string) (string, error) { return "task-0001", nil },
 		RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour,
 		Clock: func() time.Time { return clock },
@@ -69,6 +70,8 @@ func TestMutations_ActivateManagedRunBuildsExactPrivateReplaySubject(t *testing.
 		OperationID: "op-bind-0001", ServiceInstanceID: "service-instance-0001",
 		ExternalRunRef: "task-0001", RegistrationNonce: "registration-nonce_0001",
 		ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001",
+		ExecutionAttachmentID: "execution-attachment-0001",
+		AttachmentTargetName:  "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
 	}
 	if _, err := mutations.ActivateManagedRun(context.Background(), command); err != nil {
 		t.Fatalf("ActivateManagedRun() error = %v", err)
@@ -77,8 +80,18 @@ func TestMutations_ActivateManagedRunBuildsExactPrivateReplaySubject(t *testing.
 		store.activation.RegistrationNonce != command.RegistrationNonce ||
 		store.activation.Binding.ManagedRunID != command.ManagedRunID ||
 		store.activation.Binding.WorkspaceLeaseID != command.WorkspaceLeaseID ||
+		store.activation.ExecutionAttachmentID != command.ExecutionAttachmentID ||
+		store.activation.AttachmentTargetName != command.AttachmentTargetName ||
 		len(store.activation.SubjectDigest) != 64 || store.activation.At != clock {
 		t.Fatalf("activation mutation = %#v, want exact stable private subject", store.activation)
+	}
+	if attachments.bindCalls != 1 || attachments.bindRequest.TaskHandle != command.ExternalRunRef ||
+		attachments.bindRequest.ManagedRunID != command.ManagedRunID ||
+		attachments.bindRequest.WorkspaceLeaseID != command.WorkspaceLeaseID ||
+		attachments.bindRequest.ExecutionAttachmentID != command.ExecutionAttachmentID ||
+		attachments.bindRequest.AttachmentTargetName != command.AttachmentTargetName ||
+		attachments.bindRequest.LaunchOperationID == "" || attachments.bindRequest.Acknowledger != mutations {
+		t.Fatalf("runtime activation binding = %d / %#v", attachments.bindCalls, attachments.bindRequest)
 	}
 }
 

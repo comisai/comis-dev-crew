@@ -97,6 +97,7 @@ func mustRenderWorkerBriefForTest(t *testing.T, task domain.Task) domain.WorkerB
 
 type runtimeAttachmentCoordinator struct {
 	prepareRequest RuntimeAttachmentPreparationRequest
+	bindRequest    RuntimeAttachmentBindingRequest
 	prepared       PreparedRuntimeAttachment
 	prepareCalls   int
 	bindCalls      int
@@ -113,10 +114,11 @@ func (coordinator *runtimeAttachmentCoordinator) PrepareRuntimeAttachment(
 }
 
 func (coordinator *runtimeAttachmentCoordinator) BindRuntimeAttachment(
-	context.Context,
-	RuntimeAttachmentBindingRequest,
+	_ context.Context,
+	request RuntimeAttachmentBindingRequest,
 ) error {
 	coordinator.bindCalls++
+	coordinator.bindRequest = request
 	return coordinator.err
 }
 
