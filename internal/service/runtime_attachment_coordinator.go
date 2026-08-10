@@ -2,11 +2,11 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 
@@ -15,11 +15,15 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/reporter"
 )
 
-var attachmentTargetPattern = regexp.MustCompile(`^attachment-[a-f0-9]{32}\.sock$`)
+type runtimeAttachmentStore interface {
+	application.ReportMutationStore
+	ListTasks(context.Context) ([]domain.Task, error)
+	GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error)
+}
 
 type runtimeAttachmentCoordinatorConfig struct {
 	RuntimeRoot   string
-	Reports       application.ReportMutationStore
+	Store         runtimeAttachmentStore
 	Clock         application.Clock
 	NewCredential func() (string, error)
 }
@@ -43,29 +47,49 @@ type runtimeAttachmentEntry struct {
 
 type runtimeAttachmentCoordinator struct {
 	runtimeRoot   string
+	store         runtimeAttachmentStore
 	reportSink    *application.ReportSink
 	newCredential func() (string, error)
 	registrations chan runtimeAttachmentRegistration
+	recoveryReady chan struct{}
 	mu            sync.Mutex
 	entries       map[string]*runtimeAttachmentEntry
+	acknowledger  application.WorkerLaunchAcknowledger
+	recoveryErr   error
 }
 
 func newRuntimeAttachmentCoordinator(config runtimeAttachmentCoordinatorConfig) (*runtimeAttachmentCoordinator, error) {
-	if config.Reports == nil || config.Clock == nil || config.NewCredential == nil {
-		return nil, errors.New("create runtime attachment coordinator: reports, clock, and credential source are required")
+	if config.Store == nil || config.Clock == nil || config.NewCredential == nil {
+		return nil, errors.New("create runtime attachment coordinator: store, clock, and credential source are required")
 	}
 	runtimeRoot, err := ensureOwnedRuntimeRoot(config.RuntimeRoot)
 	if err != nil {
 		return nil, err
 	}
-	sink, err := application.NewReportSink(application.ReportSinkConfig{Store: config.Reports, Clock: config.Clock})
+	sink, err := application.NewReportSink(application.ReportSinkConfig{Store: config.Store, Clock: config.Clock})
 	if err != nil {
 		return nil, fmt.Errorf("create runtime attachment coordinator report sink: %w", err)
 	}
 	return &runtimeAttachmentCoordinator{
-		runtimeRoot: runtimeRoot, reportSink: sink, newCredential: config.NewCredential,
-		registrations: make(chan runtimeAttachmentRegistration), entries: make(map[string]*runtimeAttachmentEntry),
+		runtimeRoot: runtimeRoot, store: config.Store, reportSink: sink, newCredential: config.NewCredential,
+		registrations: make(chan runtimeAttachmentRegistration), recoveryReady: make(chan struct{}),
+		entries: make(map[string]*runtimeAttachmentEntry),
 	}, nil
+}
+
+// SetRecoveryAcknowledger supplies the application authority needed to restore
+// a durable activation binding before any recovered worker can acknowledge it.
+func (coordinator *runtimeAttachmentCoordinator) SetRecoveryAcknowledger(acknowledger application.WorkerLaunchAcknowledger) error {
+	if acknowledger == nil {
+		return errors.New("configure runtime attachment recovery: launch acknowledger is required")
+	}
+	coordinator.mu.Lock()
+	defer coordinator.mu.Unlock()
+	if coordinator.acknowledger != nil {
+		return errors.New("configure runtime attachment recovery: launch acknowledger is already set")
+	}
+	coordinator.acknowledger = acknowledger
+	return nil
 }
 
 func (coordinator *runtimeAttachmentCoordinator) PrepareRuntimeAttachment(
@@ -81,8 +105,16 @@ func (coordinator *runtimeAttachmentCoordinator) PrepareRuntimeAttachment(
 	if err := validateRuntimeAttachmentPreparation(request); err != nil {
 		return application.PreparedRuntimeAttachment{}, err
 	}
+	select {
+	case <-coordinator.recoveryReady:
+	case <-ctx.Done():
+		return application.PreparedRuntimeAttachment{}, ctx.Err()
+	}
 	coordinator.mu.Lock()
 	defer coordinator.mu.Unlock()
+	if coordinator.recoveryErr != nil {
+		return application.PreparedRuntimeAttachment{}, coordinator.recoveryErr
+	}
 	if existing := coordinator.entries[request.TaskHandle]; existing != nil {
 		if existing.request != request {
 			return application.PreparedRuntimeAttachment{}, errors.New("prepare runtime attachment: task binding conflicts")
@@ -99,47 +131,57 @@ func (coordinator *runtimeAttachmentCoordinator) PrepareRuntimeAttachment(
 	if err := attachment.Validate(); err != nil || len([]byte(attachment.SourcePath)) > 100 {
 		return application.PreparedRuntimeAttachment{}, errors.New("prepare runtime attachment: socket path exceeds the Unix bound")
 	}
+	entry, err := coordinator.listenRuntimeAttachment(request, attachment)
+	if err != nil {
+		return application.PreparedRuntimeAttachment{}, err
+	}
+	coordinator.entries[request.TaskHandle] = entry
+	registration := runtimeAttachmentRegistration{server: entry.server, ready: make(chan error, 1)}
+	select {
+	case coordinator.registrations <- registration:
+	case <-ctx.Done():
+		delete(coordinator.entries, request.TaskHandle)
+		return application.PreparedRuntimeAttachment{}, errors.Join(ctx.Err(), entry.server.Close())
+	}
+	select {
+	case err := <-registration.ready:
+		if err != nil {
+			delete(coordinator.entries, request.TaskHandle)
+			return application.PreparedRuntimeAttachment{}, errors.Join(err, entry.server.Close())
+		}
+		return attachment, nil
+	case <-ctx.Done():
+		delete(coordinator.entries, request.TaskHandle)
+		return application.PreparedRuntimeAttachment{}, errors.Join(ctx.Err(), entry.server.Close())
+	}
+}
+
+func (coordinator *runtimeAttachmentCoordinator) listenRuntimeAttachment(
+	request application.RuntimeAttachmentPreparationRequest,
+	attachment application.PreparedRuntimeAttachment,
+) (*runtimeAttachmentEntry, error) {
 	credential, err := coordinator.newCredential()
 	if err != nil {
-		return application.PreparedRuntimeAttachment{}, errors.New("prepare runtime attachment: credential source failed")
+		return nil, errors.New("prepare runtime attachment: credential source failed")
 	}
 	endpoint, err := reporter.NewEndpoint(reporter.EndpointConfig{
 		TaskHandle: request.TaskHandle, BriefRevision: request.BriefRevision,
 		BriefRevisionHash: request.BriefRevisionHash, Credential: credential, Sink: coordinator.reportSink,
 	})
 	if err != nil {
-		return application.PreparedRuntimeAttachment{}, fmt.Errorf("prepare runtime attachment endpoint: %w", err)
+		return nil, fmt.Errorf("prepare runtime attachment endpoint: %w", err)
 	}
 	client, err := reporter.NewClient(endpoint, credential)
 	if err != nil {
-		return application.PreparedRuntimeAttachment{}, fmt.Errorf("prepare runtime attachment client: %w", err)
+		return nil, fmt.Errorf("prepare runtime attachment client: %w", err)
 	}
 	server, err := reporter.ListenRuntime(reporter.RuntimeServerConfig{
 		SocketPath: attachment.SourcePath, Brief: request.Brief, Reporter: client,
 	})
 	if err != nil {
-		return application.PreparedRuntimeAttachment{}, err
+		return nil, err
 	}
-	entry := &runtimeAttachmentEntry{request: request, attachment: attachment, server: server}
-	coordinator.entries[request.TaskHandle] = entry
-	registration := runtimeAttachmentRegistration{server: server, ready: make(chan error, 1)}
-	select {
-	case coordinator.registrations <- registration:
-	case <-ctx.Done():
-		delete(coordinator.entries, request.TaskHandle)
-		return application.PreparedRuntimeAttachment{}, errors.Join(ctx.Err(), server.Close())
-	}
-	select {
-	case err := <-registration.ready:
-		if err != nil {
-			delete(coordinator.entries, request.TaskHandle)
-			return application.PreparedRuntimeAttachment{}, errors.Join(err, server.Close())
-		}
-		return attachment, nil
-	case <-ctx.Done():
-		delete(coordinator.entries, request.TaskHandle)
-		return application.PreparedRuntimeAttachment{}, errors.Join(ctx.Err(), server.Close())
-	}
+	return &runtimeAttachmentEntry{request: request, attachment: attachment, server: server}, nil
 }
 
 func (coordinator *runtimeAttachmentCoordinator) BindRuntimeAttachment(
@@ -152,13 +194,13 @@ func (coordinator *runtimeAttachmentCoordinator) BindRuntimeAttachment(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if domain.ValidateTaskHandle(request.TaskHandle) != nil ||
-		domain.ValidateAuthorityReference("managedRunId", request.ManagedRunID) != nil ||
-		domain.ValidateAuthorityReference("workspaceLeaseId", request.WorkspaceLeaseID) != nil ||
-		domain.ValidateAuthorityReference("executionAttachmentId", request.ExecutionAttachmentID) != nil ||
-		domain.ValidateOperationID(request.LaunchOperationID) != nil ||
-		!attachmentTargetPattern.MatchString(request.AttachmentTargetName) || request.Acknowledger == nil {
-		return errors.New("bind runtime attachment: activation binding is invalid")
+	select {
+	case <-coordinator.recoveryReady:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if err := validateRuntimeAttachmentBinding(request); err != nil {
+		return err
 	}
 	coordinator.mu.Lock()
 	defer coordinator.mu.Unlock()
@@ -166,6 +208,10 @@ func (coordinator *runtimeAttachmentCoordinator) BindRuntimeAttachment(
 	if entry == nil {
 		return errors.New("bind runtime attachment: prepared socket is unavailable")
 	}
+	return bindRuntimeAttachmentEntry(entry, request)
+}
+
+func bindRuntimeAttachmentEntry(entry *runtimeAttachmentEntry, request application.RuntimeAttachmentBindingRequest) error {
 	if entry.binding != nil {
 		prior := *entry.binding
 		prior.Acknowledger = nil
@@ -191,6 +237,87 @@ func (coordinator *runtimeAttachmentCoordinator) BindRuntimeAttachment(
 	return nil
 }
 
+func validateRuntimeAttachmentBinding(request application.RuntimeAttachmentBindingRequest) error {
+	if domain.ValidateTaskHandle(request.TaskHandle) != nil ||
+		domain.ValidateAuthorityReference("managedRunId", request.ManagedRunID) != nil ||
+		domain.ValidateAuthorityReference("workspaceLeaseId", request.WorkspaceLeaseID) != nil ||
+		domain.ValidateAuthorityReference("executionAttachmentId", request.ExecutionAttachmentID) != nil ||
+		domain.ValidateOperationID(request.LaunchOperationID) != nil ||
+		domain.ValidateAttachmentTargetName(request.AttachmentTargetName) != nil || request.Acknowledger == nil {
+		return errors.New("bind runtime attachment: activation binding is invalid")
+	}
+	return nil
+}
+
+func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeAttachments(ctx context.Context) ([]*reporter.RuntimeServer, error) {
+	coordinator.mu.Lock()
+	defer coordinator.mu.Unlock()
+	if len(coordinator.entries) != 0 {
+		return nil, errors.New("recover runtime attachments: coordinator is already populated")
+	}
+	tasks, err := coordinator.store.ListTasks(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("recover runtime attachments: list tasks: %w", err)
+	}
+	servers := make([]*reporter.RuntimeServer, 0, len(tasks))
+	for _, task := range tasks {
+		if err := ctx.Err(); err != nil {
+			return nil, errors.Join(err, closeRuntimeServers(servers))
+		}
+		preparation, err := coordinator.store.GetManagedRunPreparation(ctx, task.Handle)
+		if err != nil {
+			return nil, errors.Join(fmt.Errorf("recover runtime attachments: read preparation: %w", err), closeRuntimeServers(servers))
+		}
+		expectedSource := filepath.Join(coordinator.runtimeRoot, task.Handle, "attachment.sock")
+		if preparation.RequestedAttachment.Kind != application.RuntimeAttachmentUnixSocket ||
+			preparation.RequestedAttachment.SourcePath != expectedSource {
+			return nil, errors.Join(errors.New("recover runtime attachments: durable attachment source differs"), closeRuntimeServers(servers))
+		}
+		brief, err := task.RenderWorkerBrief()
+		if err != nil {
+			return nil, errors.Join(fmt.Errorf("recover runtime attachments: render brief: %w", err), closeRuntimeServers(servers))
+		}
+		operationDigest := fmt.Sprintf("%x", sha256.Sum256([]byte("runtime-recovery\x00"+task.Handle)))
+		request := application.RuntimeAttachmentPreparationRequest{
+			OperationID: "runtime-recovery-" + operationDigest[:32], TaskHandle: task.Handle,
+			BriefRevision: task.BriefRevision, BriefRevisionHash: task.BriefRevisionHash,
+			Brief: brief, WorkingDirectory: preparation.RequestedWorkspaceRoot,
+		}
+		if err := validateRuntimeAttachmentPreparation(request); err != nil {
+			return nil, errors.Join(fmt.Errorf("recover runtime attachments: %w", err), closeRuntimeServers(servers))
+		}
+		if err := ensureTaskRuntimeDirectory(filepath.Dir(expectedSource)); err != nil {
+			return nil, errors.Join(err, closeRuntimeServers(servers))
+		}
+		entry, err := coordinator.listenRuntimeAttachment(request, preparation.RequestedAttachment)
+		if err != nil {
+			return nil, errors.Join(fmt.Errorf("recover runtime attachments: %w", err), closeRuntimeServers(servers))
+		}
+		if task.ExecutionAttachmentID != "" {
+			operationID, operationErr := application.RuntimeLaunchAcknowledgementOperationID(task.Handle)
+			binding := application.RuntimeAttachmentBindingRequest{
+				TaskHandle: task.Handle, ManagedRunID: task.ManagedRunID, WorkspaceLeaseID: task.WorkspaceLeaseID,
+				ExecutionAttachmentID: task.ExecutionAttachmentID, AttachmentTargetName: task.AttachmentTargetName,
+				LaunchOperationID: operationID, Acknowledger: coordinator.acknowledger,
+			}
+			if operationErr != nil || validateRuntimeAttachmentBinding(binding) != nil || bindRuntimeAttachmentEntry(entry, binding) != nil {
+				return nil, errors.Join(errors.New("recover runtime attachments: durable activation binding is invalid"), entry.server.Close(), closeRuntimeServers(servers))
+			}
+		}
+		coordinator.entries[task.Handle] = entry
+		servers = append(servers, entry.server)
+	}
+	return servers, nil
+}
+
+func closeRuntimeServers(servers []*reporter.RuntimeServer) error {
+	var resultErr error
+	for _, server := range servers {
+		resultErr = errors.Join(resultErr, server.Close())
+	}
+	return resultErr
+}
+
 func (coordinator *runtimeAttachmentCoordinator) Run(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("run runtime attachment coordinator: context is required")
@@ -200,6 +327,20 @@ func (coordinator *runtimeAttachmentCoordinator) Run(ctx context.Context) error 
 	}
 	results := make(chan runtimeAttachmentResult)
 	active := make(map[*reporter.RuntimeServer]struct{})
+	recovered, err := coordinator.recoverRuntimeAttachments(ctx)
+	coordinator.mu.Lock()
+	coordinator.recoveryErr = err
+	close(coordinator.recoveryReady)
+	coordinator.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	for _, server := range recovered {
+		active[server] = struct{}{}
+		go func(recoveredServer *reporter.RuntimeServer) {
+			results <- runtimeAttachmentResult{server: recoveredServer, err: recoveredServer.Serve(ctx)}
+		}(server)
+	}
 	for {
 		select {
 		case registration := <-coordinator.registrations:

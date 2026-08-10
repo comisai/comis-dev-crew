@@ -117,7 +117,7 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	var attachmentSupervisor *runtimeAttachmentCoordinator
 	if config.RuntimeAttachments == nil && config.RuntimeRoot != "" {
 		attachmentSupervisor, err = newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
-			RuntimeRoot: config.RuntimeRoot, Reports: store, Clock: clock,
+			RuntimeRoot: config.RuntimeRoot, Store: store, Clock: clock,
 			NewCredential: func() (string, error) { return randomIdentity("runtime-credential", 16) },
 		})
 		if err != nil {
@@ -128,6 +128,11 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	mutations, err := composeMutations(config, store, clock)
 	if err != nil {
 		return err
+	}
+	if attachmentSupervisor != nil {
+		if err := attachmentSupervisor.SetRecoveryAcknowledger(mutations); err != nil {
+			return fmt.Errorf("run service runtime attachment recovery: %w", err)
+		}
 	}
 	control, err := composeComisControl(config, mutations)
 	if err != nil {
