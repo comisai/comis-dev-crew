@@ -398,7 +398,7 @@ func ensureOwnedRuntimeRoot(path string) (string, error) {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path || path == string(os.PathSeparator) || strings.ContainsAny(path, "\x00\r\n") {
 		return "", errors.New("create runtime attachment coordinator: runtime root is invalid")
 	}
-	if err := os.MkdirAll(path, 0o700); err != nil {
+	if err := createRuntimeDirectoryPath(path); err != nil {
 		return "", errors.New("create runtime attachment coordinator: runtime root is unavailable")
 	}
 	info, err := os.Lstat(path)
@@ -410,6 +410,28 @@ func ensureOwnedRuntimeRoot(path string) (string, error) {
 		return "", errors.New("create runtime attachment coordinator: runtime root is not canonical")
 	}
 	return path, nil
+}
+
+func createRuntimeDirectoryPath(path string) error {
+	root := filepath.VolumeName(path) + string(os.PathSeparator)
+	current := root
+	for _, component := range strings.Split(strings.TrimPrefix(path, root), string(os.PathSeparator)) {
+		if component == "" {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			if err := os.Mkdir(current, 0o700); err != nil {
+				return err
+			}
+			continue
+		}
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("runtime directory path contains an unsafe component")
+		}
+	}
+	return nil
 }
 
 func ensureTaskRuntimeDirectory(path string) error {
