@@ -16,6 +16,7 @@ import (
 type controlHandlerStub struct {
 	activate func(context.Context, ActivateRequestParams) (ActivateResponseResult, error)
 	abandon  func(context.Context, AbandonRequestParams) (AbandonResponseResult, error)
+	terminal func(context.Context, TerminalEventRequestParams) (TerminalEventResponseResult, error)
 }
 
 func (stub controlHandlerStub) Activate(ctx context.Context, params ActivateRequestParams) (ActivateResponseResult, error) {
@@ -30,6 +31,15 @@ func (stub controlHandlerStub) Abandon(ctx context.Context, params AbandonReques
 		return abandonResult(params), nil
 	}
 	return stub.abandon(ctx, params)
+}
+
+func (stub controlHandlerStub) TerminalEvent(ctx context.Context, params TerminalEventRequestParams) (TerminalEventResponseResult, error) {
+	if stub.terminal == nil {
+		return TerminalEventResponseResult{
+			ManagedRunID: params.ManagedRunID, TerminalSessionId: params.TerminalSessionId, Transition: params.Transition,
+		}, nil
+	}
+	return stub.terminal(ctx, params)
 }
 
 func TestControlConnectionRejectsInvalidConfiguration(t *testing.T) {
@@ -121,6 +131,52 @@ func TestControlSessionDispatchesAbandonAndFailsClosed(t *testing.T) {
 		})
 		assertControlFailure(t, response, ErrorKindMethodNotFound)
 	})
+}
+
+func TestControlSessionDispatchesAuthenticatedTerminalEvents(t *testing.T) {
+	valid := TerminalEventRequest{
+		JSONRPC: JSONRPCVersion, ID: "operation_terminal_running", Method: MethodManagedRunsTerminalEvent,
+		Params: TerminalEventRequestParams{
+			OperationID: "operation_terminal_running", ManagedRunID: "managed-run_scope",
+			WorkspaceLeaseID: "workspace-lease_scope", TerminalSessionId: "terminal-session_scope",
+			Transition: CapabilityTerminalTransitionRunning,
+		},
+	}
+	t.Run("success", func(t *testing.T) {
+		response := dispatchControlTestFrame(t, controlHandlerStub{}, map[string]any{
+			"jsonrpc": valid.JSONRPC, "id": valid.ID, "method": valid.Method,
+			"params": valid.Params, "bearer": controlTestBearer,
+		})
+		var acknowledged TerminalEventResponse
+		if err := json.Unmarshal(response, &acknowledged); err != nil {
+			t.Fatal(err)
+		}
+		if acknowledged.Result.ManagedRunID != valid.Params.ManagedRunID ||
+			acknowledged.Result.TerminalSessionId != valid.Params.TerminalSessionId ||
+			acknowledged.Result.Transition != valid.Params.Transition {
+			t.Fatalf("terminal event response = %#v", acknowledged)
+		}
+	})
+	for _, test := range []struct {
+		name  string
+		frame map[string]any
+		kind  ErrorKind
+	}{
+		{name: "credential", frame: map[string]any{"jsonrpc": valid.JSONRPC, "id": valid.ID, "method": valid.Method, "params": valid.Params, "bearer": strings.Repeat("x", len(controlTestBearer))}, kind: ErrorKindUnauthorizedInstance},
+		{name: "envelope", frame: map[string]any{"jsonrpc": valid.JSONRPC, "id": "operation_terminal_other", "method": valid.Method, "params": valid.Params, "bearer": controlTestBearer}, kind: ErrorKindInvalidRequest},
+		{name: "unknown field", frame: map[string]any{"jsonrpc": valid.JSONRPC, "id": valid.ID, "method": valid.Method, "params": valid.Params, "bearer": controlTestBearer, "content": "must not cross"}, kind: ErrorKindInvalidRequest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assertControlFailure(t, dispatchControlTestFrame(t, controlHandlerStub{}, test.frame), test.kind)
+		})
+	}
+	handler := controlHandlerStub{terminal: func(context.Context, TerminalEventRequestParams) (TerminalEventResponseResult, error) {
+		return TerminalEventResponseResult{}, RPCError{Kind: ErrorKindPreconditionFailed, Message: "terminal binding differs"}
+	}}
+	assertControlFailure(t, dispatchControlTestFrame(t, handler, map[string]any{
+		"jsonrpc": valid.JSONRPC, "id": valid.ID, "method": valid.Method,
+		"params": valid.Params, "bearer": controlTestBearer,
+	}), ErrorKindPreconditionFailed)
 }
 
 func abandonResult(params AbandonRequestParams) AbandonResponseResult {
