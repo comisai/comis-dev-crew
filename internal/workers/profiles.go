@@ -89,20 +89,21 @@ func (reason AvailabilityReason) valid() bool {
 // StaticProfile is one reviewed, explicit dispatch configuration. Arguments
 // are an argv vector and EnvironmentKeys is an allowlist; no shell field exists.
 type StaticProfile struct {
-	ID                 string
-	Harness            HarnessID
-	AllowedShapes      []domain.TaskShape
-	Model              string
-	Effort             string
-	TerminalAllowEntry string
-	Network            NetworkPosture
-	ConcurrencyLimit   int
-	Unattended         bool
-	Executable         string
-	Arguments          []string
-	EnvironmentKeys    []string
-	Availability       Availability
-	AvailabilityReason AvailabilityReason
+	ID                  string
+	Harness             HarnessID
+	AllowedShapes       []domain.TaskShape
+	Model               string
+	Effort              string
+	TerminalAllowEntry  string
+	Network             NetworkPosture
+	ConcurrencyLimit    int
+	Unattended          bool
+	Executable          string
+	ExecutableArguments []string
+	Arguments           []string
+	EnvironmentKeys     []string
+	Availability        Availability
+	AvailabilityReason  AvailabilityReason
 }
 
 // LaunchRequest binds an exact selected profile to a verified task root.
@@ -159,6 +160,7 @@ func NewProfileCatalog(configured []StaticProfile) (*ProfileCatalog, error) {
 			return nil, errors.New("create worker profile catalog: profile ID is duplicated")
 		}
 		profile.AllowedShapes = append([]domain.TaskShape(nil), profile.AllowedShapes...)
+		profile.ExecutableArguments = append([]string(nil), profile.ExecutableArguments...)
 		profile.Arguments = append([]string(nil), profile.Arguments...)
 		profile.EnvironmentKeys = append([]string(nil), profile.EnvironmentKeys...)
 		catalog.profiles[profile.ID] = profile
@@ -189,6 +191,7 @@ func (catalog *ProfileCatalog) ResolveProfile(profileID string, shape domain.Tas
 		return StaticProfile{}, ErrProfileShapeUnsupported
 	}
 	profile.AllowedShapes = append([]domain.TaskShape(nil), profile.AllowedShapes...)
+	profile.ExecutableArguments = append([]string(nil), profile.ExecutableArguments...)
 	profile.Arguments = append([]string(nil), profile.Arguments...)
 	profile.EnvironmentKeys = append([]string(nil), profile.EnvironmentKeys...)
 	return profile, nil
@@ -206,9 +209,10 @@ func (catalog *ProfileCatalog) BuildLaunchDescriptor(request LaunchRequest) (Lau
 	}
 	return LaunchDescriptor{
 		ProfileID: profile.ID, Harness: profile.Harness, Executable: profile.Executable,
-		Arguments: append([]string(nil), profile.Arguments...), WorkingDirectory: request.WorkingDirectory,
-		EnvironmentKeys: append([]string(nil), profile.EnvironmentKeys...),
-		Model:           profile.Model, Effort: profile.Effort, TerminalAllowEntry: profile.TerminalAllowEntry,
+		Arguments:        append(append([]string(nil), profile.ExecutableArguments...), profile.Arguments...),
+		WorkingDirectory: request.WorkingDirectory,
+		EnvironmentKeys:  append([]string(nil), profile.EnvironmentKeys...),
+		Model:            profile.Model, Effort: profile.Effort, TerminalAllowEntry: profile.TerminalAllowEntry,
 		Network: profile.Network, ConcurrencyLimit: profile.ConcurrencyLimit, Unattended: profile.Unattended,
 	}, nil
 }
@@ -243,10 +247,10 @@ func validateStaticProfile(profile StaticProfile) error {
 	if err := validateProfileExecutable(profile.Harness, profile.Executable); err != nil {
 		return err
 	}
-	if len(profile.Arguments) > 32 {
+	if len(profile.ExecutableArguments)+len(profile.Arguments) > 32 {
 		return errors.New("create worker profile catalog: argument vector is too large")
 	}
-	for _, argument := range profile.Arguments {
+	for _, argument := range append(append([]string(nil), profile.ExecutableArguments...), profile.Arguments...) {
 		if argument == "" || len([]byte(argument)) > 1024 || strings.ContainsAny(argument, "\x00\r\n") {
 			return errors.New("create worker profile catalog: argument vector is invalid")
 		}
@@ -267,13 +271,13 @@ func validateStaticProfile(profile StaticProfile) error {
 	return nil
 }
 
-func validateProfileExecutable(harness HarnessID, path string) error {
+func validateProfileExecutable(_ HarnessID, path string) error {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path || len([]byte(path)) > 4096 || strings.ContainsAny(path, "\x00\r\n") {
 		return errors.New("create worker profile catalog: executable path is invalid")
 	}
-	wantName := map[HarnessID]string{HarnessCodex: "codex"}[harness]
-	if filepath.Base(path) != wantName {
-		return errors.New("create worker profile catalog: executable does not match its harness")
+	switch filepath.Base(path) {
+	case "sh", "bash", "zsh", "dash", "ksh", "fish", "pwsh", "powershell", "cmd", "env":
+		return errors.New("create worker profile catalog: shell launchers are forbidden")
 	}
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 || info.Mode()&os.ModeSymlink != 0 {

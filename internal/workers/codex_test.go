@@ -2,6 +2,7 @@ package workers_test
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"os/exec"
@@ -23,6 +24,7 @@ func TestCodexAdapter_ProbesAndPinsExactInstalledVersion(t *testing.T) {
 	}
 	adapter, err := workers.NewCodexAdapter(workers.CodexAdapterConfig{
 		Profiles: catalog, ProfileID: profile.ID, ExpectedVersion: "codex-cli 0.147.0",
+		VersionArguments: []string{"codex-cli 0.147.0"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -35,6 +37,7 @@ func TestCodexAdapter_ProbesAndPinsExactInstalledVersion(t *testing.T) {
 
 	mismatched, err := workers.NewCodexAdapter(workers.CodexAdapterConfig{
 		Profiles: catalog, ProfileID: profile.ID, ExpectedVersion: "codex-cli 0.148.0",
+		VersionArguments: []string{"codex-cli 0.147.0"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +137,7 @@ func TestCodexAdapter_ClassifiesOnlyFreshStructuredSemanticEvidence(t *testing.T
 		{name: "item started", observation: codexObservation(now, `{"type":"item.started","item":{"type":"command_execution"}}`), want: application.ActivityBusy},
 		{name: "input request", observation: codexObservation(now, `{"type":"request.user_input"}`), want: application.ActivityAwaitingInput},
 		{name: "turn completed without report", observation: codexObservation(now, `{"type":"turn.completed"}`), want: application.ActivityUnknown, reason: application.SemanticReasonSettledWithoutReport},
-		{name: "process exited", observation: application.HarnessObservation{Process: application.ProcessExited, ObservedAt: now, Now: now}, want: application.ActivityExited},
+		{name: "process exited", observation: application.HarnessObservation{Process: application.ProcessExited, ObservedAt: now, Now: now, FreshnessTTL: 5 * time.Second}, want: application.ActivityExited},
 		{name: "malformed", observation: codexObservation(now, `{`), want: application.ActivityUnknown, reason: application.SemanticReasonMalformed},
 		{name: "unsupported", observation: codexObservation(now, `{"type":"invented"}`), want: application.ActivityUnknown, reason: application.SemanticReasonUnsupported},
 		{name: "stale", observation: application.HarnessObservation{EventJSON: []byte(`{"type":"turn.started"}`), Process: application.ProcessAlive, ObservedAt: now.Add(-time.Minute), Now: now, FreshnessTTL: 5 * time.Second}, want: application.ActivityUnknown, reason: application.SemanticReasonStale},
@@ -150,9 +153,136 @@ func TestCodexAdapter_ClassifiesOnlyFreshStructuredSemanticEvidence(t *testing.T
 	}
 }
 
+func TestCodexAdapter_RejectsInvalidConfigurationProbeAndLaunchBoundaries(t *testing.T) {
+	profile := availableCodexProfile(codexFixtureExecutable(t), "codex-reviewed")
+	catalog, err := workers.NewProfileCatalog([]workers.StaticProfile{profile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workers.NewCodexAdapter(workers.CodexAdapterConfig{}); err == nil {
+		t.Fatal("NewCodexAdapter(empty) error = nil")
+	}
+	for _, config := range []workers.CodexAdapterConfig{
+		{Profiles: catalog, ProfileID: "missing-profile", ExpectedVersion: "codex-cli 0.147.0"},
+		{Profiles: catalog, ProfileID: profile.ID, ExpectedVersion: "0.147.0"},
+		{Profiles: catalog, ProfileID: profile.ID, ExpectedVersion: "codex-cli 0.147.0", VersionArguments: []string{"bad\narg"}},
+		{Profiles: catalog, ProfileID: profile.ID, ExpectedVersion: "codex-cli 0.147.0", ProbeEnvironment: map[string]string{"SECRET": "value"}},
+		{Profiles: catalog, ProfileID: profile.ID, ExpectedVersion: "codex-cli 0.147.0", ProbeEnvironment: map[string]string{"PATH": "bad\x00value"}},
+	} {
+		if _, err := workers.NewCodexAdapter(config); err == nil {
+			t.Fatalf("NewCodexAdapter(%#v) error = nil", config)
+		}
+	}
+	adapter, err := workers.NewCodexAdapter(workers.CodexAdapterConfig{
+		Profiles: catalog, ProfileID: profile.ID, ExpectedVersion: "codex-cli 0.147.0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adapter.ID() != "codex" {
+		t.Fatalf("ID() = %q", adapter.ID())
+	}
+	//lint:ignore SA1012 The adapter boundary must reject nil before process access.
+	if _, err := adapter.ProbeVersion(nil); err == nil {
+		t.Fatal("ProbeVersion(nil) error = nil")
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := adapter.ProbeVersion(cancelled); err != context.Canceled {
+		t.Fatalf("ProbeVersion(cancelled) error = %v", err)
+	}
+	var unavailable *workers.CodexAdapter
+	if _, err := unavailable.ProbeVersion(context.Background()); err == nil {
+		t.Fatal("ProbeVersion(unavailable) error = nil")
+	}
+	probe, err := adapter.ProbeVersion(context.Background())
+	if err != nil || probe.Availability != application.HarnessUnknown || probe.Reason != application.HarnessReasonCapabilityUnknown {
+		t.Fatalf("ProbeVersion(malformed output) = %#v, %v", probe, err)
+	}
+
+	failingProfile := availableCodexProfile(systemExecutable(t, "false"), "codex-failing")
+	failingCatalog, err := workers.NewProfileCatalog([]workers.StaticProfile{failingProfile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failing, err := workers.NewCodexAdapter(workers.CodexAdapterConfig{
+		Profiles: failingCatalog, ProfileID: failingProfile.ID, ExpectedVersion: "codex-cli 0.147.0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe, err = failing.ProbeVersion(context.Background())
+	if err != nil || probe.Availability != application.HarnessUnavailable || probe.Reason != application.HarnessReasonExecutableUnavailable {
+		t.Fatalf("ProbeVersion(failure) = %#v, %v", probe, err)
+	}
+
+	hostSocket, closeSocket := codexAttachmentSocket(t)
+	defer closeSocket()
+	valid := application.WorkerLaunchRequest{
+		ProfileID: profile.ID, Shape: domain.ShapeShip, WorkingDirectory: canonicalWorkerTempDir(t),
+		TaskHandle: "task-valid-0001", ManagedRunID: "managed-run-valid-0001",
+		WorkspaceLeaseID: "workspace-lease-valid-0001", BriefRevision: 1,
+		BriefRevisionHash: strings.Repeat("a", 64),
+		Attachment:        application.RuntimeSocketAttachment{HostSocketPath: hostSocket, MountSocketPath: "/run/devcrew/attachment.sock"},
+	}
+	//lint:ignore SA1012 The launch boundary must reject nil before profile or mount inspection.
+	if _, err := adapter.BuildLaunchDescriptor(nil, valid); err == nil {
+		t.Fatal("BuildLaunchDescriptor(nil) error = nil")
+	}
+	if _, err := adapter.BuildLaunchDescriptor(cancelled, valid); err != context.Canceled {
+		t.Fatalf("BuildLaunchDescriptor(cancelled) error = %v", err)
+	}
+	if _, err := unavailable.BuildLaunchDescriptor(context.Background(), valid); !errors.Is(err, workers.ErrProfileUnknown) {
+		t.Fatalf("BuildLaunchDescriptor(unavailable) error = %v", err)
+	}
+	wrongProfile := valid
+	wrongProfile.ProfileID = "missing-profile"
+	if _, err := adapter.BuildLaunchDescriptor(context.Background(), wrongProfile); !errors.Is(err, workers.ErrProfileUnknown) {
+		t.Fatalf("BuildLaunchDescriptor(wrong profile) error = %v", err)
+	}
+	for _, mutate := range []func(*application.WorkerLaunchRequest){
+		func(request *application.WorkerLaunchRequest) { request.TaskHandle = "../task" },
+		func(request *application.WorkerLaunchRequest) { request.ManagedRunID = "bad id" },
+		func(request *application.WorkerLaunchRequest) { request.WorkspaceLeaseID = "bad id" },
+		func(request *application.WorkerLaunchRequest) { request.BriefRevision = 0 },
+		func(request *application.WorkerLaunchRequest) { request.BriefRevisionHash = "bad" },
+		func(request *application.WorkerLaunchRequest) { request.Attachment.HostSocketPath = "relative" },
+		func(request *application.WorkerLaunchRequest) {
+			request.Attachment.HostSocketPath = filepath.Join(filepath.Dir(hostSocket), "missing.sock")
+		},
+		func(request *application.WorkerLaunchRequest) {
+			request.Attachment.MountSocketPath = "/run/devcrew/other.sock"
+		},
+	} {
+		request := valid
+		mutate(&request)
+		if _, err := adapter.BuildLaunchDescriptor(context.Background(), request); err == nil {
+			t.Fatalf("BuildLaunchDescriptor(%#v) error = nil", request)
+		}
+	}
+
+	noAttachmentProfile := profile
+	noAttachmentProfile.ID = "codex-no-attachment"
+	noAttachmentProfile.EnvironmentKeys = []string{"PATH"}
+	noAttachmentCatalog, err := workers.NewProfileCatalog([]workers.StaticProfile{noAttachmentProfile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	noAttachment, err := workers.NewCodexAdapter(workers.CodexAdapterConfig{
+		Profiles: noAttachmentCatalog, ProfileID: noAttachmentProfile.ID, ExpectedVersion: "codex-cli 0.147.0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid.ProfileID = noAttachmentProfile.ID
+	if _, err := noAttachment.BuildLaunchDescriptor(context.Background(), valid); err == nil {
+		t.Fatal("BuildLaunchDescriptor(no attachment allowlist) error = nil")
+	}
+}
+
 func probedCodexProfile(t *testing.T, id string) workers.StaticProfile {
 	t.Helper()
-	source, err := exec.LookPath("printf")
+	source, err := exec.LookPath("echo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,22 +290,21 @@ func probedCodexProfile(t *testing.T, id string) workers.StaticProfile {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contents, err := os.ReadFile(source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	executable := filepath.Join(canonicalWorkerTempDir(t), "codex")
-	if err := os.WriteFile(executable, contents, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	profile := availableCodexProfile(executable, id)
-	profile.ExecutableArguments = []string{"codex-cli 0.147.0\n"}
-	return profile
+	return availableCodexProfile(source, id)
 }
 
 func codexAttachmentSocket(t *testing.T) (string, func()) {
 	t.Helper()
-	path := filepath.Join(canonicalWorkerTempDir(t), "attachment.sock")
+	root, err := os.MkdirTemp("/tmp", "devcrew-codex-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "attachment.sock")
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
 	if err != nil {
 		t.Fatal(err)
@@ -201,4 +330,17 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func systemExecutable(t *testing.T, name string) string {
+	t.Helper()
+	path, err := exec.LookPath(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err = filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
