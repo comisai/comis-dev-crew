@@ -261,6 +261,60 @@ func (mutations *Mutations) StartTask(ctx context.Context, command StartTaskComm
 	})
 }
 
+// RecordTerminalEvent validates and durably cross-binds one content-free Comis
+// terminal transition. Running alone never acknowledges the worker wrapper.
+func (mutations *Mutations) RecordTerminalEvent(ctx context.Context, command RecordTerminalEventCommand) (MutationResult, error) {
+	if err := validMutationContext(ctx); err != nil {
+		return MutationResult{}, err
+	}
+	if err := domain.ValidateOperationID(command.OperationID); err != nil ||
+		domain.ValidateAuthorityReference("managedRunId", command.ManagedRunID) != nil ||
+		domain.ValidateAuthorityReference("workspaceLeaseId", command.WorkspaceLeaseID) != nil ||
+		domain.ValidateAuthorityReference("terminalSessionId", command.TerminalSessionID) != nil || !command.Transition.Valid() {
+		return MutationResult{}, mutationValidationFailure("terminal event fields are invalid")
+	}
+	subjectDigest, err := digestMutationSubject(command)
+	if err != nil {
+		return MutationResult{}, mutationValidationFailure("terminal event subject cannot be encoded")
+	}
+	if replay, found, err := mutations.store.ReplayMutation(ctx, command.OperationID, commandRecordTerminalEvent, subjectDigest); err != nil {
+		return MutationResult{}, mutationReplayFailure(err)
+	} else if found {
+		return replay, nil
+	}
+	result, err := mutations.store.CommitTerminalEvent(ctx, TerminalEventMutation{
+		OperationID: command.OperationID, SubjectDigest: subjectDigest,
+		ManagedRunID: command.ManagedRunID, WorkspaceLeaseID: command.WorkspaceLeaseID,
+		TerminalSessionID: command.TerminalSessionID, Transition: command.Transition, At: mutations.clock(),
+	})
+	return result, mutationCommitFailure(err)
+}
+
+// AcknowledgeWorkerLaunch records the wrapper's exact protected-mount echo and
+// advances to working only when terminal running evidence is also durable.
+func (mutations *Mutations) AcknowledgeWorkerLaunch(ctx context.Context, command AcknowledgeWorkerLaunchCommand) (MutationResult, error) {
+	if err := validMutationContext(ctx); err != nil {
+		return MutationResult{}, err
+	}
+	if err := domain.ValidateOperationID(command.OperationID); err != nil || command.Acknowledgement.Validate() != nil {
+		return MutationResult{}, mutationValidationFailure("worker launch acknowledgement is invalid")
+	}
+	subjectDigest, err := digestMutationSubject(command)
+	if err != nil {
+		return MutationResult{}, mutationValidationFailure("worker launch acknowledgement cannot be encoded")
+	}
+	if replay, found, err := mutations.store.ReplayMutation(ctx, command.OperationID, commandAcknowledgeWorkerLaunch, subjectDigest); err != nil {
+		return MutationResult{}, mutationReplayFailure(err)
+	} else if found {
+		return replay, nil
+	}
+	result, err := mutations.store.CommitWorkerLaunchAcknowledgement(ctx, WorkerLaunchAcknowledgementMutation{
+		OperationID: command.OperationID, SubjectDigest: subjectDigest,
+		Acknowledgement: command.Acknowledgement, At: mutations.clock(),
+	})
+	return result, mutationCommitFailure(err)
+}
+
 func digestMutationSubject(subject any) (string, error) {
 	encoded, err := json.Marshal(subject)
 	if err != nil {
@@ -311,12 +365,12 @@ func mutationCommitFailure(cause error) error {
 		return mutationReplayFailure(cause)
 	case errors.Is(cause, ErrInvalidInput):
 		code, message, hint = domain.ErrorInvalidArgument,
-			"activation fields differ from the prepared workspace request",
-			"send the lease exactly when the preparation requested a workspace"
+			"mutation fields differ from durable task authority",
+			"send the exact prepared workspace and bound run identities"
 	case errors.Is(cause, ErrNotFound), errors.Is(cause, ErrPrecondition), errors.Is(cause, domain.ErrInvalidTransition):
 		code, message, hint = domain.ErrorPrecondition,
-			"managed-run preparation cannot accept this transition",
-			"reconcile the exact private preparation before retrying"
+			"task cannot accept the requested transition",
+			"reconcile the exact durable task and run binding before retrying"
 	default:
 		return cause
 	}

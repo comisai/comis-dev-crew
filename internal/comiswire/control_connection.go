@@ -15,6 +15,7 @@ import (
 type ControlHandler interface {
 	Activate(context.Context, ActivateRequestParams) (ActivateResponseResult, error)
 	Abandon(context.Context, AbandonRequestParams) (AbandonResponseResult, error)
+	TerminalEvent(context.Context, TerminalEventRequestParams) (TerminalEventResponseResult, error)
 }
 
 // ControlConnectionConfig identifies one installed capability-service instance.

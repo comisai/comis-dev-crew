@@ -209,6 +209,10 @@ func (serviceMutationStub) AbandonManagedRun(context.Context, application.Abando
 	return application.MutationResult{}, nil
 }
 
+func (serviceMutationStub) RecordTerminalEvent(context.Context, application.RecordTerminalEventCommand) (application.MutationResult, error) {
+	return application.MutationResult{}, nil
+}
+
 func installedServiceConfig(t *testing.T, root string) Config {
 	t.Helper()
 	gitExecutable, err := exec.LookPath("git")

@@ -150,6 +150,44 @@ INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (8, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 `
 
+const terminalLifecycleMigration = `
+CREATE TABLE task_terminal_bindings (
+    task_handle TEXT PRIMARY KEY,
+    managed_run_id TEXT NOT NULL,
+    workspace_lease_id TEXT NOT NULL,
+    terminal_session_id TEXT NOT NULL UNIQUE,
+    latest_transition TEXT NOT NULL,
+    running_observed INTEGER NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(task_handle) REFERENCES tasks(handle)
+);
+CREATE TABLE task_terminal_events (
+    operation_id TEXT PRIMARY KEY,
+    task_handle TEXT NOT NULL,
+    managed_run_id TEXT NOT NULL,
+    workspace_lease_id TEXT NOT NULL,
+    terminal_session_id TEXT NOT NULL,
+    transition TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    FOREIGN KEY(operation_id) REFERENCES operations(id),
+    FOREIGN KEY(task_handle) REFERENCES tasks(handle)
+);
+CREATE TABLE task_launch_acknowledgements (
+    operation_id TEXT PRIMARY KEY,
+    task_handle TEXT NOT NULL UNIQUE,
+    managed_run_id TEXT NOT NULL,
+    workspace_lease_id TEXT NOT NULL,
+    working_directory TEXT NOT NULL,
+    brief_revision INTEGER NOT NULL,
+    brief_revision_hash TEXT NOT NULL,
+    acknowledged_at TEXT NOT NULL,
+    FOREIGN KEY(operation_id) REFERENCES operations(id),
+    FOREIGN KEY(task_handle) REFERENCES tasks(handle)
+);
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (9, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+`
+
 const busyTimeoutMilliseconds = 500
 
 // Store owns one SQLite connection pool. The service composition root is the
@@ -256,7 +294,10 @@ func (store *Store) migrate(ctx context.Context) error {
 	if err := store.applyComisReportOutboxMigration(ctx); err != nil {
 		return err
 	}
-	return store.applyVersionedMigration(ctx, 8, managedRunLifecycleMigration)
+	if err := store.applyVersionedMigration(ctx, 8, managedRunLifecycleMigration); err != nil {
+		return err
+	}
+	return store.applyVersionedMigration(ctx, 9, terminalLifecycleMigration)
 }
 
 func (store *Store) applyComisReportOutboxMigration(ctx context.Context) error {

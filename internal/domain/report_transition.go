@@ -27,10 +27,20 @@ func (task Task) AcceptWorkerReport(report WorkerReport, acceptedAt time.Time) (
 	var updated Task
 	var err error
 	transition := reportTransition(report.Kind)
-	if report.Kind == ReportProgress && task.State == TaskWorking {
-		updated = task
-		updated.StateVersion++
-		updated.UpdatedAt = acceptedAt
+	if report.Kind == ReportProgress {
+		if task.State == TaskLaunching && task.WorkerProfileID == "fixture-worker" {
+			updated, err = task.ApplyTransition(transition, acceptedAt)
+			if err != nil {
+				return task, err
+			}
+		} else {
+			if task.State != TaskWorking {
+				return task, transitionFailure(task, reportTransition(report.Kind), "progress requires acknowledged working state")
+			}
+			updated = task
+			updated.StateVersion++
+			updated.UpdatedAt = acceptedAt
+		}
 	} else {
 		updated, err = task.ApplyTransition(transition, acceptedAt)
 		if err != nil {

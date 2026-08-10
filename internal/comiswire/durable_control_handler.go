@@ -13,6 +13,27 @@ import (
 type DurableControlMutations interface {
 	ActivateManagedRun(context.Context, application.ActivateManagedRunCommand) (application.MutationResult, error)
 	AbandonManagedRun(context.Context, application.AbandonManagedRunCommand) (application.MutationResult, error)
+	RecordTerminalEvent(context.Context, application.RecordTerminalEventCommand) (application.MutationResult, error)
+}
+
+// TerminalEvent commits the exact run, lease, session, and transition join
+// before returning the content-free protocol acknowledgement.
+func (handler *DurableControlHandler) TerminalEvent(ctx context.Context, params TerminalEventRequestParams) (TerminalEventResponseResult, error) {
+	result, err := handler.mutations.RecordTerminalEvent(ctx, application.RecordTerminalEventCommand{
+		OperationID: string(params.OperationID), ManagedRunID: string(params.ManagedRunID),
+		WorkspaceLeaseID: string(params.WorkspaceLeaseID), TerminalSessionID: string(params.TerminalSessionID),
+		Transition: application.TerminalTransition(params.Transition),
+	})
+	if err != nil {
+		return TerminalEventResponseResult{}, controlMutationFailure(err)
+	}
+	if result.Operation.ID != string(params.OperationID) || result.Operation.Status != domain.OperationCompleted ||
+		result.Task.ManagedRunID != string(params.ManagedRunID) || result.Task.WorkspaceLeaseID != string(params.WorkspaceLeaseID) {
+		return TerminalEventResponseResult{}, wireFailure(ErrorKindInternalError, "durable terminal event result is incomplete")
+	}
+	return TerminalEventResponseResult{
+		ManagedRunID: params.ManagedRunID, TerminalSessionID: params.TerminalSessionID, Transition: params.Transition,
+	}, nil
 }
 
 // DurableControlHandlerConfig binds one authenticated instance to the sole

@@ -162,6 +162,7 @@ func TestDurableControlHandler_AbandonDispositionIsDurableAndClosed(t *testing.T
 
 func TestDurableControlHandler_JoinsTerminalRunningAndExactWrapperAcknowledgement(t *testing.T) {
 	harness := newDurableControlHarness(t, "task-terminal-join")
+	harness.workerProfileID = "codex-test"
 	prepared := harness.prepare(t, "operation-prepare-terminal-join")
 	harness.now = harness.now.Add(time.Minute)
 	lease := comiswire.WorkspaceLeaseID("workspace-lease-terminal-join")
@@ -230,6 +231,7 @@ func TestDurableControlHandler_JoinsTerminalRunningAndExactWrapperAcknowledgemen
 
 func TestDurableControlHandler_TerminalExitNeverMeansSuccess(t *testing.T) {
 	harness := newDurableControlHarness(t, "task-terminal-exit")
+	harness.workerProfileID = "codex-test"
 	prepared := harness.prepare(t, "operation-prepare-terminal-exit")
 	harness.now = harness.now.Add(time.Minute)
 	lease := comiswire.WorkspaceLeaseID("workspace-lease-terminal-exit")
@@ -273,6 +275,7 @@ type durableControlHarness struct {
 	nextTaskID        string
 	nextNonce         string
 	serviceInstanceID string
+	workerProfileID   string
 }
 
 func newDurableControlHarness(t *testing.T, taskID string) *durableControlHarness {
@@ -290,6 +293,7 @@ func newDurableControlHarness(t *testing.T, taskID string) *durableControlHarnes
 		now:        time.Date(2026, time.August, 9, 20, 0, 0, 0, time.UTC),
 		nextTaskID: taskID, nextNonce: "registration-nonce-" + taskID,
 		serviceInstanceID: "service-instance-control",
+		workerProfileID:   "fixture-worker",
 	}
 	harness.open(t)
 	t.Cleanup(func() { _ = harness.store.Close() })
@@ -330,7 +334,7 @@ func (harness *durableControlHarness) prepare(t *testing.T, operationID string) 
 		Shape: domain.ShapeScout, RepositoryID: "fixture-repository", BaseRevision: "0123456789012345678901234567890123456789",
 		AcceptanceCriteria: []string{"The deterministic fixture completes."},
 		Constraints:        []string{"Do not broaden authority."}, ValidationProfile: "fixture-validation",
-		DeliveryMode: domain.DeliveryReport, WorkerProfileID: "fixture-worker",
+		DeliveryMode: domain.DeliveryReport, WorkerProfileID: harness.workerProfileID,
 	})
 	if err != nil || result.Preparation == nil {
 		t.Fatalf("PrepareTask() = %#v, %v", result, err)

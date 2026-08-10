@@ -418,6 +418,8 @@ type mutationStore struct {
 	activation    ManagedRunActivationMutation
 	abandon       ManagedRunAbandonMutation
 	start         TaskStartMutation
+	terminal      TerminalEventMutation
+	launchAck     WorkerLaunchAcknowledgementMutation
 	prepareCalls  int
 	replayResult  MutationResult
 	replayFound   bool
@@ -448,6 +450,16 @@ func (store *mutationStore) CommitManagedRunAbandon(_ context.Context, mutation 
 
 func (store *mutationStore) CommitTaskStart(_ context.Context, mutation TaskStartMutation) (MutationResult, error) {
 	store.start = mutation
+	return MutationResult{}, nil
+}
+
+func (store *mutationStore) CommitTerminalEvent(_ context.Context, mutation TerminalEventMutation) (MutationResult, error) {
+	store.terminal = mutation
+	return MutationResult{}, nil
+}
+
+func (store *mutationStore) CommitWorkerLaunchAcknowledgement(_ context.Context, mutation WorkerLaunchAcknowledgementMutation) (MutationResult, error) {
+	store.launchAck = mutation
 	return MutationResult{}, nil
 }
 

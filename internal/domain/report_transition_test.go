@@ -15,7 +15,6 @@ func TestTaskAcceptWorkerReport_AppliesClosedE0ReportTransitions(t *testing.T) {
 		kind      WorkerReportKind
 		wantState TaskState
 	}{
-		{name: "launch acknowledgement", from: TaskLaunching, kind: ReportProgress, wantState: TaskWorking},
 		{name: "working progress", from: TaskWorking, kind: ReportProgress, wantState: TaskWorking},
 		{name: "decision", from: TaskWorking, kind: ReportDecision, wantState: TaskAwaitingDecision},
 		{name: "resolution", from: TaskAwaitingDecision, kind: ReportResolution, wantState: TaskWorking},
@@ -63,6 +62,7 @@ func TestTaskAcceptWorkerReport_RejectsStaleIllegalAndExhaustedReportsWithoutMut
 		{name: "backward acceptance", mutate: func(task *Task, _ *WorkerReport, at *time.Time) { *at = task.UpdatedAt.Add(-time.Second) }},
 		{name: "state version exhausted", mutate: func(task *Task, _ *WorkerReport, _ *time.Time) { task.StateVersion = math.MaxInt64 }},
 		{name: "report cursor exhausted", mutate: func(task *Task, _ *WorkerReport, _ *time.Time) { task.ReportCursor = math.MaxInt64 }},
+		{name: "progress before launch acknowledgement", mutate: func(task *Task, _ *WorkerReport, _ *time.Time) { task.State = TaskLaunching }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

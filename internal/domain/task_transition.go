@@ -21,6 +21,7 @@ const (
 	TransitionPreparationAbandoned     TaskTransition = "preparation_abandoned"
 	TransitionLaunchRequested          TaskTransition = "launch_requested"
 	TransitionWorkerAcknowledged       TaskTransition = "worker_acknowledged"
+	TransitionTerminalUnavailable      TaskTransition = "terminal_unavailable"
 	TransitionDecisionRequested        TaskTransition = "decision_requested"
 	TransitionDecisionAnswered         TaskTransition = "decision_answered"
 	TransitionBlocked                  TaskTransition = "blocked"
@@ -119,6 +120,9 @@ func nextTaskState(current TaskState, transition TaskTransition) (TaskState, boo
 		return requiredTaskState(current, TaskReady, TaskLaunching)
 	case TransitionWorkerAcknowledged:
 		return requiredTaskState(current, TaskLaunching, TaskWorking)
+	case TransitionTerminalUnavailable:
+		return oneOfTaskStates(current, TaskUnknown, TaskLaunching, TaskWorking,
+			TaskAwaitingDecision, TaskBlocked, TaskPaused)
 	case TransitionDecisionRequested:
 		return requiredTaskState(current, TaskWorking, TaskAwaitingDecision)
 	case TransitionDecisionAnswered:

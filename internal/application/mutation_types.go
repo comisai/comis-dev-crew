@@ -8,10 +8,12 @@ import (
 )
 
 const (
-	commandPrepareTask        = "PrepareTask"
-	commandActivateManagedRun = "ActivateManagedRun"
-	commandAbandonManagedRun  = "AbandonManagedRun"
-	commandStartTask          = "StartTask"
+	commandPrepareTask             = "PrepareTask"
+	commandActivateManagedRun      = "ActivateManagedRun"
+	commandAbandonManagedRun       = "AbandonManagedRun"
+	commandStartTask               = "StartTask"
+	commandRecordTerminalEvent     = "RecordTerminalEvent"
+	commandAcknowledgeWorkerLaunch = "AcknowledgeWorkerLaunch"
 )
 
 // PrepareTaskCommand contains immutable E0 contract fields. The service mints
@@ -57,6 +59,47 @@ type StartTaskCommand struct {
 	TaskHandle  string
 }
 
+// TerminalTransition is the content-free Comis terminal lifecycle vocabulary.
+type TerminalTransition string
+
+const (
+	TerminalCreated     TerminalTransition = "created"
+	TerminalRunning     TerminalTransition = "running"
+	TerminalInputNeeded TerminalTransition = "input_needed"
+	TerminalStuck       TerminalTransition = "stuck"
+	TerminalExited      TerminalTransition = "exited"
+	TerminalLost        TerminalTransition = "lost"
+	TerminalRecovered   TerminalTransition = "recovered"
+	TerminalReleased    TerminalTransition = "released"
+)
+
+// Valid reports whether the transition belongs to the pinned closed vocabulary.
+func (transition TerminalTransition) Valid() bool {
+	switch transition {
+	case TerminalCreated, TerminalRunning, TerminalInputNeeded, TerminalStuck,
+		TerminalExited, TerminalLost, TerminalRecovered, TerminalReleased:
+		return true
+	default:
+		return false
+	}
+}
+
+// RecordTerminalEventCommand cross-binds one authenticated Comis event.
+type RecordTerminalEventCommand struct {
+	OperationID       string
+	ManagedRunID      string
+	WorkspaceLeaseID  string
+	TerminalSessionID string
+	Transition        TerminalTransition
+}
+
+// AcknowledgeWorkerLaunchCommand carries the wrapper's exact protected-mount
+// launch echo. Its operation identity is service-owned, not worker-selected.
+type AcknowledgeWorkerLaunchCommand struct {
+	OperationID     string
+	Acknowledgement LaunchAcknowledgement
+}
+
 // PreparedTaskMutation is the fully validated store transaction input.
 type PreparedTaskMutation struct {
 	Task          domain.Task
@@ -99,6 +142,25 @@ type TaskStartMutation struct {
 	At            time.Time
 }
 
+// TerminalEventMutation is the validated durable terminal-event transaction.
+type TerminalEventMutation struct {
+	OperationID       string
+	SubjectDigest     string
+	ManagedRunID      string
+	WorkspaceLeaseID  string
+	TerminalSessionID string
+	Transition        TerminalTransition
+	At                time.Time
+}
+
+// WorkerLaunchAcknowledgementMutation is the validated protected wrapper echo.
+type WorkerLaunchAcknowledgementMutation struct {
+	OperationID     string
+	SubjectDigest   string
+	Acknowledgement LaunchAcknowledgement
+	At              time.Time
+}
+
 // MutationResult joins one canonical task state and its replay outcome at the
 // same durable state version.
 type MutationResult struct {
@@ -114,6 +176,8 @@ type MutationStore interface {
 	CommitManagedRunActivation(context.Context, ManagedRunActivationMutation) (MutationResult, error)
 	CommitManagedRunAbandon(context.Context, ManagedRunAbandonMutation) (MutationResult, error)
 	CommitTaskStart(context.Context, TaskStartMutation) (MutationResult, error)
+	CommitTerminalEvent(context.Context, TerminalEventMutation) (MutationResult, error)
+	CommitWorkerLaunchAcknowledgement(context.Context, WorkerLaunchAcknowledgementMutation) (MutationResult, error)
 }
 
 // RepositoryCatalog validates an operator-configured repository ID without

@@ -2,6 +2,8 @@ package application
 
 import (
 	"context"
+	"errors"
+	"path/filepath"
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -64,6 +66,26 @@ type LaunchAcknowledgement struct {
 	WorkingDirectory  string
 	BriefRevision     int64
 	BriefRevisionHash string
+}
+
+// Validate rejects any partial or non-canonical launch echo.
+func (acknowledgement LaunchAcknowledgement) Validate() error {
+	if err := domain.ValidateTaskHandle(acknowledgement.TaskHandle); err != nil {
+		return errors.New("launch acknowledgement task is invalid")
+	}
+	if err := domain.ValidateAuthorityReference("managedRunId", acknowledgement.ManagedRunID); err != nil {
+		return errors.New("launch acknowledgement managed run is invalid")
+	}
+	if err := domain.ValidateAuthorityReference("workspaceLeaseId", acknowledgement.WorkspaceLeaseID); err != nil {
+		return errors.New("launch acknowledgement workspace lease is invalid")
+	}
+	if !filepath.IsAbs(acknowledgement.WorkingDirectory) || filepath.Clean(acknowledgement.WorkingDirectory) != acknowledgement.WorkingDirectory {
+		return errors.New("launch acknowledgement working directory is invalid")
+	}
+	if acknowledgement.BriefRevision < 1 || domain.ValidateBriefRevisionHash(acknowledgement.BriefRevisionHash) != nil {
+		return errors.New("launch acknowledgement brief pin is invalid")
+	}
+	return nil
 }
 
 // WorkerLaunchDescriptor is a no-shell executable/argv contract plus protected

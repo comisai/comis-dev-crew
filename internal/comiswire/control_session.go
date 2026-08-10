@@ -29,10 +29,6 @@ type authenticatedTerminalEventRequest struct {
 	Bearer string `json:"bearer"`
 }
 
-type terminalEventHandler interface {
-	TerminalEvent(context.Context, TerminalEventRequestParams) (TerminalEventResponseResult, error)
-}
-
 type controlFrameHeader struct {
 	Error   json.RawMessage `json:"error"`
 	ID      json.RawMessage `json:"id"`
@@ -230,11 +226,7 @@ func (session *controlSession) dispatch(ctx context.Context, method Method, line
 		if err := validateBaseRequest(authenticated.TerminalEventRequest); err != nil {
 			return session.writeFailure(&id, wireFailure(ErrorKindInvalidParams, "invalid terminal event request"))
 		}
-		handler, ok := session.handler.(terminalEventHandler)
-		if !ok {
-			return session.writeFailure(&id, wireFailure(ErrorKindPreconditionFailed, "terminal event handler is unavailable"))
-		}
-		result, err := handler.TerminalEvent(ctx, authenticated.Params)
+		result, err := session.handler.TerminalEvent(ctx, authenticated.Params)
 		if err != nil {
 			return session.writeFailure(&id, handlerWireFailure(err))
 		}

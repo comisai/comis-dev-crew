@@ -283,7 +283,7 @@ func openReportFixture(t *testing.T, databasePath string) (*Store, domain.Task) 
 	task := storeTask("task-report-0001", 1)
 	task.ManagedRunID = "managed-run-0001"
 	task.WorkspaceLeaseID = "workspace-lease-0001"
-	task.State = domain.TaskLaunching
+	task.State = domain.TaskWorking
 	if err := store.CreateTask(context.Background(), task); err != nil {
 		_ = store.Close()
 		t.Fatalf("CreateTask() error = %v", err)

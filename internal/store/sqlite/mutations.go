@@ -285,10 +285,12 @@ func (store *Store) CommitTaskStart(ctx context.Context, mutation application.Ta
 }
 
 const (
-	commandPrepareTask        = "PrepareTask"
-	commandActivateManagedRun = "ActivateManagedRun"
-	commandAbandonManagedRun  = "AbandonManagedRun"
-	commandStartTask          = "StartTask"
+	commandPrepareTask             = "PrepareTask"
+	commandActivateManagedRun      = "ActivateManagedRun"
+	commandAbandonManagedRun       = "AbandonManagedRun"
+	commandStartTask               = "StartTask"
+	commandRecordTerminalEvent     = "RecordTerminalEvent"
+	commandAcknowledgeWorkerLaunch = "AcknowledgeWorkerLaunch"
 )
 
 func updateTaskState(ctx context.Context, transaction *sql.Tx, task domain.Task) error {

@@ -39,6 +39,12 @@ func (handler *durableControlHandler) Abandon(_ context.Context, params AbandonR
 	return abandonResult(params), nil
 }
 
+func (handler *durableControlHandler) TerminalEvent(_ context.Context, params TerminalEventRequestParams) (TerminalEventResponseResult, error) {
+	return TerminalEventResponseResult{
+		ManagedRunID: params.ManagedRunID, TerminalSessionID: params.TerminalSessionID, Transition: params.Transition,
+	}, nil
+}
+
 func (handler *durableControlHandler) effectCount() int {
 	handler.mu.Lock()
 	defer handler.mu.Unlock()
