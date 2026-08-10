@@ -11,6 +11,7 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/comiswire"
 	"github.com/comisai/comis-dev-crew/internal/localapi"
 	"github.com/comisai/comis-dev-crew/internal/store/sqlite"
+	"github.com/comisai/comis-dev-crew/internal/workers"
 )
 
 const (
@@ -48,6 +49,7 @@ type Config struct {
 	ComisControl          ComisControl
 	RepositoryComposition *RepositoryComposition
 	ComisComposition      *ComisComposition
+	CodexComposition      *CodexComposition
 	FixtureComposition    *FixtureComposition
 	Ready                 func()
 }
@@ -68,6 +70,20 @@ type ComisComposition struct {
 	SocketPath           string
 	CredentialFile       string
 	HandshakeOperationID string
+}
+
+// CodexComposition is one exact operator-reviewed production worker profile.
+// Lifecycle settling is intentionally not configurable until a trustworthy
+// Codex settle signal is ratified.
+type CodexComposition struct {
+	ProfileID            string
+	Executable           string
+	ExpectedVersion      string
+	Model                string
+	Effort               string
+	TerminalAllowEntryID string
+	Network              workers.NetworkPosture
+	ConcurrencyLimit     int
 }
 
 // FixtureComposition enables the reviewed deterministic worker with one fixed

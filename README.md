@@ -77,7 +77,7 @@ classifies the operation as `mutate` and carries the private durable registratio
 adapter. The service composition can bind this same coordinator to a dedicated owner-only MCP
 endpoint while retaining a separate operator endpoint, and both servers cancel and join together.
 The installed service command validates one explicitly configured primary repository and linked
-fixture worktree before opening its endpoints. It supplies cryptographically random task and
+task worktree before opening its endpoints. It supplies cryptographically random task and
 registration identities, advertises that verified worktree in the managed-run preparation, and
 binds the same mutation authority to the dedicated MCP endpoint.
 
@@ -93,14 +93,15 @@ requires the exact service instance out of band, and connects only to its dedica
 The adapter parity fixture drives one real service and database through the typed client, CLI JSON,
 and official-SDK MCP transport. Preparation produces the same normalized task, operation, state
 version, and `mutate` classification across all three paths; repeated calls create one task, and an
-altered stable operation remains the same non-retryable `conflict`. List, get, and explain return
+altered stable operation remains the same non-retryable `conflict`. List, get, explain, and launch
+plan return
 identical versioned projections through all adapters and retain their `read` classification.
 A tagged integration test also builds and kills the real stdio `devcrew-mcp` process, replaces it,
 and proves the prepared task, completed operation, exact private extension, and one logical replay
 remain intact; a forged managed-run metadata hint changes no task authority. A second tagged test
 builds and launches both installed processes, performs the authenticated pinned handshake,
 prepares through the official-SDK MCP facade, activates through the persistent control socket,
-and acknowledges the exact four reports from the fixture worker.
+and returns the safe reviewed Codex launch plan from the installed service.
 
 The repository registry resolves only operator-configured opaque IDs. It validates canonical
 primary checkouts and dedicated worktree roots beneath approved roots, pins the primary Git
@@ -135,10 +136,9 @@ boundary. The restart matrix independently cancels
 the service and requesting context before and after prepare, binding acknowledgement, and report
 acceptance. Stable identities replay one logical effect; an interrupted runtime becomes `unknown`
 without relaunch or false success. The fixture launches no subprocess and exists to prove these
-properties before the first real coding-worker adapter. In the installed fixture profile, the
-service scans only `ready` tasks selecting `fixture-worker`, commits stable launch intent, renders
-the exact pinned brief, and runs each task once. Candidate completion advances only to
-`validating`; it never claims validation, delivery, or terminal success.
+properties around the report lifecycle. Fixture composition is available only as a programmatic
+test seam; the production service command exposes no fixture-worker flags. Candidate completion
+advances only to `validating`; it never claims validation, delivery, or terminal success.
 
 The design authority lives in the private `comisai/planning` repository
 (`comis-companion-ecosystem/`), including the implementation design, the common
@@ -149,7 +149,7 @@ binding ratification record.
 
 - `devcrew-service` — long-lived store and local read-API authority
 - `devcrew` — operator control console over the typed local client
-- `devcrew-mcp` — stateless four-tool MCP facade over the official SDK stdio transport
+- `devcrew-mcp` — stateless five-tool MCP facade over the official SDK stdio transport
 - `devcrew-report` — restricted worker brief reader and sparse-report client
 
 All four commands support `--help` and `--version`. Build them with `make build`.
@@ -171,6 +171,15 @@ while fresh; a completed turn without a task report is `unknown`. Because the re
 does not expose a trustworthy settle signal, the current profile is explicitly degraded and cannot
 run unattended. The repository does not infer settled or successful work from a completed Codex
 turn and does not invent a private attachment protocol or a second terminal backend.
+The canonical `GetLaunchPlan` read invokes that configured adapter with the durable task,
+workspace, brief, and activation binding, but projects only the profile ID, terminal allow-entry
+ID, brief revision hash, and attachment target with durable source/confidence/freshness metadata.
+Executable paths, argv, shell text, environment bindings, workspace paths, and attachment IDs are
+not part of the local, CLI, or MCP result.
+Production composition accepts this profile only from operator startup configuration, requires a
+canonical regular non-symlink executable that is not a shell launcher, and proves the exact pinned
+version before opening service endpoints. The fixed adapter owns argv and the protected mount
+binding; task or model content cannot redirect either, and lifecycle settling remains degraded.
 
 The minimal read-only service remains available with explicit canonical paths:
 
@@ -190,7 +199,7 @@ places the host source path in Codex argv, stdin, or environment. Comis alone ca
 into the protected mount identified by activation; an altered attachment ID, target name, or mount
 path fails closed.
 
-For the runnable Comis fixture lane, first place the 32–256 character instance bearer in an
+For the runnable Comis/Codex lane, first place the 32–256 character instance bearer in an
 owner-private (`0600`) regular file. The Comis control socket must already exist as an owner-only
 Unix socket. The primary checkout and worktree parent must be separate canonical directories
 under the approved root. Task preparation creates or exactly adopts its operation-bound linked
@@ -214,8 +223,14 @@ devcrew-service \
   --comis-credential-file /absolute/private/comis.credential \
   --comis-handshake-operation handshake-devcrew-0001 \
   --preparation-ttl 10m \
-  --fixture-worker \
-  --fixture-decision "use the bounded fixture choice"
+  --codex-profile codex-reviewed \
+  --codex-executable /absolute/path/to/codex \
+  --codex-version "codex-cli 0.147.0" \
+  --codex-model gpt-5.5-codex \
+  --codex-effort high \
+  --codex-terminal-allow-entry codex-confined \
+  --codex-network restricted \
+  --codex-concurrency 2
 ```
 
 Expose the replaceable official-SDK stdio MCP facade to the MCP client as a separate process:
@@ -244,14 +259,14 @@ devcrew-mcp [--socket PATH] --service-instance ID
 JSON outputs are stable versioned projections. Human and YAML views are presentation only
 and carry no authority. The generated authenticated client is verified against Comis's standalone
 test-only capability-service host over a real owner-only Unix socket, including exact protocol and
-digest agreement plus altered-digest and wrong-credential rejection. The runnable fixture test
-extends that conformance evidence through the installed lifecycle, while making no claim that the
-Codex subprocess launch is part of that fixture lane. The CLI never opens SQLite as a
+digest agreement plus altered-digest and wrong-credential rejection. The installed integration
+test extends that conformance evidence through activation and the production-composed Codex launch
+plan without starting an unconstrained worker process. The CLI never opens SQLite as a
 normal-operation fallback. Task preparation reads one strict bounded JSON contract, rejects
 unknown authority fields, and uses either the explicit stable operation ID or one locally minted
 request ID. Service-side mutation composition requires an explicit repository catalog, task and
 registration identity sources, service instance, expiry, and dedicated MCP socket. The installed
-fixture profile supplies those dependencies only when its complete flag set validates; otherwise
+Codex profile supplies those dependencies only when its complete flag set and exact version probe validate; otherwise
 the minimal service does not open an alternate writer. The SDK facade package is implemented and
 tested over its official in-memory transport before the command root uses the production stdio
 transport. The MCP command defaults to a separate `mcp.sock` and validates the out-of-band service

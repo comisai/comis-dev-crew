@@ -5,8 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"strings"
 	"time"
+
+	"github.com/comisai/comis-dev-crew/internal/workers"
 )
 
 const serviceUsage = `Usage: devcrew-service [--database PATH] [--socket PATH]
@@ -15,7 +16,9 @@ const serviceUsage = `Usage: devcrew-service [--database PATH] [--socket PATH]
          --repository-id ID --repository-primary PATH --worktree-root PATH
          --repository-default-branch BRANCH
          --comis-socket PATH --comis-credential-file PATH
-         --comis-handshake-operation ID --fixture-worker --fixture-decision TEXT
+         --comis-handshake-operation ID --codex-profile ID --codex-executable PATH
+         --codex-version VERSION --codex-model MODEL --codex-effort EFFORT
+         --codex-terminal-allow-entry ID --codex-network POSTURE --codex-concurrency N
 
 Run the sole durable comis-dev-crew service authority.
 
@@ -35,8 +38,14 @@ Options:
   --comis-credential-file PATH    Owner-private Comis bearer file
   --comis-handshake-operation ID  Stable handshake operation identity
   --preparation-ttl DURATION      Activation preparation lifetime (default 10m)
-  --fixture-worker                Enable the deterministic fixture worker
-  --fixture-decision TEXT         Fixed fixture decision response
+  --codex-profile ID              Exact reviewed worker profile identity
+  --codex-executable PATH         Canonical Codex executable path
+  --codex-version VERSION         Exact reviewed codex-cli version output
+  --codex-model MODEL             Pinned Codex model
+  --codex-effort EFFORT           Pinned reasoning effort
+  --codex-terminal-allow-entry ID Reviewed Comis terminal allow-entry identity
+  --codex-network POSTURE         disabled, restricted, or host
+  --codex-concurrency N           Reviewed profile concurrency limit
   --help, -h                      Show this help
   --version                       Show version
 `
@@ -70,9 +79,15 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	var comisSocketPath string
 	var comisCredentialFile string
 	var comisHandshakeOperationID string
-	var fixtureDecision string
+	var codexProfileID string
+	var codexExecutable string
+	var codexVersion string
+	var codexModel string
+	var codexEffort string
+	var codexTerminalAllowEntry string
+	var codexNetwork string
+	var codexConcurrency int
 	preparationTTL := 10 * time.Minute
-	var fixtureWorker bool
 	var help bool
 	var version bool
 	flags.StringVar(&databasePath, "database", databasePath, "owner-private SQLite database path")
@@ -90,8 +105,14 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	flags.StringVar(&comisCredentialFile, "comis-credential-file", "", "owner-private Comis bearer file")
 	flags.StringVar(&comisHandshakeOperationID, "comis-handshake-operation", "", "stable handshake operation identity")
 	flags.DurationVar(&preparationTTL, "preparation-ttl", preparationTTL, "activation preparation lifetime")
-	flags.BoolVar(&fixtureWorker, "fixture-worker", false, "enable deterministic fixture worker")
-	flags.StringVar(&fixtureDecision, "fixture-decision", "", "fixed fixture decision response")
+	flags.StringVar(&codexProfileID, "codex-profile", "", "exact reviewed worker profile identity")
+	flags.StringVar(&codexExecutable, "codex-executable", "", "canonical Codex executable path")
+	flags.StringVar(&codexVersion, "codex-version", "", "exact reviewed codex-cli version output")
+	flags.StringVar(&codexModel, "codex-model", "", "pinned Codex model")
+	flags.StringVar(&codexEffort, "codex-effort", "", "pinned reasoning effort")
+	flags.StringVar(&codexTerminalAllowEntry, "codex-terminal-allow-entry", "", "reviewed Comis terminal allow-entry identity")
+	flags.StringVar(&codexNetwork, "codex-network", "", "reviewed network posture")
+	flags.IntVar(&codexConcurrency, "codex-concurrency", 0, "reviewed profile concurrency limit")
 	flags.BoolVar(&help, "help", false, "show help")
 	flags.BoolVar(&help, "h", false, "show help")
 	flags.BoolVar(&version, "version", false, "show version")
@@ -120,19 +141,20 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	installedValues := []string{
 		mcpSocketPath, runtimeRoot, serviceInstanceID, gitExecutable, approvedRoot, repositoryID, repositoryPrimary,
 		worktreeRoot, repositoryDefaultBranch, comisSocketPath, comisCredentialFile, comisHandshakeOperationID,
-		fixtureDecision,
+		codexProfileID, codexExecutable, codexVersion, codexModel, codexEffort, codexTerminalAllowEntry, codexNetwork,
 	}
-	installed := fixtureWorker || preparationTTLConfigured
+	installed := preparationTTLConfigured || codexConcurrency != 0
 	for _, value := range installedValues {
 		installed = installed || value != ""
 	}
-	if installed && (!fixtureWorker || preparationTTL <= 0 || preparationTTL > 24*time.Hour || strings.TrimSpace(fixtureDecision) == "") {
-		return writeServiceDiagnostic(stderr, "devcrew-service: installed composition is incomplete\nHint: configure every repository, MCP, Comis, and fixture option\n", 2)
+	validNetwork := codexNetwork == string(workers.NetworkDisabled) || codexNetwork == string(workers.NetworkRestricted) || codexNetwork == string(workers.NetworkHost)
+	if installed && (preparationTTL <= 0 || preparationTTL > 24*time.Hour || codexConcurrency < 1 || codexConcurrency > 64 || !validNetwork) {
+		return writeServiceDiagnostic(stderr, "devcrew-service: installed composition is incomplete\nHint: configure every repository, MCP, Comis, and Codex option\n", 2)
 	}
 	if installed {
-		for _, value := range installedValues[:len(installedValues)-1] {
+		for _, value := range installedValues {
 			if value == "" {
-				return writeServiceDiagnostic(stderr, "devcrew-service: installed composition is incomplete\nHint: configure every repository, MCP, Comis, and fixture option\n", 2)
+				return writeServiceDiagnostic(stderr, "devcrew-service: installed composition is incomplete\nHint: configure every repository, MCP, Comis, and Codex option\n", 2)
 			}
 		}
 	}
@@ -154,7 +176,11 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 			SocketPath: comisSocketPath, CredentialFile: comisCredentialFile,
 			HandshakeOperationID: comisHandshakeOperationID,
 		}
-		serviceConfig.FixtureComposition = &FixtureComposition{Decision: fixtureDecision}
+		serviceConfig.CodexComposition = &CodexComposition{
+			ProfileID: codexProfileID, Executable: codexExecutable, ExpectedVersion: codexVersion,
+			Model: codexModel, Effort: codexEffort, TerminalAllowEntryID: codexTerminalAllowEntry,
+			Network: workers.NetworkPosture(codexNetwork), ConcurrencyLimit: codexConcurrency,
+		}
 	}
 	if err := runService(ctx, serviceConfig); err != nil {
 		return writeServiceDiagnostic(stderr, "devcrew-service: service stopped with an error\nHint: inspect local configuration and service health\n", 1)

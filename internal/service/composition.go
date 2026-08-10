@@ -12,21 +12,24 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/comiswire"
+	"github.com/comisai/comis-dev-crew/internal/domain"
 	devgit "github.com/comisai/comis-dev-crew/internal/git"
+	"github.com/comisai/comis-dev-crew/internal/workers"
 )
 
 func composeInstalledRuntime(ctx context.Context, config Config) (Config, error) {
-	configured := config.RepositoryComposition != nil || config.ComisComposition != nil || config.FixtureComposition != nil
+	configured := config.RepositoryComposition != nil || config.ComisComposition != nil || config.CodexComposition != nil
 	if !configured {
 		return config, nil
 	}
-	if config.RepositoryComposition == nil || config.ComisComposition == nil || config.FixtureComposition == nil ||
+	if config.RepositoryComposition == nil || config.ComisComposition == nil || config.CodexComposition == nil || config.FixtureComposition != nil ||
 		config.MCPSocketPath == "" || config.RuntimeRoot == "" || config.ServiceInstanceID == "" {
 		return Config{}, errors.New("run service: installed composition is incomplete")
 	}
 	if config.Repositories != nil || config.Workspaces != nil || config.TaskIDs != nil ||
-		config.RuntimeAttachments != nil || config.RegistrationNonces != nil || config.ComisControl != nil {
+		config.RuntimeAttachments != nil || config.WorkerHarnesses != nil || config.RegistrationNonces != nil || config.ComisControl != nil {
 		return Config{}, errors.New("run service: installed and injected composition cannot be combined")
 	}
 	repositoryConfig := config.RepositoryComposition
@@ -41,9 +44,34 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	if err != nil {
 		return Config{}, fmt.Errorf("run service repository composition: %w", err)
 	}
-	decision := config.FixtureComposition.Decision
-	if strings.TrimSpace(decision) == "" || strings.TrimSpace(decision) != decision || len([]byte(decision)) > 1024 {
-		return Config{}, errors.New("run service: fixture decision is invalid")
+	codexConfig := config.CodexComposition
+	profiles, err := workers.NewProfileCatalog([]workers.StaticProfile{{
+		ID: codexConfig.ProfileID, Harness: workers.HarnessCodex,
+		AllowedShapes: []domain.TaskShape{domain.ShapeShip, domain.ShapeScout},
+		Model:         codexConfig.Model, Effort: codexConfig.Effort,
+		TerminalAllowEntry: codexConfig.TerminalAllowEntryID,
+		Network:            codexConfig.Network, ConcurrencyLimit: codexConfig.ConcurrencyLimit,
+		Unattended: true, Executable: codexConfig.Executable,
+		Arguments:       []string{"exec", "--json"},
+		EnvironmentKeys: []string{"DEV_CREW_ATTACHMENT", "PATH"},
+		Availability:    workers.AvailabilityAvailable,
+	}})
+	if err != nil {
+		return Config{}, fmt.Errorf("run service Codex profile composition: %w", err)
+	}
+	adapter, err := workers.NewCodexAdapter(workers.CodexAdapterConfig{
+		Profiles: profiles, ProfileID: codexConfig.ProfileID,
+		ExpectedVersion: codexConfig.ExpectedVersion, SettleSignalVerified: false,
+	})
+	if err != nil {
+		return Config{}, fmt.Errorf("run service Codex adapter composition: %w", err)
+	}
+	probe, err := adapter.ProbeVersion(ctx)
+	if err != nil {
+		return Config{}, fmt.Errorf("run service Codex version probe: %w", err)
+	}
+	if probe.Availability != application.HarnessAvailable || probe.Version != codexConfig.ExpectedVersion {
+		return Config{}, errors.New("run service: exact Codex version is unavailable")
 	}
 	config.Repositories = registry
 	config.Workspaces = registry
@@ -51,7 +79,20 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 		return stableTaskIdentity(config.ServiceInstanceID, operationID), nil
 	}
 	config.RegistrationNonces = func() (string, error) { return randomIdentity("registration-nonce", 16) }
+	config.WorkerHarnesses = exactWorkerHarnesses{profileID: codexConfig.ProfileID, adapter: adapter}
 	return config, nil
+}
+
+type exactWorkerHarnesses struct {
+	profileID string
+	adapter   application.WorkerHarnessAdapter
+}
+
+func (harnesses exactWorkerHarnesses) ResolveWorkerHarness(profileID string) (application.WorkerHarnessAdapter, error) {
+	if profileID != harnesses.profileID || harnesses.adapter == nil {
+		return nil, errors.New("worker profile is unavailable")
+	}
+	return harnesses.adapter, nil
 }
 
 func stableTaskIdentity(serviceInstanceID, operationID string) string {
