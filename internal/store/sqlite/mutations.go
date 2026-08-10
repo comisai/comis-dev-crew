@@ -367,25 +367,29 @@ func insertManagedRunPreparation(
 ) error {
 	const statement = `INSERT INTO task_preparations (
 		task_handle, external_run_ref, registration_nonce, expires_at, created_at,
-		requested_workspace_root, state, abandon_reason, disposition, closed_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		requested_workspace_root, requested_attachment_kind, requested_attachment_source_path,
+		state, abandon_reason, disposition, closed_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := target.ExecContext(ctx, statement, taskHandle, preparation.ExternalRunRef,
 		preparation.RegistrationNonce, formatTime(preparation.ExpiresAt), formatTime(createdAt),
-		preparation.RequestedWorkspaceRoot, preparation.State, preparation.AbandonReason,
+		preparation.RequestedWorkspaceRoot, preparation.RequestedAttachment.Kind,
+		preparation.RequestedAttachment.SourcePath, preparation.State, preparation.AbandonReason,
 		preparation.Disposition, nil)
 	return err
 }
 
 func getManagedRunPreparation(ctx context.Context, source queryer, task domain.Task) (application.ManagedRunPreparation, error) {
 	const query = `SELECT external_run_ref, registration_nonce, expires_at,
-		requested_workspace_root, state, abandon_reason, disposition, closed_at
+		requested_workspace_root, requested_attachment_kind, requested_attachment_source_path,
+		state, abandon_reason, disposition, closed_at
         FROM task_preparations WHERE task_handle = ?`
 	var preparation application.ManagedRunPreparation
 	var expiresAt string
 	var closedAt sql.NullString
 	if err := source.QueryRowContext(ctx, query, task.Handle).Scan(
 		&preparation.ExternalRunRef, &preparation.RegistrationNonce, &expiresAt,
-		&preparation.RequestedWorkspaceRoot, &preparation.State, &preparation.AbandonReason,
+		&preparation.RequestedWorkspaceRoot, &preparation.RequestedAttachment.Kind,
+		&preparation.RequestedAttachment.SourcePath, &preparation.State, &preparation.AbandonReason,
 		&preparation.Disposition, &closedAt,
 	); err != nil {
 		return application.ManagedRunPreparation{}, err

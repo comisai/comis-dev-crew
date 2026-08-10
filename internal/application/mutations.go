@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -18,6 +19,7 @@ type Mutations struct {
 	store          MutationStore
 	repositories   RepositoryCatalog
 	workspaces     WorkspacePreparer
+	attachments    RuntimeAttachmentCoordinator
 	taskIDs        TaskIDSource
 	nonces         RegistrationNonceSource
 	preparationTTL time.Duration
@@ -28,15 +30,15 @@ var registrationNoncePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._~-]{1
 
 // NewMutations creates the sole application mutation coordinator.
 func NewMutations(config MutationConfig) (*Mutations, error) {
-	if config.Store == nil || config.Repositories == nil || config.Workspaces == nil || config.TaskIDs == nil ||
+	if config.Store == nil || config.Repositories == nil || config.Workspaces == nil || config.RuntimeAttachments == nil || config.TaskIDs == nil ||
 		config.RegistrationNonces == nil || config.Clock == nil {
-		return nil, errors.New("create mutations: store, repositories, workspaces, task IDs, registration nonces, and clock are required")
+		return nil, errors.New("create mutations: store, repositories, workspaces, runtime attachments, task IDs, registration nonces, and clock are required")
 	}
 	if config.PreparationTTL <= 0 || config.PreparationTTL > 24*time.Hour {
 		return nil, errors.New("create mutations: preparation TTL must be within 24 hours")
 	}
 	return &Mutations{
-		store: config.Store, repositories: config.Repositories, workspaces: config.Workspaces,
+		store: config.Store, repositories: config.Repositories, workspaces: config.Workspaces, attachments: config.RuntimeAttachments,
 		taskIDs: config.TaskIDs, nonces: config.RegistrationNonces,
 		preparationTTL: config.PreparationTTL, clock: config.Clock,
 	}, nil
@@ -92,6 +94,21 @@ func (mutations *Mutations) PrepareTask(ctx context.Context, command PrepareTask
 		(!filepath.IsAbs(workspace.CanonicalRoot) || filepath.Clean(workspace.CanonicalRoot) != workspace.CanonicalRoot) {
 		return MutationResult{}, &dependencyFailure{message: "workspace preparation returned an invalid root"}
 	}
+	brief, err := task.RenderWorkerBrief()
+	if err != nil {
+		return MutationResult{}, mutationValidationFailure("pinned worker brief is invalid")
+	}
+	attachment, err := mutations.attachments.PrepareRuntimeAttachment(ctx, RuntimeAttachmentPreparationRequest{
+		OperationID: command.OperationID, TaskHandle: task.Handle,
+		BriefRevision: task.BriefRevision, BriefRevisionHash: task.BriefRevisionHash,
+		Brief: brief, WorkingDirectory: workspace.CanonicalRoot,
+	})
+	if err != nil {
+		return MutationResult{}, &dependencyFailure{message: "runtime attachment preparation failed", cause: err}
+	}
+	if err := attachment.Validate(); err != nil {
+		return MutationResult{}, &dependencyFailure{message: "runtime attachment preparation returned an invalid source"}
+	}
 	nonce, err := mutations.nonces()
 	if err != nil {
 		return MutationResult{}, &dependencyFailure{message: "registration identity source failed", cause: err}
@@ -99,6 +116,7 @@ func (mutations *Mutations) PrepareTask(ctx context.Context, command PrepareTask
 	preparation := ManagedRunPreparation{
 		ExternalRunRef: task.Handle, RegistrationNonce: nonce,
 		RequestedWorkspaceRoot: workspace.CanonicalRoot,
+		RequestedAttachment:    attachment,
 		ExpiresAt:              now.Add(mutations.preparationTTL).UTC(), State: PreparationOpen,
 	}
 	if err := preparation.Validate(now); err != nil {
@@ -125,6 +143,9 @@ func (preparation ManagedRunPreparation) Validate(createdAt time.Time) error {
 		(!filepath.IsAbs(preparation.RequestedWorkspaceRoot) || filepath.Clean(preparation.RequestedWorkspaceRoot) != preparation.RequestedWorkspaceRoot) {
 		return errors.New("requested workspace root is invalid")
 	}
+	if err := preparation.RequestedAttachment.Validate(); err != nil {
+		return errors.New("requested runtime attachment is invalid")
+	}
 	switch preparation.State {
 	case PreparationOpen:
 		if preparation.AbandonReason != "" || preparation.Disposition != "" || preparation.ClosedAt != nil {
@@ -137,6 +158,17 @@ func (preparation ManagedRunPreparation) Validate(createdAt time.Time) error {
 		}
 	default:
 		return errors.New("preparation state is invalid")
+	}
+	return nil
+}
+
+// Validate rejects sources that cannot be handed to Comis as one exact
+// owner-controlled Unix-socket capability.
+func (attachment PreparedRuntimeAttachment) Validate() error {
+	if attachment.Kind != RuntimeAttachmentUnixSocket || !filepath.IsAbs(attachment.SourcePath) ||
+		filepath.Clean(attachment.SourcePath) != attachment.SourcePath || filepath.Base(attachment.SourcePath) != "attachment.sock" ||
+		len([]byte(attachment.SourcePath)) > 4096 || strings.ContainsAny(attachment.SourcePath, "\x00\r\n") {
+		return errors.New("prepared runtime attachment is invalid")
 	}
 	return nil
 }

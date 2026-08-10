@@ -316,7 +316,9 @@ func openTerminalLifecycleFixtureWithProfile(t *testing.T, handle string, start 
 		Task: task,
 		Preparation: application.ManagedRunPreparation{
 			ExternalRunRef: handle, RegistrationNonce: "registration-nonce-" + handle,
-			RequestedWorkspaceRoot: workspace, ExpiresAt: now.Add(time.Hour), State: application.PreparationOpen,
+			RequestedWorkspaceRoot: workspace,
+			RequestedAttachment:    application.PreparedRuntimeAttachment{Kind: application.RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/" + handle + "/attachment.sock"},
+			ExpiresAt:              now.Add(time.Hour), State: application.PreparationOpen,
 		},
 		OperationID: "operation-prepare-" + handle, SubjectDigest: strings.Repeat("a", 64), At: now,
 	})

@@ -162,6 +162,7 @@ func TestMutationStore_DirectReplayAndInvalidMutationsFailClosed(t *testing.T) {
 		Preparation: application.ManagedRunPreparation{
 			ExternalRunRef: "task-direct-0001", RegistrationNonce: "registration-nonce_direct",
 			RequestedWorkspaceRoot: "/approved/workspaces/task-direct-0001",
+			RequestedAttachment:    application.PreparedRuntimeAttachment{Kind: application.RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/task-direct-0001/attachment.sock"},
 			ExpiresAt:              preparedAt.Add(time.Hour), State: application.PreparationOpen,
 		},
 		SubjectDigest: strings.Repeat("a", 64), At: preparedAt,
@@ -332,7 +333,8 @@ func TestMutationStore_RejectsExhaustedVersionAndClosedDatabase(t *testing.T) {
 		Task: storeTask("task-exhausted", 1), OperationID: "op-after-exhaustion",
 		Preparation: application.ManagedRunPreparation{
 			ExternalRunRef: "task-exhausted", RegistrationNonce: "registration-nonce_exhausted",
-			ExpiresAt: now.Add(time.Hour), State: application.PreparationOpen,
+			RequestedAttachment: application.PreparedRuntimeAttachment{Kind: application.RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/task-exhausted/attachment.sock"},
+			ExpiresAt:           now.Add(time.Hour), State: application.PreparationOpen,
 		},
 		SubjectDigest: strings.Repeat("a", 64), At: now,
 	}
@@ -472,6 +474,7 @@ func sqliteMutations(t *testing.T, store *Store, ids *sequenceIDs, now time.Time
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: configuredCatalog{},
 		Workspaces:         configuredWorkspacePreparer{root: "/approved/workspaces/task-fixture"},
+		RuntimeAttachments: configuredRuntimeAttachments{},
 		TaskIDs:            ids.next,
 		RegistrationNonces: func() (string, error) { return "registration-nonce_0001", nil },
 		PreparationTTL:     time.Hour, Clock: func() time.Time { return now },
@@ -489,6 +492,25 @@ func (preparer configuredWorkspacePreparer) PrepareWorkspace(
 	application.WorkspacePreparationRequest,
 ) (application.PreparedWorkspace, error) {
 	return application.PreparedWorkspace{CanonicalRoot: preparer.root}, nil
+}
+
+type configuredRuntimeAttachments struct{}
+
+func (configuredRuntimeAttachments) PrepareRuntimeAttachment(
+	_ context.Context,
+	request application.RuntimeAttachmentPreparationRequest,
+) (application.PreparedRuntimeAttachment, error) {
+	return application.PreparedRuntimeAttachment{
+		Kind:       application.RuntimeAttachmentUnixSocket,
+		SourcePath: "/approved/runtime/" + request.TaskHandle + "/attachment.sock",
+	}, nil
+}
+
+func (configuredRuntimeAttachments) BindRuntimeAttachment(
+	context.Context,
+	application.RuntimeAttachmentBindingRequest,
+) error {
+	return nil
 }
 
 func sqlitePrepareCommand() application.PrepareTaskCommand {

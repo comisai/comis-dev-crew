@@ -188,6 +188,13 @@ INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (9, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 `
 
+const runtimeAttachmentMigration = `
+ALTER TABLE task_preparations ADD COLUMN requested_attachment_kind TEXT NOT NULL DEFAULT '';
+ALTER TABLE task_preparations ADD COLUMN requested_attachment_source_path TEXT NOT NULL DEFAULT '';
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (10, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+`
+
 const busyTimeoutMilliseconds = 500
 
 // Store owns one SQLite connection pool. The service composition root is the
@@ -297,7 +304,10 @@ func (store *Store) migrate(ctx context.Context) error {
 	if err := store.applyVersionedMigration(ctx, 8, managedRunLifecycleMigration); err != nil {
 		return err
 	}
-	return store.applyVersionedMigration(ctx, 9, terminalLifecycleMigration)
+	if err := store.applyVersionedMigration(ctx, 9, terminalLifecycleMigration); err != nil {
+		return err
+	}
+	return store.applyVersionedMigration(ctx, 10, runtimeAttachmentMigration)
 }
 
 func (store *Store) applyComisReportOutboxMigration(ctx context.Context) error {

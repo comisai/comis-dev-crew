@@ -35,9 +35,11 @@ type Config struct {
 	DatabasePath          string
 	SocketPath            string
 	MCPSocketPath         string
+	RuntimeRoot           string
 	ServiceInstanceID     string
 	Repositories          application.RepositoryCatalog
 	Workspaces            application.WorkspacePreparer
+	RuntimeAttachments    application.RuntimeAttachmentCoordinator
 	TaskIDs               application.TaskIDSource
 	RegistrationNonces    application.RegistrationNonceSource
 	PreparationTTL        time.Duration
@@ -112,6 +114,17 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if err != nil {
 		return fmt.Errorf("run service queries: %w", err)
 	}
+	var attachmentSupervisor *runtimeAttachmentCoordinator
+	if config.RuntimeAttachments == nil && config.RuntimeRoot != "" {
+		attachmentSupervisor, err = newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+			RuntimeRoot: config.RuntimeRoot, Reports: store, Clock: clock,
+			NewCredential: func() (string, error) { return randomIdentity("runtime-credential", 16) },
+		})
+		if err != nil {
+			return fmt.Errorf("run service runtime attachments: %w", err)
+		}
+		config.RuntimeAttachments = attachmentSupervisor
+	}
 	mutations, err := composeMutations(config, store, clock)
 	if err != nil {
 		return err
@@ -157,6 +170,9 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		servers = append(servers, mcpServer)
 	}
 	if control == nil {
+		if attachmentSupervisor != nil {
+			return serveServiceComponents(ctx, servers, []func(context.Context) error{attachmentSupervisor.Run}, config.Ready)
+		}
 		if config.Ready != nil {
 			config.Ready()
 		}
@@ -174,6 +190,9 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		control.Run,
 		forwarder.Run,
 	}
+	if attachmentSupervisor != nil {
+		components = append(components, attachmentSupervisor.Run)
+	}
 	if fixture != nil {
 		components = append(components, fixture.Run)
 	}
@@ -182,7 +201,7 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 
 func composeMutations(config Config, store *sqlite.Store, clock application.Clock) (*application.Mutations, error) {
 	configured := config.Repositories != nil || config.Workspaces != nil || config.TaskIDs != nil ||
-		config.RegistrationNonces != nil || config.PreparationTTL != 0 || config.ServiceInstanceID != ""
+		config.RuntimeAttachments != nil || config.RegistrationNonces != nil || config.PreparationTTL != 0 || config.ServiceInstanceID != ""
 	if !configured {
 		if config.MCPSocketPath != "" {
 			return nil, errors.New("run service: MCP endpoint requires mutation configuration")
@@ -191,6 +210,7 @@ func composeMutations(config Config, store *sqlite.Store, clock application.Cloc
 	}
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: config.Repositories, Workspaces: config.Workspaces, TaskIDs: config.TaskIDs,
+		RuntimeAttachments: config.RuntimeAttachments,
 		RegistrationNonces: config.RegistrationNonces,
 		PreparationTTL:     config.PreparationTTL,
 		Clock:              clock,

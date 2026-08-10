@@ -205,6 +205,51 @@ type WorkspacePreparer interface {
 	PrepareWorkspace(context.Context, WorkspacePreparationRequest) (PreparedWorkspace, error)
 }
 
+// RuntimeAttachmentKind is the closed source kind DevCrew can declare during
+// managed-run preparation.
+type RuntimeAttachmentKind string
+
+const (
+	// RuntimeAttachmentUnixSocket declares one owner-only task reporter socket.
+	RuntimeAttachmentUnixSocket RuntimeAttachmentKind = "unix_socket"
+)
+
+// PreparedRuntimeAttachment is the exact source Comis must validate and bind.
+type PreparedRuntimeAttachment struct {
+	Kind       RuntimeAttachmentKind `json:"kind"`
+	SourcePath string                `json:"sourcePath"`
+}
+
+// RuntimeAttachmentPreparationRequest binds the socket to the immutable brief
+// and operation-selected workspace before any registration nonce is minted.
+type RuntimeAttachmentPreparationRequest struct {
+	OperationID       string
+	TaskHandle        string
+	BriefRevision     int64
+	BriefRevisionHash string
+	Brief             domain.WorkerBrief
+	WorkingDirectory  string
+}
+
+// RuntimeAttachmentBindingRequest carries only activation-returned authority
+// and the service-selected durable wrapper acknowledgement operation.
+type RuntimeAttachmentBindingRequest struct {
+	TaskHandle            string
+	ManagedRunID          string
+	WorkspaceLeaseID      string
+	ExecutionAttachmentID string
+	AttachmentTargetName  string
+	LaunchOperationID     string
+	Acknowledger          WorkerLaunchAcknowledger
+}
+
+// RuntimeAttachmentCoordinator owns per-task reporter listeners and binds the
+// activation identity to the same protected socket without replacing it.
+type RuntimeAttachmentCoordinator interface {
+	PrepareRuntimeAttachment(context.Context, RuntimeAttachmentPreparationRequest) (PreparedRuntimeAttachment, error)
+	BindRuntimeAttachment(context.Context, RuntimeAttachmentBindingRequest) error
+}
+
 // TaskIDSource deterministically derives one opaque service-local task handle
 // from a stable preparation operation.
 type TaskIDSource func(string) (string, error)
@@ -215,14 +260,15 @@ type RegistrationNonceSource func() (string, error)
 // ManagedRunPreparation is the durable service-owned half of the two-phase
 // Comis activation join. It is private adapter metadata, not model authority.
 type ManagedRunPreparation struct {
-	ExternalRunRef         string             `json:"externalRunRef"`
-	RegistrationNonce      string             `json:"registrationNonce"`
-	RequestedWorkspaceRoot string             `json:"requestedWorkspaceRoot,omitempty"`
-	ExpiresAt              time.Time          `json:"expiresAt"`
-	State                  PreparationState   `json:"state"`
-	AbandonReason          AbandonReason      `json:"abandonReason,omitempty"`
-	Disposition            AbandonDisposition `json:"disposition,omitempty"`
-	ClosedAt               *time.Time         `json:"closedAt,omitempty"`
+	ExternalRunRef         string                    `json:"externalRunRef"`
+	RegistrationNonce      string                    `json:"registrationNonce"`
+	RequestedWorkspaceRoot string                    `json:"requestedWorkspaceRoot,omitempty"`
+	RequestedAttachment    PreparedRuntimeAttachment `json:"requestedAttachment"`
+	ExpiresAt              time.Time                 `json:"expiresAt"`
+	State                  PreparationState          `json:"state"`
+	AbandonReason          AbandonReason             `json:"abandonReason,omitempty"`
+	Disposition            AbandonDisposition        `json:"disposition,omitempty"`
+	ClosedAt               *time.Time                `json:"closedAt,omitempty"`
 }
 
 // PreparationState is the closed private lifecycle for a two-phase join.
@@ -257,6 +303,7 @@ type MutationConfig struct {
 	Store              MutationStore
 	Repositories       RepositoryCatalog
 	Workspaces         WorkspacePreparer
+	RuntimeAttachments RuntimeAttachmentCoordinator
 	TaskIDs            TaskIDSource
 	RegistrationNonces RegistrationNonceSource
 	PreparationTTL     time.Duration

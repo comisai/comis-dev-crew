@@ -32,6 +32,7 @@ func TestRun_ComposesCanonicalMutationOnDedicatedMCPEndpoint(t *testing.T) {
 			DatabasePath: databasePath, SocketPath: operatorSocket, MCPSocketPath: mcpSocket,
 			ServiceInstanceID: "service-instance_a", Repositories: serviceRepositoryCatalog{},
 			Workspaces:         serviceWorkspacePreparer{root: "/approved/worktrees/task-service-prepare"},
+			RuntimeAttachments: serviceRuntimeAttachments{},
 			TaskIDs:            func(string) (string, error) { return "task-service-prepare", nil },
 			RegistrationNonces: func() (string, error) { return "registration-nonce_service", nil },
 			PreparationTTL:     time.Hour, Ready: func() { close(ready) },
@@ -88,6 +89,22 @@ func (preparer serviceWorkspacePreparer) PrepareWorkspace(
 }
 
 var _ application.WorkspacePreparer = serviceWorkspacePreparer{}
+
+type serviceRuntimeAttachments struct{}
+
+func (serviceRuntimeAttachments) PrepareRuntimeAttachment(
+	_ context.Context,
+	request application.RuntimeAttachmentPreparationRequest,
+) (application.PreparedRuntimeAttachment, error) {
+	return application.PreparedRuntimeAttachment{
+		Kind:       application.RuntimeAttachmentUnixSocket,
+		SourcePath: "/approved/runtime/" + request.TaskHandle + "/attachment.sock",
+	}, nil
+}
+
+func (serviceRuntimeAttachments) BindRuntimeAttachment(context.Context, application.RuntimeAttachmentBindingRequest) error {
+	return nil
+}
 
 func TestRun_ServesPersistedQueriesAndRestartsCleanly(t *testing.T) {
 	root := shortTempDir(t)

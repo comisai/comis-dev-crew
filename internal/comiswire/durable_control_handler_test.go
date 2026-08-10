@@ -309,6 +309,7 @@ func (harness *durableControlHarness) open(t *testing.T) {
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: acceptingCatalog{},
 		Workspaces:         acceptingWorkspace{root: harness.workspaceRoot},
+		RuntimeAttachments: acceptingRuntimeAttachments{},
 		TaskIDs:            func(string) (string, error) { return harness.nextTaskID, nil },
 		RegistrationNonces: func() (string, error) { return harness.nextNonce, nil },
 		PreparationTTL:     time.Hour, Clock: func() time.Time { return harness.now },
@@ -361,6 +362,22 @@ func (workspace acceptingWorkspace) PrepareWorkspace(
 	application.WorkspacePreparationRequest,
 ) (application.PreparedWorkspace, error) {
 	return application.PreparedWorkspace{CanonicalRoot: workspace.root}, nil
+}
+
+type acceptingRuntimeAttachments struct{}
+
+func (acceptingRuntimeAttachments) PrepareRuntimeAttachment(
+	_ context.Context,
+	request application.RuntimeAttachmentPreparationRequest,
+) (application.PreparedRuntimeAttachment, error) {
+	return application.PreparedRuntimeAttachment{
+		Kind:       application.RuntimeAttachmentUnixSocket,
+		SourcePath: "/approved/runtime/" + request.TaskHandle + "/attachment.sock",
+	}, nil
+}
+
+func (acceptingRuntimeAttachments) BindRuntimeAttachment(context.Context, application.RuntimeAttachmentBindingRequest) error {
+	return nil
 }
 
 func wireErrorKind(err error, want comiswire.ErrorKind) bool {

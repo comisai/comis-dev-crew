@@ -42,7 +42,8 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 	t.Cleanup(func() { _ = store.Close() })
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: configured.Repositories, Workspaces: configured.Workspaces,
-		TaskIDs: configured.TaskIDs, RegistrationNonces: configured.RegistrationNonces,
+		RuntimeAttachments: serviceRuntimeAttachments{},
+		TaskIDs:            configured.TaskIDs, RegistrationNonces: configured.RegistrationNonces,
 		PreparationTTL: configured.PreparationTTL, Clock: func() time.Time { return time.Now().UTC() },
 	})
 	if err != nil {
@@ -147,6 +148,7 @@ func TestComposeMutations_RejectsIncompleteMCPAndAuthorityConfiguration(t *testi
 	}
 	configuration := Config{
 		Repositories: serviceRepositoryCatalog{}, Workspaces: serviceWorkspacePreparer{root: "/approved/worktrees/task-composition"},
+		RuntimeAttachments: serviceRuntimeAttachments{},
 		TaskIDs:            func(string) (string, error) { return "task-composition", nil },
 		RegistrationNonces: func() (string, error) { return "registration-nonce_composition", nil },
 		PreparationTTL:     time.Minute,
@@ -248,7 +250,7 @@ func installedServiceConfig(t *testing.T, root string) Config {
 	writeServiceCredential(t, credentialFile, "installed_service_bearer_0123456789abcdef", 0o600)
 	return Config{
 		DatabasePath: filepath.Join(root, "state", "devcrew.db"), SocketPath: filepath.Join(root, "operator.sock"),
-		MCPSocketPath: filepath.Join(root, "mcp.sock"), ServiceInstanceID: "service-instance-fixture",
+		MCPSocketPath: filepath.Join(root, "mcp.sock"), RuntimeRoot: filepath.Join(root, "runtime"), ServiceInstanceID: "service-instance-fixture",
 		PreparationTTL: 10 * time.Minute,
 		RepositoryComposition: &RepositoryComposition{
 			GitExecutable: gitExecutable, ApprovedRoot: approvedRoot, RepositoryID: "product-api",

@@ -22,11 +22,11 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 		return config, nil
 	}
 	if config.RepositoryComposition == nil || config.ComisComposition == nil || config.FixtureComposition == nil ||
-		config.MCPSocketPath == "" || config.ServiceInstanceID == "" {
+		config.MCPSocketPath == "" || config.RuntimeRoot == "" || config.ServiceInstanceID == "" {
 		return Config{}, errors.New("run service: installed composition is incomplete")
 	}
 	if config.Repositories != nil || config.Workspaces != nil || config.TaskIDs != nil ||
-		config.RegistrationNonces != nil || config.ComisControl != nil {
+		config.RuntimeAttachments != nil || config.RegistrationNonces != nil || config.ComisControl != nil {
 		return Config{}, errors.New("run service: installed and injected composition cannot be combined")
 	}
 	repositoryConfig := config.RepositoryComposition

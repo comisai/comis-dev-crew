@@ -24,6 +24,7 @@ func TestFixtureSupervisor_ConsumesPinnedReadyTaskExactlyOnce(t *testing.T) {
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: serviceRepositoryCatalog{},
 		Workspaces:         serviceWorkspacePreparer{root: "/private/worktrees/managed-run-fixture"},
+		RuntimeAttachments: serviceRuntimeAttachments{},
 		TaskIDs:            func(string) (string, error) { return "task-fixture-supervised", nil },
 		RegistrationNonces: func() (string, error) { return "registration-nonce_supervised", nil },
 		PreparationTTL:     time.Hour, Clock: func() time.Time { return now },
