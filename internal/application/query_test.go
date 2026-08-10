@@ -184,6 +184,36 @@ func TestQueries_GetLaunchPlanAllowsLaunchingRecoveryReread(t *testing.T) {
 	}
 }
 
+func TestBuildWorkerLaunchDescriptorRejectsIncompleteDirectCallers(t *testing.T) {
+	task := queryTask("task-launch-direct-boundary", domain.TaskReady, 9)
+	task.ExecutionAttachmentID = "execution-attachment-direct"
+	task.AttachmentTargetName = "attachment-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.sock"
+	preparation := ManagedRunPreparation{
+		ExternalRunRef: task.Handle, RequestedWorkspaceRoot: t.TempDir(), State: PreparationOpen,
+	}
+	harnesses := &queryHarnesses{adapter: &queryHarnessAdapter{}}
+	//lint:ignore SA1012 The boundary test proves nil contexts fail closed.
+	if _, err := BuildWorkerLaunchDescriptor(nil, task, preparation, harnesses); err == nil {
+		t.Fatal("BuildWorkerLaunchDescriptor(nil context) error = nil")
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := BuildWorkerLaunchDescriptor(cancelled, task, preparation, harnesses); !errors.Is(err, context.Canceled) {
+		t.Fatalf("BuildWorkerLaunchDescriptor(cancelled) error = %v", err)
+	}
+	invalid := task
+	invalid.State = domain.TaskWorking
+	if _, err := BuildWorkerLaunchDescriptor(context.Background(), invalid, preparation, harnesses); err == nil {
+		t.Fatal("BuildWorkerLaunchDescriptor(working) error = nil")
+	}
+	if _, err := BuildWorkerLaunchDescriptor(context.Background(), task, preparation, nil); err == nil {
+		t.Fatal("BuildWorkerLaunchDescriptor(no harnesses) error = nil")
+	}
+	if _, err := BuildWorkerLaunchDescriptor(context.Background(), task, preparation, &queryHarnesses{}); err == nil {
+		t.Fatal("BuildWorkerLaunchDescriptor(nil adapter) error = nil")
+	}
+}
+
 func TestQueries_GetLaunchPlanRejectsUnactivatedTaskWithoutCallingHarness(t *testing.T) {
 	task := queryTask("task-not-activated", domain.TaskPrepared, 3)
 	adapter := &queryHarnessAdapter{}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -178,7 +177,8 @@ func (queries *Queries) GetLaunchPlan(ctx context.Context, handle string) (Launc
 	if err != nil {
 		return LaunchPlan{}, translateReadError(err, "task")
 	}
-	if task.State != domain.TaskReady || task.ManagedRunID == "" || task.WorkspaceLeaseID == "" ||
+	if (task.State != domain.TaskReady && task.State != domain.TaskLaunching) ||
+		task.ManagedRunID == "" || task.WorkspaceLeaseID == "" ||
 		task.ExecutionAttachmentID == "" || task.AttachmentTargetName == "" {
 		return LaunchPlan{}, newSafeFailure(
 			domain.ErrorPrecondition, false, "task is not ready for launch",
@@ -192,31 +192,15 @@ func (queries *Queries) GetLaunchPlan(ctx context.Context, handle string) (Launc
 	if err != nil {
 		return LaunchPlan{}, translateReadError(err, "task launch preparation")
 	}
-	adapter, err := queries.harnesses.ResolveWorkerHarness(task.WorkerProfileID)
-	if err != nil || adapter == nil {
-		return LaunchPlan{}, launchAdapterFailure(err)
-	}
-	attachment := RuntimeSocketAttachment{
-		ExecutionAttachmentID: task.ExecutionAttachmentID,
-		AttachmentTargetName:  task.AttachmentTargetName,
-		MountSocketPath:       filepath.Join("/run/comis/attachments", task.AttachmentTargetName),
-	}
-	request := WorkerLaunchRequest{
-		ProfileID: task.WorkerProfileID, Shape: task.Shape,
-		WorkingDirectory: preparation.RequestedWorkspaceRoot,
-		TaskHandle:       task.Handle, ManagedRunID: task.ManagedRunID, WorkspaceLeaseID: task.WorkspaceLeaseID,
-		BriefRevision: task.BriefRevision, BriefRevisionHash: task.BriefRevisionHash,
-		Attachment: attachment,
-	}
-	descriptor, err := adapter.BuildLaunchDescriptor(ctx, request)
+	descriptor, err := BuildWorkerLaunchDescriptor(ctx, task, preparation, queries.harnesses)
 	if err != nil {
+		if errors.Is(err, errLaunchAuthorityIncomplete) || errors.Is(err, errLaunchDescriptorInconsistent) {
+			return LaunchPlan{}, newSafeFailure(
+				domain.ErrorInternal, false, "reviewed launch descriptor is inconsistent",
+				"inspect the configured worker profile before retrying", nil,
+			)
+		}
 		return LaunchPlan{}, launchAdapterFailure(err)
-	}
-	if !launchDescriptorMatches(descriptor, request) {
-		return LaunchPlan{}, newSafeFailure(
-			domain.ErrorInternal, false, "reviewed launch descriptor is inconsistent",
-			"inspect the configured worker profile before retrying", nil,
-		)
 	}
 	return LaunchPlan{
 		SchemaVersion: 1, CapturedAtMs: queries.now().UnixMilli(), StateVersion: task.StateVersion,
@@ -225,16 +209,6 @@ func (queries *Queries) GetLaunchPlan(ctx context.Context, handle string) (Launc
 		WorkerProfileID: task.WorkerProfileID, TerminalAllowEntryID: descriptor.TerminalAllowEntry,
 		BriefRevisionHash: task.BriefRevisionHash, AttachmentTargetName: task.AttachmentTargetName,
 	}, nil
-}
-
-func launchDescriptorMatches(descriptor WorkerLaunchDescriptor, request WorkerLaunchRequest) bool {
-	return descriptor.ProfileID == request.ProfileID && descriptor.TerminalAllowEntry != "" &&
-		descriptor.Attachment == request.Attachment &&
-		descriptor.ExpectedAcknowledgement == (LaunchAcknowledgement{
-			TaskHandle: request.TaskHandle, ManagedRunID: request.ManagedRunID,
-			WorkspaceLeaseID: request.WorkspaceLeaseID, WorkingDirectory: request.WorkingDirectory,
-			BriefRevision: request.BriefRevision, BriefRevisionHash: request.BriefRevisionHash,
-		})
 }
 
 func launchAdapterFailure(cause error) error {

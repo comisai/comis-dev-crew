@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"time"
 
@@ -177,4 +178,74 @@ type WorkerHarnessAdapter interface {
 // selected profile. It never ranks profiles or falls back to another harness.
 type WorkerHarnessResolver interface {
 	ResolveWorkerHarness(string) (WorkerHarnessAdapter, error)
+}
+
+var (
+	errLaunchAuthorityIncomplete    = errors.New("durable launch authority is incomplete")
+	errLaunchDescriptorInconsistent = errors.New("reviewed launch descriptor is inconsistent")
+)
+
+// BuildWorkerLaunchDescriptor constructs and verifies the exact process launch
+// contract from durable activation authority. It accepts launching tasks so a
+// caller can reconstruct the same descriptor after a confirmed start intent.
+func BuildWorkerLaunchDescriptor(
+	ctx context.Context,
+	task domain.Task,
+	preparation ManagedRunPreparation,
+	harnesses WorkerHarnessResolver,
+) (WorkerLaunchDescriptor, error) {
+	if ctx == nil {
+		return WorkerLaunchDescriptor{}, errors.New("build worker launch descriptor: context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return WorkerLaunchDescriptor{}, err
+	}
+	if task.Validate() != nil || (task.State != domain.TaskReady && task.State != domain.TaskLaunching) ||
+		task.ManagedRunID == "" || task.WorkspaceLeaseID == "" ||
+		task.ExecutionAttachmentID == "" || task.AttachmentTargetName == "" ||
+		preparation.ExternalRunRef != task.Handle ||
+		!filepath.IsAbs(preparation.RequestedWorkspaceRoot) ||
+		filepath.Clean(preparation.RequestedWorkspaceRoot) != preparation.RequestedWorkspaceRoot {
+		return WorkerLaunchDescriptor{}, errLaunchAuthorityIncomplete
+	}
+	if harnesses == nil {
+		return WorkerLaunchDescriptor{}, errors.New("build worker launch descriptor: worker harnesses are unavailable")
+	}
+	adapter, err := harnesses.ResolveWorkerHarness(task.WorkerProfileID)
+	if err != nil {
+		return WorkerLaunchDescriptor{}, fmt.Errorf("build worker launch descriptor: resolve worker profile: %w", err)
+	}
+	if adapter == nil {
+		return WorkerLaunchDescriptor{}, errors.New("build worker launch descriptor: worker profile is unavailable")
+	}
+	attachment := RuntimeSocketAttachment{
+		ExecutionAttachmentID: task.ExecutionAttachmentID,
+		AttachmentTargetName:  task.AttachmentTargetName,
+		MountSocketPath:       filepath.Join("/run/comis/attachments", task.AttachmentTargetName),
+	}
+	request := WorkerLaunchRequest{
+		ProfileID: task.WorkerProfileID, Shape: task.Shape,
+		WorkingDirectory: preparation.RequestedWorkspaceRoot,
+		TaskHandle:       task.Handle, ManagedRunID: task.ManagedRunID, WorkspaceLeaseID: task.WorkspaceLeaseID,
+		BriefRevision: task.BriefRevision, BriefRevisionHash: task.BriefRevisionHash,
+		Attachment: attachment,
+	}
+	descriptor, err := adapter.BuildLaunchDescriptor(ctx, request)
+	if err != nil {
+		return WorkerLaunchDescriptor{}, err
+	}
+	if !launchDescriptorMatches(descriptor, request) {
+		return WorkerLaunchDescriptor{}, errLaunchDescriptorInconsistent
+	}
+	return descriptor, nil
+}
+
+func launchDescriptorMatches(descriptor WorkerLaunchDescriptor, request WorkerLaunchRequest) bool {
+	return descriptor.ProfileID == request.ProfileID && descriptor.TerminalAllowEntry != "" &&
+		descriptor.Attachment == request.Attachment &&
+		descriptor.ExpectedAcknowledgement == (LaunchAcknowledgement{
+			TaskHandle: request.TaskHandle, ManagedRunID: request.ManagedRunID,
+			WorkspaceLeaseID: request.WorkspaceLeaseID, WorkingDirectory: request.WorkingDirectory,
+			BriefRevision: request.BriefRevision, BriefRevisionHash: request.BriefRevisionHash,
+		})
 }

@@ -153,7 +153,20 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 			return fmt.Errorf("run service runtime attachment recovery: %w", err)
 		}
 	}
-	control, err := composeComisControl(config, mutations)
+	var controlMutations comiswire.DurableControlMutations
+	if mutations != nil {
+		controlMutations = mutations
+	}
+	if config.RepositoryComposition != nil {
+		launchSupervisor, supervisorErr := newProductionLaunchSupervisor(productionLaunchSupervisorConfig{
+			Store: store, Mutations: mutations, Harnesses: config.WorkerHarnesses,
+		})
+		if supervisorErr != nil {
+			return fmt.Errorf("run service production launch supervisor: %w", supervisorErr)
+		}
+		controlMutations = launchSupervisor
+	}
+	control, err := composeComisControl(config, controlMutations)
 	if err != nil {
 		return err
 	}

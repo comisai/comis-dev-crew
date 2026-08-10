@@ -251,7 +251,7 @@ func (store *Store) CommitManagedRunAbandon(ctx context.Context, mutation applic
 }
 
 // CommitTaskStart atomically records launch intent and its replay outcome
-// before a fixture worker is allowed to begin.
+// before a worker is allowed to begin.
 func (store *Store) CommitTaskStart(ctx context.Context, mutation application.TaskStartMutation) (application.MutationResult, error) {
 	transaction, err := store.db.BeginTx(ctx, nil)
 	if err != nil {

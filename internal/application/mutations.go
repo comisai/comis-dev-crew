@@ -308,8 +308,8 @@ func (mutations *Mutations) AbandonManagedRun(ctx context.Context, command Aband
 	return result, mutationCommitFailure(err)
 }
 
-// StartTask durably records launch intent before any fixture worker can emit a
-// report or begin work.
+// StartTask durably records launch intent before any worker can acknowledge
+// its wrapper or begin work.
 func (mutations *Mutations) StartTask(ctx context.Context, command StartTaskCommand) (MutationResult, error) {
 	if err := validMutationContext(ctx); err != nil {
 		return MutationResult{}, err
@@ -338,23 +338,14 @@ func (mutations *Mutations) StartTask(ctx context.Context, command StartTaskComm
 // RecordTerminalEvent validates and durably cross-binds one content-free Comis
 // terminal transition. Running alone never acknowledges the worker wrapper.
 func (mutations *Mutations) RecordTerminalEvent(ctx context.Context, command RecordTerminalEventCommand) (MutationResult, error) {
-	if err := validMutationContext(ctx); err != nil {
+	if replay, found, err := mutations.ReconcileTerminalEvent(ctx, command); err != nil {
 		return MutationResult{}, err
-	}
-	if err := domain.ValidateOperationID(command.OperationID); err != nil ||
-		domain.ValidateAuthorityReference("managedRunId", command.ManagedRunID) != nil ||
-		domain.ValidateAuthorityReference("workspaceLeaseId", command.WorkspaceLeaseID) != nil ||
-		domain.ValidateAuthorityReference("terminalSessionId", command.TerminalSessionID) != nil || !command.Transition.Valid() {
-		return MutationResult{}, mutationValidationFailure("terminal event fields are invalid")
-	}
-	subjectDigest, err := digestMutationSubject(command)
-	if err != nil {
-		return MutationResult{}, mutationValidationFailure("terminal event subject cannot be encoded")
-	}
-	if replay, found, err := mutations.store.ReplayMutation(ctx, command.OperationID, commandRecordTerminalEvent, subjectDigest); err != nil {
-		return MutationResult{}, mutationReplayFailure(err)
 	} else if found {
 		return replay, nil
+	}
+	subjectDigest, err := terminalEventSubjectDigest(command)
+	if err != nil {
+		return MutationResult{}, err
 	}
 	result, err := mutations.store.CommitTerminalEvent(ctx, TerminalEventMutation{
 		OperationID: command.OperationID, SubjectDigest: subjectDigest,
@@ -362,6 +353,38 @@ func (mutations *Mutations) RecordTerminalEvent(ctx context.Context, command Rec
 		TerminalSessionID: command.TerminalSessionID, Transition: command.Transition, At: mutations.clock(),
 	})
 	return result, mutationCommitFailure(err)
+}
+
+// ReconcileTerminalEvent checks whether an authenticated terminal operation is
+// already durable before a production launch supervisor performs prerequisite
+// start work. Altered operation reuse returns the closed replay conflict.
+func (mutations *Mutations) ReconcileTerminalEvent(ctx context.Context, command RecordTerminalEventCommand) (MutationResult, bool, error) {
+	if err := validMutationContext(ctx); err != nil {
+		return MutationResult{}, false, err
+	}
+	subjectDigest, err := terminalEventSubjectDigest(command)
+	if err != nil {
+		return MutationResult{}, false, err
+	}
+	replay, found, err := mutations.store.ReplayMutation(ctx, command.OperationID, commandRecordTerminalEvent, subjectDigest)
+	if err != nil {
+		return MutationResult{}, false, mutationReplayFailure(err)
+	}
+	return replay, found, nil
+}
+
+func terminalEventSubjectDigest(command RecordTerminalEventCommand) (string, error) {
+	if err := domain.ValidateOperationID(command.OperationID); err != nil ||
+		domain.ValidateAuthorityReference("managedRunId", command.ManagedRunID) != nil ||
+		domain.ValidateAuthorityReference("workspaceLeaseId", command.WorkspaceLeaseID) != nil ||
+		domain.ValidateAuthorityReference("terminalSessionId", command.TerminalSessionID) != nil || !command.Transition.Valid() {
+		return "", mutationValidationFailure("terminal event fields are invalid")
+	}
+	subjectDigest, err := digestMutationSubject(command)
+	if err != nil {
+		return "", mutationValidationFailure("terminal event subject cannot be encoded")
+	}
+	return subjectDigest, nil
 }
 
 // AcknowledgeWorkerLaunch records the wrapper's exact protected-mount echo and

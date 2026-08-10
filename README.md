@@ -67,8 +67,17 @@ service restart; altered subjects fail closed, and concurrent identical preparat
 logical task. Preparation also atomically stores the private external reference, registration
 nonce, bounded UTC expiry, requested workspace root, and open/abandoned posture needed for the
 Comis two-phase join; exact replay returns that same private registration instead of minting
-another. A separate durable start command records `ready` to `launching` intent and its
-operation outcome before the deterministic fixture may emit progress or begin work.
+another. In the installed production composition, the authenticated terminal `created`
+acknowledgement is cross-bound to the exact managed run and workspace lease, the reviewed launch
+descriptor is rebuilt and verified, and a stable service-owned start operation records `ready` to
+`launching` before the event is acknowledged. Exact event replays are idempotent and altered reuse
+fails closed. A `running` event remains insufficient by itself: only its durable join with the
+protected wrapper's task, canonical working-directory, run/lease, and brief-hash acknowledgement
+advances `launching` to `working`. Terminal exit or missing evidence never means success.
+Threat posture: the production supervisor reconciles the stable terminal operation before any
+start side effect, serializes inbound lifecycle coordination, and refuses ambiguous run/lease
+bindings or inconsistent reviewed descriptors without acknowledging the event. Unverified
+evidence cannot select a worker, redirect the protected attachment, or advance task state.
 
 The typed local client and strict handler now expose `PrepareTask` as the first canonical mutation.
 Its public payload contains only task-contract fields: the stable operation ID comes from the
@@ -101,7 +110,9 @@ and proves the prepared task, completed operation, exact private extension, and 
 remain intact; a forged managed-run metadata hint changes no task authority. A second tagged test
 builds and launches both installed processes, performs the authenticated pinned handshake,
 prepares through the official-SDK MCP facade, activates through the persistent control socket,
-and returns the safe reviewed Codex launch plan from the installed service.
+verifies the safe reviewed Codex launch plan, and drives the real task from `ready` through
+`launching` to `working` using authenticated terminal events plus the exact runtime wrapper
+acknowledgement.
 
 The repository registry resolves only operator-configured opaque IDs. It validates canonical
 primary checkouts and dedicated worktree roots beneath approved roots, pins the primary Git
@@ -171,7 +182,8 @@ while fresh; a completed turn without a task report is `unknown`. Because the re
 does not expose a trustworthy settle signal, the current profile is explicitly degraded and cannot
 run unattended. The repository does not infer settled or successful work from a completed Codex
 turn and does not invent a private attachment protocol or a second terminal backend.
-The canonical `GetLaunchPlan` read invokes that configured adapter with the durable task,
+The canonical `GetLaunchPlan` read accepts `ready` and recovery-reread `launching` tasks, then
+invokes that configured adapter with the durable task,
 workspace, brief, and activation binding, but projects only the profile ID, terminal allow-entry
 ID, brief revision hash, and attachment target with durable source/confidence/freshness metadata.
 Executable paths, argv, shell text, environment bindings, workspace paths, and attachment IDs are
@@ -260,8 +272,9 @@ JSON outputs are stable versioned projections. Human and YAML views are presenta
 and carry no authority. The generated authenticated client is verified against Comis's standalone
 test-only capability-service host over a real owner-only Unix socket, including exact protocol and
 digest agreement plus altered-digest and wrong-credential rejection. The installed integration
-test extends that conformance evidence through activation and the production-composed Codex launch
-plan without starting an unconstrained worker process. The CLI never opens SQLite as a
+test extends that conformance evidence through activation, production-composed Codex launch-plan
+verification, authenticated terminal lifecycle events, and the protected wrapper acknowledgement
+without starting an unconstrained worker process. The CLI never opens SQLite as a
 normal-operation fallback. Task preparation reads one strict bounded JSON contract, rejects
 unknown authority fields, and uses either the explicit stable operation ID or one locally minted
 request ID. Service-side mutation composition requires an explicit repository catalog, task and
