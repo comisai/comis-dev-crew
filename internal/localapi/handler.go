@@ -103,6 +103,13 @@ func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 		}
 		result, err := handler.queries.ExplainTask(ctx, payload.TaskHandle)
 		return queryOutcome(request.OperationID, result.Summary.StateVersion, result, err)
+	case MethodGetLaunchPlan:
+		var payload taskPayload
+		if err := decodeObject(request.Payload, &payload); err != nil {
+			return invalidPayload(request.OperationID, err)
+		}
+		result, err := handler.queries.GetLaunchPlan(ctx, payload.TaskHandle)
+		return queryOutcome(request.OperationID, result.StateVersion, result, err)
 	case MethodOperation:
 		var payload operationPayload
 		if err := decodeObject(request.Payload, &payload); err != nil {

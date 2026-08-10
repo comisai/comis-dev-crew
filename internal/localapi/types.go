@@ -42,18 +42,19 @@ func (caller CallerClass) valid() bool {
 type Method string
 
 const (
-	MethodDiagnose    Method = "Diagnose"
-	MethodFleet       Method = "FleetStatus"
-	MethodListTasks   Method = "ListTasks"
-	MethodShowTask    Method = "ShowTask"
-	MethodExplainTask Method = "ExplainTask"
-	MethodOperation   Method = "GetOperation"
-	MethodPrepareTask Method = "PrepareTask"
+	MethodDiagnose      Method = "Diagnose"
+	MethodFleet         Method = "FleetStatus"
+	MethodListTasks     Method = "ListTasks"
+	MethodShowTask      Method = "ShowTask"
+	MethodExplainTask   Method = "ExplainTask"
+	MethodGetLaunchPlan Method = "GetLaunchPlan"
+	MethodOperation     Method = "GetOperation"
+	MethodPrepareTask   Method = "PrepareTask"
 )
 
 func (method Method) valid() bool {
 	switch method {
-	case MethodDiagnose, MethodFleet, MethodListTasks, MethodShowTask, MethodExplainTask, MethodOperation, MethodPrepareTask:
+	case MethodDiagnose, MethodFleet, MethodListTasks, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan, MethodOperation, MethodPrepareTask:
 		return true
 	default:
 		return false
@@ -111,6 +112,7 @@ type ReadQueries interface {
 	ListTasks(context.Context) (application.TaskList, error)
 	ShowTask(context.Context, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string) (application.TaskExplanation, error)
+	GetLaunchPlan(context.Context, string) (application.LaunchPlan, error)
 	Operation(context.Context, string) (application.OperationView, error)
 }
 

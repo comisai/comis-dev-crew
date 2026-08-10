@@ -71,6 +71,13 @@ func (client *Client) ExplainTask(ctx context.Context, operationID, taskHandle s
 	return result, err
 }
 
+// GetLaunchPlan reads the safe reviewed launch requirements for one task.
+func (client *Client) GetLaunchPlan(ctx context.Context, operationID, taskHandle string) (application.LaunchPlan, error) {
+	var result application.LaunchPlan
+	err := client.call(ctx, operationID, MethodGetLaunchPlan, taskPayload{TaskHandle: taskHandle}, &result)
+	return result, err
+}
+
 // Operation reconciles one stable durable operation ID.
 func (client *Client) Operation(ctx context.Context, operationID, targetOperationID string) (application.OperationView, error) {
 	var result application.OperationView
@@ -160,6 +167,8 @@ func projectedStateVersion(result any) (int64, bool) {
 		return projection.StateVersion, true
 	case *application.TaskExplanation:
 		return projection.Summary.StateVersion, true
+	case *application.LaunchPlan:
+		return projection.StateVersion, true
 	case *application.OperationView:
 		return projection.StateVersion, true
 	case *PrepareTaskResult:

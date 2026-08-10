@@ -29,6 +29,7 @@ Commands:
   tasks list [--format table|json]
   task show TASK [--format yaml|json]
   task explain TASK [--format text|json]
+  task launch-plan TASK [--format json]
   task operation OPERATION [--format text|json]
   task prepare --input FILE|- [--operation OPERATION] [--format json]
 
@@ -45,6 +46,7 @@ type ReadClient interface {
 	ListTasks(context.Context, string) (application.TaskList, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
+	GetLaunchPlan(context.Context, string, string) (application.LaunchPlan, error)
 	Operation(context.Context, string, string) (application.OperationView, error)
 	PrepareTask(context.Context, string, localapi.PrepareTaskInput) (localapi.PrepareTaskResult, error)
 }
@@ -68,6 +70,7 @@ const (
 	commandListTasks
 	commandShowTask
 	commandExplainTask
+	commandGetLaunchPlan
 	commandOperation
 	commandPrepareTask
 )
@@ -199,6 +202,11 @@ func parseTaskCommand(command parsedCommand, args []string) (parsedCommand, erro
 			return parsedCommand{}, err
 		}
 		command.kind, defaultFormat, allowed = commandExplainTask, "text", []string{"text", "json"}
+	case "launch-plan":
+		if err := domain.ValidateTaskHandle(command.reference); err != nil {
+			return parsedCommand{}, err
+		}
+		command.kind, defaultFormat, allowed = commandGetLaunchPlan, "json", []string{"json"}
 	case "operation":
 		if err := domain.ValidateOperationID(command.reference); err != nil {
 			return parsedCommand{}, err
@@ -306,6 +314,8 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 		return client.ShowTask(ctx, operationID, command.reference)
 	case commandExplainTask:
 		return client.ExplainTask(ctx, operationID, command.reference)
+	case commandGetLaunchPlan:
+		return client.GetLaunchPlan(ctx, operationID, command.reference)
 	case commandOperation:
 		return client.Operation(ctx, operationID, command.reference)
 	case commandPrepareTask:

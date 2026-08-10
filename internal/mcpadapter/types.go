@@ -12,10 +12,11 @@ import (
 )
 
 const (
-	ToolPrepareTask = "prepare_task"
-	ToolListTasks   = "list_tasks"
-	ToolGetTask     = "get_task"
-	ToolExplainTask = "explain_task"
+	ToolPrepareTask   = "prepare_task"
+	ToolListTasks     = "list_tasks"
+	ToolGetTask       = "get_task"
+	ToolExplainTask   = "explain_task"
+	ToolGetLaunchPlan = "get_launch_plan"
 
 	CallContextMetaKey      = "comis.callContext"
 	ManagedRunResultMetaKey = "comis.managedRun"
@@ -27,6 +28,7 @@ type Client interface {
 	ListTasks(context.Context, string) (application.TaskList, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
+	GetLaunchPlan(context.Context, string, string) (application.LaunchPlan, error)
 	Operation(context.Context, string, string) (application.OperationView, error)
 }
 

@@ -13,7 +13,7 @@ import (
 const defaultReconcileTimeout = 2 * time.Second
 const maximumReconcileTimeout = 10 * time.Second
 
-// New creates the exact four-tool official-SDK facade.
+// New creates the exact five-tool official-SDK facade.
 func New(config Config) (*Facade, error) {
 	if config.Client == nil || config.NewOperationID == nil {
 		return nil, errors.New("create MCP facade: local client and operation source are required")
@@ -57,6 +57,7 @@ func (facade *Facade) registerTools() {
 	mcp.AddTool(facade.server, tool(ToolListTasks, "List durable development tasks.", true), facade.listTasks)
 	mcp.AddTool(facade.server, tool(ToolGetTask, "Get one durable development task.", true), facade.getTask)
 	mcp.AddTool(facade.server, tool(ToolExplainTask, "Explain one durable task posture.", true), facade.explainTask)
+	mcp.AddTool(facade.server, tool(ToolGetLaunchPlan, "Get reviewed launch requirements for one ready task.", true), facade.getLaunchPlan)
 }
 
 func tool(name, description string, readOnly bool) *mcp.Tool {
@@ -119,6 +120,15 @@ func (facade *Facade) explainTask(ctx context.Context, request *mcp.CallToolRequ
 		return nil, application.TaskExplanation{}, err
 	}
 	result, err := facade.client.ExplainTask(ctx, string(callContext.OperationID), input.TaskHandle)
+	return nil, result, err
+}
+
+func (facade *Facade) getLaunchPlan(ctx context.Context, request *mcp.CallToolRequest, input TaskInput) (*mcp.CallToolResult, application.LaunchPlan, error) {
+	callContext, err := facade.authorize(request)
+	if err != nil {
+		return nil, application.LaunchPlan{}, err
+	}
+	result, err := facade.client.GetLaunchPlan(ctx, string(callContext.OperationID), input.TaskHandle)
 	return nil, result, err
 }
 

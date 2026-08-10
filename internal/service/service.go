@@ -40,6 +40,7 @@ type Config struct {
 	Repositories          application.RepositoryCatalog
 	Workspaces            application.WorkspacePreparer
 	RuntimeAttachments    application.RuntimeAttachmentCoordinator
+	WorkerHarnesses       application.WorkerHarnessResolver
 	TaskIDs               application.TaskIDSource
 	RegistrationNonces    application.RegistrationNonceSource
 	PreparationTTL        time.Duration
@@ -110,7 +111,9 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if _, err := reconciler.Reconcile(ctx); err != nil {
 		return fmt.Errorf("run service startup reconciliation: %w", err)
 	}
-	queries, err := application.NewQueries(application.QueryConfig{Repository: store, Clock: clock})
+	queries, err := application.NewQueries(application.QueryConfig{
+		Repository: store, Harnesses: config.WorkerHarnesses, Clock: clock,
+	})
 	if err != nil {
 		return fmt.Errorf("run service queries: %w", err)
 	}

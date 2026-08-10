@@ -81,8 +81,8 @@ fixture worktree before opening its endpoints. It supplies cryptographically ran
 registration identities, advertises that verified worktree in the managed-run preparation, and
 binds the same mutation authority to the dedicated MCP endpoint.
 
-The stateless MCP adapter now uses the exact-pinned official Go SDK and defines only four tools:
-`prepare_task`, `list_tasks`, `get_task`, and `explain_task`. Every call must carry a generated-schema
+The stateless MCP adapter now uses the exact-pinned official Go SDK and defines only five tools:
+`prepare_task`, `list_tasks`, `get_task`, `explain_task`, and `get_launch_plan`. Every call must carry a generated-schema
 valid `comis.callContext`; the configured service identity must match, while optional managed-run
 references grant no task authority. Preparation returns its visible task outcome separately from
 the private schema-validated `comis.managedRun` result metadata. Only retryable uncertain mutations
@@ -235,6 +235,7 @@ devcrew [--socket PATH] status [--format table|json]
 devcrew [--socket PATH] tasks list [--format table|json]
 devcrew [--socket PATH] task show TASK [--format yaml|json]
 devcrew [--socket PATH] task explain TASK [--format text|json]
+devcrew [--socket PATH] task launch-plan TASK [--format json]
 devcrew [--socket PATH] task operation OPERATION [--format text|json]
 devcrew [--socket PATH] task prepare --input FILE|- [--operation OPERATION] [--format json]
 devcrew-mcp [--socket PATH] --service-instance ID
