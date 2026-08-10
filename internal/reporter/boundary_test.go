@@ -102,6 +102,55 @@ func TestRuntimeConstructionRejectsUnsafeOrAmbiguousTargets(t *testing.T) {
 	}
 }
 
+func TestDevcrewReportBriefProbeConnectsThroughAssignedMountedTarget(t *testing.T) {
+	mountRoot, err := os.MkdirTemp("/tmp", "dcr-mount-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(mountRoot) })
+	targetName := "attachment-0123456789abcdef0123456789abcdef.sock"
+	socketPath := filepath.Join(mountRoot, targetName)
+	address, err := net.ResolveUnixAddr("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.ListenUnix("unix", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.SetUnlinkOnClose(false)
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	brief := boundaryBrief("task-mounted-probe")
+	server := &RuntimeServer{
+		listener: listener, socketPath: socketPath, socketInfo: info,
+		brief: brief, reporter: &Client{},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		_ = server.Close()
+		if err := <-done; err != nil {
+			t.Errorf("mounted runtime probe stop = %v", err)
+		}
+	})
+	client, err := NewRuntimeClient(socketPath, time.Second)
+	if err != nil {
+		t.Fatalf("open assigned mounted target: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	if exit := RunCommand(context.Background(), []string{"brief"}, &stdout, &stderr, CommandConfig{Capability: client}); exit != 0 || stdout.String() != brief.Content || stderr.Len() != 0 {
+		t.Fatalf("devcrew-report brief probe = %d, stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
+	}
+}
+
 func TestRuntimeServerRejectsClosedWireVocabulary(t *testing.T) {
 	server, socketPath, stop := startBoundaryRuntime(t, &Client{})
 	defer stop()

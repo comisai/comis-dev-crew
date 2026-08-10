@@ -50,6 +50,7 @@ func TestCodexAdapter_ProbesAndPinsExactInstalledVersion(t *testing.T) {
 func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(t *testing.T) {
 	profile := availableCodexProfile(codexFixtureExecutable(t), "codex-reviewed")
 	profile.Unattended = true
+	profile.EnvironmentKeys = append(profile.EnvironmentKeys, "DEV_CREW_ATTACHMENT_TARGET_NAME")
 	catalog, err := workers.NewProfileCatalog([]workers.StaticProfile{profile})
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +106,9 @@ func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(
 		!strings.Contains(bootstrap, "devcrew-report brief") ||
 		strings.Index(bootstrap, "devcrew-report acknowledge") > strings.Index(bootstrap, "devcrew-report brief") ||
 		!containsString(descriptor.EnvironmentKeys, "DEV_CREW_ATTACHMENT") ||
-		len(descriptor.EnvironmentBindings) != 1 || descriptor.EnvironmentBindings["DEV_CREW_ATTACHMENT"] != attachmentMount {
+		!containsString(descriptor.EnvironmentKeys, "DEV_CREW_ATTACHMENT_TARGET_NAME") ||
+		len(descriptor.EnvironmentBindings) != 2 || descriptor.EnvironmentBindings["DEV_CREW_ATTACHMENT"] != attachmentMount ||
+		descriptor.EnvironmentBindings["DEV_CREW_ATTACHMENT_TARGET_NAME"] != attachmentTarget {
 		t.Fatalf("Codex bootstrap does not use protected attachment: %#v", descriptor)
 	}
 	if descriptor.ExpectedAcknowledgement.TaskHandle != request.TaskHandle ||
