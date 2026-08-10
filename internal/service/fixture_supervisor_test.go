@@ -129,6 +129,46 @@ func TestFixtureSupervisor_RejectsInvalidLifecycleAndStoreFailure(t *testing.T) 
 	}
 }
 
+func TestFixtureSupervisor_IdleCancellationAndTaskSelectionAreDeterministic(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	idle := &fixtureSupervisor{
+		store: fixtureStoreFunc{list: func(context.Context) ([]domain.Task, error) {
+			cancel()
+			return nil, nil
+		}},
+		pollInterval: time.Hour,
+	}
+	if err := idle.Run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run(idle cancellation) error = %v", err)
+	}
+
+	prepared := serviceTask()
+	wrongProfile := prepared
+	wrongProfile.State = domain.TaskReady
+	wrongProfile.WorkerProfileID = "codex-reviewed"
+	none := &fixtureSupervisor{store: fixtureStoreFunc{list: func(context.Context) ([]domain.Task, error) {
+		return []domain.Task{prepared, wrongProfile}, nil
+	}}}
+	if ran, err := none.runNext(context.Background()); err != nil || ran {
+		t.Fatalf("runNext(ineligible tasks) = %v, %v", ran, err)
+	}
+
+	ready := wrongProfile
+	ready.WorkerProfileID = "fixture-worker"
+	privateFailure := errors.New("private start failure")
+	failing := &fixtureSupervisor{
+		store: fixtureStoreFunc{list: func(context.Context) ([]domain.Task, error) {
+			return []domain.Task{ready}, nil
+		}},
+		mutations: fixtureStarterFunc(func(context.Context, application.StartTaskCommand) (application.MutationResult, error) {
+			return application.MutationResult{}, privateFailure
+		}),
+	}
+	if ran, err := failing.runNext(context.Background()); ran || !errors.Is(err, privateFailure) {
+		t.Fatalf("runNext(start failure) = %v, %v", ran, err)
+	}
+}
+
 func TestFixtureSupervisor_FailsClosedAtWorkerCompositionBoundaries(t *testing.T) {
 	privateFailure := errors.New("private fixture boundary failure")
 	ready := serviceTask()
@@ -197,6 +237,18 @@ func (store failingFixtureStore) ListTasks(context.Context) ([]domain.Task, erro
 }
 
 func (failingFixtureStore) CommitReport(context.Context, application.ReportMutation) (domain.ReportReceipt, error) {
+	return domain.ReportReceipt{}, nil
+}
+
+type fixtureStoreFunc struct {
+	list func(context.Context) ([]domain.Task, error)
+}
+
+func (store fixtureStoreFunc) ListTasks(ctx context.Context) ([]domain.Task, error) {
+	return store.list(ctx)
+}
+
+func (fixtureStoreFunc) CommitReport(context.Context, application.ReportMutation) (domain.ReportReceipt, error) {
 	return domain.ReportReceipt{}, nil
 }
 
