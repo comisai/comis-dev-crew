@@ -66,6 +66,7 @@ func TestInstalledComposition_JoinsMCPActivationFixtureAndReports(t *testing.T) 
 	serviceStderr := &bytes.Buffer{}
 	serviceCommand := exec.Command(serviceBinary,
 		"--database", database, "--socket", operatorSocket, "--mcp-socket", mcpSocket,
+		"--runtime-root", filepath.Join(runRoot, "tasks"),
 		"--service-instance", parityServiceID,
 		"--git-executable", gitExecutable, "--approved-root", approvedRoot,
 		"--repository-id", "product-api", "--repository-primary", primary,
@@ -135,12 +136,14 @@ func TestInstalledComposition_JoinsMCPActivationFixtureAndReports(t *testing.T) 
 	}
 
 	lease := comiswire.WorkspaceLeaseID("workspace-lease-installed")
+	attachmentID := comiswire.ExecutionAttachmentID("execution-attachment-installed")
+	attachmentTarget := comiswire.AttachmentTargetName("attachment-dddddddddddddddddddddddddddddddd.sock")
 	activation := comiswire.ActivateRequest{
 		JSONRPC: comiswire.JSONRPCVersion, ID: "installed-activate-0001", Method: comiswire.MethodManagedRunsActivate,
 		Params: comiswire.ActivateRequestParams{
 			OperationID: "installed-activate-0001", ManagedRunID: "managed-run-installed",
 			ExternalRunRef: registration.ExternalRunRef, RegistrationNonce: registration.RegistrationNonce,
-			WorkspaceLeaseID: &lease,
+			WorkspaceLeaseID: &lease, ExecutionAttachmentID: &attachmentID, AttachmentTargetName: &attachmentTarget,
 		},
 	}
 	if err := writeInstalledFrame(peer.connection, installedAuthenticatedActivate{ActivateRequest: activation, Bearer: installedCredential}); err != nil {

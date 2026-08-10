@@ -516,6 +516,8 @@ func matrixBindCommand() application.ActivateManagedRunCommand {
 		OperationID: "op-bind-restart", ServiceInstanceID: "service-instance-restart",
 		ExternalRunRef: matrixTaskHandle, RegistrationNonce: "registration-nonce_matrix",
 		ManagedRunID: "managed-run-restart", WorkspaceLeaseID: "workspace-lease-restart",
+		ExecutionAttachmentID: "execution-attachment-restart",
+		AttachmentTargetName:  "attachment-cccccccccccccccccccccccccccccccc.sock",
 	}
 }
 

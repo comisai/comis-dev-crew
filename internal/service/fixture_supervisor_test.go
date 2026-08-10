@@ -46,6 +46,8 @@ func TestFixtureSupervisor_ConsumesPinnedReadyTaskExactlyOnce(t *testing.T) {
 		OperationID: "activate-fixture-supervised", ServiceInstanceID: "service-instance-fixture",
 		ManagedRunID: "managed-run-fixture", ExternalRunRef: prepared.Task.Handle,
 		RegistrationNonce: prepared.Preparation.RegistrationNonce, WorkspaceLeaseID: "workspace-lease-fixture",
+		ExecutionAttachmentID: "execution-attachment-fixture",
+		AttachmentTargetName:  "attachment-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.sock",
 	}); err != nil {
 		t.Fatal(err)
 	}
