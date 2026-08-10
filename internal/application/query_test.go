@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -95,6 +96,79 @@ func TestQueries_ListShowExplainAndOperationShareCanonicalProjections(t *testing
 	}
 	if operationView.OperationID != operation.ID || operationView.Status != operation.Status || operationView.SubjectDigest != operation.SubjectDigest {
 		t.Fatalf("Operation() = %#v, want durable operation projection", operationView)
+	}
+}
+
+func TestQueries_GetLaunchPlanBuildsAndSafelyProjectsReviewedDescriptor(t *testing.T) {
+	now := time.Date(2026, time.August, 10, 9, 30, 0, 0, time.UTC)
+	workspace := t.TempDir()
+	task := queryTask("task-launch-plan", domain.TaskReady, 7)
+	task.ExecutionAttachmentID = "execution-attachment-0001"
+	task.AttachmentTargetName = "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock"
+	repository := &queryRepository{
+		tasks: []domain.Task{task},
+		preparation: ManagedRunPreparation{
+			ExternalRunRef: task.Handle, RequestedWorkspaceRoot: workspace,
+			State: PreparationOpen,
+		},
+	}
+	adapter := &queryHarnessAdapter{}
+	queries, err := NewQueries(QueryConfig{
+		Repository: repository,
+		Harnesses:  &queryHarnesses{adapter: adapter},
+		Clock:      func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewQueries() error = %v", err)
+	}
+
+	plan, err := queries.GetLaunchPlan(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("GetLaunchPlan() error = %v", err)
+	}
+	if adapter.request.ProfileID != task.WorkerProfileID || adapter.request.Shape != task.Shape ||
+		adapter.request.WorkingDirectory != workspace || adapter.request.TaskHandle != task.Handle ||
+		adapter.request.ManagedRunID != task.ManagedRunID || adapter.request.WorkspaceLeaseID != task.WorkspaceLeaseID ||
+		adapter.request.BriefRevision != task.BriefRevision || adapter.request.BriefRevisionHash != task.BriefRevisionHash ||
+		adapter.request.Attachment.ExecutionAttachmentID != task.ExecutionAttachmentID ||
+		adapter.request.Attachment.AttachmentTargetName != task.AttachmentTargetName ||
+		adapter.request.Attachment.MountSocketPath != "/run/comis/attachments/"+task.AttachmentTargetName {
+		t.Fatalf("BuildLaunchDescriptor() request = %#v, want exact durable launch binding", adapter.request)
+	}
+	if plan.SchemaVersion != 1 || plan.CapturedAtMs != now.UnixMilli() || plan.StateVersion != task.StateVersion ||
+		plan.Completeness != CompletenessComplete || plan.TaskHandle != task.Handle || plan.State != domain.TaskReady ||
+		plan.StateSource != StateSourceStore || plan.StateConfidence != ConfidenceVerified || plan.Freshness != FreshnessCurrent ||
+		plan.WorkerProfileID != task.WorkerProfileID || plan.TerminalAllowEntryID != "terminal-codex-reviewed" ||
+		plan.BriefRevisionHash != task.BriefRevisionHash || plan.AttachmentTargetName != task.AttachmentTargetName {
+		t.Fatalf("GetLaunchPlan() = %#v, want exact safe reviewed projection", plan)
+	}
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatalf("Marshal(plan) error = %v", err)
+	}
+	for _, forbidden := range []string{workspace, "/usr/local/bin/codex", "--model", "DEV_CREW_ATTACHMENT", task.ExecutionAttachmentID} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("launch plan leaked protected process material %q: %s", forbidden, encoded)
+		}
+	}
+}
+
+func TestQueries_GetLaunchPlanRejectsUnactivatedTaskWithoutCallingHarness(t *testing.T) {
+	task := queryTask("task-not-activated", domain.TaskPrepared, 3)
+	adapter := &queryHarnessAdapter{}
+	queries, err := NewQueries(QueryConfig{
+		Repository: &queryRepository{tasks: []domain.Task{task}},
+		Harnesses:  &queryHarnesses{adapter: adapter},
+		Clock:      time.Now,
+	})
+	if err != nil {
+		t.Fatalf("NewQueries() error = %v", err)
+	}
+	if _, err := queries.GetLaunchPlan(context.Background(), task.Handle); failureCode(err) != domain.ErrorPrecondition {
+		t.Fatalf("GetLaunchPlan(prepared) error = %v, want precondition", err)
+	}
+	if adapter.called {
+		t.Fatal("GetLaunchPlan(prepared) called worker harness without activation authority")
 	}
 }
 
@@ -278,11 +352,61 @@ func failureCode(err error) domain.ErrorCode {
 type queryRepository struct {
 	tasks           []domain.Task
 	operation       domain.OperationRecord
+	preparation     ManagedRunPreparation
 	stateVersion    int64
 	stateVersionErr error
 	readErr         error
 	readCalled      bool
 	snapshotCalled  bool
+}
+
+func (repository *queryRepository) GetManagedRunPreparation(context.Context, string) (ManagedRunPreparation, error) {
+	repository.readCalled = true
+	if repository.readErr != nil {
+		return ManagedRunPreparation{}, repository.readErr
+	}
+	return repository.preparation, nil
+}
+
+type queryHarnesses struct {
+	adapter WorkerHarnessAdapter
+	err     error
+}
+
+func (harnesses *queryHarnesses) ResolveWorkerHarness(string) (WorkerHarnessAdapter, error) {
+	return harnesses.adapter, harnesses.err
+}
+
+type queryHarnessAdapter struct {
+	request WorkerLaunchRequest
+	called  bool
+}
+
+func (*queryHarnessAdapter) ID() string { return "codex" }
+
+func (*queryHarnessAdapter) ProbeVersion(context.Context) (HarnessVersionProbe, error) {
+	return HarnessVersionProbe{Version: "codex-cli 1.2.3", Availability: HarnessAvailable}, nil
+}
+
+func (adapter *queryHarnessAdapter) BuildLaunchDescriptor(_ context.Context, request WorkerLaunchRequest) (WorkerLaunchDescriptor, error) {
+	adapter.called = true
+	adapter.request = request
+	return WorkerLaunchDescriptor{
+		ProfileID: request.ProfileID, Harness: "codex", Executable: "/usr/local/bin/codex",
+		Arguments: []string{"--model", "reviewed-model"}, WorkingDirectory: request.WorkingDirectory,
+		EnvironmentKeys: []string{"DEV_CREW_ATTACHMENT"},
+		EnvironmentBindings: map[string]string{"DEV_CREW_ATTACHMENT": request.Attachment.MountSocketPath},
+		TerminalAllowEntry: "terminal-codex-reviewed", Attachment: request.Attachment,
+		ExpectedAcknowledgement: LaunchAcknowledgement{
+			TaskHandle: request.TaskHandle, ManagedRunID: request.ManagedRunID,
+			WorkspaceLeaseID: request.WorkspaceLeaseID, WorkingDirectory: request.WorkingDirectory,
+			BriefRevision: request.BriefRevision, BriefRevisionHash: request.BriefRevisionHash,
+		},
+	}, nil
+}
+
+func (*queryHarnessAdapter) ClassifySemanticActivity(HarnessObservation) SemanticActivityResult {
+	return SemanticActivityResult{State: ActivityUnknown, Reason: SemanticReasonMissing}
 }
 
 func (repository *queryRepository) CreateTask(context.Context, domain.Task) error { return nil }
