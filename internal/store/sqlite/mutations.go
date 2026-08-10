@@ -128,13 +128,21 @@ func (store *Store) CommitManagedRunActivation(ctx context.Context, mutation app
 	if !requestedWorkspace {
 		return application.MutationResult{}, fmt.Errorf("managed-run activation requires a DevCrew workspace: %w", application.ErrPrecondition)
 	}
-	if task.State != domain.TaskPrepared || task.ManagedRunID != "" || task.WorkspaceLeaseID != "" {
+	if preparation.RequestedAttachment.Validate() != nil ||
+		domain.ValidateAuthorityReference("executionAttachmentId", mutation.ExecutionAttachmentID) != nil ||
+		domain.ValidateAttachmentTargetName(mutation.AttachmentTargetName) != nil {
+		return application.MutationResult{}, fmt.Errorf("managed-run activation attachment invariant: %w", application.ErrInvalidInput)
+	}
+	if task.State != domain.TaskPrepared || task.ManagedRunID != "" || task.WorkspaceLeaseID != "" ||
+		task.ExecutionAttachmentID != "" || task.AttachmentTargetName != "" {
 		return application.MutationResult{}, fmt.Errorf("managed-run activation task state: %w", application.ErrPrecondition)
 	}
 	bound, err := task.AcknowledgeBinding(mutation.Binding, mutation.At)
 	if err != nil {
 		return application.MutationResult{}, fmt.Errorf("apply managed-run activation: %w", err)
 	}
+	bound.ExecutionAttachmentID = mutation.ExecutionAttachmentID
+	bound.AttachmentTargetName = mutation.AttachmentTargetName
 	stateVersion, err := nextMutationStateVersion(ctx, transaction)
 	if err != nil {
 		return application.MutationResult{}, err
@@ -148,10 +156,11 @@ func (store *Store) CommitManagedRunActivation(ctx context.Context, mutation app
 		bound.Handle, stateVersion, mutation.At,
 	)
 	const update = `UPDATE tasks
-        SET managed_run_id = ?, workspace_lease_id = ?, state = ?, state_version = ?, updated_at = ?
+		SET managed_run_id = ?, workspace_lease_id = ?, execution_attachment_id = ?, attachment_target_name = ?,
+		state = ?, state_version = ?, updated_at = ?
         WHERE handle = ?`
 	result, err := transaction.ExecContext(ctx, update,
-		bound.ManagedRunID, bound.WorkspaceLeaseID, bound.State,
+		bound.ManagedRunID, bound.WorkspaceLeaseID, bound.ExecutionAttachmentID, bound.AttachmentTargetName, bound.State,
 		bound.StateVersion, formatTime(bound.UpdatedAt), bound.Handle,
 	)
 	if err != nil {

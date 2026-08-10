@@ -40,18 +40,21 @@ func insertTask(ctx context.Context, target execer, task domain.Task) error {
 		return fmt.Errorf("encode task constraints: %w", err)
 	}
 	const statement = `INSERT INTO tasks (
-        handle, schema_version, service_instance_id, managed_run_id,
-        workspace_lease_id, state, shape, repository_id, base_revision,
+		handle, schema_version, service_instance_id, managed_run_id,
+		workspace_lease_id, execution_attachment_id, attachment_target_name,
+		state, shape, repository_id, base_revision,
         brief_revision, brief_revision_hash, acceptance_criteria_json,
         constraints_json, validation_profile, delivery_mode, worker_profile_id,
         report_cursor, state_version, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err = target.ExecContext(ctx, statement,
 		task.Handle,
 		task.SchemaVersion,
 		task.ServiceInstanceID,
 		task.ManagedRunID,
 		task.WorkspaceLeaseID,
+		task.ExecutionAttachmentID,
+		task.AttachmentTargetName,
 		task.State,
 		task.Shape,
 		task.RepositoryID,
@@ -148,8 +151,9 @@ type queryer interface {
 
 func listTasks(ctx context.Context, source queryer) (tasks []domain.Task, resultErr error) {
 	const query = `SELECT
-        handle, schema_version, service_instance_id, managed_run_id,
-        workspace_lease_id, state, shape, repository_id, base_revision,
+		handle, schema_version, service_instance_id, managed_run_id,
+		workspace_lease_id, execution_attachment_id, attachment_target_name,
+		state, shape, repository_id, base_revision,
         brief_revision, brief_revision_hash, acceptance_criteria_json,
         constraints_json, validation_profile, delivery_mode, worker_profile_id,
         report_cursor, state_version, created_at, updated_at
@@ -182,8 +186,9 @@ func (store *Store) GetTask(ctx context.Context, handle string) (domain.Task, er
 
 func getTask(ctx context.Context, source queryer, handle string) (domain.Task, error) {
 	const query = `SELECT
-        handle, schema_version, service_instance_id, managed_run_id,
-        workspace_lease_id, state, shape, repository_id, base_revision,
+		handle, schema_version, service_instance_id, managed_run_id,
+		workspace_lease_id, execution_attachment_id, attachment_target_name,
+		state, shape, repository_id, base_revision,
         brief_revision, brief_revision_hash, acceptance_criteria_json,
         constraints_json, validation_profile, delivery_mode, worker_profile_id,
         report_cursor, state_version, created_at, updated_at
@@ -280,6 +285,8 @@ func scanTask(row rowScanner) (domain.Task, error) {
 		&task.ServiceInstanceID,
 		&task.ManagedRunID,
 		&task.WorkspaceLeaseID,
+		&task.ExecutionAttachmentID,
+		&task.AttachmentTargetName,
 		&task.State,
 		&task.Shape,
 		&task.RepositoryID,

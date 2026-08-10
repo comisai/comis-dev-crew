@@ -220,8 +220,9 @@ func validateWorkerLaunchAcknowledgementMutation(mutation application.WorkerLaun
 
 func getTaskByBinding(ctx context.Context, source queryer, managedRunID, workspaceLeaseID string) (domain.Task, error) {
 	const query = `SELECT
-        handle, schema_version, service_instance_id, managed_run_id,
-        workspace_lease_id, state, shape, repository_id, base_revision,
+		handle, schema_version, service_instance_id, managed_run_id,
+		workspace_lease_id, execution_attachment_id, attachment_target_name,
+		state, shape, repository_id, base_revision,
         brief_revision, brief_revision_hash, acceptance_criteria_json,
         constraints_json, validation_profile, delivery_mode, worker_profile_id,
         report_cursor, state_version, created_at, updated_at

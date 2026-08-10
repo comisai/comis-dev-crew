@@ -224,9 +224,11 @@ func TestMutationStore_DirectReplayAndInvalidMutationsFailClosed(t *testing.T) {
 
 	missingBinding := application.ManagedRunActivationMutation{
 		ServiceInstanceID: "service-instance-0001", ExternalRunRef: "task-missing",
-		RegistrationNonce: "registration-nonce_direct",
-		Binding:           domain.TaskBinding{ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001"},
-		OperationID:       "op-bind-missing", SubjectDigest: strings.Repeat("d", 64), At: preparedAt.Add(time.Minute),
+		RegistrationNonce:     "registration-nonce_direct",
+		Binding:               domain.TaskBinding{ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001"},
+		ExecutionAttachmentID: "execution-attachment-0001",
+		AttachmentTargetName:  "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
+		OperationID:           "op-bind-missing", SubjectDigest: strings.Repeat("d", 64), At: preparedAt.Add(time.Minute),
 	}
 	if _, err := store.CommitManagedRunActivation(ctx, missingBinding); !errors.Is(err, application.ErrNotFound) {
 		t.Fatalf("CommitManagedRunActivation(missing) error = %v, want ErrNotFound", err)
@@ -360,9 +362,11 @@ func TestMutationStore_RejectsExhaustedVersionAndClosedDatabase(t *testing.T) {
 	}
 	binding := application.ManagedRunActivationMutation{
 		ServiceInstanceID: prepared.Task.ServiceInstanceID, ExternalRunRef: prepared.Task.Handle,
-		RegistrationNonce: prepared.Preparation.RegistrationNonce,
-		Binding:           domain.TaskBinding{ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001"},
-		OperationID:       "op-bind-closed", SubjectDigest: strings.Repeat("b", 64), At: now,
+		RegistrationNonce:     prepared.Preparation.RegistrationNonce,
+		Binding:               domain.TaskBinding{ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001"},
+		ExecutionAttachmentID: "execution-attachment-0001",
+		AttachmentTargetName:  "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
+		OperationID:           "op-bind-closed", SubjectDigest: strings.Repeat("b", 64), At: now,
 	}
 	if _, err := store.CommitManagedRunActivation(context.Background(), binding); err == nil {
 		t.Fatal("CommitManagedRunActivation(closed) error = nil")

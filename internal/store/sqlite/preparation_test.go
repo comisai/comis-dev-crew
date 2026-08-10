@@ -344,9 +344,11 @@ func lifecycleStore(t *testing.T, withWorkspace bool) (*Store, application.Mutat
 	}
 	activation := application.ManagedRunActivationMutation{
 		ServiceInstanceID: command.ServiceInstanceID, ExternalRunRef: prepared.Task.Handle,
-		RegistrationNonce: prepared.Preparation.RegistrationNonce,
-		Binding:           domain.TaskBinding{ManagedRunID: "managed-run-lifecycle", WorkspaceLeaseID: "workspace-lease-lifecycle"},
-		OperationID:       "operation-activate-lifecycle", SubjectDigest: strings.Repeat("a", 64), At: now.Add(time.Minute),
+		RegistrationNonce:     prepared.Preparation.RegistrationNonce,
+		Binding:               domain.TaskBinding{ManagedRunID: "managed-run-lifecycle", WorkspaceLeaseID: "workspace-lease-lifecycle"},
+		ExecutionAttachmentID: "execution-attachment-lifecycle",
+		AttachmentTargetName:  "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
+		OperationID:           "operation-activate-lifecycle", SubjectDigest: strings.Repeat("a", 64), At: now.Add(time.Minute),
 	}
 	return store, prepared, activation
 }

@@ -66,26 +66,28 @@ func (state TaskState) valid() bool {
 // Task is the pure E0 durable domain record. Comis protocol DTOs do not appear
 // here; only exact opaque host-authority references cross the adapter boundary.
 type Task struct {
-	SchemaVersion      int
-	Handle             string
-	ServiceInstanceID  string
-	ManagedRunID       string
-	WorkspaceLeaseID   string
-	State              TaskState
-	Shape              TaskShape
-	RepositoryID       string
-	BaseRevision       string
-	BriefRevision      int64
-	BriefRevisionHash  string
-	AcceptanceCriteria []string
-	Constraints        []string
-	ValidationProfile  string
-	DeliveryMode       DeliveryMode
-	WorkerProfileID    string
-	ReportCursor       int64
-	StateVersion       int64
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	SchemaVersion         int
+	Handle                string
+	ServiceInstanceID     string
+	ManagedRunID          string
+	WorkspaceLeaseID      string
+	ExecutionAttachmentID string
+	AttachmentTargetName  string
+	State                 TaskState
+	Shape                 TaskShape
+	RepositoryID          string
+	BaseRevision          string
+	BriefRevision         int64
+	BriefRevisionHash     string
+	AcceptanceCriteria    []string
+	Constraints           []string
+	ValidationProfile     string
+	DeliveryMode          DeliveryMode
+	WorkerProfileID       string
+	ReportCursor          int64
+	StateVersion          int64
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
 }
 
 // Validate enforces the E0 record and shape/delivery relationship.
@@ -120,6 +122,19 @@ func (task Task) Validate() error {
 			return err
 		}
 		if err := validateAuthorityReference("workspaceLeaseId", task.WorkspaceLeaseID); err != nil {
+			return err
+		}
+	}
+	hasAttachmentID := task.ExecutionAttachmentID != ""
+	hasAttachmentTarget := task.AttachmentTargetName != ""
+	if hasAttachmentID != hasAttachmentTarget {
+		return &ValidationError{Field: "executionAttachment", Reason: "attachment identity and target must be present together"}
+	}
+	if hasAttachmentID {
+		if err := validateAuthorityReference("executionAttachmentId", task.ExecutionAttachmentID); err != nil {
+			return err
+		}
+		if err := ValidateAttachmentTargetName(task.AttachmentTargetName); err != nil {
 			return err
 		}
 	}

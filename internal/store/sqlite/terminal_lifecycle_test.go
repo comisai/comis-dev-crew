@@ -328,9 +328,11 @@ func openTerminalLifecycleFixtureWithProfile(t *testing.T, handle string, start 
 	}
 	activated, err := store.CommitManagedRunActivation(context.Background(), application.ManagedRunActivationMutation{
 		ServiceInstanceID: task.ServiceInstanceID, ExternalRunRef: handle,
-		RegistrationNonce: "registration-nonce-" + handle,
-		Binding:           domain.TaskBinding{ManagedRunID: "managed-run-" + handle, WorkspaceLeaseID: "workspace-lease-" + handle},
-		OperationID:       "operation-activate-" + handle, SubjectDigest: strings.Repeat("b", 64), At: now.Add(time.Minute),
+		RegistrationNonce:     "registration-nonce-" + handle,
+		Binding:               domain.TaskBinding{ManagedRunID: "managed-run-" + handle, WorkspaceLeaseID: "workspace-lease-" + handle},
+		ExecutionAttachmentID: "execution-attachment-" + handle,
+		AttachmentTargetName:  "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
+		OperationID:           "operation-activate-" + handle, SubjectDigest: strings.Repeat("b", 64), At: now.Add(time.Minute),
 	})
 	if err != nil {
 		_ = store.Close()
