@@ -79,3 +79,89 @@ func TestRuntimeAttachmentCoordinator_PreparesServingTaskSocketUnderOwnedRoot(t 
 		t.Fatalf("protected brief = %#v, %v", brief, err)
 	}
 }
+
+func TestRuntimeAttachmentCoordinator_RecoversPreparedTaskSocketAfterRestart(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := sqlite.Open(context.Background(), filepath.Join(root, "state", "devcrew.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Date(2026, time.August, 10, 16, 30, 0, 0, time.UTC)
+	newCoordinator := func() *runtimeAttachmentCoordinator {
+		coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+			RuntimeRoot: runtimeRoot, Reports: store, Clock: func() time.Time { return now },
+			NewCredential: func() (string, error) { return "restart-credential-0123456789abcdef", nil },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return coordinator
+	}
+	first := newCoordinator()
+	firstContext, stopFirst := context.WithCancel(context.Background())
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- first.Run(firstContext) }()
+	mutations, err := application.NewMutations(application.MutationConfig{
+		Store: store, Repositories: serviceRepositoryCatalog{},
+		Workspaces: serviceWorkspacePreparer{root: workspace}, RuntimeAttachments: first,
+		TaskIDs:            func(string) (string, error) { return "task-runtime-restart-0001", nil },
+		RegistrationNonces: func() (string, error) { return "registration-nonce_runtime_restart", nil },
+		PreparationTTL:     time.Hour, Clock: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := mutations.PrepareTask(context.Background(), application.PrepareTaskCommand{
+		OperationID: "operation-runtime-restart-0001", ServiceInstanceID: "service-instance-runtime-restart",
+		Shape: domain.ShapeScout, RepositoryID: "product-api", BaseRevision: strings.Repeat("b", 40),
+		AcceptanceCriteria: []string{"Recover the exact protected reporter."}, ValidationProfile: "go-default",
+		DeliveryMode: domain.DeliveryReport, WorkerProfileID: "codex-reviewed",
+	})
+	if err != nil || prepared.Preparation == nil {
+		t.Fatalf("PrepareTask() = %#v, %v", prepared, err)
+	}
+	socketPath := prepared.Preparation.RequestedAttachment.SourcePath
+	stopFirst()
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first coordinator stop error = %v", err)
+	}
+	if _, err := os.Lstat(socketPath); !os.IsNotExist(err) {
+		t.Fatalf("socket after first stop error = %v, want not exist", err)
+	}
+
+	second := newCoordinator()
+	secondContext, stopSecond := context.WithCancel(context.Background())
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- second.Run(secondContext) }()
+	t.Cleanup(func() {
+		stopSecond()
+		if err := <-secondDone; err != nil {
+			t.Errorf("second coordinator stop error = %v", err)
+		}
+	})
+	deadline := time.Now().Add(time.Second)
+	for {
+		info, statErr := os.Lstat(socketPath)
+		if statErr == nil && info.Mode()&os.ModeSocket != 0 && info.Mode().Perm() == 0o600 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("recovered socket error = %v, info = %#v", statErr, info)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	client, err := reporter.NewRuntimeClient(socketPath, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	brief, err := client.Brief(context.Background())
+	if err != nil || brief.RevisionHash != prepared.Task.BriefRevisionHash {
+		t.Fatalf("recovered brief = %#v, %v", brief, err)
+	}
+}
