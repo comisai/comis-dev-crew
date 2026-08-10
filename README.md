@@ -2,13 +2,16 @@
 
 Pre-release E0 foundation. The service now owns durable SQLite state and a strict owner-only
 local API; the operator CLI provides read-only service, fleet, task, and operation views. The
-protocol foundation pins an exact Comis capability-service bundle and generates a closed Go
+protocol foundation pins the 24-artifact Comis capability-service revision at source commit
+`b84577fe790829bf1f043af6c2626f6b27ef7b89` and bundle digest
+`94ec7bd173cd20f0de2cb4e9ab719d392f240236ac80d56e3a7ea1abe4e20cb8`, and generates a closed Go
 adapter. The durable-work wave now includes the closed E0 task transition authority and one
 canonical task contract whose deterministic worker brief is pinned by a stored SHA-256 revision
-hash. The application now commits replay-safe task preparation and exact host binding atomically
-with their durable operation outcomes. Tagged integration tests prove the restart/replay matrix
-and the generated client handshake against Comis's standalone fixture host. Real worker execution,
-public mutation transport, and end-to-end production Comis runtime wiring are not implemented yet.
+hash. The application now commits replay-safe task preparation, attachment request, and exact host
+binding atomically with their durable operation outcomes. Tagged integration tests prove the
+restart/replay matrix and the generated client handshake against Comis's standalone fixture host.
+Real worker execution, public mutation transport, and end-to-end production Comis runtime wiring
+are not implemented yet.
 
 `comis-dev-crew` is a companion product for the [Comis](https://github.com/comisai/comis)
 agent platform: a long-lived Go service (`devcrew-service`), an independent operator CLI
@@ -22,8 +25,10 @@ repository now has its engineering protocol, verification contract, CI foundatio
 E0 domain records, a pure-Go SQLite store, canonical read application handlers, a bounded
 newline-delimited local protocol over an owner-only Unix socket, the first read-only operator
 CLI, and an authenticated Comis protocol pin with generated DTO, validation, and Unix control
-client support. The protocol-foundation join gate is implemented. End-to-end Comis host
-production integration, public mutation transport, and real worker capability are not claimed yet.
+client support. The protocol-foundation join gate is implemented for protocol
+`comis.capability-service/1`, including workspace-lease, terminal-event, and execution-attachment
+control scopes. End-to-end production worker execution and public mutation transport are not
+claimed yet.
 
 The Comis adapter now also contains the supervised persistent bidirectional connection used by
 the next service composition step. It authenticates the exact pinned handshake, dispatches only
@@ -115,10 +120,13 @@ remain eligible for exact-identity resend until the store records the host's mat
 retention acknowledgement. Identical task/report IDs replay the original receipt across restart;
 altered payloads, acknowledgements, and ambiguous decision keys fail closed. A real worker uses
 an owner-only per-task Unix socket to read its brief, acknowledge its exact run/lease/canonical-cwd
-and brief binding, and append reports without a task or authority selector. The control-socket
-forwarder is implemented as an independently supervised adapter and participates in the installed
-service lifecycle. The deterministic fixture continues to use the same reviewed in-process report
-boundary and launches no subprocess.
+and brief binding, and append reports without a task or authority selector. Preparation creates
+that socket under the configured private runtime root and declares it as `requestedAttachment`;
+activation then supplies the execution-attachment ID and target name that bind the same listener.
+The listener and any durable activation binding are reconstructed after a service restart. The
+control-socket forwarder is implemented as an independently supervised adapter and participates
+in the installed service lifecycle. The deterministic fixture continues to use the same reviewed
+in-process report boundary and launches no subprocess.
 
 The deterministic fixture worker runs synchronously from a verified brief, emits authenticated
 progress, requests exactly one keyed decision, records its resolution, and ends by reporting only
@@ -146,22 +154,23 @@ binding ratification record.
 
 All four commands support `--help` and `--version`. Build them with `make build`.
 
-Workers receive `devcrew-report` with `DEV_CREW_ATTACHMENT` set by the launcher to an
-owner-only, task-scoped Unix socket mounted at the static profile path. The command accepts no
-task, run, lease, socket, or credential selector. `brief` reads the exact pinned contract;
+Workers receive `devcrew-report` with `DEV_CREW_ATTACHMENT` set by the launch descriptor to the
+Comis-protected task socket at `/run/comis/attachments/<attachmentTargetName>`. The command accepts
+no task, run, lease, socket, or credential selector. `brief` reads the exact pinned contract;
 `acknowledge` verifies and echoes the socket-bound task/run/lease, actual canonical working
 directory, and brief revision before task state may become `working`;
 `progress`, `decision`, `blocked`, `paused`, `candidate-complete`, `failed`, and `resolved`
 append bounded sparse reports. A candidate report remains non-terminal until service validation.
 
 The first real harness adapter builds a fixed no-shell `codex exec --json` descriptor from an
-exact-version static profile. Task/run/lease and brief authority remain only in the protected
-attachment, never argv or the generic bootstrap prompt. Structured activity is classified only
+exact-version static profile. The descriptor validates the activation-returned attachment ID and
+target name, references no host socket source, and binds only the exact protected mounted target to
+`DEV_CREW_ATTACHMENT`. Task/run/lease and brief authority remain only in the protected attachment,
+never argv or the generic bootstrap prompt. Structured activity is classified only
 while fresh; a completed turn without a task report is `unknown`. Because the reviewed Codex CLI
 does not expose a trustworthy settle signal, the current profile is explicitly degraded and cannot
-run unattended. The final managed-terminal launch remains gated on Comis exposing its run-scoped
-execution-attachment creation seam to the capability service; this repository does not invent a
-private fallback protocol or a second terminal backend.
+run unattended. The repository does not infer settled or successful work from a completed Codex
+turn and does not invent a private attachment protocol or a second terminal backend.
 
 The minimal read-only service remains available with explicit canonical paths:
 
@@ -175,6 +184,12 @@ as owner-only, and refuses relative, non-canonical, symlinked, broad-root, non-r
 or identity-ambiguous targets. Without explicit flags, both binaries derive the same paths
 under the operating system's user configuration directory.
 
+The attachment threat boundary is deliberately narrow: the service rejects symlinks in every
+runtime-root component before creating anything, owns each task directory and socket, and never
+places the host source path in Codex argv, stdin, or environment. Comis alone carries the source
+into the protected mount identified by activation; an altered attachment ID, target name, or mount
+path fails closed.
+
 For the runnable Comis fixture lane, first place the 32–256 character instance bearer in an
 owner-private (`0600`) regular file. The Comis control socket must already exist as an owner-only
 Unix socket. The primary checkout and worktree parent must be separate canonical directories
@@ -187,6 +202,7 @@ devcrew-service \
   --database /absolute/private/state/devcrew.db \
   --socket /absolute/private/run/operator.sock \
   --mcp-socket /absolute/private/run/mcp.sock \
+  --runtime-root /absolute/private/run/tasks \
   --service-instance service-instance-devcrew \
   --git-executable /absolute/path/to/git \
   --approved-root /absolute/repositories \
@@ -228,8 +244,8 @@ JSON outputs are stable versioned projections. Human and YAML views are presenta
 and carry no authority. The generated authenticated client is verified against Comis's standalone
 test-only capability-service host over a real owner-only Unix socket, including exact protocol and
 digest agreement plus altered-digest and wrong-credential rejection. The runnable fixture test
-extends that conformance evidence through the installed lifecycle, while still making no claim
-about a real coding-worker adapter. The CLI never opens SQLite as a
+extends that conformance evidence through the installed lifecycle, while making no claim that the
+Codex subprocess launch is part of that fixture lane. The CLI never opens SQLite as a
 normal-operation fallback. Task preparation reads one strict bounded JSON contract, rejects
 unknown authority fields, and uses either the explicit stable operation ID or one locally minted
 request ID. Service-side mutation composition requires an explicit repository catalog, task and
