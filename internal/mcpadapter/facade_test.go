@@ -42,7 +42,7 @@ func TestFacade_OfficialSDKCatalogAndPrivatePreparation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, private := range []string{"managedRun", "registration-nonce_private", "expiresAt", "/approved/workspaces/task-0001"} {
+	for _, private := range []string{"managedRun", "registration-nonce_private", "expiresAt", "/approved/workspaces/task-0001", "/approved/runtime/task-0001/attachment.sock"} {
 		if strings.Contains(string(visible), private) {
 			t.Fatalf("visible result leaked %q: %s", private, visible)
 		}
@@ -60,8 +60,10 @@ func TestFacade_OfficialSDKCatalogAndPrivatePreparation(t *testing.T) {
 	}
 	var prepared comiswire.MCPManagedRunResult
 	if err := json.Unmarshal(encodedExtension, &prepared); err != nil || prepared.RequestedWorkspace == nil ||
-		prepared.RequestedWorkspace.RootHint != "/approved/workspaces/task-0001" {
-		t.Fatalf("managed-run requested workspace = %#v, %v", prepared.RequestedWorkspace, err)
+		prepared.RequestedWorkspace.RootHint != "/approved/workspaces/task-0001" || prepared.RequestedAttachment == nil ||
+		prepared.RequestedAttachment.Kind != comiswire.ExecutionAttachmentKindUnixSocket ||
+		prepared.RequestedAttachment.SourcePath != "/approved/runtime/task-0001/attachment.sock" {
+		t.Fatalf("managed-run requested resources = workspace:%#v attachment:%#v, %v", prepared.RequestedWorkspace, prepared.RequestedAttachment, err)
 	}
 	if got := strings.Join(client.calls, ","); got != "prepare:prepare-0001" {
 		t.Fatalf("local calls = %q, want one canonical prepare", got)
@@ -236,6 +238,7 @@ func preparedResult() localapi.PrepareTaskResult {
 		ManagedRun: application.ManagedRunPreparation{
 			ExternalRunRef: "task-0001", RegistrationNonce: "registration-nonce_private",
 			RequestedWorkspaceRoot: "/approved/workspaces/task-0001",
+			RequestedAttachment:    application.PreparedRuntimeAttachment{Kind: application.RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/task-0001/attachment.sock"},
 			ExpiresAt:              time.Date(2026, time.August, 10, 0, 0, 0, 0, time.UTC), State: application.PreparationOpen,
 		},
 	}
