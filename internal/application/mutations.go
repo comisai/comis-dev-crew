@@ -246,17 +246,30 @@ func (mutations *Mutations) ActivateManagedRun(ctx context.Context, command Acti
 }
 
 func (mutations *Mutations) bindRuntimeAttachment(ctx context.Context, command ActivateManagedRunCommand) error {
-	operationDigest := fmt.Sprintf("%x", sha256.Sum256([]byte("runtime-launch-ack\x00"+command.ExternalRunRef)))
-	err := mutations.attachments.BindRuntimeAttachment(ctx, RuntimeAttachmentBindingRequest{
+	launchOperationID, err := RuntimeLaunchAcknowledgementOperationID(command.ExternalRunRef)
+	if err != nil {
+		return mutationValidationFailure("runtime launch acknowledgement identity is invalid")
+	}
+	err = mutations.attachments.BindRuntimeAttachment(ctx, RuntimeAttachmentBindingRequest{
 		TaskHandle: command.ExternalRunRef, ManagedRunID: command.ManagedRunID,
 		WorkspaceLeaseID: command.WorkspaceLeaseID, ExecutionAttachmentID: command.ExecutionAttachmentID,
 		AttachmentTargetName: command.AttachmentTargetName,
-		LaunchOperationID:    "launch-ack-" + operationDigest[:32], Acknowledger: mutations,
+		LaunchOperationID:    launchOperationID, Acknowledger: mutations,
 	})
 	if err != nil {
 		return &dependencyFailure{message: "runtime attachment activation binding failed", cause: err}
 	}
 	return nil
+}
+
+// RuntimeLaunchAcknowledgementOperationID deterministically derives the sole
+// wrapper acknowledgement operation for one service-owned task.
+func RuntimeLaunchAcknowledgementOperationID(taskHandle string) (string, error) {
+	if err := domain.ValidateTaskHandle(taskHandle); err != nil {
+		return "", err
+	}
+	operationDigest := fmt.Sprintf("%x", sha256.Sum256([]byte("runtime-launch-ack\x00"+taskHandle)))
+	return "launch-ack-" + operationDigest[:32], nil
 }
 
 // AbandonManagedRun durably closes one exact unbound preparation. Preserve
