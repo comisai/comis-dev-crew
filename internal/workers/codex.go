@@ -151,8 +151,9 @@ func (adapter *CodexAdapter) BuildLaunchDescriptor(
 	if err := validateRuntimeAttachment(request.Attachment); err != nil {
 		return application.WorkerLaunchDescriptor{}, err
 	}
-	if !containsEnvironmentKey(base.EnvironmentKeys, "DEV_CREW_ATTACHMENT") {
-		return application.WorkerLaunchDescriptor{}, errors.New("build Codex launch descriptor: attachment environment key is not allowed")
+	if !containsEnvironmentKey(base.EnvironmentKeys, application.RuntimeAttachmentPathEnvironment) ||
+		!containsEnvironmentKey(base.EnvironmentKeys, application.RuntimeAttachmentTargetEnvironment) {
+		return application.WorkerLaunchDescriptor{}, errors.New("build Codex launch descriptor: attachment environment keys are not allowed")
 	}
 	arguments := append([]string(nil), base.Arguments...)
 	arguments = append(arguments,
@@ -171,7 +172,8 @@ func (adapter *CodexAdapter) BuildLaunchDescriptor(
 		Arguments: arguments, WorkingDirectory: base.WorkingDirectory,
 		EnvironmentKeys: append([]string(nil), base.EnvironmentKeys...),
 		EnvironmentBindings: map[string]string{
-			"DEV_CREW_ATTACHMENT": request.Attachment.MountSocketPath,
+			application.RuntimeAttachmentPathEnvironment:   request.Attachment.MountSocketPath,
+			application.RuntimeAttachmentTargetEnvironment: request.Attachment.AttachmentTargetName,
 		},
 		Model: base.Model, Effort: base.Effort, TerminalAllowEntry: base.TerminalAllowEntry,
 		Network: string(base.Network), ConcurrencyLimit: base.ConcurrencyLimit,
@@ -246,7 +248,7 @@ func validateRuntimeAttachment(attachment application.RuntimeSocketAttachment) e
 		domain.ValidateAttachmentTargetName(attachment.AttachmentTargetName) != nil {
 		return errors.New("build Codex launch descriptor: runtime attachment authority is invalid")
 	}
-	expectedMount := filepath.Join("/run/comis/attachments", attachment.AttachmentTargetName)
+	expectedMount := filepath.Join(application.RuntimeAttachmentMountDirectory, attachment.AttachmentTargetName)
 	if attachment.MountSocketPath != expectedMount || filepath.Clean(attachment.MountSocketPath) != attachment.MountSocketPath ||
 		strings.ContainsAny(attachment.MountSocketPath, "\x00\r\n") {
 		return errors.New("build Codex launch descriptor: runtime attachment mount differs from activation")

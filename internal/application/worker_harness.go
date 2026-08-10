@@ -10,6 +10,17 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
+const (
+	// RuntimeAttachmentMountDirectory is the fixed worker-visible directory
+	// populated by the Comis execution-attachment mount.
+	RuntimeAttachmentMountDirectory = "/run/comis/attachments"
+	// RuntimeAttachmentPathEnvironment carries the exact mounted socket path.
+	RuntimeAttachmentPathEnvironment = "DEV_CREW_ATTACHMENT"
+	// RuntimeAttachmentTargetEnvironment carries the host-assigned target name
+	// that the reporter must match before connecting.
+	RuntimeAttachmentTargetEnvironment = "DEV_CREW_ATTACHMENT_TARGET_NAME"
+)
+
 // HarnessAvailability is the closed result of an exact adapter probe.
 type HarnessAvailability string
 
@@ -221,7 +232,7 @@ func BuildWorkerLaunchDescriptor(
 	attachment := RuntimeSocketAttachment{
 		ExecutionAttachmentID: task.ExecutionAttachmentID,
 		AttachmentTargetName:  task.AttachmentTargetName,
-		MountSocketPath:       filepath.Join("/run/comis/attachments", task.AttachmentTargetName),
+		MountSocketPath:       filepath.Join(RuntimeAttachmentMountDirectory, task.AttachmentTargetName),
 	}
 	request := WorkerLaunchRequest{
 		ProfileID: task.WorkerProfileID, Shape: task.Shape,

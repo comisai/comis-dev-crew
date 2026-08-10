@@ -108,6 +108,10 @@ func TestDevcrewReportBriefProbeConnectsThroughAssignedMountedTarget(t *testing.
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(mountRoot) })
+	mountRoot, err = filepath.EvalSymlinks(mountRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
 	targetName := "attachment-0123456789abcdef0123456789abcdef.sock"
 	socketPath := filepath.Join(mountRoot, targetName)
 	address, err := net.ResolveUnixAddr("unix", socketPath)
@@ -141,13 +145,60 @@ func TestDevcrewReportBriefProbeConnectsThroughAssignedMountedTarget(t *testing.
 			t.Errorf("mounted runtime probe stop = %v", err)
 		}
 	})
-	client, err := NewRuntimeClient(socketPath, time.Second)
+	client, err := newMountedRuntimeClient(socketPath, targetName, mountRoot, time.Second)
 	if err != nil {
 		t.Fatalf("open assigned mounted target: %v", err)
 	}
 	var stdout, stderr bytes.Buffer
 	if exit := RunCommand(context.Background(), []string{"brief"}, &stdout, &stderr, CommandConfig{Capability: client}); exit != 0 || stdout.String() != brief.Content || stderr.Len() != 0 {
 		t.Fatalf("devcrew-report brief probe = %d, stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
+	}
+	if err := os.Chmod(mountRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Brief(context.Background()); err == nil {
+		t.Fatal("mounted runtime client ignored a changed protected mount posture")
+	}
+}
+
+func TestMountedRuntimeClientRequiresExactAssignedTarget(t *testing.T) {
+	targetName := "attachment-0123456789abcdef0123456789abcdef.sock"
+	mountRoot := "/run/comis/attachments"
+	validPath := filepath.Join(mountRoot, targetName)
+	if err := validateMountedRuntimeSocketPath(validPath, targetName, mountRoot); err != nil {
+		t.Fatalf("valid assigned target rejected: %v", err)
+	}
+	tests := []struct {
+		name           string
+		path           string
+		assigned       string
+		mountDirectory string
+	}{
+		{name: "relative", path: "run/comis/attachments/" + targetName, assigned: targetName, mountDirectory: mountRoot},
+		{name: "unclean", path: mountRoot + "/../attachments/" + targetName, assigned: targetName, mountDirectory: mountRoot},
+		{name: "different directory", path: "/run/comis/other/" + targetName, assigned: targetName, mountDirectory: mountRoot},
+		{name: "source basename", path: mountRoot + "/attachment.sock", assigned: "attachment.sock", mountDirectory: mountRoot},
+		{name: "different assigned name", path: validPath, assigned: "attachment-ffffffffffffffffffffffffffffffff.sock", mountDirectory: mountRoot},
+		{name: "uppercase assigned name", path: validPath, assigned: "attachment-0123456789ABCDEF0123456789ABCDEF.sock", mountDirectory: mountRoot},
+		{name: "control character", path: validPath + "\n", assigned: targetName, mountDirectory: mountRoot},
+		{name: "unclean mount directory", path: validPath, assigned: targetName, mountDirectory: mountRoot + "/."},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validateMountedRuntimeSocketPath(test.path, test.assigned, test.mountDirectory); err == nil {
+				t.Fatal("mounted runtime path accepted an unassigned target")
+			}
+		})
+	}
+	if _, err := NewMountedRuntimeClient("/tmp/"+targetName, targetName, time.Second); err == nil {
+		t.Fatal("NewMountedRuntimeClient accepted a socket outside the protected mount")
+	}
+	unsafeRoot := boundaryRuntimeDirectory(t)
+	if err := os.Chmod(unsafeRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newMountedRuntimeClient(filepath.Join(unsafeRoot, targetName), targetName, unsafeRoot, time.Second); err == nil {
+		t.Fatal("mounted runtime client accepted a broadly accessible mount")
 	}
 }
 

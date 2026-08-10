@@ -165,18 +165,26 @@ binding ratification record.
 
 All four commands support `--help` and `--version`. Build them with `make build`.
 
-Workers receive `devcrew-report` with `DEV_CREW_ATTACHMENT` set by the launch descriptor to the
-Comis-protected task socket at `/run/comis/attachments/<attachmentTargetName>`. The command accepts
-no task, run, lease, socket, or credential selector. `brief` reads the exact pinned contract;
+Workers receive `devcrew-report` with `DEV_CREW_ATTACHMENT` and
+`DEV_CREW_ATTACHMENT_TARGET_NAME` set by the launch descriptor from the same activation-returned
+binding. The former is the Comis-protected task socket at
+`/run/comis/attachments/<attachmentTargetName>`; the latter must exactly match that path's
+host-assigned `attachment-<32 lowercase hex>.sock` basename. The command rejects a different
+directory, basename, or assigned name and accepts no task, run, lease, socket, or credential
+selector. `brief` reads the exact pinned contract;
 `acknowledge` verifies and echoes the socket-bound task/run/lease, actual canonical working
 directory, and brief revision before task state may become `working`;
 `progress`, `decision`, `blocked`, `paused`, `candidate-complete`, `failed`, and `resolved`
 append bounded sparse reports. A candidate report remains non-terminal until service validation.
+This boundary treats both environment values as untrusted selectors: the fixed directory, exact
+assigned-name equality, owner-only canonical mount, socket type/mode, and pinned inode must all
+agree. Any missing, altered, symlinked, or differently named target fails closed.
 
 The first real harness adapter builds a fixed no-shell `codex exec --json` descriptor from an
 exact-version static profile. The descriptor validates the activation-returned attachment ID and
-target name, references no host socket source, and binds only the exact protected mounted target to
-`DEV_CREW_ATTACHMENT`. Task/run/lease and brief authority remain only in the protected attachment,
+target name, references no host socket source, and binds only the exact protected mounted path and
+its matching target name to the two fixed reporter environment keys. Task/run/lease, execution-
+attachment ID, and brief authority remain only in the protected attachment,
 never argv or the generic bootstrap prompt. Structured activity is classified only
 while fresh; a completed turn without a task report is `unknown`. Because the reviewed Codex CLI
 does not expose a trustworthy settle signal, the current profile is explicitly degraded and cannot

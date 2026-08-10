@@ -52,9 +52,13 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 		TerminalAllowEntry: codexConfig.TerminalAllowEntryID,
 		Network:            codexConfig.Network, ConcurrencyLimit: codexConfig.ConcurrencyLimit,
 		Unattended: true, Executable: codexConfig.Executable,
-		Arguments:       []string{"exec", "--json"},
-		EnvironmentKeys: []string{"DEV_CREW_ATTACHMENT", "PATH"},
-		Availability:    workers.AvailabilityAvailable,
+		Arguments: []string{"exec", "--json"},
+		EnvironmentKeys: []string{
+			application.RuntimeAttachmentPathEnvironment,
+			application.RuntimeAttachmentTargetEnvironment,
+			"PATH",
+		},
+		Availability: workers.AvailabilityAvailable,
 	}})
 	if err != nil {
 		return Config{}, fmt.Errorf("run service Codex profile composition: %w", err)

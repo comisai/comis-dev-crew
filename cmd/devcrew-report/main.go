@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/command"
 	"github.com/comisai/comis-dev-crew/internal/reporter"
 )
@@ -20,7 +21,11 @@ import (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	capability, _ := reporter.NewRuntimeClient(os.Getenv("DEV_CREW_ATTACHMENT"), 5*time.Second)
+	capability, _ := reporter.NewMountedRuntimeClient(
+		os.Getenv(application.RuntimeAttachmentPathEnvironment),
+		os.Getenv(application.RuntimeAttachmentTargetEnvironment),
+		5*time.Second,
+	)
 	os.Exit(reporter.RunCommand(ctx, os.Args[1:], os.Stdout, os.Stderr, reporter.CommandConfig{
 		Capability: capability, Clock: func() time.Time { return time.Now().UTC() },
 		NewLocalReportID: newLocalReportID, WorkingDirectory: canonicalWorkingDirectory,

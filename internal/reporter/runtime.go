@@ -269,24 +269,11 @@ func (server *RuntimeServer) acknowledgeLaunch(ctx context.Context, request runt
 
 // RuntimeClient is the worker-side narrow brief/read and report/append client.
 type RuntimeClient struct {
-	socketPath string
-	socketInfo os.FileInfo
-	timeout    time.Duration
-}
-
-// NewRuntimeClient validates and pins the owner-only Unix socket identity.
-func NewRuntimeClient(socketPath string, timeout time.Duration) (*RuntimeClient, error) {
-	if timeout <= 0 || timeout > time.Minute {
-		return nil, errors.New("create runtime attachment client: timeout is invalid")
-	}
-	if err := validateRuntimeSocketPath(socketPath); err != nil {
-		return nil, err
-	}
-	info, err := os.Lstat(socketPath)
-	if err != nil || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 {
-		return nil, errors.New("create runtime attachment client: socket is unavailable or unsafe")
-	}
-	return &RuntimeClient{socketPath: socketPath, socketInfo: info, timeout: timeout}, nil
+	socketPath     string
+	socketInfo     os.FileInfo
+	mountDirectory string
+	mountInfo      os.FileInfo
+	timeout        time.Duration
 }
 
 // Brief fetches the exact pinned task brief from the socket capability.
@@ -372,6 +359,13 @@ func (client *RuntimeClient) call(ctx context.Context, request runtimeRequest) (
 	if client == nil || client.socketInfo == nil {
 		return RuntimeOutcome{}, errors.New("call runtime attachment: client is unavailable")
 	}
+	if client.mountInfo != nil {
+		currentMount, mountErr := os.Lstat(client.mountDirectory)
+		if mountErr != nil || !os.SameFile(client.mountInfo, currentMount) || !currentMount.IsDir() ||
+			currentMount.Mode()&os.ModeSymlink != 0 || currentMount.Mode().Perm()&0o077 != 0 {
+			return RuntimeOutcome{}, errors.New("call runtime attachment: protected mount identity changed")
+		}
+	}
 	current, err := os.Lstat(client.socketPath)
 	if err != nil || !os.SameFile(client.socketInfo, current) {
 		return RuntimeOutcome{}, errors.New("call runtime attachment: socket identity changed")
@@ -456,7 +450,7 @@ func validLaunchAcknowledgementResult(
 }
 
 func validateRuntimeSocketTarget(path string) error {
-	if err := validateRuntimeSocketPath(path); err != nil {
+	if err := validateRuntimeSourceSocketPath(path); err != nil {
 		return err
 	}
 	parent := filepath.Dir(path)
@@ -470,14 +464,6 @@ func validateRuntimeSocketTarget(path string) error {
 	}
 	if _, err := os.Lstat(path); err == nil || !os.IsNotExist(err) {
 		return errors.New("listen runtime attachment: socket target already exists or is ambiguous")
-	}
-	return nil
-}
-
-func validateRuntimeSocketPath(path string) error {
-	if !filepath.IsAbs(path) || filepath.Clean(path) != path || len([]byte(path)) > maximumRuntimePath ||
-		filepath.Base(path) != "attachment.sock" || strings.ContainsAny(path, "\x00\r\n") {
-		return errors.New("runtime attachment socket path is invalid")
 	}
 	return nil
 }
