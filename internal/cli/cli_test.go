@@ -113,6 +113,7 @@ func TestRun_HumanReadCommandsUseOneCanonicalClient(t *testing.T) {
 		{name: "task show", args: []string{"task", "show", "task-0001"}, wantCall: "show:task-0001", wantOutput: "taskHandle: \"task-0001\""},
 		{name: "task explain", args: []string{"task", "explain", "task-0001"}, wantCall: "explain:task-0001", wantOutput: "REASON"},
 		{name: "task operation", args: []string{"task", "operation", "op-0001"}, wantCall: "operation:op-0001", wantOutput: "OPERATION"},
+		{name: "task launch plan", args: []string{"task", "launch-plan", "task-0001"}, wantCall: "launch-plan:task-0001", wantOutput: `"terminalAllowEntryId"`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -144,6 +145,7 @@ func TestRun_JSONFormatsAreStableVersionedProjections(t *testing.T) {
 		{"task", "show", "task-0001", "--format", "json"},
 		{"task", "explain", "task-0001", "--format", "json"},
 		{"task", "operation", "op-0001", "--format", "json"},
+		{"task", "launch-plan", "task-0001", "--format", "json"},
 	}
 	for _, args := range tests {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
@@ -285,6 +287,7 @@ type fakeClient struct {
 	detail      application.TaskDetail
 	explanation application.TaskExplanation
 	operation   application.OperationView
+	launchPlan  application.LaunchPlan
 	prepared    localapi.PrepareTaskResult
 	err         error
 	calls       []string
@@ -329,6 +332,11 @@ func (client *fakeClient) ExplainTask(_ context.Context, operationID, handle str
 func (client *fakeClient) Operation(_ context.Context, operationID, targetID string) (application.OperationView, error) {
 	client.record(operationID, "operation:"+targetID)
 	return client.operation, client.err
+}
+
+func (client *fakeClient) GetLaunchPlan(_ context.Context, operationID, taskHandle string) (application.LaunchPlan, error) {
+	client.record(operationID, "launch-plan:"+taskHandle)
+	return client.launchPlan, client.err
 }
 
 func fixtureClient() *fakeClient {
@@ -380,6 +388,15 @@ func fixtureClient() *fakeClient {
 		operation: application.OperationView{
 			SchemaVersion: 1, CapturedAtMs: 1234, OperationID: "op-0001", Command: "PrepareTask",
 			SubjectDigest: strings.Repeat("b", 64), Status: domain.OperationCompleted, StateVersion: 7,
+		},
+		launchPlan: application.LaunchPlan{
+			SchemaVersion: 1, CapturedAtMs: 1234, StateVersion: 7,
+			Completeness: application.CompletenessComplete, TaskHandle: "task-0001",
+			State: domain.TaskReady, StateSource: application.StateSourceStore,
+			StateConfidence: application.ConfidenceVerified, Freshness: application.FreshnessCurrent,
+			WorkerProfileID: "codex-standard", TerminalAllowEntryID: "terminal-codex-reviewed",
+			BriefRevisionHash:    strings.Repeat("c", 64),
+			AttachmentTargetName: "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
 		},
 	}
 }

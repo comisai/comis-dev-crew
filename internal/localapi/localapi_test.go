@@ -28,6 +28,11 @@ func TestServerClient_ReadQueriesOverOwnerOnlyUnixSocket(t *testing.T) {
 			TaskHandle: "task-0001", StateVersion: 7,
 		}},
 		operation: application.OperationView{SchemaVersion: 1, CapturedAtMs: now.UnixMilli(), OperationID: "op-0001", StateVersion: 7},
+		launchPlan: application.LaunchPlan{
+			SchemaVersion: 1, CapturedAtMs: now.UnixMilli(), StateVersion: 7,
+			TaskHandle: "task-0001", WorkerProfileID: "codex-reviewed",
+			TerminalAllowEntryID: "terminal-codex-reviewed",
+		},
 	}
 	socketPath, stop := startAPIServer(t, queries, CallerOperatorCLI, time.Now)
 	defer stop()
@@ -60,6 +65,10 @@ func TestServerClient_ReadQueriesOverOwnerOnlyUnixSocket(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(operation, queries.operation) {
 		t.Fatalf("Operation() = %#v, %v, want %#v", operation, err, queries.operation)
 	}
+	launchPlan, err := client.GetLaunchPlan(context.Background(), "read-0007", "task-0001")
+	if err != nil || !reflect.DeepEqual(launchPlan, queries.launchPlan) {
+		t.Fatalf("GetLaunchPlan() = %#v, %v, want %#v", launchPlan, err, queries.launchPlan)
+	}
 
 	assertMode(t, filepath.Dir(socketPath), 0o700)
 	assertMode(t, socketPath, 0o600)
@@ -87,6 +96,7 @@ func TestServer_StrictlyRejectsMalformedAndAuthorityBroadeningRequests(t *testin
 		{name: "duplicate payload field", line: validPrefix + `"method":"ShowTask","payload":{"taskHandle":"task-0001","taskHandle":"task-0002"}}`, code: domain.ErrorInvalidArgument},
 		{name: "explain payload field", line: validPrefix + `"method":"ExplainTask","payload":{"taskHandle":"task-0001","scope":"all"}}`, code: domain.ErrorInvalidArgument},
 		{name: "operation payload field", line: validPrefix + `"method":"GetOperation","payload":{"operationId":"op-0001","scope":"all"}}`, code: domain.ErrorInvalidArgument},
+		{name: "launch plan payload field", line: validPrefix + `"method":"GetLaunchPlan","payload":{"taskHandle":"task-0001","path":"/tmp/redirect"}}`, code: domain.ErrorInvalidArgument},
 		{name: "expired deadline", line: validPrefix + `"method":"Diagnose","payload":{},"deadlineAtMs":` + formatInt(now.Add(-time.Second).UnixMilli()) + `}`, code: domain.ErrorDeadlineExceeded},
 		{name: "oversized request", line: validPrefix + `"method":"Diagnose","payload":{"padding":"` + strings.Repeat("x", MaxRequestBytes) + `"}}`, code: domain.ErrorInvalidArgument},
 	}
@@ -176,6 +186,7 @@ type apiQueries struct {
 	detail      application.TaskDetail
 	explanation application.TaskExplanation
 	operation   application.OperationView
+	launchPlan  application.LaunchPlan
 	diagnose    func(context.Context) (application.DiagnosticReport, error)
 }
 
@@ -204,6 +215,10 @@ func (queries *apiQueries) ExplainTask(context.Context, string) (application.Tas
 
 func (queries *apiQueries) Operation(context.Context, string) (application.OperationView, error) {
 	return queries.operation, nil
+}
+
+func (queries *apiQueries) GetLaunchPlan(context.Context, string) (application.LaunchPlan, error) {
+	return queries.launchPlan, nil
 }
 
 func startAPIServer(t *testing.T, queries ReadQueries, caller CallerClass, clock application.Clock) (string, func()) {

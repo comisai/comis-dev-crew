@@ -92,6 +92,7 @@ func TestFacade_ReadToolsUseOneCanonicalCommandAndIgnoreForgedRunMetadata(t *tes
 		{name: ToolListTasks, args: EmptyInput{}, want: "list:read-0001"},
 		{name: ToolGetTask, args: TaskInput{TaskHandle: "task-0001"}, want: "get:read-0001:task-0001"},
 		{name: ToolExplainTask, args: TaskInput{TaskHandle: "task-0001"}, want: "explain:read-0001:task-0001"},
+		{name: ToolGetLaunchPlan, args: TaskInput{TaskHandle: "task-0001"}, want: "launch-plan:read-0001:task-0001"},
 	}
 	for _, test := range tests {
 		client.calls = nil
@@ -183,7 +184,7 @@ func TestFacade_UncertainPreparationReconcilesBeforeOneExactRetry(t *testing.T) 
 
 func assertToolCatalog(t *testing.T, tools []*mcp.Tool) {
 	t.Helper()
-	want := map[string]bool{ToolPrepareTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true}
+	want := map[string]bool{ToolPrepareTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true}
 	if len(tools) != len(want) {
 		t.Fatalf("tool count = %d, want %d", len(tools), len(want))
 	}
@@ -287,4 +288,12 @@ func (client *fakeClient) ExplainTask(_ context.Context, operationID, taskHandle
 func (client *fakeClient) Operation(_ context.Context, operationID, target string) (application.OperationView, error) {
 	client.calls = append(client.calls, "operation:"+operationID+":"+target)
 	return client.operation, client.operationError
+}
+
+func (client *fakeClient) GetLaunchPlan(_ context.Context, operationID, taskHandle string) (application.LaunchPlan, error) {
+	client.calls = append(client.calls, "launch-plan:"+operationID+":"+taskHandle)
+	return application.LaunchPlan{
+		SchemaVersion: 1, StateVersion: 7, TaskHandle: taskHandle,
+		WorkerProfileID: "codex-reviewed", TerminalAllowEntryID: "terminal-codex-reviewed",
+	}, nil
 }

@@ -21,11 +21,13 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/localapi"
 	"github.com/comisai/comis-dev-crew/internal/mcpadapter"
 	"github.com/comisai/comis-dev-crew/internal/service"
+	"github.com/comisai/comis-dev-crew/internal/store/sqlite"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const parityOperationID = "parity-prepare-0001"
 const parityServiceID = "service-instance-parity"
+const parityLaunchTaskHandle = "task-parity-launch-0001"
 
 func TestAdapterParity_PrepareReplayAndErrorsMatchAcrossDirectCLIAndMCP(t *testing.T) {
 	harness := newParityHarness(t)
@@ -169,6 +171,44 @@ func TestAdapterParity_ReadOutcomesAndClassificationsMatch(t *testing.T) {
 	}
 }
 
+func TestAdapterParity_LaunchPlanMatchesDirectCLIJSONAndMCPWithoutProcessMaterial(t *testing.T) {
+	harness := newLaunchPlanParityHarness(t)
+	direct, err := harness.operator.GetLaunchPlan(context.Background(), "parity-launch-direct", parityLaunchTaskHandle)
+	if err != nil {
+		t.Fatalf("direct GetLaunchPlan() error = %v", err)
+	}
+	cliOutput, cliError, exit := harness.runCLI([]string{
+		"--socket", harness.operatorSocket, "task", "launch-plan", parityLaunchTaskHandle, "--format", "json",
+	}, "parity-launch-cli", nil)
+	if exit != cli.ExitSuccess || cliError != "" {
+		t.Fatalf("CLI launch-plan exit=%d output=%q error=%q", exit, cliOutput, cliError)
+	}
+	var cliPlan application.LaunchPlan
+	decodeJSON(t, []byte(cliOutput), &cliPlan)
+	mcpResult, err := harness.mcpSession.CallTool(context.Background(), &mcp.CallToolParams{
+		Meta: parityCallMeta("parity-launch-mcp"), Name: mcpadapter.ToolGetLaunchPlan,
+		Arguments: mcpadapter.TaskInput{TaskHandle: parityLaunchTaskHandle},
+	})
+	if err != nil || mcpResult.IsError {
+		t.Fatalf("MCP get_launch_plan = %#v, %v", mcpResult, err)
+	}
+	var mcpPlan application.LaunchPlan
+	decodeStructured(t, mcpResult.StructuredContent, &mcpPlan)
+	if !reflect.DeepEqual(cliPlan, direct) || !reflect.DeepEqual(mcpPlan, direct) {
+		t.Fatalf("launch-plan parity mismatch direct=%#v CLI=%#v MCP=%#v", direct, cliPlan, mcpPlan)
+	}
+	encoded := string(encodeJSON(t, direct)) + cliOutput + string(encodeJSON(t, mcpResult.StructuredContent))
+	for _, forbidden := range []string{"/private/", "/run/comis/attachments", "--model", "DEV_CREW_ATTACHMENT", "execution-attachment-parity"} {
+		if strings.Contains(encoded, forbidden) {
+			t.Fatalf("launch-plan parity fixture leaked %q: %s", forbidden, encoded)
+		}
+	}
+	if localapi.MethodGetLaunchPlan.SideEffect() != localapi.SideEffectRead {
+		t.Fatalf("GetLaunchPlan side effect = %s", localapi.MethodGetLaunchPlan.SideEffect())
+	}
+	assertToolReadOnly(t, harness.mcpSession, mcpadapter.ToolGetLaunchPlan, true)
+}
+
 type parityHarness struct {
 	operatorSocket string
 	operator       *localapi.Client
@@ -176,8 +216,17 @@ type parityHarness struct {
 }
 
 func newParityHarness(t *testing.T) *parityHarness {
+	return newParityHarnessConfigured(t, false)
+}
+
+func newLaunchPlanParityHarness(t *testing.T) *parityHarness {
+	return newParityHarnessConfigured(t, true)
+}
+
+func newParityHarnessConfigured(t *testing.T, seedLaunchPlan bool) *parityHarness {
 	t.Helper()
 	root := integrationShortTempDir(t)
+	databasePath := filepath.Join(root, "state", "devcrew.db")
 	operatorSocket := filepath.Join(root, "run", "operator.sock")
 	mcpSocket := filepath.Join(root, "run", "mcp.sock")
 	ready := make(chan struct{})
@@ -185,9 +234,12 @@ func newParityHarness(t *testing.T) *parityHarness {
 	done := make(chan error, 1)
 	now := time.Now().UTC()
 	clock := func() time.Time { return now }
+	if seedLaunchPlan {
+		seedParityLaunchTask(t, databasePath, root, clock)
+	}
 	go func() {
 		done <- service.Run(ctx, service.Config{
-			DatabasePath: filepath.Join(root, "state", "devcrew.db"),
+			DatabasePath: databasePath,
 			SocketPath:   operatorSocket, MCPSocketPath: mcpSocket, ServiceInstanceID: parityServiceID,
 			Repositories:       parityRepositoryCatalog{},
 			Workspaces:         parityWorkspacePreparer{root: filepath.Join(root, "worktrees", "task-parity-0001")},
@@ -195,6 +247,7 @@ func newParityHarness(t *testing.T) *parityHarness {
 			TaskIDs:            func(string) (string, error) { return "task-parity-0001", nil },
 			RegistrationNonces: func() (string, error) { return "registration-nonce_parity", nil },
 			PreparationTTL:     time.Hour, Clock: clock, Ready: func() { close(ready) },
+			WorkerHarnesses: parityLaunchHarnesses{},
 		})
 	}()
 	select {
@@ -240,6 +293,83 @@ func newParityHarness(t *testing.T) *parityHarness {
 	}
 	t.Cleanup(func() { _ = mcpSession.Close(); _ = serverSession.Close() })
 	return &parityHarness{operatorSocket: operatorSocket, operator: operator, mcpSession: mcpSession}
+}
+
+func seedParityLaunchTask(t *testing.T, databasePath, root string, clock application.Clock) {
+	t.Helper()
+	store, err := sqlite.Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatalf("open launch-plan seed store: %v", err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("close launch-plan seed store: %v", err)
+		}
+	}()
+	mutations, err := application.NewMutations(application.MutationConfig{
+		Store: store, Repositories: parityRepositoryCatalog{},
+		Workspaces:         parityWorkspacePreparer{root: filepath.Join(root, "worktrees", parityLaunchTaskHandle)},
+		RuntimeAttachments: integrationRuntimeAttachments{},
+		TaskIDs:            func(string) (string, error) { return parityLaunchTaskHandle, nil },
+		RegistrationNonces: func() (string, error) { return "registration-nonce_launch-parity", nil },
+		PreparationTTL:     time.Hour, Clock: clock,
+	})
+	if err != nil {
+		t.Fatalf("create launch-plan seed mutations: %v", err)
+	}
+	prepared, err := mutations.PrepareTask(context.Background(), application.PrepareTaskCommand{
+		OperationID: "parity-launch-prepare", ServiceInstanceID: parityServiceID,
+		Shape: domain.ShapeScout, RepositoryID: "product-api", BaseRevision: strings.Repeat("c", 40),
+		AcceptanceCriteria: []string{"Return a safe launch plan."}, ValidationProfile: "go-default",
+		DeliveryMode: domain.DeliveryReport, WorkerProfileID: "codex-reviewed",
+	})
+	if err != nil {
+		t.Fatalf("prepare launch-plan seed: %v", err)
+	}
+	_, err = mutations.ActivateManagedRun(context.Background(), application.ActivateManagedRunCommand{
+		OperationID: "parity-launch-activate", ServiceInstanceID: parityServiceID,
+		ManagedRunID: "managed-run-launch-parity", ExternalRunRef: prepared.Task.Handle,
+		RegistrationNonce:     prepared.Preparation.RegistrationNonce,
+		WorkspaceLeaseID:      "workspace-lease-launch-parity",
+		ExecutionAttachmentID: "execution-attachment-parity",
+		AttachmentTargetName:  "attachment-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.sock",
+	})
+	if err != nil {
+		t.Fatalf("activate launch-plan seed: %v", err)
+	}
+}
+
+type parityLaunchHarnesses struct{}
+
+func (parityLaunchHarnesses) ResolveWorkerHarness(string) (application.WorkerHarnessAdapter, error) {
+	return parityLaunchAdapter{}, nil
+}
+
+type parityLaunchAdapter struct{}
+
+func (parityLaunchAdapter) ID() string { return "codex" }
+
+func (parityLaunchAdapter) ProbeVersion(context.Context) (application.HarnessVersionProbe, error) {
+	return application.HarnessVersionProbe{Version: "codex-cli 1.2.3", Availability: application.HarnessAvailable}, nil
+}
+
+func (parityLaunchAdapter) BuildLaunchDescriptor(
+	_ context.Context,
+	request application.WorkerLaunchRequest,
+) (application.WorkerLaunchDescriptor, error) {
+	return application.WorkerLaunchDescriptor{
+		ProfileID: request.ProfileID, TerminalAllowEntry: "terminal-codex-reviewed",
+		Attachment: request.Attachment,
+		ExpectedAcknowledgement: application.LaunchAcknowledgement{
+			TaskHandle: request.TaskHandle, ManagedRunID: request.ManagedRunID,
+			WorkspaceLeaseID: request.WorkspaceLeaseID, WorkingDirectory: request.WorkingDirectory,
+			BriefRevision: request.BriefRevision, BriefRevisionHash: request.BriefRevisionHash,
+		},
+	}, nil
+}
+
+func (parityLaunchAdapter) ClassifySemanticActivity(application.HarnessObservation) application.SemanticActivityResult {
+	return application.SemanticActivityResult{State: application.ActivityUnknown, Reason: application.SemanticReasonMissing}
 }
 
 func (harness *parityHarness) runCLI(args []string, operation string, stdin []byte) (string, string, int) {
@@ -367,6 +497,8 @@ func pointerTo(value any) any {
 	case application.TaskDetail:
 		return &typed
 	case application.TaskExplanation:
+		return &typed
+	case application.LaunchPlan:
 		return &typed
 	default:
 		panic(fmt.Sprintf("unknown parity value %T", value))

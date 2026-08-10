@@ -119,7 +119,7 @@ func TestPrepareTaskDefensiveConfigurationAndIncompleteOutcome(t *testing.T) {
 	if outcome := incomplete.handle(context.Background(), CallerOperatorCLI, payload); outcome.Error == nil || outcome.Error.Code != domain.ErrorInternal {
 		t.Fatalf("incomplete prepare outcome = %#v", outcome)
 	}
-	if MethodListTasks.SideEffect() != SideEffectRead || MethodPrepareTask.SideEffect() != SideEffectMutate {
+	if MethodListTasks.SideEffect() != SideEffectRead || MethodGetLaunchPlan.SideEffect() != SideEffectRead || MethodPrepareTask.SideEffect() != SideEffectMutate {
 		t.Fatal("method side-effect classification drifted")
 	}
 }
