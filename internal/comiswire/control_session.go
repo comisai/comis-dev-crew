@@ -358,16 +358,7 @@ func validateBaseRequest(request any) error {
 }
 
 func sameControlScopes(scopes []ServiceScope) bool {
-	required := requiredControlScopes()
-	if len(scopes) != len(required) {
-		return false
-	}
-	for index := range required {
-		if scopes[index] != required[index] {
-			return false
-		}
-	}
-	return true
+	return sameServiceScopeSet(requiredControlScopes(), scopes)
 }
 
 func requiredControlScopes() []ServiceScope {

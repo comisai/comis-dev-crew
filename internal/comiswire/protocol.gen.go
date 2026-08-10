@@ -505,6 +505,27 @@ type Client struct {
 	transport roundTripper
 }
 
+func sameServiceScopeSet(required, active []ServiceScope) bool {
+	requiredSet := make(map[ServiceScope]struct{}, len(required))
+	for _, scope := range required {
+		if !scope.Valid() {
+			return false
+		}
+		requiredSet[scope] = struct{}{}
+	}
+	activeSet := make(map[ServiceScope]struct{}, len(active))
+	for _, scope := range active {
+		if !scope.Valid() {
+			return false
+		}
+		if _, required := requiredSet[scope]; !required {
+			return false
+		}
+		activeSet[scope] = struct{}{}
+	}
+	return len(activeSet) == len(requiredSet)
+}
+
 func newClient(transport roundTripper) *Client {
 	return &Client{transport: transport}
 }
@@ -530,17 +551,8 @@ func (client *Client) Handshake(ctx context.Context, params HandshakeRequestPara
 	if response.ID != request.ID || response.Result.ProtocolID != ProtocolID || response.Result.BundleDigest != BundleDigest || response.Result.ServiceInstanceID != params.ServiceInstanceID {
 		return HandshakeResponseResult{}, fmt.Errorf("handshake response authority does not match request")
 	}
-	for _, requested := range params.RequestedScopes {
-		active := false
-		for _, candidate := range response.Result.ActiveScopes {
-			if requested == candidate {
-				active = true
-				break
-			}
-		}
-		if !active {
-			return HandshakeResponseResult{}, fmt.Errorf("handshake response omits requested scope %q", requested)
-		}
+	if !sameServiceScopeSet(params.RequestedScopes, response.Result.ActiveScopes) {
+		return HandshakeResponseResult{}, fmt.Errorf("handshake response active scopes differ from requested scopes")
 	}
 	return response.Result, nil
 }

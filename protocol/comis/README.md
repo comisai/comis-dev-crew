@@ -29,6 +29,10 @@ activate and abandon DTOs are inbound handler contracts and cannot be used as ou
 methods. Strict runtime validation rejects unknown or duplicate fields, trailing JSON, invalid
 closed discriminators, operation-envelope disagreement, response identity drift, and size-limit
 violations before they can cross the adapter boundary.
+Negotiated scope arrays are treated as duplicate-insensitive sets: ordering grants no authority,
+every requested scope must be active, and any unexpected grant is rejected. The manifest method
+list and method catalog are likewise matched by unique method name rather than position; MCP tool
+catalog verification already uses the same name-set posture.
 
 `make test-conformance` materializes the manifest's digest token and evaluates every pinned
 fixture through the generated schema dispatch. The canonical examples decode into generated DTOs

@@ -143,11 +143,21 @@ func validateMethods(manifest Manifest) error {
 	for _, artifact := range manifest.Artifacts {
 		artifacts[artifact.Path] = struct{}{}
 	}
+	catalog := make(map[string]Method, len(manifest.MethodCatalog))
+	for _, method := range manifest.MethodCatalog {
+		if method.Name == "" {
+			return fmt.Errorf("manifest method catalog has an empty name")
+		}
+		if _, exists := catalog[method.Name]; exists {
+			return fmt.Errorf("duplicate manifest method %q", method.Name)
+		}
+		catalog[method.Name] = method
+	}
 	seen := make(map[string]struct{}, len(manifest.Methods))
-	for index, name := range manifest.Methods {
-		method := manifest.MethodCatalog[index]
-		if name == "" || method.Name != name {
-			return fmt.Errorf("manifest method order differs from its catalog")
+	for _, name := range manifest.Methods {
+		method, exists := catalog[name]
+		if name == "" || !exists {
+			return fmt.Errorf("manifest method %q is absent from its catalog", name)
 		}
 		if _, exists := seen[name]; exists {
 			return fmt.Errorf("duplicate manifest method %q", name)
