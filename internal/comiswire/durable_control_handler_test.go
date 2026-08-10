@@ -81,11 +81,13 @@ func TestDurableControlHandler_ActivationValidatesPrivateJoinAndLeaseInvariant(t
 			prepared := harness.prepare(t, "operation-prepare-"+test.id)
 			lease := comiswire.WorkspaceLeaseID("workspace-lease-" + test.id)
 			params := comiswire.ActivateRequestParams{
-				OperationID:       comiswire.OperationID("operation-activate-" + test.id),
-				ManagedRunID:      comiswire.ManagedRunID("managed-run-" + test.id),
-				ExternalRunRef:    comiswire.ExternalRunRef(prepared.ExternalRunRef),
-				RegistrationNonce: comiswire.RegistrationNonce(prepared.RegistrationNonce),
-				WorkspaceLeaseID:  &lease,
+				OperationID:           comiswire.OperationID("operation-activate-" + test.id),
+				ManagedRunID:          comiswire.ManagedRunID("managed-run-" + test.id),
+				ExternalRunRef:        comiswire.ExternalRunRef(prepared.ExternalRunRef),
+				RegistrationNonce:     comiswire.RegistrationNonce(prepared.RegistrationNonce),
+				WorkspaceLeaseID:      &lease,
+				ExecutionAttachmentID: testExecutionAttachmentID("execution-attachment-" + test.id),
+				AttachmentTargetName:  testAttachmentTargetName(),
 			}
 			test.mutate(harness, &params)
 			if _, err := harness.handler.Activate(context.Background(), params); !wireErrorKind(err, test.kind) {
@@ -156,6 +158,8 @@ func TestDurableControlHandler_AbandonDispositionIsDurableAndClosed(t *testing.T
 				OperationID:  comiswire.OperationID("operation-activate-after-" + id),
 				ManagedRunID: "managed-run-after-abandon", ExternalRunRef: params.ExternalRunRef,
 				RegistrationNonce: params.RegistrationNonce, WorkspaceLeaseID: &lease,
+				ExecutionAttachmentID: testExecutionAttachmentID("execution-attachment-after-abandon"),
+				AttachmentTargetName:  testAttachmentTargetName(),
 			})
 			if !wireErrorKind(activateErr, comiswire.ErrorKindPreconditionFailed) {
 				t.Fatalf("Activate(after abandon) error = %v, want precondition_failed", activateErr)
@@ -174,6 +178,8 @@ func TestDurableControlHandler_JoinsTerminalRunningAndExactWrapperAcknowledgemen
 		OperationID: "operation-activate-terminal-join", ManagedRunID: "managed-run-terminal-join",
 		ExternalRunRef:    comiswire.ExternalRunRef(prepared.ExternalRunRef),
 		RegistrationNonce: comiswire.RegistrationNonce(prepared.RegistrationNonce), WorkspaceLeaseID: &lease,
+		ExecutionAttachmentID: testExecutionAttachmentID("execution-attachment-terminal-join"),
+		AttachmentTargetName:  testAttachmentTargetName(),
 	}
 	if _, err := harness.handler.Activate(context.Background(), activation); err != nil {
 		t.Fatal(err)
@@ -243,6 +249,8 @@ func TestDurableControlHandler_TerminalExitNeverMeansSuccess(t *testing.T) {
 		OperationID: "operation-activate-terminal-exit", ManagedRunID: "managed-run-terminal-exit",
 		ExternalRunRef:    comiswire.ExternalRunRef(prepared.ExternalRunRef),
 		RegistrationNonce: comiswire.RegistrationNonce(prepared.RegistrationNonce), WorkspaceLeaseID: &lease,
+		ExecutionAttachmentID: testExecutionAttachmentID("execution-attachment-terminal-exit"),
+		AttachmentTargetName:  testAttachmentTargetName(),
 	}
 	if _, err := harness.handler.Activate(context.Background(), activation); err != nil {
 		t.Fatal(err)
@@ -387,4 +395,14 @@ func (acceptingRuntimeAttachments) BindRuntimeAttachment(context.Context, applic
 func wireErrorKind(err error, want comiswire.ErrorKind) bool {
 	var failure comiswire.RPCError
 	return errors.As(err, &failure) && failure.Kind == want
+}
+
+func testExecutionAttachmentID(value string) *comiswire.ExecutionAttachmentID {
+	attachmentID := comiswire.ExecutionAttachmentID(value)
+	return &attachmentID
+}
+
+func testAttachmentTargetName() *comiswire.AttachmentTargetName {
+	target := comiswire.AttachmentTargetName("attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock")
+	return &target
 }

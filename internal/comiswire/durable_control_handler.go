@@ -69,10 +69,19 @@ func (handler *DurableControlHandler) Activate(ctx context.Context, params Activ
 	if params.WorkspaceLeaseID != nil {
 		workspaceLeaseID = string(*params.WorkspaceLeaseID)
 	}
+	executionAttachmentID := ""
+	attachmentTargetName := ""
+	if params.ExecutionAttachmentID != nil {
+		executionAttachmentID = string(*params.ExecutionAttachmentID)
+	}
+	if params.AttachmentTargetName != nil {
+		attachmentTargetName = string(*params.AttachmentTargetName)
+	}
 	result, err := handler.mutations.ActivateManagedRun(ctx, application.ActivateManagedRunCommand{
 		OperationID: string(params.OperationID), ServiceInstanceID: handler.serviceInstanceID,
 		ManagedRunID: string(params.ManagedRunID), ExternalRunRef: string(params.ExternalRunRef),
 		RegistrationNonce: string(params.RegistrationNonce), WorkspaceLeaseID: workspaceLeaseID,
+		ExecutionAttachmentID: executionAttachmentID, AttachmentTargetName: attachmentTargetName,
 	})
 	if err != nil {
 		return ActivateResponseResult{}, controlMutationFailure(err)
@@ -80,7 +89,8 @@ func (handler *DurableControlHandler) Activate(ctx context.Context, params Activ
 	if result.Operation.ID != string(params.OperationID) || result.Operation.Status != domain.OperationCompleted ||
 		result.Operation.UpdatedAt.Location() != time.UTC || result.Task.State != domain.TaskReady ||
 		result.Task.ManagedRunID != string(params.ManagedRunID) || result.Task.Handle != string(params.ExternalRunRef) ||
-		result.Task.WorkspaceLeaseID != workspaceLeaseID {
+		result.Task.WorkspaceLeaseID != workspaceLeaseID || result.Task.ExecutionAttachmentID != executionAttachmentID ||
+		result.Task.AttachmentTargetName != attachmentTargetName {
 		return ActivateResponseResult{}, wireFailure(ErrorKindInternalError, "durable activation result is incomplete")
 	}
 	return ActivateResponseResult{
