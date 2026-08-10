@@ -194,3 +194,29 @@ func TestRuntimeAttachmentCoordinator_RecoversPreparedTaskSocketAfterRestart(t *
 		t.Fatalf("task after recovered acknowledgement = %#v, %v", task, err)
 	}
 }
+
+func TestRuntimeAttachmentCoordinator_RejectsIntermediateSymlinkWithoutCreatingOutside(t *testing.T) {
+	root := shortTempDir(t)
+	outside := filepath.Join(root, "outside")
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(root, "linked")
+	if err := os.Symlink(outside, linked); err != nil {
+		t.Fatal(err)
+	}
+	store, err := sqlite.Open(context.Background(), filepath.Join(root, "state", "devcrew.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+		RuntimeRoot: filepath.Join(linked, "tasks"), Store: store,
+		Clock: time.Now, NewCredential: func() (string, error) { return "unused-credential-0123456789abcdef", nil },
+	}); err == nil {
+		t.Fatal("newRuntimeAttachmentCoordinator(symlinked root) error = nil")
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "tasks")); !os.IsNotExist(err) {
+		t.Fatalf("outside runtime root was created through symlink: %v", err)
+	}
+}
