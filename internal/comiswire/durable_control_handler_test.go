@@ -21,11 +21,15 @@ func TestDurableControlHandler_ActivationReplaysAcrossRestartAndRejectsAlteratio
 	prepared := harness.prepare(t, "operation-prepare-activate")
 	harness.now = harness.now.Add(time.Minute)
 	lease := comiswire.WorkspaceLeaseID("workspace-lease-activate")
+	attachmentID := comiswire.ExecutionAttachmentID("execution-attachment-activate")
+	attachmentTarget := comiswire.AttachmentTargetName("attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock")
 	params := comiswire.ActivateRequestParams{
 		OperationID: "operation-activate", ManagedRunID: "managed-run-activate",
-		ExternalRunRef:    comiswire.ExternalRunRef(prepared.ExternalRunRef),
-		RegistrationNonce: comiswire.RegistrationNonce(prepared.RegistrationNonce),
-		WorkspaceLeaseID:  &lease,
+		ExternalRunRef:        comiswire.ExternalRunRef(prepared.ExternalRunRef),
+		RegistrationNonce:     comiswire.RegistrationNonce(prepared.RegistrationNonce),
+		WorkspaceLeaseID:      &lease,
+		ExecutionAttachmentID: &attachmentID,
+		AttachmentTargetName:  &attachmentTarget,
 	}
 
 	first, err := harness.handler.Activate(context.Background(), params)
