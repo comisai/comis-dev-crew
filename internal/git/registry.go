@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sync"
 )
 
 var repositoryIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,63}$`)
@@ -15,6 +16,7 @@ var repositoryIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,63}$`)
 type Registry struct {
 	gitExecutable string
 	repositories  map[string]Repository
+	mu            sync.Mutex
 }
 
 // NewRegistry validates every configured path and primary Git identity before
@@ -154,6 +156,14 @@ func inspectConfiguredRepository(ctx context.Context, executable string, roots [
 	if err := validatePrimaryMarker(configured.PrimaryCheckout); err != nil {
 		return Repository{}, safePathError("inspect configured repository", err)
 	}
+	if !repositoryIDPattern.MatchString(configured.DefaultBranch) {
+		return Repository{}, errors.New("inspect configured repository: default branch is invalid")
+	}
+	branchExists, err := gitPredicate(ctx, executable, "--no-optional-locks", "-C", configured.PrimaryCheckout,
+		"show-ref", "--verify", "--quiet", "refs/heads/"+configured.DefaultBranch)
+	if err != nil || !branchExists {
+		return Repository{}, errors.New("inspect configured repository: default branch is unavailable")
+	}
 	commonDirectory, identity, err := inspectGitWorktree(ctx, executable, configured.PrimaryCheckout)
 	if err != nil {
 		return Repository{}, err
@@ -163,7 +173,8 @@ func inspectConfiguredRepository(ctx context.Context, executable string, roots [
 	}
 	return Repository{
 		ID: configured.ID, PrimaryCheckout: configured.PrimaryCheckout, WorktreeRoot: configured.WorktreeRoot,
-		GitCommonDir: commonDirectory, GitCommonDirIdentity: identity,
+		DefaultBranch: configured.DefaultBranch,
+		GitCommonDir:  commonDirectory, GitCommonDirIdentity: identity,
 	}, nil
 }
 

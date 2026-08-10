@@ -19,6 +19,7 @@ func TestRegistry_ResolvesConfiguredPrimaryAndValidatesRealWorktreeIdentity(t *t
 		ApprovedRoots: []string{fixture.approvedRoot},
 		Repositories: []devgit.RepositoryConfig{{
 			ID: fixture.repositoryID, PrimaryCheckout: fixture.primary, WorktreeRoot: fixture.worktreeRoot,
+			DefaultBranch: "main",
 		}},
 	})
 	if err != nil {
@@ -90,6 +91,8 @@ func TestRegistry_RejectsUnsafeConfiguredRootsAndPrimaryCheckouts(t *testing.T) 
 			config.Repositories = append(config.Repositories, duplicate)
 		})},
 		{name: "invalid repository id", config: fixture.config(func(config *devgit.RegistryConfig) { config.Repositories[0].ID = "owner/repository" })},
+		{name: "invalid default branch", config: fixture.config(func(config *devgit.RegistryConfig) { config.Repositories[0].DefaultBranch = "owner/main" })},
+		{name: "missing default branch", config: fixture.config(func(config *devgit.RegistryConfig) { config.Repositories[0].DefaultBranch = "missing" })},
 		{name: "no repositories", config: fixture.config(func(config *devgit.RegistryConfig) { config.Repositories = nil })},
 		{name: "duplicate approved root", config: fixture.config(func(config *devgit.RegistryConfig) {
 			config.ApprovedRoots = append(config.ApprovedRoots, config.ApprovedRoots[0])
@@ -246,6 +249,7 @@ func (fixture repositoryFixture) config(mutate func(*devgit.RegistryConfig)) dev
 		ApprovedRoots: []string{fixture.approvedRoot},
 		Repositories: []devgit.RepositoryConfig{{
 			ID: fixture.repositoryID, PrimaryCheckout: fixture.primary, WorktreeRoot: fixture.worktreeRoot,
+			DefaultBranch: "main",
 		}},
 	}
 	if mutate != nil {

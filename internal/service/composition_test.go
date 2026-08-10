@@ -229,7 +229,7 @@ func installedServiceConfig(t *testing.T, root string) Config {
 	if err := os.MkdirAll(worktreeRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	runServiceGit(t, primary, "init")
+	runServiceGit(t, primary, "init", "--initial-branch=main")
 	runServiceGit(t, primary, "config", "user.name", "Service Fixture")
 	runServiceGit(t, primary, "config", "user.email", "fixture@example.invalid")
 	if err := os.WriteFile(filepath.Join(primary, "README.md"), []byte("fixture\n"), 0o600); err != nil {
@@ -247,7 +247,7 @@ func installedServiceConfig(t *testing.T, root string) Config {
 		PreparationTTL: 10 * time.Minute,
 		RepositoryComposition: &RepositoryComposition{
 			GitExecutable: gitExecutable, ApprovedRoot: approvedRoot, RepositoryID: "product-api",
-			PrimaryCheckout: primary, WorktreeRoot: worktreeRoot, WorkspaceRoot: workspace,
+			PrimaryCheckout: primary, WorktreeRoot: worktreeRoot, DefaultBranch: "main", WorkspaceRoot: workspace,
 		},
 		ComisComposition: &ComisComposition{
 			SocketPath: filepath.Join(root, "comis.sock"), CredentialFile: credentialFile,

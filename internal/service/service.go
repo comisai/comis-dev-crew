@@ -56,6 +56,7 @@ type RepositoryComposition struct {
 	RepositoryID    string
 	PrimaryCheckout string
 	WorktreeRoot    string
+	DefaultBranch   string
 	WorkspaceRoot   string
 }
 

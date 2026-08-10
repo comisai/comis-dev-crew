@@ -13,7 +13,8 @@ const serviceUsage = `Usage: devcrew-service [--database PATH] [--socket PATH]
        devcrew-service --database PATH --socket PATH --mcp-socket PATH
          --service-instance ID --git-executable PATH --approved-root PATH
          --repository-id ID --repository-primary PATH --worktree-root PATH
-         --workspace-root PATH --comis-socket PATH --comis-credential-file PATH
+         --repository-default-branch BRANCH --workspace-root PATH
+         --comis-socket PATH --comis-credential-file PATH
          --comis-handshake-operation ID --fixture-worker --fixture-decision TEXT
 
 Run the sole durable comis-dev-crew service authority.
@@ -28,6 +29,7 @@ Options:
   --repository-id ID              Opaque configured repository identity
   --repository-primary PATH       Canonical primary checkout path
   --worktree-root PATH            Canonical dedicated worktree parent
+  --repository-default-branch BRANCH  Configured local default branch
   --workspace-root PATH           Canonical activated fixture worktree
   --comis-socket PATH             Owner-only Comis control Unix socket
   --comis-credential-file PATH    Owner-private Comis bearer file
@@ -63,6 +65,7 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	var repositoryID string
 	var repositoryPrimary string
 	var worktreeRoot string
+	var repositoryDefaultBranch string
 	var workspaceRoot string
 	var comisSocketPath string
 	var comisCredentialFile string
@@ -81,6 +84,7 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	flags.StringVar(&repositoryID, "repository-id", "", "opaque configured repository identity")
 	flags.StringVar(&repositoryPrimary, "repository-primary", "", "canonical primary checkout path")
 	flags.StringVar(&worktreeRoot, "worktree-root", "", "canonical dedicated worktree parent")
+	flags.StringVar(&repositoryDefaultBranch, "repository-default-branch", "", "configured local default branch")
 	flags.StringVar(&workspaceRoot, "workspace-root", "", "canonical activated fixture worktree")
 	flags.StringVar(&comisSocketPath, "comis-socket", "", "owner-only Comis control Unix socket")
 	flags.StringVar(&comisCredentialFile, "comis-credential-file", "", "owner-private Comis bearer file")
@@ -115,7 +119,7 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	}
 	installedValues := []string{
 		mcpSocketPath, serviceInstanceID, gitExecutable, approvedRoot, repositoryID, repositoryPrimary,
-		worktreeRoot, workspaceRoot, comisSocketPath, comisCredentialFile, comisHandshakeOperationID,
+		worktreeRoot, repositoryDefaultBranch, workspaceRoot, comisSocketPath, comisCredentialFile, comisHandshakeOperationID,
 		fixtureDecision,
 	}
 	installed := fixtureWorker || preparationTTLConfigured
@@ -143,7 +147,8 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 		serviceConfig.PreparationTTL = preparationTTL
 		serviceConfig.RepositoryComposition = &RepositoryComposition{
 			GitExecutable: gitExecutable, ApprovedRoot: approvedRoot, RepositoryID: repositoryID,
-			PrimaryCheckout: repositoryPrimary, WorktreeRoot: worktreeRoot, WorkspaceRoot: workspaceRoot,
+			PrimaryCheckout: repositoryPrimary, WorktreeRoot: worktreeRoot,
+			DefaultBranch: repositoryDefaultBranch, WorkspaceRoot: workspaceRoot,
 		}
 		serviceConfig.ComisComposition = &ComisComposition{
 			SocketPath: comisSocketPath, CredentialFile: comisCredentialFile,

@@ -171,6 +171,7 @@ devcrew-service \
   --repository-id product-api \
   --repository-primary /absolute/repositories/product-api \
   --worktree-root /absolute/repositories/worktrees \
+  --repository-default-branch main \
   --workspace-root /absolute/repositories/worktrees/managed-run-devcrew \
   --comis-socket /absolute/private/run/comis-control.sock \
   --comis-credential-file /absolute/private/comis.credential \

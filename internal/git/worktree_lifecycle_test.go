@@ -14,7 +14,7 @@ import (
 	devgit "github.com/comisai/comis-dev-crew/internal/git"
 )
 
-var preparedBranchPattern = regexp.MustCompile(`^devcrew/[a-z0-9][a-z0-9-]{2,47}-[a-f0-9]{16}$`)
+var preparedBranchPattern = regexp.MustCompile(`^devcrew/[a-z0-9][a-z0-9-]{2,47}-[a-f0-9]{24}$`)
 
 func TestRegistry_PrepareWorktreeCreatesAndAdoptsOneOperationBoundWorkspace(t *testing.T) {
 	fixture := newRepositoryFixture(t, "product-api")
@@ -147,6 +147,21 @@ func TestRegistry_PrepareWorktreeRefusesUnsafeBaseTargetsAndAdoption(t *testing.
 		}
 	})
 
+	t.Run("deterministic branch without its target conflicts", func(t *testing.T) {
+		fixture := newRepositoryFixture(t, "product-api")
+		registry := newLifecycleRegistry(t, fixture)
+		request := lifecycleRequest(t, fixture, "prepare-orphan-branch", "task-orphan-branch")
+		prepared, err := registry.PrepareWorktree(context.Background(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary,
+			"worktree", "remove", "--", prepared.CanonicalPath)
+		if _, err := registry.PrepareWorktree(context.Background(), request); err == nil {
+			t.Fatal("PrepareWorktree(orphan branch) error = nil")
+		}
+	})
+
 	t.Run("live lease path conflicts before Git mutation", func(t *testing.T) {
 		fixture := newRepositoryFixture(t, "product-api")
 		registry := newLifecycleRegistry(t, fixture)
@@ -254,6 +269,24 @@ func TestRegistry_CleanupWorktreeRefusesAmbiguityAndRemovesOnlyExactCleanBase(t 
 		}
 	})
 
+	t.Run("detached worktree is preserved", func(t *testing.T) {
+		fixture := newRepositoryFixture(t, "product-api")
+		registry := newLifecycleRegistry(t, fixture)
+		request := lifecycleRequest(t, fixture, "prepare-detached", "task-detached")
+		prepared, err := registry.PrepareWorktree(context.Background(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath,
+			"checkout", "--detach", prepared.HeadRevision)
+		if err := registry.CleanupWorktree(context.Background(), cleanupRequest(request)); err == nil {
+			t.Fatal("CleanupWorktree(detached) error = nil")
+		}
+		if _, err := os.Lstat(prepared.CanonicalPath); err != nil {
+			t.Fatalf("detached worktree was removed: %v", err)
+		}
+	})
+
 	t.Run("exact clean prepared worktree and branch are removed", func(t *testing.T) {
 		fixture := newRepositoryFixture(t, "product-api")
 		registry := newLifecycleRegistry(t, fixture)
@@ -301,11 +334,7 @@ func lifecycleRequest(t *testing.T, fixture repositoryFixture, operationID, task
 }
 
 func cleanupRequest(request devgit.PrepareWorktreeRequest) devgit.CleanupWorktreeRequest {
-	return devgit.CleanupWorktreeRequest{
-		OperationID: request.OperationID, TaskHandle: request.TaskHandle,
-		RepositoryID: request.RepositoryID, BaseRevision: request.BaseRevision,
-		LiveLeasePaths: request.LiveLeasePaths,
-	}
+	return devgit.CleanupWorktreeRequest(request)
 }
 
 func gitOutput(t *testing.T, executable string, arguments ...string) string {
@@ -329,4 +358,3 @@ func gitTestEnvironment(additional []string) []string {
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_OPTIONAL_LOCKS=0", "LC_ALL=C",
 	}, additional...)
 }
-

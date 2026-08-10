@@ -32,11 +32,52 @@ func (destination *boundedBuffer) Write(contents []byte) (int, error) {
 }
 
 func runGit(ctx context.Context, executable string, arguments ...string) (string, error) {
+	output, exitCode, err := executeGit(ctx, executable, arguments...)
+	if err != nil {
+		return "", err
+	}
+	if exitCode != 0 {
+		return "", errors.New("git inspection command failed")
+	}
+	result := strings.TrimSuffix(string(output), "\n")
+	if result == "" || strings.ContainsAny(result, "\r\n\x00") {
+		return "", errors.New("git inspection returned an invalid single-line result")
+	}
+	return result, nil
+}
+
+func runGitBytes(ctx context.Context, executable string, arguments ...string) ([]byte, error) {
+	output, exitCode, err := executeGit(ctx, executable, arguments...)
+	if err != nil {
+		return nil, err
+	}
+	if exitCode != 0 {
+		return nil, errors.New("git machine command failed")
+	}
+	return output, nil
+}
+
+func gitPredicate(ctx context.Context, executable string, arguments ...string) (bool, error) {
+	_, exitCode, err := executeGit(ctx, executable, arguments...)
+	if err != nil {
+		return false, err
+	}
+	switch exitCode {
+	case 0:
+		return true, nil
+	case 1:
+		return false, nil
+	default:
+		return false, errors.New("git predicate command failed")
+	}
+}
+
+func executeGit(ctx context.Context, executable string, arguments ...string) ([]byte, int, error) {
 	if ctx == nil {
-		return "", errors.New("git command context is required")
+		return nil, -1, errors.New("git command context is required")
 	}
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return nil, -1, err
 	}
 	command := exec.CommandContext(ctx, executable, arguments...)
 	command.Env = []string{
@@ -52,16 +93,16 @@ func runGit(ctx context.Context, executable string, arguments ...string) (string
 	command.Stderr = stderr
 	if err := command.Run(); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return "", ctxErr
+			return nil, -1, ctxErr
 		}
 		if errors.Is(err, errGitOutputTooLarge) {
-			return "", errGitOutputTooLarge
+			return nil, -1, errGitOutputTooLarge
 		}
-		return "", fmt.Errorf("git inspection command failed: %w", err)
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			return append([]byte(nil), stdout.buffer.Bytes()...), exit.ExitCode(), nil
+		}
+		return nil, -1, fmt.Errorf("git command execution failed: %w", err)
 	}
-	output := strings.TrimSuffix(stdout.buffer.String(), "\n")
-	if output == "" || strings.ContainsAny(output, "\r\n\x00") {
-		return "", errors.New("git inspection returned an invalid single-line result")
-	}
-	return output, nil
+	return append([]byte(nil), stdout.buffer.Bytes()...), 0, nil
 }

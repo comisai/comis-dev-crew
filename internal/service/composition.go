@@ -34,7 +34,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 		ApprovedRoots: []string{repositoryConfig.ApprovedRoot},
 		Repositories: []devgit.RepositoryConfig{{
 			ID: repositoryConfig.RepositoryID, PrimaryCheckout: repositoryConfig.PrimaryCheckout,
-			WorktreeRoot: repositoryConfig.WorktreeRoot,
+			WorktreeRoot: repositoryConfig.WorktreeRoot, DefaultBranch: repositoryConfig.DefaultBranch,
 		}},
 	})
 	if err != nil {

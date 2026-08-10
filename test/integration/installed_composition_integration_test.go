@@ -69,7 +69,7 @@ func TestInstalledComposition_JoinsMCPActivationFixtureAndReports(t *testing.T) 
 		"--service-instance", parityServiceID,
 		"--git-executable", gitExecutable, "--approved-root", approvedRoot,
 		"--repository-id", "product-api", "--repository-primary", primary,
-		"--worktree-root", worktreeRoot, "--workspace-root", workspace,
+		"--worktree-root", worktreeRoot, "--repository-default-branch", "main", "--workspace-root", workspace,
 		"--comis-socket", controlSocket, "--comis-credential-file", credentialFile,
 		"--comis-handshake-operation", "installed-handshake-0001",
 		"--preparation-ttl", "10m", "--fixture-worker",
@@ -346,7 +346,7 @@ func installedRepository(t *testing.T, root string) (string, string, string, str
 	if err := os.MkdirAll(worktreeRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, primary, "init")
+	runGit(t, primary, "init", "--initial-branch=main")
 	runGit(t, primary, "config", "user.name", "Installed Fixture")
 	runGit(t, primary, "config", "user.email", "fixture@example.invalid")
 	if err := os.WriteFile(filepath.Join(primary, "README.md"), []byte("installed fixture\n"), 0o600); err != nil {
