@@ -52,7 +52,7 @@ func TestRuntimeAttachment_RejectsCrossTaskAndOversizedWireRequests(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := fmt.Sprintf(`{"version":"devcrew.runtime.v1","kind":"report","taskHandle":"task-runtime-0002","report":{"SchemaVersion":1}}` + "\n")
+	request := `{"version":"devcrew.runtime.v1","kind":"report","taskHandle":"task-runtime-0002","report":{"SchemaVersion":1}}` + "\n"
 	if _, err := connection.Write([]byte(request)); err != nil {
 		t.Fatal(err)
 	}

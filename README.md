@@ -138,9 +138,15 @@ binding ratification record.
 - `devcrew-service` — long-lived store and local read-API authority
 - `devcrew` — operator control console over the typed local client
 - `devcrew-mcp` — stateless four-tool MCP facade over the official SDK stdio transport
-- `devcrew-report` — restricted worker reporter composition root (scaffold only)
+- `devcrew-report` — restricted worker brief reader and sparse-report client
 
 All four commands support `--help` and `--version`. Build them with `make build`.
+
+Workers receive `devcrew-report` with `DEV_CREW_ATTACHMENT` set by the launcher to an
+owner-only, task-scoped Unix socket mounted at the static profile path. The command accepts no
+task, run, lease, socket, or credential selector. `brief` reads the exact pinned contract;
+`progress`, `decision`, `blocked`, `paused`, `candidate-complete`, `failed`, and `resolved`
+append bounded sparse reports. A candidate report remains non-terminal until service validation.
 
 The minimal read-only service remains available with explicit canonical paths:
 
