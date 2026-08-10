@@ -451,7 +451,7 @@ type TerminalEventRequest struct {
 type TerminalEventRequestParams struct {
 	ManagedRunID      ManagedRunID                 `json:"managedRunId"`
 	OperationID       OperationID                  `json:"operationId"`
-	TerminalSessionId TerminalSessionID            `json:"terminalSessionId"`
+	TerminalSessionID TerminalSessionID            `json:"terminalSessionId"`
 	Transition        CapabilityTerminalTransition `json:"transition"`
 	WorkspaceLeaseID  WorkspaceLeaseID             `json:"workspaceLeaseId"`
 }
@@ -464,7 +464,7 @@ type TerminalEventResponse struct {
 
 type TerminalEventResponseResult struct {
 	ManagedRunID      ManagedRunID                 `json:"managedRunId"`
-	TerminalSessionId TerminalSessionID            `json:"terminalSessionId"`
+	TerminalSessionID TerminalSessionID            `json:"terminalSessionId"`
 	Transition        CapabilityTerminalTransition `json:"transition"`
 }
 

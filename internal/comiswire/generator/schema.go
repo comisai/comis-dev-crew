@@ -113,6 +113,7 @@ func exportedName(value string) string {
 		"rootRunId":           "RootRunID",
 		"serviceInstanceId":   "ServiceInstanceID",
 		"serviceReportId":     "ServiceReportID",
+		"terminalSessionId":   "TerminalSessionID",
 		"traceId":             "TraceID",
 		"workspacePolicyHash": "WorkspacePolicyHash",
 		"workspaceLeaseId":    "WorkspaceLeaseID",

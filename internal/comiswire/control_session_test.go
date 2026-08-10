@@ -36,7 +36,7 @@ func (stub controlHandlerStub) Abandon(ctx context.Context, params AbandonReques
 func (stub controlHandlerStub) TerminalEvent(ctx context.Context, params TerminalEventRequestParams) (TerminalEventResponseResult, error) {
 	if stub.terminal == nil {
 		return TerminalEventResponseResult{
-			ManagedRunID: params.ManagedRunID, TerminalSessionId: params.TerminalSessionId, Transition: params.Transition,
+			ManagedRunID: params.ManagedRunID, TerminalSessionID: params.TerminalSessionID, Transition: params.Transition,
 		}, nil
 	}
 	return stub.terminal(ctx, params)
@@ -138,7 +138,7 @@ func TestControlSessionDispatchesAuthenticatedTerminalEvents(t *testing.T) {
 		JSONRPC: JSONRPCVersion, ID: "operation_terminal_running", Method: MethodManagedRunsTerminalEvent,
 		Params: TerminalEventRequestParams{
 			OperationID: "operation_terminal_running", ManagedRunID: "managed-run_scope",
-			WorkspaceLeaseID: "workspace-lease_scope", TerminalSessionId: "terminal-session_scope",
+			WorkspaceLeaseID: "workspace-lease_scope", TerminalSessionID: "terminal-session_scope",
 			Transition: CapabilityTerminalTransitionRunning,
 		},
 	}
@@ -152,7 +152,7 @@ func TestControlSessionDispatchesAuthenticatedTerminalEvents(t *testing.T) {
 			t.Fatal(err)
 		}
 		if acknowledged.Result.ManagedRunID != valid.Params.ManagedRunID ||
-			acknowledged.Result.TerminalSessionId != valid.Params.TerminalSessionId ||
+			acknowledged.Result.TerminalSessionID != valid.Params.TerminalSessionID ||
 			acknowledged.Result.Transition != valid.Params.Transition {
 			t.Fatalf("terminal event response = %#v", acknowledged)
 		}

@@ -24,6 +24,15 @@ type authenticatedAbandonRequest struct {
 	Bearer string `json:"bearer"`
 }
 
+type authenticatedTerminalEventRequest struct {
+	TerminalEventRequest
+	Bearer string `json:"bearer"`
+}
+
+type terminalEventHandler interface {
+	TerminalEvent(context.Context, TerminalEventRequestParams) (TerminalEventResponseResult, error)
+}
+
 type controlFrameHeader struct {
 	Error   json.RawMessage `json:"error"`
 	ID      json.RawMessage `json:"id"`
@@ -206,6 +215,30 @@ func (session *controlSession) dispatch(ctx context.Context, method Method, line
 			return session.writeFailure(&id, handlerWireFailure(err))
 		}
 		return session.writeValidated(PayloadAbandonResponse, AbandonResponse{JSONRPC: JSONRPCVersion, ID: id, Result: result})
+	case MethodManagedRunsTerminalEvent:
+		var authenticated authenticatedTerminalEventRequest
+		if err := decodeStrictObject(line, &authenticated); err != nil {
+			return session.writeFailure(nil, wireFailure(ErrorKindInvalidRequest, "invalid terminal event envelope"))
+		}
+		id := authenticated.ID
+		if !session.authenticated(authenticated.Bearer) {
+			return session.writeFailure(&id, wireFailure(ErrorKindUnauthorizedInstance, "instance credential differs"))
+		}
+		if authenticated.ID != authenticated.Params.OperationID {
+			return session.writeFailure(&id, wireFailure(ErrorKindInvalidRequest, "terminal event operation identity differs"))
+		}
+		if err := validateBaseRequest(authenticated.TerminalEventRequest); err != nil {
+			return session.writeFailure(&id, wireFailure(ErrorKindInvalidParams, "invalid terminal event request"))
+		}
+		handler, ok := session.handler.(terminalEventHandler)
+		if !ok {
+			return session.writeFailure(&id, wireFailure(ErrorKindPreconditionFailed, "terminal event handler is unavailable"))
+		}
+		result, err := handler.TerminalEvent(ctx, authenticated.Params)
+		if err != nil {
+			return session.writeFailure(&id, handlerWireFailure(err))
+		}
+		return session.writeValidated(PayloadTerminalEventResponse, TerminalEventResponse{JSONRPC: JSONRPCVersion, ID: id, Result: result})
 	default:
 		return session.writeFailure(nil, wireFailure(ErrorKindMethodNotFound, "control method is not allowed"))
 	}
