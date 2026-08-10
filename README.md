@@ -99,11 +99,13 @@ and acknowledges the exact four reports from the fixture worker.
 
 The repository registry resolves only operator-configured opaque IDs. It validates canonical
 primary checkouts and dedicated worktree roots beneath approved roots, pins the primary Git
-common-directory filesystem identity, and accepts a task worktree only when a real Git query
-proves that exact identity. It does not create worktrees; installed configuration must name an
-already verified linked worktree before the service can launch the deterministic fixture.
+common-directory filesystem identity, and creates or exactly adopts an operation-bound task
+worktree only when real Git queries prove the exact repository, pinned base, branch, and path
+identity. Deterministic bounded branch naming is collision-safe; retries return the same worktree.
+Dirty, divergent, unpushed, symlink-escaped, primary-checkout, live-sibling, untracked-target, and
+cleanup-ambiguous postures fail closed without overwriting or removing work.
 
-The in-process reporter seam is append-only and task-scoped: its endpoint stores only a digest
+The reporter seam is append-only and task-scoped: its endpoint stores only a digest
 of the protected credential, derives the task identity instead of accepting it from worker
 content, requires the exact pinned brief revision/hash, bounds the sparse closed report payload,
 and rejects a mismatched sink receipt. Its application sink now atomically persists the exact
@@ -111,10 +113,12 @@ authenticated report, advances the task cursor and closed E0 lifecycle, and enqu
 Comis delivery identity at the same global state version. Pending deliveries survive restart and
 remain eligible for exact-identity resend until the store records the host's matching sequence and
 retention acknowledgement. Identical task/report IDs replay the original receipt across restart;
-altered payloads, acknowledgements, and ambiguous decision keys fail closed. The control-socket
+altered payloads, acknowledgements, and ambiguous decision keys fail closed. A real worker uses
+an owner-only per-task Unix socket to read its brief, acknowledge its exact run/lease/canonical-cwd
+and brief binding, and append reports without a task or authority selector. The control-socket
 forwarder is implemented as an independently supervised adapter and participates in the installed
-service lifecycle. The fixture uses the reviewed in-process task-scoped reporter seam; Unix-socket
-reporter transport remains future work for a real worker process.
+service lifecycle. The deterministic fixture continues to use the same reviewed in-process report
+boundary and launches no subprocess.
 
 The deterministic fixture worker runs synchronously from a verified brief, emits authenticated
 progress, requests exactly one keyed decision, records its resolution, and ends by reporting only
@@ -145,8 +149,19 @@ All four commands support `--help` and `--version`. Build them with `make build`
 Workers receive `devcrew-report` with `DEV_CREW_ATTACHMENT` set by the launcher to an
 owner-only, task-scoped Unix socket mounted at the static profile path. The command accepts no
 task, run, lease, socket, or credential selector. `brief` reads the exact pinned contract;
+`acknowledge` verifies and echoes the socket-bound task/run/lease, actual canonical working
+directory, and brief revision before task state may become `working`;
 `progress`, `decision`, `blocked`, `paused`, `candidate-complete`, `failed`, and `resolved`
 append bounded sparse reports. A candidate report remains non-terminal until service validation.
+
+The first real harness adapter builds a fixed no-shell `codex exec --json` descriptor from an
+exact-version static profile. Task/run/lease and brief authority remain only in the protected
+attachment, never argv or the generic bootstrap prompt. Structured activity is classified only
+while fresh; a completed turn without a task report is `unknown`. Because the reviewed Codex CLI
+does not expose a trustworthy settle signal, the current profile is explicitly degraded and cannot
+run unattended. The final managed-terminal launch remains gated on Comis exposing its run-scoped
+execution-attachment creation seam to the capability service; this repository does not invent a
+private fallback protocol or a second terminal backend.
 
 The minimal read-only service remains available with explicit canonical paths:
 
