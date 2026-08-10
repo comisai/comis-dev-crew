@@ -120,6 +120,30 @@ func TestGeneratedClientRejectsResponseIdentityAndAuthorityDrift(t *testing.T) {
 	}
 }
 
+func TestGeneratedClientComparesNegotiatedScopesAsSets(t *testing.T) {
+	params := HandshakeRequestParams{
+		ProtocolID: ProtocolID, BundleDigest: BundleDigest, OperationID: "operation_handshake",
+		ServiceInstanceID: "service-instance_a",
+		RequestedScopes:   []ServiceScope{ServiceScopeHealth, ServiceScopeReport},
+	}
+	accepted := &recordingTransport{response: func(target any) {
+		*(target.(*HandshakeResponse)) = validHandshakeResponse(func(response *HandshakeResponse) {
+			response.Result.ActiveScopes = []ServiceScope{ServiceScopeReport, ServiceScopeHealth, ServiceScopeReport}
+		})
+	}}
+	if _, err := newClient(accepted).Handshake(context.Background(), params); err != nil {
+		t.Fatalf("Handshake(reordered duplicate scopes) error = %v", err)
+	}
+	extra := &recordingTransport{response: func(target any) {
+		*(target.(*HandshakeResponse)) = validHandshakeResponse(func(response *HandshakeResponse) {
+			response.Result.ActiveScopes = []ServiceScope{ServiceScopeReport, ServiceScopeHealth, ServiceScopeWorkspaceLease}
+		})
+	}}
+	if _, err := newClient(extra).Handshake(context.Background(), params); err == nil {
+		t.Fatal("Handshake(unexpected active scope) error = nil")
+	}
+}
+
 func TestGeneratedClientRejectsSupersededBundleDigest(t *testing.T) {
 	const supersededDigest = "e87e69511ea9e01ea2383cd211f9946233fdbe1ce8edf016e76ce55eae683297"
 	if BundleDigest == supersededDigest {

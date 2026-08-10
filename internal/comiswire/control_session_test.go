@@ -98,6 +98,78 @@ func TestControlHandshakeRequestsCompleteRequiredScopeSet(t *testing.T) {
 	}
 }
 
+func TestControlHandshakeAcceptsPinnedScopesAsAnOrderIndependentSet(t *testing.T) {
+	canonical := pinnedHandshakeResponseScopes(t)
+	negotiated := append(append([]ServiceScope(nil), canonical[2:]...), canonical[:2]...)
+	if slices.Equal(negotiated, requiredControlScopes()) {
+		t.Fatal("test fixture did not differ from the service request order")
+	}
+	clientConnection, serverConnection := net.Pipe()
+	t.Cleanup(func() { _ = clientConnection.Close(); _ = serverConnection.Close() })
+	serverResult := make(chan error, 1)
+	go func() {
+		var request authenticatedHandshakeRequest
+		if err := readControlFrame(serverConnection, &request); err != nil {
+			serverResult <- err
+			return
+		}
+		serverResult <- writeControlFrame(serverConnection, validHandshakeResponse(func(response *HandshakeResponse) {
+			response.ID = request.ID
+			response.Result.ServiceInstanceID = request.Params.ServiceInstanceID
+			response.Result.ActiveScopes = negotiated
+		}))
+	}()
+	request := controlHandshake(ControlConnectionConfig{
+		ServiceInstanceID: "service-instance_scope_set", HandshakeOperationID: "operation_handshake_scope_set",
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := newControlSession(clientConnection, controlTestBearer, controlHandlerStub{}, time.Second).handshake(ctx, request); err != nil {
+		t.Fatalf("handshake(reordered pinned scopes) error = %v", err)
+	}
+	if err := <-serverResult; err != nil {
+		t.Fatalf("serve reordered handshake response: %v", err)
+	}
+	withDuplicate := append(append([]ServiceScope(nil), negotiated...), negotiated[0])
+	if !sameControlScopes(withDuplicate) {
+		t.Fatal("complete scope set with a duplicate was rejected")
+	}
+	if sameControlScopes(negotiated[:len(negotiated)-1]) {
+		t.Fatal("genuinely missing scope was accepted")
+	}
+	if sameControlScopes(append(append([]ServiceScope(nil), negotiated...), ServiceScope("unexpected"))) {
+		t.Fatal("unexpected granted scope was accepted")
+	}
+}
+
+func pinnedHandshakeResponseScopes(t *testing.T) []ServiceScope {
+	t.Helper()
+	contents, err := os.ReadFile(filepath.Join("..", "..", "protocol", "comis", "fixtures", "valid.json"))
+	if err != nil {
+		t.Fatalf("read pinned valid fixture: %v", err)
+	}
+	var fixture struct {
+		Steps []struct {
+			Target  string `json:"target"`
+			Payload struct {
+				Result struct {
+					ActiveScopes []ServiceScope `json:"activeScopes"`
+				} `json:"result"`
+			} `json:"payload"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal(contents, &fixture); err != nil {
+		t.Fatalf("decode pinned valid fixture: %v", err)
+	}
+	for _, step := range fixture.Steps {
+		if step.Target == "handshake-response" && len(step.Payload.Result.ActiveScopes) > 0 {
+			return step.Payload.Result.ActiveScopes
+		}
+	}
+	t.Fatal("pinned valid fixture has no handshake response scopes")
+	return nil
+}
+
 func TestControlSessionDispatchesAbandonAndFailsClosed(t *testing.T) {
 	valid := AbandonRequest{
 		JSONRPC: JSONRPCVersion, ID: "operation_abandon_a", Method: MethodManagedRunsAbandon,

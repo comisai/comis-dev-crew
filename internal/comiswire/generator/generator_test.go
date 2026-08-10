@@ -61,6 +61,7 @@ func TestGenerateProducesDeterministicClosedPinnedClient(t *testing.T) {
 		"type MCPManagedRunResultRequestedAttachment struct",
 		"type RPCError struct",
 		"func (client *Client) Handshake(",
+		"func sameServiceScopeSet(",
 		"func (client *Client) Health(",
 		"func (client *Client) Report(",
 	} {

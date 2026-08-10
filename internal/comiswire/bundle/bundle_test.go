@@ -196,6 +196,25 @@ func TestManifestRejectsIncompleteIdentityLimitsAndCatalogEntries(t *testing.T) 
 	}
 }
 
+func TestManifestMethodCollectionsCompareByNameRatherThanPosition(t *testing.T) {
+	root, _ := writeFixtureBundle(t)
+	verified, err := Open(root)
+	if err != nil {
+		t.Fatalf("open fixture bundle: %v", err)
+	}
+	manifest := cloneManifest(verified.Manifest)
+	second := manifest.MethodCatalog[0]
+	second.Name = "managedRuns.report"
+	manifest.Methods = append(manifest.Methods, second.Name)
+	manifest.MethodCatalog = append(manifest.MethodCatalog, second)
+	for left, right := 0, len(manifest.MethodCatalog)-1; left < right; left, right = left+1, right-1 {
+		manifest.MethodCatalog[left], manifest.MethodCatalog[right] = manifest.MethodCatalog[right], manifest.MethodCatalog[left]
+	}
+	if err := validateManifest(manifest); err != nil {
+		t.Fatalf("validateManifest(reordered method catalog) error = %v", err)
+	}
+}
+
 func TestOpenRejectsMalformedDuplicateAndTrailingManifestJSON(t *testing.T) {
 	tests := []struct {
 		name   string
