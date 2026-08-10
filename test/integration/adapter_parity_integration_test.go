@@ -191,6 +191,7 @@ func newParityHarness(t *testing.T) *parityHarness {
 			SocketPath:   operatorSocket, MCPSocketPath: mcpSocket, ServiceInstanceID: parityServiceID,
 			Repositories:       parityRepositoryCatalog{},
 			Workspaces:         parityWorkspacePreparer{root: filepath.Join(root, "worktrees", "task-parity-0001")},
+			RuntimeAttachments: integrationRuntimeAttachments{},
 			TaskIDs:            func(string) (string, error) { return "task-parity-0001", nil },
 			RegistrationNonces: func() (string, error) { return "registration-nonce_parity", nil },
 			PreparationTTL:     time.Hour, Clock: clock, Ready: func() { close(ready) },

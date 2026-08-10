@@ -195,6 +195,7 @@ func (harness *restartHarness) open(t *testing.T) {
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: matrixRepositoryCatalog{},
 		Workspaces:         parityWorkspacePreparer{root: filepath.Join(harness.root, "fixture-workspace")},
+		RuntimeAttachments: integrationRuntimeAttachments{},
 		TaskIDs:            harness.taskIDs.next,
 		RegistrationNonces: func() (string, error) { return "registration-nonce_matrix", nil },
 		PreparationTTL:     time.Hour, Clock: func() time.Time { return harness.now },

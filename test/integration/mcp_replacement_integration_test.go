@@ -121,6 +121,7 @@ func startReplacementService(t *testing.T) (string, string) {
 			SocketPath:   operatorSocket, MCPSocketPath: mcpSocket, ServiceInstanceID: parityServiceID,
 			Repositories:       parityRepositoryCatalog{},
 			Workspaces:         parityWorkspacePreparer{root: filepath.Join(root, "worktrees", "task-replacement-0001")},
+			RuntimeAttachments: integrationRuntimeAttachments{},
 			TaskIDs:            func(string) (string, error) { return "task-replacement-0001", nil },
 			RegistrationNonces: func() (string, error) { return "registration-nonce_replacement", nil },
 			PreparationTTL:     time.Hour, Clock: func() time.Time { return now }, Ready: func() { close(ready) },
