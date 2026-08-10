@@ -57,19 +57,26 @@ type RuntimeServerConfig struct {
 	LaunchAcknowledger application.WorkerLaunchAcknowledger
 }
 
+// RuntimeLaunchConfig binds activation-returned authority to an already-open
+// reporter socket. Identical replays keep the original binding.
+type RuntimeLaunchConfig struct {
+	OperationID  string
+	Expected     application.LaunchAcknowledgement
+	Acknowledger application.WorkerLaunchAcknowledger
+}
+
 // RuntimeServer serves a single task capability on one owner-only Unix socket.
 type RuntimeServer struct {
-	listener           *net.UnixListener
-	socketPath         string
-	socketInfo         os.FileInfo
-	brief              domain.WorkerBrief
-	reporter           *Client
-	launchOperationID  string
-	expectedLaunch     application.LaunchAcknowledgement
-	launchAcknowledger application.WorkerLaunchAcknowledger
-	closeOnce          sync.Once
-	closeErr           error
-	waitGroup          sync.WaitGroup
+	listener   *net.UnixListener
+	socketPath string
+	socketInfo os.FileInfo
+	brief      domain.WorkerBrief
+	reporter   *Client
+	launchMu   sync.RWMutex
+	launch     *RuntimeLaunchConfig
+	closeOnce  sync.Once
+	closeErr   error
+	waitGroup  sync.WaitGroup
 }
 
 // ListenRuntime creates a new attachment without replacing an existing path.
@@ -99,12 +106,41 @@ func ListenRuntime(config RuntimeServerConfig) (*RuntimeServer, error) {
 	if err != nil || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 {
 		return nil, errors.Join(errors.New("listen runtime attachment: socket identity is unavailable"), listener.Close(), os.Remove(config.SocketPath))
 	}
-	return &RuntimeServer{
+	server := &RuntimeServer{
 		listener: listener, socketPath: config.SocketPath, socketInfo: info,
 		brief: config.Brief, reporter: config.Reporter,
-		launchOperationID: config.LaunchOperationID, expectedLaunch: config.ExpectedLaunch,
-		launchAcknowledger: config.LaunchAcknowledger,
-	}, nil
+	}
+	if config.LaunchOperationID != "" {
+		if err := server.BindLaunch(RuntimeLaunchConfig{
+			OperationID: config.LaunchOperationID, Expected: config.ExpectedLaunch,
+			Acknowledger: config.LaunchAcknowledger,
+		}); err != nil {
+			return nil, errors.Join(err, server.Close())
+		}
+	}
+	return server, nil
+}
+
+// BindLaunch attaches one exact activation identity without replacing the
+// socket Comis already validated. Altered replays fail closed.
+func (server *RuntimeServer) BindLaunch(config RuntimeLaunchConfig) error {
+	if server == nil || server.reporter == nil {
+		return errors.New("bind runtime launch: server is unavailable")
+	}
+	if err := validateRuntimeLaunchBinding(server.brief, server.reporter, config); err != nil {
+		return err
+	}
+	server.launchMu.Lock()
+	defer server.launchMu.Unlock()
+	if server.launch != nil {
+		if server.launch.OperationID != config.OperationID || server.launch.Expected != config.Expected {
+			return errors.New("bind runtime launch: activation binding conflicts")
+		}
+		return nil
+	}
+	binding := config
+	server.launch = &binding
+	return nil
 }
 
 // Serve accepts bounded one-request connections until cancellation or Close.
@@ -199,35 +235,46 @@ func (server *RuntimeServer) serveConnection(ctx context.Context, connection *ne
 			outcome = RuntimeOutcome{Version: runtimeProtocolVersion, Receipt: &receipt}
 		}
 	case "launch":
+		launch := server.launchBinding()
 		if request.Report != nil || request.Acknowledgement != nil {
 			outcome = runtimeRejected("malformed_request")
-		} else if server.launchAcknowledger == nil {
+		} else if launch == nil {
 			outcome = runtimeRejected("launch_unavailable")
 		} else {
-			expected := server.expectedLaunch
+			expected := launch.Expected
 			outcome = RuntimeOutcome{Version: runtimeProtocolVersion, Acknowledgement: &expected}
 		}
 	case "acknowledge":
-		outcome = server.acknowledgeLaunch(ctx, request)
+		outcome = server.acknowledgeLaunch(ctx, request, server.launchBinding())
 	default:
 		outcome = runtimeRejected("unknown_request")
 	}
 	return writeRuntimeOutcome(connection, outcome)
 }
 
-func (server *RuntimeServer) acknowledgeLaunch(ctx context.Context, request runtimeRequest) RuntimeOutcome {
-	if request.Report != nil || request.Acknowledgement == nil || server.launchAcknowledger == nil ||
-		*request.Acknowledgement != server.expectedLaunch {
+func (server *RuntimeServer) acknowledgeLaunch(ctx context.Context, request runtimeRequest, launch *RuntimeLaunchConfig) RuntimeOutcome {
+	if request.Report != nil || request.Acknowledgement == nil || launch == nil ||
+		*request.Acknowledgement != launch.Expected {
 		return runtimeRejected("acknowledgement_rejected")
 	}
-	result, err := server.launchAcknowledger.AcknowledgeWorkerLaunch(ctx, application.AcknowledgeWorkerLaunchCommand{
-		OperationID: server.launchOperationID, Acknowledgement: server.expectedLaunch,
+	result, err := launch.Acknowledger.AcknowledgeWorkerLaunch(ctx, application.AcknowledgeWorkerLaunchCommand{
+		OperationID: launch.OperationID, Acknowledgement: launch.Expected,
 	})
-	if err != nil || !validLaunchAcknowledgementResult(result, server.launchOperationID, server.expectedLaunch) {
+	if err != nil || !validLaunchAcknowledgementResult(result, launch.OperationID, launch.Expected) {
 		return runtimeRejected("acknowledgement_rejected")
 	}
-	acknowledged := server.expectedLaunch
+	acknowledged := launch.Expected
 	return RuntimeOutcome{Version: runtimeProtocolVersion, Acknowledgement: &acknowledged}
+}
+
+func (server *RuntimeServer) launchBinding() *RuntimeLaunchConfig {
+	server.launchMu.RLock()
+	defer server.launchMu.RUnlock()
+	if server.launch == nil {
+		return nil
+	}
+	binding := *server.launch
+	return &binding
 }
 
 // RuntimeClient is the worker-side narrow brief/read and report/append client.
@@ -386,15 +433,21 @@ func validateRuntimeLaunchConfig(config RuntimeServerConfig) error {
 	if !configured {
 		return nil
 	}
-	canonicalWorkspace, workspaceErr := filepath.EvalSymlinks(config.ExpectedLaunch.WorkingDirectory)
-	if domain.ValidateOperationID(config.LaunchOperationID) != nil || config.ExpectedLaunch.Validate() != nil || config.LaunchAcknowledger == nil ||
-		workspaceErr != nil || canonicalWorkspace != config.ExpectedLaunch.WorkingDirectory ||
-		config.ExpectedLaunch.BriefRevision != config.Brief.Revision || config.ExpectedLaunch.BriefRevisionHash != config.Brief.RevisionHash {
+	return validateRuntimeLaunchBinding(config.Brief, config.Reporter, RuntimeLaunchConfig{
+		OperationID: config.LaunchOperationID, Expected: config.ExpectedLaunch, Acknowledger: config.LaunchAcknowledger,
+	})
+}
+
+func validateRuntimeLaunchBinding(brief domain.WorkerBrief, reporter *Client, config RuntimeLaunchConfig) error {
+	canonicalWorkspace, workspaceErr := filepath.EvalSymlinks(config.Expected.WorkingDirectory)
+	if domain.ValidateOperationID(config.OperationID) != nil || config.Expected.Validate() != nil || config.Acknowledger == nil ||
+		workspaceErr != nil || canonicalWorkspace != config.Expected.WorkingDirectory ||
+		config.Expected.BriefRevision != brief.Revision || config.Expected.BriefRevisionHash != brief.RevisionHash {
 		return errors.New("listen runtime attachment: launch acknowledgement binding is invalid")
 	}
-	if config.Reporter.endpoint == nil || config.Reporter.endpoint.taskHandle != config.ExpectedLaunch.TaskHandle ||
-		config.Reporter.endpoint.briefRevision != config.ExpectedLaunch.BriefRevision ||
-		config.Reporter.endpoint.briefRevisionHash != config.ExpectedLaunch.BriefRevisionHash {
+	if reporter == nil || reporter.endpoint == nil || reporter.endpoint.taskHandle != config.Expected.TaskHandle ||
+		reporter.endpoint.briefRevision != config.Expected.BriefRevision ||
+		reporter.endpoint.briefRevisionHash != config.Expected.BriefRevisionHash {
 		return errors.New("listen runtime attachment: launch and report scopes differ")
 	}
 	return nil
