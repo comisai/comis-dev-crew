@@ -113,6 +113,7 @@ func TestRunCommand_ComposesInstalledComisFixtureLaneFromExplicitConfiguration(t
 		"--database", "/private/state/devcrew.db",
 		"--socket", "/private/run/operator.sock",
 		"--mcp-socket", "/private/run/mcp.sock",
+		"--runtime-root", "/private/run/tasks",
 		"--service-instance", "service-instance-fixture",
 		"--git-executable", "/usr/bin/git",
 		"--approved-root", "/private/repositories",
@@ -146,7 +147,7 @@ func TestRunCommand_ComposesInstalledComisFixtureLaneFromExplicitConfiguration(t
 	}
 	wantFixture := &FixtureComposition{Decision: "use the bounded fixture choice"}
 	if got.DatabasePath != "/private/state/devcrew.db" || got.SocketPath != "/private/run/operator.sock" ||
-		got.MCPSocketPath != "/private/run/mcp.sock" || got.ServiceInstanceID != "service-instance-fixture" ||
+		got.MCPSocketPath != "/private/run/mcp.sock" || got.RuntimeRoot != "/private/run/tasks" || got.ServiceInstanceID != "service-instance-fixture" ||
 		got.PreparationTTL != 15*time.Minute || !reflect.DeepEqual(got.RepositoryComposition, wantRepository) ||
 		!reflect.DeepEqual(got.ComisComposition, wantComis) || !reflect.DeepEqual(got.FixtureComposition, wantFixture) {
 		t.Fatalf("installed service config = %#v", got)
