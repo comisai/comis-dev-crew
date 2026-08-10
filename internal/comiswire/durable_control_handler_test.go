@@ -160,6 +160,108 @@ func TestDurableControlHandler_AbandonDispositionIsDurableAndClosed(t *testing.T
 	}
 }
 
+func TestDurableControlHandler_JoinsTerminalRunningAndExactWrapperAcknowledgement(t *testing.T) {
+	harness := newDurableControlHarness(t, "task-terminal-join")
+	prepared := harness.prepare(t, "operation-prepare-terminal-join")
+	harness.now = harness.now.Add(time.Minute)
+	lease := comiswire.WorkspaceLeaseID("workspace-lease-terminal-join")
+	activation := comiswire.ActivateRequestParams{
+		OperationID: "operation-activate-terminal-join", ManagedRunID: "managed-run-terminal-join",
+		ExternalRunRef:    comiswire.ExternalRunRef(prepared.ExternalRunRef),
+		RegistrationNonce: comiswire.RegistrationNonce(prepared.RegistrationNonce), WorkspaceLeaseID: &lease,
+	}
+	if _, err := harness.handler.Activate(context.Background(), activation); err != nil {
+		t.Fatal(err)
+	}
+	harness.now = harness.now.Add(time.Minute)
+	started, err := harness.mutations.StartTask(context.Background(), application.StartTaskCommand{
+		OperationID: "operation-start-terminal-join", TaskHandle: prepared.ExternalRunRef,
+	})
+	if err != nil || started.Task.State != domain.TaskLaunching {
+		t.Fatalf("StartTask() = %#v, %v", started, err)
+	}
+
+	harness.now = harness.now.Add(time.Minute)
+	terminal := comiswire.TerminalEventRequestParams{
+		OperationID: "operation-terminal-running-join", ManagedRunID: activation.ManagedRunID,
+		WorkspaceLeaseID: lease, TerminalSessionID: "terminal-session-join",
+		Transition: comiswire.CapabilityTerminalTransitionRunning,
+	}
+	acknowledged, err := harness.handler.TerminalEvent(context.Background(), terminal)
+	if err != nil || acknowledged.ManagedRunID != terminal.ManagedRunID ||
+		acknowledged.TerminalSessionID != terminal.TerminalSessionID || acknowledged.Transition != terminal.Transition {
+		t.Fatalf("TerminalEvent() = %#v, %v", acknowledged, err)
+	}
+	launching, err := harness.store.GetTask(context.Background(), prepared.ExternalRunRef)
+	if err != nil || launching.State != domain.TaskLaunching {
+		t.Fatalf("terminal running alone changed task = %#v, %v", launching, err)
+	}
+
+	harness.now = harness.now.Add(time.Minute)
+	working, err := harness.mutations.AcknowledgeWorkerLaunch(context.Background(), application.AcknowledgeWorkerLaunchCommand{
+		OperationID: "operation-wrapper-ack-join",
+		Acknowledgement: application.LaunchAcknowledgement{
+			TaskHandle: prepared.ExternalRunRef, ManagedRunID: string(activation.ManagedRunID),
+			WorkspaceLeaseID: string(lease), WorkingDirectory: harness.workspaceRoot,
+			BriefRevision: started.Task.BriefRevision, BriefRevisionHash: started.Task.BriefRevisionHash,
+		},
+	})
+	if err != nil || working.Task.State != domain.TaskWorking {
+		t.Fatalf("AcknowledgeWorkerLaunch() = %#v, %v", working, err)
+	}
+
+	harness.restart(t)
+	replayed, err := harness.handler.TerminalEvent(context.Background(), terminal)
+	if err != nil || replayed != acknowledged {
+		t.Fatalf("TerminalEvent(restart replay) = %#v, %v, want %#v", replayed, err, acknowledged)
+	}
+	altered := terminal
+	altered.Transition = comiswire.CapabilityTerminalTransitionExited
+	if _, err := harness.handler.TerminalEvent(context.Background(), altered); !wireErrorKind(err, comiswire.ErrorKindReplayConflict) {
+		t.Fatalf("TerminalEvent(altered replay) error = %v", err)
+	}
+	crossLease := terminal
+	crossLease.OperationID = "operation-terminal-cross-lease"
+	crossLease.WorkspaceLeaseID = "workspace-lease-other"
+	if _, err := harness.handler.TerminalEvent(context.Background(), crossLease); !wireErrorKind(err, comiswire.ErrorKindPreconditionFailed) {
+		t.Fatalf("TerminalEvent(cross lease) error = %v", err)
+	}
+}
+
+func TestDurableControlHandler_TerminalExitNeverMeansSuccess(t *testing.T) {
+	harness := newDurableControlHarness(t, "task-terminal-exit")
+	prepared := harness.prepare(t, "operation-prepare-terminal-exit")
+	harness.now = harness.now.Add(time.Minute)
+	lease := comiswire.WorkspaceLeaseID("workspace-lease-terminal-exit")
+	activation := comiswire.ActivateRequestParams{
+		OperationID: "operation-activate-terminal-exit", ManagedRunID: "managed-run-terminal-exit",
+		ExternalRunRef:    comiswire.ExternalRunRef(prepared.ExternalRunRef),
+		RegistrationNonce: comiswire.RegistrationNonce(prepared.RegistrationNonce), WorkspaceLeaseID: &lease,
+	}
+	if _, err := harness.handler.Activate(context.Background(), activation); err != nil {
+		t.Fatal(err)
+	}
+	harness.now = harness.now.Add(time.Minute)
+	if _, err := harness.mutations.StartTask(context.Background(), application.StartTaskCommand{
+		OperationID: "operation-start-terminal-exit", TaskHandle: prepared.ExternalRunRef,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	harness.now = harness.now.Add(time.Minute)
+	response, err := harness.handler.TerminalEvent(context.Background(), comiswire.TerminalEventRequestParams{
+		OperationID: "operation-terminal-exited", ManagedRunID: activation.ManagedRunID,
+		WorkspaceLeaseID: lease, TerminalSessionID: "terminal-session-exit",
+		Transition: comiswire.CapabilityTerminalTransitionExited,
+	})
+	if err != nil || response.Transition != comiswire.CapabilityTerminalTransitionExited {
+		t.Fatalf("TerminalEvent(exited) = %#v, %v", response, err)
+	}
+	task, err := harness.store.GetTask(context.Background(), prepared.ExternalRunRef)
+	if err != nil || task.State != domain.TaskUnknown {
+		t.Fatalf("exited task = %#v, %v, want unknown", task, err)
+	}
+}
+
 type durableControlHarness struct {
 	t                 *testing.T
 	databasePath      string
