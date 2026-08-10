@@ -3,8 +3,6 @@ package workers_test
 import (
 	"context"
 	"errors"
-	"net"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -299,29 +297,6 @@ func probedCodexProfile(t *testing.T, id string) workers.StaticProfile {
 		t.Fatal(err)
 	}
 	return availableCodexProfile(source, id)
-}
-
-func codexAttachmentSocket(t *testing.T) (string, func()) {
-	t.Helper()
-	root, err := os.MkdirTemp("/tmp", "devcrew-codex-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
-	root, err = filepath.EvalSymlinks(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(root, "attachment.sock")
-	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		_ = listener.Close()
-		t.Fatal(err)
-	}
-	return path, func() { _ = listener.Close() }
 }
 
 func codexObservation(now time.Time, event string) application.HarnessObservation {

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -171,7 +170,10 @@ func (adapter *CodexAdapter) BuildLaunchDescriptor(
 		ProfileID: base.ProfileID, Harness: string(base.Harness), Executable: base.Executable,
 		Arguments: arguments, WorkingDirectory: base.WorkingDirectory,
 		EnvironmentKeys: append([]string(nil), base.EnvironmentKeys...),
-		Model:           base.Model, Effort: base.Effort, TerminalAllowEntry: base.TerminalAllowEntry,
+		EnvironmentBindings: map[string]string{
+			"DEV_CREW_ATTACHMENT": request.Attachment.MountSocketPath,
+		},
+		Model: base.Model, Effort: base.Effort, TerminalAllowEntry: base.TerminalAllowEntry,
 		Network: string(base.Network), ConcurrencyLimit: base.ConcurrencyLimit,
 		Unattended: unattended, DegradedReason: degradedReason,
 		Attachment: request.Attachment, StandardInput: []byte(codexBootstrapPrompt),
@@ -240,19 +242,14 @@ func validateCodexLaunchBinding(request application.WorkerLaunchRequest) error {
 }
 
 func validateRuntimeAttachment(attachment application.RuntimeSocketAttachment) error {
-	if !filepath.IsAbs(attachment.HostSocketPath) || filepath.Clean(attachment.HostSocketPath) != attachment.HostSocketPath ||
-		!filepath.IsAbs(attachment.MountSocketPath) || filepath.Clean(attachment.MountSocketPath) != attachment.MountSocketPath ||
-		filepath.Base(attachment.MountSocketPath) != "attachment.sock" ||
-		strings.ContainsAny(attachment.HostSocketPath+attachment.MountSocketPath, "\x00\r\n") {
-		return errors.New("build Codex launch descriptor: runtime attachment path is invalid")
+	if domain.ValidateAuthorityReference("executionAttachmentId", attachment.ExecutionAttachmentID) != nil ||
+		domain.ValidateAttachmentTargetName(attachment.AttachmentTargetName) != nil {
+		return errors.New("build Codex launch descriptor: runtime attachment authority is invalid")
 	}
-	info, err := os.Lstat(attachment.HostSocketPath)
-	if err != nil || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 {
-		return errors.New("build Codex launch descriptor: runtime attachment is unavailable or unsafe")
-	}
-	resolved, err := filepath.EvalSymlinks(attachment.HostSocketPath)
-	if err != nil || resolved != attachment.HostSocketPath {
-		return errors.New("build Codex launch descriptor: runtime attachment is not canonical")
+	expectedMount := filepath.Join("/run/comis/attachments", attachment.AttachmentTargetName)
+	if attachment.MountSocketPath != expectedMount || filepath.Clean(attachment.MountSocketPath) != attachment.MountSocketPath ||
+		strings.ContainsAny(attachment.MountSocketPath, "\x00\r\n") {
+		return errors.New("build Codex launch descriptor: runtime attachment mount differs from activation")
 	}
 	return nil
 }

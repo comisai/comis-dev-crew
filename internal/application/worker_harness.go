@@ -36,11 +36,13 @@ type HarnessVersionProbe struct {
 	Reason       HarnessReason
 }
 
-// RuntimeSocketAttachment is a task-scoped host socket mounted at one fixed
-// worker-visible path. Mount visibility is the capability; no token is argv.
+// RuntimeSocketAttachment is activation-returned Comis attachment authority
+// resolved to its exact protected worker-visible mount. No host source enters
+// the launch descriptor.
 type RuntimeSocketAttachment struct {
-	HostSocketPath  string
-	MountSocketPath string
+	ExecutionAttachmentID string
+	AttachmentTargetName  string
+	MountSocketPath       string
 }
 
 // WorkerLaunchRequest contains the exact launch binding. Authority fields are
@@ -103,6 +105,7 @@ type WorkerLaunchDescriptor struct {
 	Arguments               []string
 	WorkingDirectory        string
 	EnvironmentKeys         []string
+	EnvironmentBindings     map[string]string
 	Model                   string
 	Effort                  string
 	TerminalAllowEntry      string
