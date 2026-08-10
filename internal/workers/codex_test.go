@@ -63,15 +63,17 @@ func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(
 	if err != nil {
 		t.Fatal(err)
 	}
-	hostSocket, closeSocket := codexAttachmentSocket(t)
-	defer closeSocket()
+	attachmentTarget := "attachment-0123456789abcdef0123456789abcdef.sock"
+	attachmentMount := "/run/comis/attachments/" + attachmentTarget
 	request := application.WorkerLaunchRequest{
 		ProfileID: profile.ID, Shape: domain.ShapeShip, WorkingDirectory: canonicalWorkerTempDir(t),
 		TaskHandle: "task-secret-0001", ManagedRunID: "managed-run-secret-0001",
 		WorkspaceLeaseID: "workspace-lease-secret-0001", BriefRevision: 3,
 		BriefRevisionHash: strings.Repeat("a", 64),
 		Attachment: application.RuntimeSocketAttachment{
-			HostSocketPath: hostSocket, MountSocketPath: "/run/devcrew/attachment.sock",
+			ExecutionAttachmentID: "execution-attachment-secret-0001",
+			AttachmentTargetName:  attachmentTarget,
+			MountSocketPath:       attachmentMount,
 		},
 	}
 	descriptor, err := adapter.BuildLaunchDescriptor(context.Background(), request)
@@ -94,7 +96,7 @@ func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(
 	joined := strings.Join(descriptor.Arguments, "\x00") + string(descriptor.StandardInput)
 	for _, secret := range []string{
 		request.TaskHandle, request.ManagedRunID, request.WorkspaceLeaseID,
-		request.BriefRevisionHash, hostSocket,
+		request.BriefRevisionHash, request.Attachment.ExecutionAttachmentID,
 	} {
 		if strings.Contains(joined, secret) {
 			t.Fatalf("Codex process input leaked task authority %q", secret)
@@ -104,7 +106,8 @@ func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(
 	if !strings.Contains(bootstrap, "devcrew-report acknowledge") ||
 		!strings.Contains(bootstrap, "devcrew-report brief") ||
 		strings.Index(bootstrap, "devcrew-report acknowledge") > strings.Index(bootstrap, "devcrew-report brief") ||
-		!containsString(descriptor.EnvironmentKeys, "DEV_CREW_ATTACHMENT") {
+		!containsString(descriptor.EnvironmentKeys, "DEV_CREW_ATTACHMENT") ||
+		len(descriptor.EnvironmentBindings) != 1 || descriptor.EnvironmentBindings["DEV_CREW_ATTACHMENT"] != attachmentMount {
 		t.Fatalf("Codex bootstrap does not use protected attachment: %#v", descriptor)
 	}
 	if descriptor.ExpectedAcknowledgement.TaskHandle != request.TaskHandle ||
@@ -219,14 +222,16 @@ func TestCodexAdapter_RejectsInvalidConfigurationProbeAndLaunchBoundaries(t *tes
 		t.Fatalf("ProbeVersion(failure) = %#v, %v", probe, err)
 	}
 
-	hostSocket, closeSocket := codexAttachmentSocket(t)
-	defer closeSocket()
+	attachmentTarget := "attachment-0123456789abcdef0123456789abcdef.sock"
 	valid := application.WorkerLaunchRequest{
 		ProfileID: profile.ID, Shape: domain.ShapeShip, WorkingDirectory: canonicalWorkerTempDir(t),
 		TaskHandle: "task-valid-0001", ManagedRunID: "managed-run-valid-0001",
 		WorkspaceLeaseID: "workspace-lease-valid-0001", BriefRevision: 1,
 		BriefRevisionHash: strings.Repeat("a", 64),
-		Attachment:        application.RuntimeSocketAttachment{HostSocketPath: hostSocket, MountSocketPath: "/run/devcrew/attachment.sock"},
+		Attachment: application.RuntimeSocketAttachment{
+			ExecutionAttachmentID: "execution-attachment-valid-0001", AttachmentTargetName: attachmentTarget,
+			MountSocketPath: "/run/comis/attachments/" + attachmentTarget,
+		},
 	}
 	//lint:ignore SA1012 The launch boundary must reject nil before profile or mount inspection.
 	if _, err := adapter.BuildLaunchDescriptor(nil, valid); err == nil {
@@ -249,12 +254,12 @@ func TestCodexAdapter_RejectsInvalidConfigurationProbeAndLaunchBoundaries(t *tes
 		func(request *application.WorkerLaunchRequest) { request.WorkspaceLeaseID = "bad id" },
 		func(request *application.WorkerLaunchRequest) { request.BriefRevision = 0 },
 		func(request *application.WorkerLaunchRequest) { request.BriefRevisionHash = "bad" },
-		func(request *application.WorkerLaunchRequest) { request.Attachment.HostSocketPath = "relative" },
+		func(request *application.WorkerLaunchRequest) { request.Attachment.ExecutionAttachmentID = "bad id" },
 		func(request *application.WorkerLaunchRequest) {
-			request.Attachment.HostSocketPath = filepath.Join(filepath.Dir(hostSocket), "missing.sock")
+			request.Attachment.AttachmentTargetName = "attachment.sock"
 		},
 		func(request *application.WorkerLaunchRequest) {
-			request.Attachment.MountSocketPath = "/run/devcrew/other.sock"
+			request.Attachment.MountSocketPath = "/run/comis/attachments/attachment-ffffffffffffffffffffffffffffffff.sock"
 		},
 	} {
 		request := valid
