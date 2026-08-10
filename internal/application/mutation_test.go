@@ -225,6 +225,60 @@ func TestMutations_StartTaskBuildsExactReplaySubject(t *testing.T) {
 	}
 }
 
+func TestMutations_AcknowledgesExactProtectedLaunchAndRejectsInvalidEchoes(t *testing.T) {
+	acknowledgement := LaunchAcknowledgement{
+		TaskHandle: "task-launch-0001", ManagedRunID: "managed-run-launch-0001",
+		WorkspaceLeaseID: "workspace-lease-launch-0001", WorkingDirectory: "/approved/workspaces/task-launch-0001",
+		BriefRevision: 1, BriefRevisionHash: strings.Repeat("a", 64),
+	}
+	if err := acknowledgement.Validate(); err != nil {
+		t.Fatalf("LaunchAcknowledgement.Validate() error = %v", err)
+	}
+	for _, mutate := range []func(*LaunchAcknowledgement){
+		func(value *LaunchAcknowledgement) { value.TaskHandle = "../task" },
+		func(value *LaunchAcknowledgement) { value.ManagedRunID = "bad id" },
+		func(value *LaunchAcknowledgement) { value.WorkspaceLeaseID = "bad id" },
+		func(value *LaunchAcknowledgement) { value.WorkingDirectory = "relative" },
+		func(value *LaunchAcknowledgement) { value.BriefRevisionHash = "bad" },
+	} {
+		invalid := acknowledgement
+		mutate(&invalid)
+		if err := invalid.Validate(); err == nil {
+			t.Fatalf("LaunchAcknowledgement.Validate(%#v) error = nil", invalid)
+		}
+	}
+	if _, err := RuntimeLaunchAcknowledgementOperationID("../task"); err == nil {
+		t.Fatal("RuntimeLaunchAcknowledgementOperationID(invalid) error = nil")
+	}
+	store := &mutationStore{}
+	mutations, err := NewMutations(MutationConfig{
+		Store: store, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(), RuntimeAttachments: testRuntimeAttachments(),
+		TaskIDs: func(string) (string, error) { return "task-unused", nil }, RegistrationNonces: testRegistrationNonceSource,
+		PreparationTTL: time.Hour, Clock: time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := AcknowledgeWorkerLaunchCommand{OperationID: "operation-launch-ack", Acknowledgement: acknowledgement}
+	if _, err := mutations.AcknowledgeWorkerLaunch(context.Background(), command); err != nil {
+		t.Fatalf("AcknowledgeWorkerLaunch() error = %v", err)
+	}
+	if store.launchAck.Acknowledgement != acknowledgement || store.launchAck.OperationID != command.OperationID ||
+		len(store.launchAck.SubjectDigest) != 64 {
+		t.Fatalf("launch acknowledgement mutation = %#v", store.launchAck)
+	}
+	invalidCommand := command
+	invalidCommand.OperationID = "bad id"
+	if _, err := mutations.AcknowledgeWorkerLaunch(context.Background(), invalidCommand); err == nil {
+		t.Fatal("AcknowledgeWorkerLaunch(invalid) error = nil")
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := mutations.AcknowledgeWorkerLaunch(cancelled, command); !errors.Is(err, context.Canceled) {
+		t.Fatalf("AcknowledgeWorkerLaunch(cancelled) error = %v", err)
+	}
+}
+
 func TestMutations_StartTaskRejectsInvalidCancelledAndAlteredReplay(t *testing.T) {
 	store := &mutationStore{}
 	mutations, err := NewMutations(MutationConfig{

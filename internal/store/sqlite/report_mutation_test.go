@@ -291,6 +291,26 @@ func openReportFixture(t *testing.T, databasePath string) (*Store, domain.Task) 
 	return store, task
 }
 
+func TestStoreBoundaryHelpersRejectInvalidReportScopesAndUnavailableState(t *testing.T) {
+	if err := validateReportMutation(application.ReportMutation{
+		Report: domain.AuthenticatedReport{TaskHandle: "../task"},
+	}); err == nil {
+		t.Fatal("validateReportMutation(invalid task) error = nil")
+	}
+	if err := validateReportMutation(application.ReportMutation{
+		Report: domain.AuthenticatedReport{TaskHandle: "task-invalid-report"},
+	}); err == nil {
+		t.Fatal("validateReportMutation(invalid report) error = nil")
+	}
+	var unavailable *Store
+	if err := unavailable.Close(); err != nil {
+		t.Fatalf("Close(nil) error = %v", err)
+	}
+	if terminalLossChangesTask(domain.TaskReady) {
+		t.Fatal("terminalLossChangesTask(ready) = true")
+	}
+}
+
 func reportClient(t *testing.T, store *Store, task domain.Task, acceptedAt time.Time) *reporter.Client {
 	t.Helper()
 	sink, err := application.NewReportSink(application.ReportSinkConfig{Store: store, Clock: func() time.Time { return acceptedAt }})
