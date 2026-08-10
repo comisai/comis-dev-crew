@@ -105,7 +105,7 @@ func TestRunCommand_RejectsMissingCompositionDependencies(t *testing.T) {
 	}
 }
 
-func TestRunCommand_ComposesInstalledComisFixtureLaneFromExplicitConfiguration(t *testing.T) {
+func TestRunCommand_ComposesInstalledComisCodexLaneFromExplicitConfiguration(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	var got Config
@@ -125,8 +125,14 @@ func TestRunCommand_ComposesInstalledComisFixtureLaneFromExplicitConfiguration(t
 		"--comis-credential-file", "/private/config/comis.credential",
 		"--comis-handshake-operation", "handshake-fixture-0001",
 		"--preparation-ttl", "15m",
-		"--fixture-worker",
-		"--fixture-decision", "use the bounded fixture choice",
+		"--codex-profile", "codex-reviewed",
+		"--codex-executable", "/opt/codex/bin/codex",
+		"--codex-version", "codex-cli 0.147.0",
+		"--codex-model", "gpt-5.5-codex",
+		"--codex-effort", "high",
+		"--codex-terminal-allow-entry", "codex-confined",
+		"--codex-network", "restricted",
+		"--codex-concurrency", "2",
 	}, &stdout, &stderr, CommandConfig{
 		RunService: func(_ context.Context, config Config) error {
 			got = config
@@ -145,11 +151,15 @@ func TestRunCommand_ComposesInstalledComisFixtureLaneFromExplicitConfiguration(t
 		SocketPath: "/private/run/comis-control.sock", CredentialFile: "/private/config/comis.credential",
 		HandshakeOperationID: "handshake-fixture-0001",
 	}
-	wantFixture := &FixtureComposition{Decision: "use the bounded fixture choice"}
+	wantCodex := &CodexComposition{
+		ProfileID: "codex-reviewed", Executable: "/opt/codex/bin/codex",
+		ExpectedVersion: "codex-cli 0.147.0", Model: "gpt-5.5-codex", Effort: "high",
+		TerminalAllowEntryID: "codex-confined", Network: "restricted", ConcurrencyLimit: 2,
+	}
 	if got.DatabasePath != "/private/state/devcrew.db" || got.SocketPath != "/private/run/operator.sock" ||
 		got.MCPSocketPath != "/private/run/mcp.sock" || got.RuntimeRoot != "/private/run/tasks" || got.ServiceInstanceID != "service-instance-fixture" ||
 		got.PreparationTTL != 15*time.Minute || !reflect.DeepEqual(got.RepositoryComposition, wantRepository) ||
-		!reflect.DeepEqual(got.ComisComposition, wantComis) || !reflect.DeepEqual(got.FixtureComposition, wantFixture) {
+		!reflect.DeepEqual(got.ComisComposition, wantComis) || !reflect.DeepEqual(got.CodexComposition, wantCodex) || got.FixtureComposition != nil {
 		t.Fatalf("installed service config = %#v", got)
 	}
 }

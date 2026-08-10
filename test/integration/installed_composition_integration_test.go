@@ -17,16 +17,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/comiswire"
 	"github.com/comisai/comis-dev-crew/internal/domain"
-	"github.com/comisai/comis-dev-crew/internal/localapi"
 	"github.com/comisai/comis-dev-crew/internal/mcpadapter"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const installedCredential = "installed_fixture_bearer_0123456789abcdef"
 
-func TestInstalledComposition_JoinsMCPActivationFixtureAndReports(t *testing.T) {
+func TestInstalledComposition_JoinsMCPActivationAndReviewedCodexLaunchPlan(t *testing.T) {
 	root := integrationShortTempDir(t)
 	gitExecutable := installedGitExecutable(t)
 	approvedRoot, primary, worktreeRoot, baseRevision := installedRepository(t, root)
@@ -60,6 +60,7 @@ func TestInstalledComposition_JoinsMCPActivationFixtureAndReports(t *testing.T) 
 
 	serviceBinary := buildInstalledBinary(t, "devcrew-service")
 	mcpBinary := buildInstalledBinary(t, "devcrew-mcp")
+	codexExecutable := installedCodexExecutable(t, root)
 	operatorSocket := filepath.Join(runRoot, "operator.sock")
 	mcpSocket := filepath.Join(runRoot, "mcp.sock")
 	database := filepath.Join(root, "state", "devcrew.db")
@@ -73,8 +74,11 @@ func TestInstalledComposition_JoinsMCPActivationFixtureAndReports(t *testing.T) 
 		"--worktree-root", worktreeRoot, "--repository-default-branch", "main",
 		"--comis-socket", controlSocket, "--comis-credential-file", credentialFile,
 		"--comis-handshake-operation", "installed-handshake-0001",
-		"--preparation-ttl", "10m", "--fixture-worker",
-		"--fixture-decision", "use the bounded fixture choice",
+		"--preparation-ttl", "10m",
+		"--codex-profile", "codex-reviewed", "--codex-executable", codexExecutable,
+		"--codex-version", "codex-cli 0.147.0", "--codex-model", "gpt-5.5-codex",
+		"--codex-effort", "high", "--codex-terminal-allow-entry", "codex-confined",
+		"--codex-network", "restricted", "--codex-concurrency", "2",
 	)
 	serviceCommand.Stderr = serviceStderr
 	if err := serviceCommand.Start(); err != nil {
@@ -118,7 +122,7 @@ func TestInstalledComposition_JoinsMCPActivationFixtureAndReports(t *testing.T) 
 			Shape: domain.ShapeScout, RepositoryID: "product-api", BaseRevision: baseRevision,
 			AcceptanceCriteria: []string{"Exercise the installed composition end to end."},
 			Constraints:        []string{"Stop at a validation candidate."}, ValidationProfile: "go-default",
-			DeliveryMode: domain.DeliveryReport, WorkerProfileID: "fixture-worker",
+			DeliveryMode: domain.DeliveryReport, WorkerProfileID: "codex-reviewed",
 		},
 	})
 	if err != nil || prepared.IsError {
@@ -149,73 +153,35 @@ func TestInstalledComposition_JoinsMCPActivationFixtureAndReports(t *testing.T) 
 	if err := writeInstalledFrame(peer.connection, installedAuthenticatedActivate{ActivateRequest: activation, Bearer: installedCredential}); err != nil {
 		t.Fatal(err)
 	}
-	wantKinds := []comiswire.ReportKind{
-		comiswire.ReportKindProgress, comiswire.ReportKindAttention,
-		comiswire.ReportKindResolution, comiswire.ReportKindCandidateComplete,
-	}
-	activated := false
-	reports := make([]comiswire.ReportRequestParams, 0, len(wantKinds))
-	for !activated || len(reports) != len(wantKinds) {
-		line, err := peer.reader.ReadBytes('\n')
-		if err != nil {
-			t.Fatalf("read installed control frame: %v", err)
-		}
-		var header struct {
-			Method *comiswire.Method `json:"method"`
-		}
-		if err := json.Unmarshal(line, &header); err != nil {
-			t.Fatal(err)
-		}
-		if header.Method == nil {
-			var response comiswire.ActivateResponse
-			decodeJSON(t, line, &response)
-			if response.ID != activation.ID || response.Result.ManagedRunID != activation.Params.ManagedRunID ||
-				response.Result.ExternalRunRef != registration.ExternalRunRef || response.Result.State != comiswire.ManagedRunStateActive {
-				t.Fatalf("installed activation response = %#v", response)
-			}
-			activated = true
-			continue
-		}
-		if *header.Method != comiswire.MethodManagedRunsReport {
-			t.Fatalf("unexpected installed control method %q", *header.Method)
-		}
-		var report installedAuthenticatedReport
-		decodeJSON(t, line, &report)
-		if report.Bearer != installedCredential || report.Params.ManagedRunID != activation.Params.ManagedRunID {
-			t.Fatalf("installed report authority = %#v", report)
-		}
-		reports = append(reports, report.Params)
-		ack := comiswire.ReportResponse{
-			JSONRPC: comiswire.JSONRPCVersion, ID: report.ID,
-			Result: comiswire.ReportResponseResult{
-				ManagedRunID: report.Params.ManagedRunID, ServiceReportID: report.Params.ServiceReportID,
-				AcceptedSequence: int64(len(reports)), RetainedUntilMs: time.Now().UTC().Add(30 * 24 * time.Hour).UnixMilli(),
-			},
-		}
-		if err := writeInstalledFrame(peer.connection, ack); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for index, report := range reports {
-		if report.Kind != wantKinds[index] {
-			t.Fatalf("installed report %d kind = %q, want %q", index+1, report.Kind, wantKinds[index])
-		}
-	}
-
-	operator, err := localapi.NewClient(operatorSocket, 2*time.Second)
+	line, err := peer.reader.ReadBytes('\n')
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("read installed activation response: %v", err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		detail, showErr := operator.ShowTask(context.Background(), "installed-show-0001", string(registration.ExternalRunRef))
-		if showErr == nil && detail.Summary.State == domain.TaskValidating && detail.ReportCursor == 4 {
-			break
+	var response comiswire.ActivateResponse
+	decodeJSON(t, line, &response)
+	if response.ID != activation.ID || response.Result.ManagedRunID != activation.Params.ManagedRunID ||
+		response.Result.ExternalRunRef != registration.ExternalRunRef || response.Result.State != comiswire.ManagedRunStateActive {
+		t.Fatalf("installed activation response = %#v", response)
+	}
+	planResult, err := mcpSession.CallTool(context.Background(), &mcp.CallToolParams{
+		Meta: parityCallMeta("installed-launch-plan-0001"), Name: mcpadapter.ToolGetLaunchPlan,
+		Arguments: mcpadapter.TaskInput{TaskHandle: string(registration.ExternalRunRef)},
+	})
+	if err != nil || planResult.IsError {
+		t.Fatalf("installed get_launch_plan = %#v, %v", planResult, err)
+	}
+	var plan application.LaunchPlan
+	decodeStructured(t, planResult.StructuredContent, &plan)
+	if plan.TaskHandle != string(registration.ExternalRunRef) || plan.State != domain.TaskReady ||
+		plan.WorkerProfileID != "codex-reviewed" || plan.TerminalAllowEntryID != "codex-confined" ||
+		plan.AttachmentTargetName != string(attachmentTarget) || plan.BriefRevisionHash == "" {
+		t.Fatalf("installed launch plan = %#v", plan)
+	}
+	visible := string(encodeJSON(t, planResult.StructuredContent))
+	for _, forbidden := range []string{workspace, codexExecutable, "/run/comis/attachments", string(attachmentID), "--model"} {
+		if strings.Contains(visible, forbidden) {
+			t.Fatalf("installed launch plan leaked %q: %s", forbidden, visible)
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("installed task did not reach validating: %#v, %v", detail, showErr)
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
 
 	if err := mcpSession.Close(); err != nil {
@@ -249,11 +215,6 @@ type installedAuthenticatedHandshake struct {
 
 type installedAuthenticatedActivate struct {
 	comiswire.ActivateRequest
-	Bearer string `json:"bearer"`
-}
-
-type installedAuthenticatedReport struct {
-	comiswire.ReportRequest
 	Bearer string `json:"bearer"`
 }
 
@@ -323,6 +284,18 @@ func buildInstalledBinary(t *testing.T, name string) string {
 		t.Fatalf("build %s: %v\n%s", name, err, output)
 	}
 	return binary
+}
+
+func installedCodexExecutable(t *testing.T, root string) string {
+	t.Helper()
+	executable := filepath.Join(root, "bin", "codex")
+	if err := os.MkdirAll(filepath.Dir(executable), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\nprintf 'codex-cli 0.147.0\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return executable
 }
 
 func installedGitExecutable(t *testing.T) string {

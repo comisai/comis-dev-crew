@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
 	"github.com/comisai/comis-dev-crew/internal/store/sqlite"
+	"github.com/comisai/comis-dev-crew/internal/workers"
 )
 
 func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *testing.T) {
@@ -22,6 +24,28 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 	}
 	if configured.Repositories == nil || configured.Workspaces == nil {
 		t.Fatalf("installed repository configuration = %#v", configured)
+	}
+	adapter, err := configured.WorkerHarnesses.ResolveWorkerHarness("codex-reviewed")
+	if err != nil {
+		t.Fatalf("ResolveWorkerHarness() error = %v", err)
+	}
+	descriptor, err := adapter.BuildLaunchDescriptor(context.Background(), application.WorkerLaunchRequest{
+		ProfileID: "codex-reviewed", Shape: domain.ShapeShip, WorkingDirectory: configuration.RepositoryComposition.PrimaryCheckout,
+		TaskHandle: "task-installed-plan", ManagedRunID: "managed-run-installed-plan",
+		WorkspaceLeaseID: "workspace-lease-installed-plan", BriefRevision: 1,
+		BriefRevisionHash: strings.Repeat("a", 64),
+		Attachment: application.RuntimeSocketAttachment{
+			ExecutionAttachmentID: "execution-attachment-installed-plan",
+			AttachmentTargetName:  "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
+			MountSocketPath:       "/run/comis/attachments/attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildLaunchDescriptor(installed) error = %v", err)
+	}
+	if descriptor.ProfileID != "codex-reviewed" || descriptor.TerminalAllowEntry != "codex-confined" ||
+		descriptor.Unattended || descriptor.DegradedReason != application.HarnessReasonLifecycleSignalUnknown {
+		t.Fatalf("installed Codex launch posture = %#v", descriptor)
 	}
 	taskID, err := configured.TaskIDs("operation-installed-stable")
 	if err != nil || !strings.HasPrefix(taskID, "task-") || len(taskID) != len("task-")+24 {
@@ -86,16 +110,16 @@ func TestInstalledRuntime_RejectsPartialMixedAndUnverifiedConfiguration(t *testi
 	mixed := Config{
 		MCPSocketPath: "/private/mcp.sock", ServiceInstanceID: "service-instance-fixture",
 		RepositoryComposition: &RepositoryComposition{}, ComisComposition: &ComisComposition{},
-		FixtureComposition: &FixtureComposition{Decision: "bounded"}, Repositories: serviceRepositoryCatalog{},
+		CodexComposition: &CodexComposition{}, Repositories: serviceRepositoryCatalog{},
 	}
 	if _, err := composeInstalledRuntime(context.Background(), mixed); err == nil {
 		t.Fatal("composeInstalledRuntime(mixed) error = nil")
 	}
 	root := shortTempDir(t)
 	configuration := installedServiceConfig(t, root)
-	configuration.FixtureComposition.Decision = " altered whitespace "
+	configuration.CodexComposition.ExpectedVersion = "codex-cli 9.9.9"
 	if _, err := composeInstalledRuntime(context.Background(), configuration); err == nil {
-		t.Fatal("composeInstalledRuntime(untrimmed decision) error = nil")
+		t.Fatal("composeInstalledRuntime(version mismatch) error = nil")
 	}
 	configuration = installedServiceConfig(t, shortTempDir(t))
 	configuration.RepositoryComposition.DefaultBranch = "missing"
@@ -260,8 +284,24 @@ func installedServiceConfig(t *testing.T, root string) Config {
 			SocketPath: filepath.Join(root, "comis.sock"), CredentialFile: credentialFile,
 			HandshakeOperationID: "installed-handshake-0001",
 		},
-		FixtureComposition: &FixtureComposition{Decision: "use the bounded fixture choice"},
+		CodexComposition: &CodexComposition{
+			ProfileID: "codex-reviewed", Executable: serviceCodexExecutable(t, root),
+			ExpectedVersion: "codex-cli 0.147.0", Model: "gpt-5.5-codex", Effort: "high",
+			TerminalAllowEntryID: "codex-confined", Network: workers.NetworkRestricted, ConcurrencyLimit: 2,
+		},
 	}
+}
+
+func serviceCodexExecutable(t *testing.T, root string) string {
+	t.Helper()
+	executable := filepath.Join(root, "bin", "codex")
+	if err := os.MkdirAll(filepath.Dir(executable), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\nprintf 'codex-cli 0.147.0\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return executable
 }
 
 func writeServiceCredential(t *testing.T, path, contents string, mode os.FileMode) {
