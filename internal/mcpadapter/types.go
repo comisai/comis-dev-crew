@@ -13,6 +13,7 @@ import (
 
 const (
 	ToolPrepareTask   = "prepare_task"
+	ToolHandbackTask  = "handback_task"
 	ToolListTasks     = "list_tasks"
 	ToolGetTask       = "get_task"
 	ToolExplainTask   = "explain_task"
@@ -25,6 +26,7 @@ const (
 // Client is the sole canonical local-service surface used by the facade.
 type Client interface {
 	PrepareTask(context.Context, string, localapi.PrepareTaskInput) (localapi.PrepareTaskResult, error)
+	HandbackTask(context.Context, string, localapi.HandbackTaskInput) (localapi.TaskMutationResult, error)
 	ListTasks(context.Context, string) (application.TaskList, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
@@ -59,6 +61,12 @@ type PrepareTaskInput struct {
 	ValidationProfile  string              `json:"validationProfile"`
 	DeliveryMode       domain.DeliveryMode `json:"deliveryMode"`
 	WorkerProfileID    string              `json:"workerProfileId"`
+}
+
+// HandbackTaskInput selects one safe paused task for developer-work validation.
+type HandbackTaskInput struct {
+	TaskHandle string                     `json:"taskHandle" jsonschema:"opaque task handle"`
+	Action     application.HandbackAction `json:"action" jsonschema:"validate-developer-work"`
 }
 
 func (input PrepareTaskInput) local() localapi.PrepareTaskInput {

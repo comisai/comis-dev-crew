@@ -36,3 +36,26 @@ func (facade *Facade) reconcilePreparation(ctx context.Context, operationID stri
 		return localapi.PrepareTaskResult{}, errors.New("unknown operation reconciliation status")
 	}
 }
+
+func (facade *Facade) reconcileHandback(
+	ctx context.Context,
+	operationID string,
+	input localapi.HandbackTaskInput,
+	original error,
+) (localapi.TaskMutationResult, error) {
+	if ctx == nil {
+		return localapi.TaskMutationResult{}, original
+	}
+	reconcileContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), facade.reconcileTimeout)
+	defer cancel()
+	requestID, err := facade.newOperationID()
+	if err != nil || domain.ValidateOperationID(requestID) != nil {
+		return localapi.TaskMutationResult{}, original
+	}
+	operation, err := facade.client.Operation(reconcileContext, requestID, operationID)
+	if err != nil || operation.OperationID != operationID || operation.Command != "HandbackTask" ||
+		operation.Status != domain.OperationCompleted {
+		return localapi.TaskMutationResult{}, original
+	}
+	return facade.client.HandbackTask(reconcileContext, operationID, input)
+}
