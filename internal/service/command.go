@@ -206,11 +206,11 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 func serviceFailureClass(err error) string {
 	message := err.Error()
 	switch {
-	case strings.Contains(message, "run service candidate supervisor: validate task candidate: pull-request truth is unavailable"):
+	case strings.Contains(message, "candidate supervisor: validate task candidate: pull-request truth is unavailable"):
 		return "candidate_pull_request_truth"
-	case strings.Contains(message, "run service candidate supervisor: candidate evidence was not accepted"):
+	case strings.Contains(message, "candidate supervisor: candidate evidence was not accepted"):
 		return "candidate_evidence_rejected"
-	case strings.Contains(message, "run service candidate supervisor"):
+	case strings.Contains(message, "candidate supervisor"):
 		return "candidate_supervision"
 	case strings.Contains(message, "run service validation recovery"):
 		return "validation_process_recovery"
