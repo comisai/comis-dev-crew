@@ -166,6 +166,43 @@ func (connection *ControlConnection) PutEvidence(
 	return response.Result, nil
 }
 
+// Release asks Comis to revoke exact run capabilities and release its lease.
+// An error leaves cleanup held until the stable request is reconciled.
+func (connection *ControlConnection) Release(
+	ctx context.Context,
+	params ReleaseRequestParams,
+) (ReleaseResponseResult, error) {
+	if ctx == nil {
+		return ReleaseResponseResult{}, errors.New("release managed run in Comis: context is required")
+	}
+	request := ReleaseRequest{
+		JSONRPC: JSONRPCVersion, ID: params.OperationID, Method: MethodManagedRunsRelease, Params: params,
+	}
+	if err := validateGeneratedDocument(schemaReleaseRequest, request); err != nil {
+		return ReleaseResponseResult{}, fmt.Errorf("release managed run in Comis: invalid request: %w", err)
+	}
+	session, err := connection.awaitSession(ctx)
+	if err != nil {
+		return ReleaseResponseResult{}, err
+	}
+	var response ReleaseResponse
+	authenticated := authenticatedReleaseRequest{ReleaseRequest: request, Bearer: connection.config.Credential}
+	if err := session.call(ctx, authenticated, params.OperationID, &response); err != nil {
+		return ReleaseResponseResult{}, fmt.Errorf("release managed run in Comis: outcome uncertain: %w", err)
+	}
+	if err := validateGeneratedDocument(schemaReleaseResponse, response); err != nil {
+		return ReleaseResponseResult{}, fmt.Errorf("release managed run in Comis: invalid response: %w", err)
+	}
+	if response.Result.ManagedRunID != params.ManagedRunID ||
+		response.Result.WorkspaceLeaseID != params.WorkspaceLeaseID ||
+		response.Result.Disposition != params.Disposition ||
+		response.Result.ReleasedAtMs != params.ReleasedAtMs ||
+		response.Result.State != ManagedRunState("released") {
+		return ReleaseResponseResult{}, errors.New("release managed run in Comis: acknowledgement identity differs")
+	}
+	return response.Result, nil
+}
+
 func (connection *ControlConnection) connect(ctx context.Context) (*controlSession, error) {
 	before, err := inspectOwnerOnlySocket(connection.config.SocketPath)
 	if err != nil {

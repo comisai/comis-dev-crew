@@ -275,6 +275,69 @@ func TestControlConnectionSendsVerifiedEvidenceOnAuthenticatedPersistentSession(
 	}
 }
 
+func TestControlConnectionSendsReleaseOnPersistentAuthenticatedSession(t *testing.T) {
+	socketPath, listener := controlTestListener(t)
+	handler := &durableControlHandler{activations: make(map[OperationID]ActivateRequestParams)}
+	connection, err := NewControlConnection(ControlConnectionConfig{
+		SocketPath: socketPath, Credential: controlTestBearer,
+		ServiceInstanceID: "service-instance_a", HandshakeOperationID: "operation_handshake_a",
+		Handler: handler, RequestTimeout: time.Second,
+		MinimumBackoff: time.Millisecond, MaximumBackoff: 2 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewControlConnection() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- connection.Run(ctx) }()
+	serverDone := make(chan error, 1)
+	go func() {
+		peer, acceptErr := listener.AcceptUnix()
+		if acceptErr != nil {
+			serverDone <- acceptErr
+			return
+		}
+		defer peer.Close()
+		if handshakeErr := serveHandshake(peer); handshakeErr != nil {
+			serverDone <- handshakeErr
+			return
+		}
+		var request authenticatedReleaseRequest
+		if readErr := readControlFrame(peer, &request); readErr != nil {
+			serverDone <- readErr
+			return
+		}
+		if request.Bearer != controlTestBearer || request.Method != MethodManagedRunsRelease ||
+			request.Params.WorkspaceLeaseID != "workspace-lease_a" {
+			serverDone <- errors.New("release did not use authenticated persistent connection")
+			return
+		}
+		serverDone <- writeControlFrame(peer, ReleaseResponse{
+			JSONRPC: JSONRPCVersion, ID: request.ID,
+			Result: ReleaseResponseResult{
+				ManagedRunID: request.Params.ManagedRunID, WorkspaceLeaseID: request.Params.WorkspaceLeaseID,
+				State: ManagedRunState("released"), Disposition: request.Params.Disposition,
+				ReleasedAtMs: request.Params.ReleasedAtMs,
+			},
+		})
+	}()
+
+	result, err := connection.Release(context.Background(), ReleaseRequestParams{
+		OperationID: "operation_release_a", ManagedRunID: "managed-run_a",
+		WorkspaceLeaseID: "workspace-lease_a", Disposition: "reap_safe", ReleasedAtMs: 1_800_000_000_000,
+	})
+	if err != nil || result.State != ManagedRunState("released") {
+		t.Fatalf("Release() = %#v, %v", result, err)
+	}
+	if serverErr := <-serverDone; serverErr != nil {
+		t.Fatalf("control fixture server error = %v", serverErr)
+	}
+	cancel()
+	if err := <-runDone; err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
 func TestControlConnectionRejectsHostileBearerBeforeDispatch(t *testing.T) {
 	socketPath, listener := controlTestListener(t)
 	handler := &durableControlHandler{activations: make(map[OperationID]ActivateRequestParams)}

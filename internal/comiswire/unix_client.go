@@ -45,6 +45,11 @@ type authenticatedPutEvidenceRequest struct {
 	Bearer string `json:"bearer"`
 }
 
+type authenticatedReleaseRequest struct {
+	ReleaseRequest
+	Bearer string `json:"bearer"`
+}
+
 type responseEnvelope struct {
 	Error   json.RawMessage `json:"error"`
 	ID      json.RawMessage `json:"id"`
@@ -159,6 +164,10 @@ func addInstanceCredential(request any, bearer string) (any, error) {
 		return authenticatedHealthRequest{HealthRequest: envelope, Bearer: bearer}, nil
 	case ReportRequest:
 		return authenticatedReportRequest{ReportRequest: envelope, Bearer: bearer}, nil
+	case PutEvidenceRequest:
+		return authenticatedPutEvidenceRequest{PutEvidenceRequest: envelope, Bearer: bearer}, nil
+	case ReleaseRequest:
+		return authenticatedReleaseRequest{ReleaseRequest: envelope, Bearer: bearer}, nil
 	default:
 		return nil, fmt.Errorf("unsupported authenticated Comis wire request %T", request)
 	}
@@ -171,6 +180,10 @@ func outboundOperationID(request any) (OperationID, error) {
 	case HealthRequest:
 		return envelope.ID, nil
 	case ReportRequest:
+		return envelope.ID, nil
+	case PutEvidenceRequest:
+		return envelope.ID, nil
+	case ReleaseRequest:
 		return envelope.ID, nil
 	default:
 		return "", fmt.Errorf("unsupported outbound Comis wire request %T", request)
