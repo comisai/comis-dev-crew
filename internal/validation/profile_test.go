@@ -1,0 +1,95 @@
+package validation
+
+import (
+	"reflect"
+	"testing"
+	"time"
+)
+
+func TestProfileCatalog_ResolvesOnlyReviewedArgumentTemplates(t *testing.T) {
+	catalog, err := NewCatalog(CatalogConfig{
+		Programs: []Program{{ID: "go-test", Executable: "/usr/bin/go"}},
+		Profiles: []Profile{{
+			ID: "fixture-default",
+			LocalChecks: []LocalCheck{{
+				ID: "unit", ProgramID: "go-test", Timeout: 2 * time.Minute, Required: true,
+				Arguments: []ArgumentTemplate{
+					{Kind: ArgumentLiteral, Value: "test"},
+					{Kind: ArgumentLiteral, Value: "./..."},
+					{Kind: ArgumentTaskField, Value: string(FieldHeadRevision)},
+				},
+			}},
+			ForgeChecks:  []ForgeCheck{{Name: "ci/unit", Required: true}},
+			ArtifactRules: []ArtifactRule{{Kind: ArtifactRegularFile, MaxBytes: 1024}},
+			EvidenceTTL:  15 * time.Minute,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("NewCatalog() error = %v", err)
+	}
+	command, err := catalog.ResolveLocalCheck("fixture-default", "unit", TaskFields{
+		TaskHandle: "task-alpha", WorktreePath: "/approved/worktrees/task-alpha",
+		BaseRevision: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", HeadRevision: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	})
+	if err != nil {
+		t.Fatalf("ResolveLocalCheck() error = %v", err)
+	}
+	if command.Executable != "/usr/bin/go" || command.WorkingDirectory != "/approved/worktrees/task-alpha" ||
+		!reflect.DeepEqual(command.Arguments, []string{"test", "./...", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}) ||
+		command.Timeout != 2*time.Minute || !command.Required {
+		t.Fatalf("resolved command = %#v", command)
+	}
+	profile, err := catalog.ResolveProfile("fixture-default")
+	if err != nil || len(profile.ForgeChecks) != 1 || len(profile.ArtifactRules) != 1 || profile.EvidenceTTL != 15*time.Minute {
+		t.Fatalf("ResolveProfile() = %#v, %v", profile, err)
+	}
+	profile.LocalChecks[0].Arguments[0].Value = "mutated"
+	again, err := catalog.ResolveLocalCheck("fixture-default", "unit", TaskFields{
+		TaskHandle: "task-alpha", WorktreePath: "/approved/worktrees/task-alpha",
+		BaseRevision: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", HeadRevision: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	})
+	if err != nil || again.Arguments[0] != "test" {
+		t.Fatalf("catalog was mutable through resolved profile: %#v, %v", again, err)
+	}
+}
+
+func TestProfileCatalog_RejectsUnreviewedProgramsAndAmbiguousProfiles(t *testing.T) {
+	validProgram := Program{ID: "go-test", Executable: "/usr/bin/go"}
+	validProfile := Profile{
+		ID: "fixture-default",
+		LocalChecks: []LocalCheck{{
+			ID: "unit", ProgramID: "go-test", Timeout: time.Minute, Required: true,
+			Arguments: []ArgumentTemplate{{Kind: ArgumentLiteral, Value: "test"}},
+		}},
+		EvidenceTTL: time.Minute,
+	}
+	tests := []struct {
+		name   string
+		mutate func(*CatalogConfig)
+	}{
+		{name: "relative executable", mutate: func(config *CatalogConfig) { config.Programs[0].Executable = "go" }},
+		{name: "duplicate program", mutate: func(config *CatalogConfig) { config.Programs = append(config.Programs, validProgram) }},
+		{name: "duplicate profile", mutate: func(config *CatalogConfig) { config.Profiles = append(config.Profiles, validProfile) }},
+		{name: "unknown program", mutate: func(config *CatalogConfig) { config.Profiles[0].LocalChecks[0].ProgramID = "missing" }},
+		{name: "shell fragment", mutate: func(config *CatalogConfig) { config.Profiles[0].LocalChecks[0].Arguments[0].Value = "test; touch escaped" }},
+		{name: "unknown field", mutate: func(config *CatalogConfig) {
+			config.Profiles[0].LocalChecks[0].Arguments[0] = ArgumentTemplate{Kind: ArgumentTaskField, Value: "worker_argument"}
+		}},
+		{name: "zero timeout", mutate: func(config *CatalogConfig) { config.Profiles[0].LocalChecks[0].Timeout = 0 }},
+		{name: "zero evidence ttl", mutate: func(config *CatalogConfig) { config.Profiles[0].EvidenceTTL = 0 }},
+		{name: "unbounded artifact", mutate: func(config *CatalogConfig) {
+			config.Profiles[0].ArtifactRules = []ArtifactRule{{Kind: ArtifactRegularFile}}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			configuration := CatalogConfig{Programs: []Program{validProgram}, Profiles: []Profile{validProfile}}
+			configuration.Profiles[0].LocalChecks = append([]LocalCheck(nil), validProfile.LocalChecks...)
+			configuration.Profiles[0].LocalChecks[0].Arguments = append([]ArgumentTemplate(nil), validProfile.LocalChecks[0].Arguments...)
+			test.mutate(&configuration)
+			if _, err := NewCatalog(configuration); err == nil {
+				t.Fatal("NewCatalog() error = nil")
+			}
+		})
+	}
+}
