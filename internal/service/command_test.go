@@ -108,6 +108,28 @@ func TestRunCommand_RejectsMissingCompositionDependencies(t *testing.T) {
 	}
 }
 
+func TestServiceFailureClassUsesSafeStableCategories(t *testing.T) {
+	tests := []struct {
+		message string
+		want    string
+	}{
+		{"run candidate supervisor: validate task candidate: pull-request truth is unavailable", "candidate_pull_request_truth"},
+		{"run candidate supervisor: candidate evidence was not accepted", "candidate_evidence_rejected"},
+		{"run candidate supervisor: durable task queue is unavailable", "candidate_supervision"},
+		{"run service validation recovery: unavailable", "validation_process_recovery"},
+		{"run service startup reconciliation: unavailable", "startup_reconciliation"},
+		{"run service local endpoint: unavailable", "operator_endpoint"},
+		{"run service MCP endpoint: unavailable", "mcp_endpoint"},
+		{"run service store: unavailable", "state_store"},
+		{"unclassified private detail", "service_runtime"},
+	}
+	for _, test := range tests {
+		if got := serviceFailureClass(errors.New(test.message)); got != test.want {
+			t.Fatalf("serviceFailureClass() = %q, want %q", got, test.want)
+		}
+	}
+}
+
 func TestRunCommand_ComposesInstalledComisCodexLaneFromExplicitConfiguration(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

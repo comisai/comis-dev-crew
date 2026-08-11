@@ -156,6 +156,18 @@ func TestCandidateSupervisor_FailsClosedForUnavailableDependenciesTimeAndShape(t
 	if _, _, err := supervisor.ValidateTask(context.Background(), "bad handle"); err == nil {
 		t.Fatal("ValidateTask(invalid handle) error = nil")
 	}
+	identityFixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	identityConfig := identityFixture.config()
+	identityConfig.NewValidationOperationID = func() (string, error) {
+		return "", errors.New("identity unavailable")
+	}
+	identitySupervisor, err := newCandidateSupervisor(identityConfig)
+	if err != nil {
+		t.Fatalf("newCandidateSupervisor(identity failure) error = %v", err)
+	}
+	if _, _, err := identitySupervisor.ValidateTask(context.Background(), identityFixture.task.Handle); err == nil {
+		t.Fatal("ValidateTask(identity failure) error = nil")
+	}
 	for _, test := range []struct {
 		name   string
 		mutate func(*candidateSupervisorFixture)
