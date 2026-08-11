@@ -202,6 +202,27 @@ INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (11, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 `
 
+const validationProcessMigration = `
+CREATE TABLE validation_processes (
+    operation_id TEXT PRIMARY KEY,
+    task_handle TEXT NOT NULL,
+    program_id TEXT NOT NULL,
+    executable_label TEXT NOT NULL,
+    pid INTEGER NOT NULL,
+    start_identity TEXT NOT NULL,
+    process_group_identity TEXT NOT NULL,
+    state TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    exit_code INTEGER,
+    FOREIGN KEY(task_handle) REFERENCES tasks(handle)
+);
+CREATE INDEX validation_processes_recovery_idx
+ON validation_processes(state, observed_at, operation_id);
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (12, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+`
+
 const busyTimeoutMilliseconds = 500
 
 // Store owns one SQLite connection pool. The service composition root is the
@@ -317,7 +338,10 @@ func (store *Store) migrate(ctx context.Context) error {
 	if err := store.applyVersionedMigration(ctx, 10, runtimeAttachmentMigration); err != nil {
 		return err
 	}
-	return store.applyVersionedMigration(ctx, 11, activatedAttachmentMigration)
+	if err := store.applyVersionedMigration(ctx, 11, activatedAttachmentMigration); err != nil {
+		return err
+	}
+	return store.applyVersionedMigration(ctx, 12, validationProcessMigration)
 }
 
 func (store *Store) applyComisReportOutboxMigration(ctx context.Context) error {
