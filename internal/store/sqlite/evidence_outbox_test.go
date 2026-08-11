@@ -300,3 +300,73 @@ func TestComisEvidenceOutbox_RejectsInvalidAcknowledgementsAndCorruptRows(t *tes
 		t.Fatal("MarkComisEvidenceDelivered(closed) error = nil")
 	}
 }
+
+func TestComisEvidenceOutbox_FailsClosedAcrossTransactionalBoundaries(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	task := candidateEvidenceTask(t, "task-evidence-transaction")
+	if err := store.CreateTask(context.Background(), task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	sealed := candidateEvidence(t, task, strings.Repeat("b", 40))
+	publications := candidateEvidencePublications(t, task, sealed)
+	if _, found, err := store.NextComisEvidence(context.Background()); err != nil || found {
+		t.Fatalf("NextComisEvidence(empty) found = %t, error = %v", found, err)
+	}
+	transaction, err := store.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("BeginTx() error = %v", err)
+	}
+	if err := insertCandidatePublications(context.Background(), transaction, task, nil, publications, 2); err == nil {
+		t.Fatal("insertCandidatePublications(invalid) error = nil")
+	}
+	if matches, err := candidatePublicationsMatch(context.Background(), transaction, publications); err != nil || matches {
+		t.Fatalf("candidatePublicationsMatch(missing) = %t, %v", matches, err)
+	}
+	if err := insertCandidatePublications(context.Background(), transaction, task, sealed, publications, 2); err != nil {
+		t.Fatalf("insertCandidatePublications() error = %v", err)
+	}
+	if err := insertCandidatePublications(context.Background(), transaction, task, sealed, publications, 2); !errors.Is(err, application.ErrConflict) {
+		t.Fatalf("insertCandidatePublications(duplicate) error = %v, want ErrConflict", err)
+	}
+	if err := transaction.Rollback(); err != nil {
+		t.Fatalf("Rollback() error = %v", err)
+	}
+	if err := insertCandidatePublications(context.Background(), transaction, task, sealed, publications, 2); err == nil {
+		t.Fatal("insertCandidatePublications(closed transaction) error = nil")
+	}
+	if _, err := candidatePublicationsMatch(context.Background(), transaction, publications); err == nil {
+		t.Fatal("candidatePublicationsMatch(closed transaction) error = nil")
+	}
+	judgedAt := task.UpdatedAt.Add(5 * time.Minute)
+	if _, _, err := store.CommitCandidateEvidence(
+		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt, publications,
+	); err != nil {
+		t.Fatalf("CommitCandidateEvidence() error = %v", err)
+	}
+	first, found, err := store.NextComisEvidence(context.Background())
+	if err != nil || !found {
+		t.Fatalf("NextComisEvidence() = %#v, %t, %v", first, found, err)
+	}
+	if _, err := store.db.Exec(`CREATE TRIGGER fail_evidence_ack_update BEFORE UPDATE ON comis_evidence_outbox
+            BEGIN SELECT RAISE(FAIL, 'evidence acknowledgement unavailable'); END`); err != nil {
+		t.Fatalf("create acknowledgement trigger: %v", err)
+	}
+	if err := store.MarkComisEvidenceDelivered(context.Background(), first.OperationID, application.ComisEvidenceAcknowledgement{
+		ManagedRunID: first.ManagedRunID, EvidenceRef: first.EvidenceRef,
+		ContentHash: first.ContentHash, VerificationLevel: first.VerificationLevel,
+	}, judgedAt.Add(time.Minute)); err == nil {
+		t.Fatal("MarkComisEvidenceDelivered(write failure) error = nil")
+	}
+	if _, err := store.db.Exec("ALTER TABLE candidate_evidence RENAME TO unavailable_candidate_records"); err != nil {
+		t.Fatalf("rename candidate evidence table: %v", err)
+	}
+	if _, _, err := store.CommitCandidateEvidence(
+		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt, publications,
+	); err == nil {
+		t.Fatal("CommitCandidateEvidence(unavailable records) error = nil")
+	}
+}
