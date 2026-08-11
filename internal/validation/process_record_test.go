@@ -26,7 +26,12 @@ func TestProcessRecord_ValidatesClosedLifecycleAndMonotonicIdentity(t *testing.T
 	unknown := running
 	unknown.State = ProcessUnknown
 	unknown.ObservedAt = startedAt.Add(2 * time.Second)
-	for _, record := range []ProcessRecord{starting, running, exited, unknown} {
+	recoveredExit := exited
+	recoveredExit.ExitCode = nil
+	preStartUnknown := starting
+	preStartUnknown.State = ProcessUnknown
+	preStartUnknown.ObservedAt = startedAt.Add(2 * time.Second)
+	for _, record := range []ProcessRecord{starting, running, exited, unknown, recoveredExit, preStartUnknown} {
 		if err := record.Validate(); err != nil {
 			t.Fatalf("Validate(%s) error = %v", record.State, err)
 		}

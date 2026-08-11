@@ -2,7 +2,9 @@ package validation
 
 import (
 	"context"
+	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -38,11 +40,96 @@ func TestRunner_RecordsRealValidationProcessAndBoundedReceipt(t *testing.T) {
 		t.Fatalf("process records = %#v", records)
 	}
 	running := records[1]
-	if running.PID < 1 || running.ProcessGroupIdentity == "" || running.StartIdentity == "" || running.ExecutableLabel != "fixture-program" {
+	if running.PID < 1 || running.ProcessGroupIdentity == "" || running.StartIdentity == "" || running.ExecutableLabel != filepath.Base(executable) {
 		t.Fatalf("running record = %#v", running)
 	}
 	if strings.Contains(running.StartIdentity, "success") {
 		t.Fatalf("process record leaked arguments: %#v", running)
+	}
+}
+
+func TestRunner_RecoveryRechecksOSIdentityAndFailsClosed(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+	catalog := runnerCatalog(t, executable, []string{"-test.run=TestValidationHelperProcess", "--", "success"})
+	startedAt := time.Date(2026, time.August, 11, 17, 0, 0, 0, time.UTC)
+	running := ProcessRecord{
+		TaskHandle: "task-alpha", OperationID: "validate-alpha", ProgramID: "fixture-program",
+		ExecutableLabel: filepath.Base(executable), PID: 4321, StartIdentity: "darwin-100-200",
+		ProcessGroupIdentity: "4321", State: ProcessRunning, StartedAt: startedAt, ObservedAt: startedAt,
+	}
+	tests := []struct {
+		name       string
+		record     ProcessRecord
+		observe    ProcessObservation
+		observeErr error
+		wantState  ProcessState
+	}{
+		{name: "matching process stays running", record: running, observe: ProcessObservation{
+			PID: 4321, StartIdentity: "darwin-100-200", ProcessGroupIdentity: "4321", ExecutableLabel: filepath.Base(executable),
+		}, wantState: ProcessRunning},
+		{name: "reused pid becomes unknown", record: running, observe: ProcessObservation{
+			PID: 4321, StartIdentity: "darwin-999-999", ProcessGroupIdentity: "4321", ExecutableLabel: filepath.Base(executable),
+		}, wantState: ProcessUnknown},
+		{name: "absent process becomes exited without invented code", record: running, observeErr: ErrProcessAbsent, wantState: ProcessExited},
+		{name: "pre-start crash becomes unknown", record: ProcessRecord{
+			TaskHandle: "task-alpha", OperationID: "validate-alpha", ProgramID: "fixture-program",
+			ExecutableLabel: filepath.Base(executable), State: ProcessStarting, StartedAt: startedAt, ObservedAt: startedAt,
+		}, wantState: ProcessUnknown},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := &recordingProcessStore{active: []ProcessRecord{test.record}}
+			runner, runErr := NewRunner(RunnerConfig{
+				Catalog: catalog, Processes: store, MaxOutputBytes: 128,
+				Clock: func() time.Time { return startedAt.Add(time.Minute) },
+				ObserveProcess: func(context.Context, int) (ProcessObservation, error) {
+					return test.observe, test.observeErr
+				},
+			})
+			if runErr != nil {
+				t.Fatalf("NewRunner() error = %v", runErr)
+			}
+			result, recoverErr := runner.Recover(context.Background())
+			if recoverErr != nil {
+				t.Fatalf("Recover() error = %v", recoverErr)
+			}
+			records := store.snapshot()
+			if len(records) != 1 || records[0].State != test.wantState || records[0].ObservedAt != startedAt.Add(time.Minute) {
+				t.Fatalf("recovered records = %#v", records)
+			}
+			if test.wantState == ProcessExited && records[0].ExitCode != nil {
+				t.Fatalf("recovered exit invented a code: %#v", records[0])
+			}
+			if result.Observed != 1 {
+				t.Fatalf("Recover() = %#v", result)
+			}
+		})
+	}
+}
+
+func TestRunner_RecoveryRejectsUnavailableStoreAndObserver(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+	catalog := runnerCatalog(t, executable, []string{"-test.run=TestValidationHelperProcess", "--", "success"})
+	runner, err := NewRunner(RunnerConfig{Catalog: catalog, Processes: recordOnlyProcessStore{}, MaxOutputBytes: 128})
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+	if _, err := runner.Recover(context.Background()); err == nil {
+		t.Fatal("Recover(non-recovery store) error = nil")
+	}
+	store := &recordingProcessStore{activeErr: errors.New("store unavailable")}
+	runner, err = NewRunner(RunnerConfig{Catalog: catalog, Processes: store, MaxOutputBytes: 128})
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+	if _, err := runner.Recover(context.Background()); err == nil {
+		t.Fatal("Recover(store failure) error = nil")
 	}
 }
 
@@ -180,9 +267,19 @@ func runnerCatalog(t *testing.T, executable string, arguments []string) *Catalog
 }
 
 type recordingProcessStore struct {
-	mu      sync.Mutex
-	records []ProcessRecord
-	running chan struct{}
+	mu        sync.Mutex
+	records   []ProcessRecord
+	running   chan struct{}
+	active    []ProcessRecord
+	activeErr error
+}
+
+type recordOnlyProcessStore struct{}
+
+func (recordOnlyProcessStore) Record(context.Context, ProcessRecord) error { return nil }
+
+func (store *recordingProcessStore) ListActiveValidationProcesses(context.Context) ([]ProcessRecord, error) {
+	return append([]ProcessRecord(nil), store.active...), store.activeErr
 }
 
 func (store *recordingProcessStore) Record(_ context.Context, record ProcessRecord) error {
