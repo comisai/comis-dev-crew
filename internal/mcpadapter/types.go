@@ -14,6 +14,7 @@ import (
 const (
 	ToolPrepareTask   = "prepare_task"
 	ToolHandbackTask  = "handback_task"
+	ToolCleanupTask   = "cleanup_task"
 	ToolListTasks     = "list_tasks"
 	ToolGetTask       = "get_task"
 	ToolExplainTask   = "explain_task"
@@ -27,6 +28,7 @@ const (
 type Client interface {
 	PrepareTask(context.Context, string, localapi.PrepareTaskInput) (localapi.PrepareTaskResult, error)
 	HandbackTask(context.Context, string, localapi.HandbackTaskInput) (localapi.TaskMutationResult, error)
+	CleanupTask(context.Context, string, localapi.CleanupTaskInput) (localapi.TaskMutationResult, error)
 	ListTasks(context.Context, string) (application.TaskList, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)

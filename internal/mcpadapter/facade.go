@@ -14,7 +14,7 @@ import (
 const defaultReconcileTimeout = 2 * time.Second
 const maximumReconcileTimeout = 10 * time.Second
 
-// New creates the exact five-tool official-SDK facade.
+// New creates the exact seven-tool official-SDK facade.
 func New(config Config) (*Facade, error) {
 	if config.Client == nil || config.NewOperationID == nil {
 		return nil, errors.New("create MCP facade: local client and operation source are required")
@@ -56,10 +56,29 @@ func (facade *Facade) Run(ctx context.Context, transport mcp.Transport) error {
 func (facade *Facade) registerTools() {
 	mcp.AddTool(facade.server, tool(ToolPrepareTask, "Prepare one durable development task.", false), facade.prepareTask)
 	mcp.AddTool(facade.server, tool(ToolHandbackTask, "Validate developer work after one safe paused worker exits.", false), facade.handbackTask)
+	mcp.AddTool(facade.server, cleanupTool(), facade.cleanupTask)
 	mcp.AddTool(facade.server, tool(ToolListTasks, "List durable development tasks.", true), facade.listTasks)
 	mcp.AddTool(facade.server, tool(ToolGetTask, "Get one durable development task.", true), facade.getTask)
 	mcp.AddTool(facade.server, tool(ToolExplainTask, "Explain one durable task posture.", true), facade.explainTask)
 	mcp.AddTool(facade.server, tool(ToolGetLaunchPlan, "Get reviewed launch requirements for one ready task.", true), facade.getLaunchPlan)
+}
+
+func (facade *Facade) cleanupTask(
+	ctx context.Context,
+	request *mcp.CallToolRequest,
+	input TaskInput,
+) (*mcp.CallToolResult, localapi.TaskMutationResult, error) {
+	callContext, err := facade.authorize(request)
+	if err != nil {
+		return nil, localapi.TaskMutationResult{}, err
+	}
+	operationID := string(callContext.OperationID)
+	localInput := localapi.CleanupTaskInput{TaskHandle: input.TaskHandle}
+	result, err := facade.client.CleanupTask(ctx, operationID, localInput)
+	if err != nil && uncertainMutation(ctx, err) {
+		result, err = facade.reconcileCleanup(ctx, operationID, localInput, err)
+	}
+	return nil, result, err
 }
 
 func (facade *Facade) handbackTask(
@@ -86,6 +105,17 @@ func tool(name, description string, readOnly bool) *mcp.Tool {
 		Name: name, Description: description,
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint: readOnly, DestructiveHint: &destructive,
+			IdempotentHint: true, OpenWorldHint: &openWorld,
+		},
+	}
+}
+
+func cleanupTool() *mcp.Tool {
+	destructive, openWorld := true, true
+	return &mcp.Tool{
+		Name: ToolCleanupTask, Description: "Release exact host authority and remove one safely delivered task worktree.",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint: false, DestructiveHint: &destructive,
 			IdempotentHint: true, OpenWorldHint: &openWorld,
 		},
 	}

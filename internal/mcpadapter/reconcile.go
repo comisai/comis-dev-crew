@@ -59,3 +59,26 @@ func (facade *Facade) reconcileHandback(
 	}
 	return facade.client.HandbackTask(reconcileContext, operationID, input)
 }
+
+func (facade *Facade) reconcileCleanup(
+	ctx context.Context,
+	operationID string,
+	input localapi.CleanupTaskInput,
+	original error,
+) (localapi.TaskMutationResult, error) {
+	if ctx == nil {
+		return localapi.TaskMutationResult{}, original
+	}
+	reconcileContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), facade.reconcileTimeout)
+	defer cancel()
+	requestID, err := facade.newOperationID()
+	if err != nil || domain.ValidateOperationID(requestID) != nil {
+		return localapi.TaskMutationResult{}, original
+	}
+	operation, err := facade.client.Operation(reconcileContext, requestID, operationID)
+	if err != nil || operation.OperationID != operationID || operation.Command != "CleanupTask" ||
+		operation.Status != domain.OperationCompleted {
+		return localapi.TaskMutationResult{}, original
+	}
+	return facade.client.CleanupTask(reconcileContext, operationID, input)
+}
