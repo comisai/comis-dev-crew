@@ -55,6 +55,7 @@ func TestRunner_CancellationStopsOnlyOwningValidationOperation(t *testing.T) {
 		"-test.run=TestValidationHelperProcess", "--", "wait",
 	})
 	store := &recordingProcessStore{running: make(chan struct{})}
+	runningSignal := store.running
 	runner, err := NewRunner(RunnerConfig{Catalog: catalog, Processes: store, MaxOutputBytes: 128})
 	if err != nil {
 		t.Fatalf("NewRunner() error = %v", err)
@@ -69,7 +70,7 @@ func TestRunner_CancellationStopsOnlyOwningValidationOperation(t *testing.T) {
 		result <- runErr
 	}()
 	select {
-	case <-store.running:
+	case <-runningSignal:
 	case <-time.After(5 * time.Second):
 		t.Fatal("validation process did not reach running")
 	}
@@ -93,6 +94,48 @@ func TestRunner_CancellationStopsOnlyOwningValidationOperation(t *testing.T) {
 	}
 }
 
+func TestRunner_FailsClosedForInvalidConfigurationFailureAndOversizedOutput(t *testing.T) {
+	if _, err := NewRunner(RunnerConfig{}); err == nil {
+		t.Fatal("NewRunner(empty) error = nil")
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+	for _, scenario := range []struct {
+		name       string
+		helperMode string
+		outputMax  int64
+	}{
+		{name: "program failure", helperMode: "failure", outputMax: 128},
+		{name: "oversized output", helperMode: "oversized", outputMax: 8},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			catalog := runnerCatalog(t, executable, []string{"-test.run=TestValidationHelperProcess", "--", scenario.helperMode})
+			runner, runErr := NewRunner(RunnerConfig{Catalog: catalog, Processes: &recordingProcessStore{}, MaxOutputBytes: scenario.outputMax})
+			if runErr != nil {
+				t.Fatalf("NewRunner() error = %v", runErr)
+			}
+			fields := TaskFields{TaskHandle: "task-alpha", WorktreePath: t.TempDir(), BaseRevision: strings.Repeat("a", 40), HeadRevision: strings.Repeat("b", 40)}
+			receipt, runErr := runner.Run(context.Background(), RunRequest{
+				OperationID: "validate-alpha", TaskHandle: "task-alpha", ProfileID: "fixture-default", CheckID: "unit", Fields: fields,
+			})
+			if runErr == nil || receipt.Passed || receipt.OutputBytes > scenario.outputMax {
+				t.Fatalf("Run() = %#v, %v", receipt, runErr)
+			}
+			fields.TaskHandle = "task-other"
+			if _, invalidErr := runner.Run(context.Background(), RunRequest{
+				OperationID: "validate-other", TaskHandle: "task-alpha", ProfileID: "fixture-default", CheckID: "unit", Fields: fields,
+			}); invalidErr == nil {
+				t.Fatal("Run(mismatched task) error = nil")
+			}
+		})
+	}
+	if err := (*Runner)(nil).Stop(context.Background(), "validate-alpha", "task-alpha"); err == nil {
+		t.Fatal("Stop(nil runner) error = nil")
+	}
+}
+
 func TestValidationHelperProcess(t *testing.T) {
 	separator := -1
 	for index, argument := range os.Args {
@@ -109,6 +152,10 @@ func TestValidationHelperProcess(t *testing.T) {
 		_, _ = os.Stdout.WriteString("validated fixture output\n")
 	case "wait":
 		select {}
+	case "oversized":
+		_, _ = os.Stdout.WriteString("output larger than the configured validation bound\n")
+	case "failure":
+		os.Exit(17)
 	default:
 		os.Exit(17)
 	}

@@ -19,9 +19,9 @@ func TestProfileCatalog_ResolvesOnlyReviewedArgumentTemplates(t *testing.T) {
 					{Kind: ArgumentTaskField, Value: string(FieldHeadRevision)},
 				},
 			}},
-			ForgeChecks:  []ForgeCheck{{Name: "ci/unit", Required: true}},
+			ForgeChecks:   []ForgeCheck{{Name: "ci/unit", Required: true}},
 			ArtifactRules: []ArtifactRule{{Kind: ArtifactRegularFile, MaxBytes: 1024}},
-			EvidenceTTL:  15 * time.Minute,
+			EvidenceTTL:   15 * time.Minute,
 		}},
 	})
 	if err != nil {
@@ -71,7 +71,9 @@ func TestProfileCatalog_RejectsUnreviewedProgramsAndAmbiguousProfiles(t *testing
 		{name: "duplicate program", mutate: func(config *CatalogConfig) { config.Programs = append(config.Programs, validProgram) }},
 		{name: "duplicate profile", mutate: func(config *CatalogConfig) { config.Profiles = append(config.Profiles, validProfile) }},
 		{name: "unknown program", mutate: func(config *CatalogConfig) { config.Profiles[0].LocalChecks[0].ProgramID = "missing" }},
-		{name: "shell fragment", mutate: func(config *CatalogConfig) { config.Profiles[0].LocalChecks[0].Arguments[0].Value = "test; touch escaped" }},
+		{name: "shell fragment", mutate: func(config *CatalogConfig) {
+			config.Profiles[0].LocalChecks[0].Arguments[0].Value = "test; touch escaped"
+		}},
 		{name: "unknown field", mutate: func(config *CatalogConfig) {
 			config.Profiles[0].LocalChecks[0].Arguments[0] = ArgumentTemplate{Kind: ArgumentTaskField, Value: "worker_argument"}
 		}},
@@ -91,5 +93,36 @@ func TestProfileCatalog_RejectsUnreviewedProgramsAndAmbiguousProfiles(t *testing
 				t.Fatal("NewCatalog() error = nil")
 			}
 		})
+	}
+}
+
+func TestProfileCatalog_RejectsUnknownProfilesChecksAndTaskFacts(t *testing.T) {
+	if _, err := (*Catalog)(nil).ResolveProfile("fixture-default"); err == nil {
+		t.Fatal("ResolveProfile(nil) error = nil")
+	}
+	catalog, err := NewCatalog(CatalogConfig{
+		Programs: []Program{{ID: "go-test", Executable: "/usr/bin/go"}},
+		Profiles: []Profile{{ID: "fixture-default", EvidenceTTL: time.Minute, LocalChecks: []LocalCheck{{
+			ID: "unit", ProgramID: "go-test", Timeout: time.Minute, Required: true,
+			Arguments: []ArgumentTemplate{{Kind: ArgumentTaskField, Value: string(FieldTaskHandle)}},
+		}}}},
+	})
+	if err != nil {
+		t.Fatalf("NewCatalog() error = %v", err)
+	}
+	if _, err := catalog.ResolveProfile("missing-profile"); err == nil {
+		t.Fatal("ResolveProfile(missing) error = nil")
+	}
+	validFields := TaskFields{
+		TaskHandle: "task-alpha", WorktreePath: "/approved/worktrees/task-alpha",
+		BaseRevision: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", HeadRevision: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	}
+	if _, err := catalog.ResolveLocalCheck("fixture-default", "missing-check", validFields); err == nil {
+		t.Fatal("ResolveLocalCheck(missing) error = nil")
+	}
+	invalidFields := validFields
+	invalidFields.WorktreePath = "relative/worktree"
+	if _, err := catalog.ResolveLocalCheck("fixture-default", "unit", invalidFields); err == nil {
+		t.Fatal("ResolveLocalCheck(relative worktree) error = nil")
 	}
 }
