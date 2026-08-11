@@ -81,10 +81,38 @@ func (store *Store) NextComisReport(ctx context.Context) (application.ComisRepor
 		}
 		delivery.WorkerObservedAt = &observed
 	}
+	if delivery.Kind == domain.ReportCandidateComplete {
+		delivery.ArtifactRefs, err = store.deliveredCandidateEvidenceRefs(ctx, delivery.TaskHandle)
+		if err != nil {
+			return application.ComisReportDelivery{}, false, err
+		}
+	}
 	if err := validateComisDelivery(delivery); err != nil {
 		return application.ComisReportDelivery{}, false, err
 	}
 	return delivery, true, nil
+}
+
+func (store *Store) deliveredCandidateEvidenceRefs(ctx context.Context, taskHandle string) ([]string, error) {
+	const query = `SELECT evidence_ref FROM comis_evidence_outbox
+        WHERE task_handle = ? AND delivered_at IS NOT NULL ORDER BY evidence_ref`
+	rows, err := store.db.QueryContext(ctx, query, taskHandle)
+	if err != nil {
+		return nil, fmt.Errorf("read candidate evidence references: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var references []string
+	for rows.Next() {
+		var reference string
+		if err := rows.Scan(&reference); err != nil {
+			return nil, fmt.Errorf("scan candidate evidence reference: %w", err)
+		}
+		references = append(references, reference)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read candidate evidence references: %w", err)
+	}
+	return references, nil
 }
 
 // MarkComisReportDelivered durably records only an exact acknowledgement and
@@ -170,6 +198,18 @@ func validateComisDelivery(delivery application.ComisReportDelivery) error {
 	}
 	if err := report.Validate(); err != nil {
 		return errors.New("read Comis report outbox: invalid sparse report")
+	}
+	if delivery.Kind == domain.ReportCandidateComplete {
+		if len(delivery.ArtifactRefs) != 2 || delivery.ArtifactRefs[0] == delivery.ArtifactRefs[1] {
+			return errors.New("read Comis report outbox: candidate evidence references are invalid")
+		}
+		for _, reference := range delivery.ArtifactRefs {
+			if domain.ValidateAuthorityReference("evidenceRef", reference) != nil {
+				return errors.New("read Comis report outbox: candidate evidence reference is invalid")
+			}
+		}
+	} else if len(delivery.ArtifactRefs) != 0 {
+		return errors.New("read Comis report outbox: non-candidate report has evidence references")
 	}
 	return nil
 }

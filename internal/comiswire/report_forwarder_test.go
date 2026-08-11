@@ -103,6 +103,25 @@ func TestReportForwarder_RetriesExactIdentityAfterUncertainOutcome(t *testing.T)
 	}
 }
 
+func TestReportForwarderCarriesOnlyDurableCandidateEvidenceReferences(t *testing.T) {
+	delivery := validForwarderDelivery()
+	delivery.Kind = domain.ReportCandidateComplete
+	delivery.ExternalKey = ""
+	delivery.Details = ""
+	delivery.ArtifactRefs = []string{"evidence-bundle", "evidence-delivery"}
+
+	request, err := reportForwarderRequest(delivery)
+	if err != nil {
+		t.Fatalf("reportForwarderRequest() error = %v", err)
+	}
+	if request.Kind != ReportKindCandidateComplete || !reflect.DeepEqual(
+		request.ArtifactRefs,
+		[]ArtifactRef{"evidence-bundle", "evidence-delivery"},
+	) {
+		t.Fatalf("reportForwarderRequest() = %#v", request)
+	}
+}
+
 func TestReportForwarder_RestartResendsAfterAcknowledgementBeforeMarkCrash(t *testing.T) {
 	delivery := validForwarderDelivery()
 	crash := errors.New("simulated local store loss")

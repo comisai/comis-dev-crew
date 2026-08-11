@@ -19,6 +19,7 @@ type ComisReportDelivery struct {
 	ExternalKey      string
 	Summary          string
 	Details          string
+	ArtifactRefs     []string
 	WorkerObservedAt *time.Time
 	StateVersion     int64
 }

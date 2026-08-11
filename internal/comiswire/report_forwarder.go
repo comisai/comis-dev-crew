@@ -117,6 +117,9 @@ func reportForwarderRequest(delivery application.ComisReportDelivery) (ReportReq
 		OperationID: OperationID(delivery.OperationID), ManagedRunID: ManagedRunID(delivery.ManagedRunID),
 		ServiceReportID: ServiceReportID(delivery.ServiceReportID), Kind: kind, Summary: delivery.Summary,
 	}
+	for _, reference := range delivery.ArtifactRefs {
+		request.ArtifactRefs = append(request.ArtifactRefs, ArtifactRef(reference))
+	}
 	if delivery.ExternalKey != "" {
 		key := delivery.ExternalKey
 		request.ExternalKey = &key
