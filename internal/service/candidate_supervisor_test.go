@@ -170,6 +170,22 @@ func TestCandidateSupervisor_FailsClosedForUnavailableDependenciesTimeAndShape(t
 	}
 }
 
+func TestCandidateSupervisor_RunRecoversDurableValidatingTaskAndJoinsCancellation(t *testing.T) {
+	fixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	ctx, cancel := context.WithCancel(context.Background())
+	fixture.store.onCommit = cancel
+	supervisor, err := newCandidateSupervisor(fixture.config())
+	if err != nil {
+		t.Fatalf("newCandidateSupervisor() error = %v", err)
+	}
+	if err := supervisor.Run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context.Canceled", err)
+	}
+	if fixture.store.evidence == nil || fixture.store.task.State != domain.TaskCandidateComplete {
+		t.Fatal("Run() did not recover and validate the durable task")
+	}
+}
+
 type candidateSupervisorFixture struct {
 	task         domain.Task
 	preparation  application.ManagedRunPreparation
@@ -257,7 +273,7 @@ func (fixture *candidateSupervisorFixture) config() candidateSupervisorConfig {
 	return candidateSupervisorConfig{
 		Store: fixture.store, Git: fixture.git, Catalog: fixture.catalog, Runner: fixture.runner,
 		PullRequests: fixture.pullRequests, InspectArtifact: fixture.artifact.inspect,
-		Clock: func() time.Time { return fixture.now },
+		Clock: func() time.Time { return fixture.now }, PollInterval: time.Millisecond,
 	}
 }
 
@@ -266,6 +282,11 @@ type candidateSupervisorStore struct {
 	preparation application.ManagedRunPreparation
 	reports     []domain.AcceptedReport
 	evidence    *domain.SealedDeliveryEvidence
+	onCommit    func()
+}
+
+func (store *candidateSupervisorStore) ListTasks(context.Context) ([]domain.Task, error) {
+	return []domain.Task{store.task}, nil
 }
 
 func (store *candidateSupervisorStore) GetTask(context.Context, string) (domain.Task, error) {
@@ -298,6 +319,9 @@ func (store *candidateSupervisorStore) CommitCandidateEvidence(
 		updated.State = domain.TaskCandidateComplete
 	}
 	store.task = updated
+	if store.onCommit != nil {
+		store.onCommit()
+	}
 	return updated, judgment, nil
 }
 
