@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -339,6 +340,71 @@ func TestControlConnectionSendsReleaseOnPersistentAuthenticatedSession(t *testin
 	cancel()
 	if err := <-runDone; err != nil && !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v", err)
+	}
+}
+
+func TestControlConnectionRejectsInvalidEvidenceAndReleaseBeforeDispatch(t *testing.T) {
+	socketPath, _ := controlTestListener(t)
+	connection, err := NewControlConnection(ControlConnectionConfig{
+		SocketPath: socketPath, Credential: controlTestBearer,
+		ServiceInstanceID: "service-instance_a", HandshakeOperationID: "operation_handshake_a",
+		Handler:        &durableControlHandler{activations: make(map[OperationID]ActivateRequestParams)},
+		RequestTimeout: time.Second, MinimumBackoff: time.Millisecond, MaximumBackoff: 2 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewControlConnection() error = %v", err)
+	}
+	body := []byte("bounded evidence")
+	contentHash := fmt.Sprintf("%x", sha256.Sum256(body))
+	params := PutEvidenceRequestParams{
+		OperationID: "operation_evidence_validation", ManagedRunID: "managed-run_a", EvidenceRef: "evidence_a",
+		Kind: "candidate_bundle", SubjectDigest: contentHash, ObservedAtMs: 1_800_000_000_000,
+		ContentHash: contentHash, VerificationLevel: EvidenceVerificationLevelAdapterVerified,
+		BodyBase64: base64.StdEncoding.EncodeToString(body),
+	}
+	if _, err := connection.PutEvidence(nil, params); err == nil {
+		t.Fatal("PutEvidence(nil context) error = nil")
+	}
+	invalidBody := params
+	invalidBody.BodyBase64 = "not-base64"
+	if _, err := connection.PutEvidence(context.Background(), invalidBody); err == nil {
+		t.Fatal("PutEvidence(invalid body) error = nil")
+	}
+	wrongHash := params
+	wrongHash.ContentHash = strings.Repeat("0", 64)
+	if _, err := connection.PutEvidence(context.Background(), wrongHash); err == nil {
+		t.Fatal("PutEvidence(wrong hash) error = nil")
+	}
+	hostVerified := params
+	hostVerified.VerificationLevel = EvidenceVerificationLevelHostVerified
+	if _, err := connection.PutEvidence(context.Background(), hostVerified); err == nil {
+		t.Fatal("PutEvidence(host verified) error = nil")
+	}
+	invalidRequest := params
+	invalidRequest.OperationID = "bad operation"
+	if _, err := connection.PutEvidence(context.Background(), invalidRequest); err == nil {
+		t.Fatal("PutEvidence(invalid request) error = nil")
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := connection.PutEvidence(canceled, params); !errors.Is(err, context.Canceled) {
+		t.Fatalf("PutEvidence(canceled) error = %v, want context.Canceled", err)
+	}
+	if _, err := connection.Release(nil, ReleaseRequestParams{
+		OperationID: "operation_release_validation", ManagedRunID: "managed-run_a",
+		WorkspaceLeaseID: "workspace-lease_a", Disposition: "reap_safe", ReleasedAtMs: 1_800_000_000_000,
+	}); err == nil {
+		t.Fatal("Release(nil context) error = nil")
+	}
+	if _, err := connection.ReleaseManagedRun(context.Background(), application.ManagedRunReleaseRequest{}); err == nil {
+		t.Fatal("ReleaseManagedRun(invalid request) error = nil")
+	}
+	if _, err := connection.ReleaseManagedRun(canceled, application.ManagedRunReleaseRequest{
+		OperationID: "operation_release_validation", ManagedRunID: "managed-run_a",
+		WorkspaceLeaseID: "workspace-lease_a", Disposition: application.ManagedRunReleaseReapSafe,
+		ReleasedAt: time.UnixMilli(1_800_000_000_000).UTC(),
+	}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ReleaseManagedRun(canceled) error = %v, want context.Canceled", err)
 	}
 }
 

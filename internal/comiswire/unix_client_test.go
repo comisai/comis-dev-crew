@@ -204,6 +204,41 @@ func TestUnixRoundTripperRejectsUnsupportedRequestsAndSocketKinds(t *testing.T) 
 	if _, err := outboundOperationID(ReportRequest{ID: "operation_report"}); err != nil {
 		t.Fatalf("report operation ID: %v", err)
 	}
+	for _, request := range []struct {
+		name     string
+		envelope any
+		wantID   OperationID
+	}{
+		{name: "health", envelope: HealthRequest{ID: "operation_health"}, wantID: "operation_health"},
+		{name: "put evidence", envelope: PutEvidenceRequest{ID: "operation_evidence"}, wantID: "operation_evidence"},
+		{name: "release", envelope: ReleaseRequest{ID: "operation_release"}, wantID: "operation_release"},
+	} {
+		t.Run(request.name+" operation identity", func(t *testing.T) {
+			got, err := outboundOperationID(request.envelope)
+			if err != nil || got != request.wantID {
+				t.Fatalf("outboundOperationID() = %q, %v", got, err)
+			}
+		})
+	}
+	const bearer = "fixture_bearer_000000000000000000000001"
+	for _, request := range []struct {
+		name     string
+		envelope any
+	}{
+		{name: "health", envelope: HealthRequest{}},
+		{name: "report", envelope: ReportRequest{}},
+		{name: "put evidence", envelope: PutEvidenceRequest{}},
+		{name: "release", envelope: ReleaseRequest{}},
+	} {
+		t.Run(request.name+" credential", func(t *testing.T) {
+			if _, err := addInstanceCredential(request.envelope, bearer); err != nil {
+				t.Fatalf("addInstanceCredential() error = %v", err)
+			}
+		})
+	}
+	if _, err := addInstanceCredential(struct{}{}, bearer); err == nil {
+		t.Fatal("addInstanceCredential(unsupported) error = nil")
+	}
 
 	regular := filepath.Join(newCanonicalTempDirectory(t), "not-a-socket")
 	if err := os.WriteFile(regular, []byte("file"), 0o600); err != nil {
@@ -241,6 +276,11 @@ func TestDecodeWireResponseRejectsEveryEnvelopeContradiction(t *testing.T) {
 	}
 	if err := contextOrTransportError(context.Background(), "read", errors.New("cause")); err == nil || !strings.Contains(err.Error(), "cause") {
 		t.Fatalf("transport cause was not preserved: %v", err)
+	}
+	for _, malformed := range []string{`{"name":1`, `[1`, `[}`} {
+		if err := rejectDuplicateJSONNames([]byte(malformed)); err == nil {
+			t.Fatalf("rejectDuplicateJSONNames(%q) error = nil", malformed)
+		}
 	}
 }
 
