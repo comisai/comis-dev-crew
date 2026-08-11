@@ -83,8 +83,7 @@ func runtimeSensitiveState(state domain.TaskState) bool {
 	switch state {
 	case domain.TaskLaunching, domain.TaskWorking, domain.TaskAwaitingDecision,
 		domain.TaskBlocked, domain.TaskPaused, domain.TaskReconciling,
-		domain.TaskValidating, domain.TaskCandidateComplete, domain.TaskDelivering,
-		domain.TaskCleanupHeld:
+		domain.TaskValidating, domain.TaskCandidateComplete, domain.TaskDelivering:
 		return true
 	default:
 		return false
