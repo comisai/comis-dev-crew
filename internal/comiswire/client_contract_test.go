@@ -2,7 +2,10 @@ package comiswire
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -174,6 +177,119 @@ func TestGeneratedClientRejectsSupersededBundleDigest(t *testing.T) {
 	})
 	if err == nil || transport.request != nil {
 		t.Fatalf("Handshake(superseded digest) error = %v, request = %#v", err, transport.request)
+	}
+}
+
+func TestGeneratedClientPutEvidenceValidatesBodyAuthorityAndResponseIdentity(t *testing.T) {
+	body := []byte("bounded candidate evidence")
+	contentHash := fmt.Sprintf("%x", sha256.Sum256(body))
+	params := PutEvidenceRequestParams{
+		OperationID: "operation_evidence", ManagedRunID: "managed-run_a", EvidenceRef: "evidence_a",
+		Kind: "candidate_bundle", SubjectDigest: contentHash, ObservedAtMs: 1_800_000_000_000,
+		ContentHash: contentHash, VerificationLevel: EvidenceVerificationLevelAdapterVerified,
+		BodyBase64: base64.StdEncoding.EncodeToString(body),
+	}
+	if _, err := newClient(&recordingTransport{}).PutEvidence(nil, params); err == nil {
+		t.Fatal("PutEvidence(nil context) error = nil")
+	}
+	invalidBody := params
+	invalidBody.BodyBase64 = "not-base64"
+	if _, err := newClient(&recordingTransport{}).PutEvidence(context.Background(), invalidBody); err == nil {
+		t.Fatal("PutEvidence(invalid body) error = nil")
+	}
+	wrongHash := params
+	wrongHash.ContentHash = fmt.Sprintf("%064x", 1)
+	if _, err := newClient(&recordingTransport{}).PutEvidence(context.Background(), wrongHash); err == nil {
+		t.Fatal("PutEvidence(wrong hash) error = nil")
+	}
+	hostVerified := params
+	hostVerified.VerificationLevel = EvidenceVerificationLevelHostVerified
+	if _, err := newClient(&recordingTransport{}).PutEvidence(context.Background(), hostVerified); err == nil {
+		t.Fatal("PutEvidence(host verified) error = nil")
+	}
+	invalidRequest := params
+	invalidRequest.OperationID = "bad operation"
+	if _, err := newClient(&recordingTransport{}).PutEvidence(context.Background(), invalidRequest); err == nil {
+		t.Fatal("PutEvidence(invalid request) error = nil")
+	}
+	transportFailure := &recordingTransport{err: errors.New("transport unavailable")}
+	if _, err := newClient(transportFailure).PutEvidence(context.Background(), params); err == nil {
+		t.Fatal("PutEvidence(transport failure) error = nil")
+	}
+	invalidResponse := &recordingTransport{}
+	if _, err := newClient(invalidResponse).PutEvidence(context.Background(), params); err == nil {
+		t.Fatal("PutEvidence(invalid response) error = nil")
+	}
+	drifted := &recordingTransport{response: func(target any) {
+		*(target.(*PutEvidenceResponse)) = PutEvidenceResponse{
+			JSONRPC: JSONRPCVersion, ID: params.OperationID,
+			Result: PutEvidenceResponseResult{
+				ManagedRunID: "managed-run_other", EvidenceRef: params.EvidenceRef,
+				ContentHash: params.ContentHash, VerificationLevel: params.VerificationLevel,
+			},
+		}
+	}}
+	if _, err := newClient(drifted).PutEvidence(context.Background(), params); err == nil {
+		t.Fatal("PutEvidence(response drift) error = nil")
+	}
+	accepted := &recordingTransport{response: func(target any) {
+		*(target.(*PutEvidenceResponse)) = PutEvidenceResponse{
+			JSONRPC: JSONRPCVersion, ID: params.OperationID,
+			Result: PutEvidenceResponseResult{
+				ManagedRunID: params.ManagedRunID, EvidenceRef: params.EvidenceRef,
+				ContentHash: params.ContentHash, VerificationLevel: params.VerificationLevel,
+			},
+		}
+	}}
+	result, err := newClient(accepted).PutEvidence(context.Background(), params)
+	if err != nil || result.ManagedRunID != params.ManagedRunID || result.ContentHash != params.ContentHash {
+		t.Fatalf("PutEvidence() = %#v, %v", result, err)
+	}
+}
+
+func TestGeneratedClientReleaseValidatesRequestAndResponseAuthority(t *testing.T) {
+	params := ReleaseRequestParams{
+		OperationID: "operation_release", ManagedRunID: "managed-run_a",
+		WorkspaceLeaseID: "workspace-lease_a", Disposition: "reap_safe", ReleasedAtMs: 1_800_000_000_000,
+	}
+	if _, err := newClient(&recordingTransport{}).Release(nil, params); err == nil {
+		t.Fatal("Release(nil context) error = nil")
+	}
+	invalid := params
+	invalid.OperationID = "bad operation"
+	if _, err := newClient(&recordingTransport{}).Release(context.Background(), invalid); err == nil {
+		t.Fatal("Release(invalid request) error = nil")
+	}
+	if _, err := newClient(&recordingTransport{err: errors.New("transport unavailable")}).Release(context.Background(), params); err == nil {
+		t.Fatal("Release(transport failure) error = nil")
+	}
+	if _, err := newClient(&recordingTransport{}).Release(context.Background(), params); err == nil {
+		t.Fatal("Release(invalid response) error = nil")
+	}
+	drifted := &recordingTransport{response: func(target any) {
+		*(target.(*ReleaseResponse)) = ReleaseResponse{
+			JSONRPC: JSONRPCVersion, ID: params.OperationID,
+			Result: ReleaseResponseResult{
+				ManagedRunID: "managed-run_other", WorkspaceLeaseID: params.WorkspaceLeaseID,
+				Disposition: params.Disposition, ReleasedAtMs: params.ReleasedAtMs, State: ManagedRunState("released"),
+			},
+		}
+	}}
+	if _, err := newClient(drifted).Release(context.Background(), params); err == nil {
+		t.Fatal("Release(response drift) error = nil")
+	}
+	accepted := &recordingTransport{response: func(target any) {
+		*(target.(*ReleaseResponse)) = ReleaseResponse{
+			JSONRPC: JSONRPCVersion, ID: params.OperationID,
+			Result: ReleaseResponseResult{
+				ManagedRunID: params.ManagedRunID, WorkspaceLeaseID: params.WorkspaceLeaseID,
+				Disposition: params.Disposition, ReleasedAtMs: params.ReleasedAtMs, State: ManagedRunState("released"),
+			},
+		}
+	}}
+	result, err := newClient(accepted).Release(context.Background(), params)
+	if err != nil || result.ManagedRunID != params.ManagedRunID || result.ReleasedAtMs != params.ReleasedAtMs {
+		t.Fatalf("Release() = %#v, %v", result, err)
 	}
 }
 
