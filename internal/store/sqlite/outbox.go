@@ -51,6 +51,14 @@ func (store *Store) NextComisReport(ctx context.Context) (application.ComisRepor
     JOIN reports r ON r.task_handle = o.task_handle AND r.local_report_id = o.local_report_id
     JOIN tasks t ON t.handle = r.task_handle
     WHERE o.delivered_at IS NULL
+      AND (r.kind != 'candidate_complete' OR (
+        t.state IN ('candidate_complete', 'delivering', 'delivered')
+        AND (SELECT COUNT(*) FROM comis_evidence_outbox e WHERE e.task_handle = t.handle) = 2
+        AND NOT EXISTS (
+          SELECT 1 FROM comis_evidence_outbox e
+          WHERE e.task_handle = t.handle AND e.delivered_at IS NULL
+        )
+      ))
     ORDER BY r.state_version, r.task_handle, r.local_report_id
     LIMIT 1`
 	var delivery application.ComisReportDelivery
