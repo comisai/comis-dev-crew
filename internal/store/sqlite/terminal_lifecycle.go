@@ -314,7 +314,7 @@ func terminalUnavailable(transition application.TerminalTransition) bool {
 
 func terminalLossChangesTask(state domain.TaskState) bool {
 	switch state {
-	case domain.TaskLaunching, domain.TaskWorking, domain.TaskAwaitingDecision, domain.TaskBlocked, domain.TaskPaused:
+	case domain.TaskLaunching, domain.TaskWorking, domain.TaskAwaitingDecision, domain.TaskBlocked:
 		return true
 	default:
 		return false
