@@ -21,16 +21,20 @@ import (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	os.Exit(run(ctx, os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	capability, _ := reporter.NewMountedRuntimeClient(
 		os.Getenv(application.RuntimeAttachmentPathEnvironment),
 		os.Getenv(application.RuntimeAttachmentTargetEnvironment),
 		5*time.Second,
 	)
-	os.Exit(reporter.RunCommand(ctx, os.Args[1:], os.Stdout, os.Stderr, reporter.CommandConfig{
+	return reporter.RunCommand(ctx, args, stdout, stderr, reporter.CommandConfig{
 		Capability: capability, Clock: func() time.Time { return time.Now().UTC() },
 		NewLocalReportID: newLocalReportID, WorkingDirectory: canonicalWorkingDirectory,
 		Version: command.Version,
-	}))
+	})
 }
 
 func canonicalWorkingDirectory() (string, error) {
