@@ -202,6 +202,84 @@ func TestMountedRuntimeClientRequiresExactAssignedTarget(t *testing.T) {
 	}
 }
 
+func TestMountedRuntimeClientReproducesRealJailMountShape(t *testing.T) {
+	const targetName = "attachment-0123456789abcdef0123456789abcdef.sock"
+
+	t.Run("valid protected mount", func(t *testing.T) {
+		mountDirectory := mountedRuntimeTestDirectory(t)
+		socketPath := filepath.Join(mountDirectory, targetName)
+		listenBoundarySocket(t, socketPath, 0o600)
+		if _, err := newMountedRuntimeClient(socketPath, targetName, mountDirectory, time.Second); err != nil {
+			t.Fatalf("NewMountedRuntimeClient(valid jail mount) error = %v", err)
+		}
+	})
+
+	tests := []struct {
+		name string
+		want string
+		make func(*testing.T) (string, string)
+	}{
+		{
+			name: "broad mount mode",
+			want: "runtime mounted attachment directory permissions are unsafe: require 0700",
+			make: func(t *testing.T) (string, string) {
+				mountDirectory := mountedRuntimeTestDirectory(t)
+				socketPath := filepath.Join(mountDirectory, targetName)
+				listenBoundarySocket(t, socketPath, 0o600)
+				if err := os.Chmod(mountDirectory, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				return mountDirectory, socketPath
+			},
+		},
+		{
+			name: "symlinked component",
+			want: "runtime mounted attachment directory is not canonical",
+			make: func(t *testing.T) (string, string) {
+				root := shortBoundaryDirectory(t)
+				realMount := filepath.Join(root, "real", "comis", "attachments")
+				if err := os.MkdirAll(realMount, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(root, "real"), filepath.Join(root, "run")); err != nil {
+					t.Fatal(err)
+				}
+				mountDirectory := filepath.Join(root, "run", "comis", "attachments")
+				socketPath := filepath.Join(mountDirectory, targetName)
+				listenBoundarySocket(t, filepath.Join(realMount, targetName), 0o600)
+				return mountDirectory, socketPath
+			},
+		},
+		{
+			name: "broad socket mode",
+			want: "create runtime attachment client: socket permissions are unsafe: require 0600",
+			make: func(t *testing.T) (string, string) {
+				mountDirectory := mountedRuntimeTestDirectory(t)
+				socketPath := filepath.Join(mountDirectory, targetName)
+				listenBoundarySocket(t, socketPath, 0o644)
+				return mountDirectory, socketPath
+			},
+		},
+		{
+			name: "socket absent",
+			want: "create runtime attachment client: socket does not exist",
+			make: func(t *testing.T) (string, string) {
+				mountDirectory := mountedRuntimeTestDirectory(t)
+				return mountDirectory, filepath.Join(mountDirectory, targetName)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mountDirectory, socketPath := test.make(t)
+			_, err := newMountedRuntimeClient(socketPath, targetName, mountDirectory, time.Second)
+			if err == nil || err.Error() != test.want {
+				t.Fatalf("NewMountedRuntimeClient() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestRuntimeServerRejectsClosedWireVocabulary(t *testing.T) {
 	server, socketPath, stop := startBoundaryRuntime(t, &Client{})
 	defer stop()
@@ -376,6 +454,52 @@ func boundaryRuntimeDirectory(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return canonical
+}
+
+func shortBoundaryDirectory(t *testing.T) string {
+	t.Helper()
+	root, err := os.MkdirTemp("/tmp", "d-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return canonical
+}
+
+func mountedRuntimeTestDirectory(t *testing.T) string {
+	t.Helper()
+	mountDirectory := filepath.Join(shortBoundaryDirectory(t), "run", "comis", "attachments")
+	if err := os.MkdirAll(mountDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(mountDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return mountDirectory
+}
+
+func listenBoundarySocket(t *testing.T, socketPath string, mode os.FileMode) {
+	t.Helper()
+	address, err := net.ResolveUnixAddr("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.ListenUnix("unix", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.SetUnlinkOnClose(false)
+	t.Cleanup(func() {
+		_ = listener.Close()
+		_ = os.Remove(socketPath)
+	})
+	if err := os.Chmod(socketPath, mode); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func startBoundaryRuntime(t *testing.T, client *Client) (*RuntimeServer, string, func()) {
