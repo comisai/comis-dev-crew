@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,7 +21,7 @@ func TestReportArtifactInspector_HashesOnlyStableBoundedRegularFile(t *testing.T
 		t.Fatalf("InspectReportArtifact() error = %v", err)
 	}
 	if evidence.Size != int64(len(contents)) || evidence.MediaType != "text/markdown" ||
-		evidence.ContentHash != "a5f88e36b0baf44a19e86dc43fa018b055a790b7754f76f2470dff3bc4380506" {
+		evidence.ContentHash != "b5f53d83148f51570cd0e9115929e5bbe6b457ca61c88855c0ff980040925b96" {
 		t.Fatalf("InspectReportArtifact() = %#v", evidence)
 	}
 	if _, err := os.Stat(path); err != nil {
@@ -52,12 +53,21 @@ func TestReportArtifactInspector_RefusesSymlinkDirectoryOversizeAndChangedFile(t
 		{name: "oversize", path: oversize, limit: 16},
 		{name: "relative", path: "report.md", limit: 16},
 		{name: "zero limit", path: regular, limit: 0},
+		{name: "missing", path: filepath.Join(root, "missing.md"), limit: 16},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := InspectReportArtifact(context.Background(), test.path, test.limit, "text/markdown"); err == nil {
 				t.Fatal("InspectReportArtifact() error = nil")
 			}
 		})
+	}
+	if _, err := InspectReportArtifact(context.Background(), regular, 16, "invalid"); err == nil {
+		t.Fatal("InspectReportArtifact(invalid media type) error = nil")
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := InspectReportArtifact(cancelled, regular, 16, "text/markdown"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("InspectReportArtifact(cancelled) error = %v", err)
 	}
 	dependencies := reportArtifactDependencies{
 		lstat: os.Lstat,
