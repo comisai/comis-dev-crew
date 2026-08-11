@@ -143,6 +143,12 @@ func TestGitHubAdapter_VerifiesRecordedPullRequestWithReadAuthorityOnly(t *testi
 		len(ported.Checks) != 1 || ported.Checks[0].Conclusion != domain.CheckPassed {
 		t.Fatalf("VerifyPullRequestDelivery() = %#v, %v", ported, err)
 	}
+	if _, err := throughPort.VerifyPullRequestDelivery(context.Background(), application.PullRequestDeliveryVerification{
+		RepositoryID: "different-repository", PullRequestID: "github-pr-23",
+		Branch: "devcrew/task-recorded", HeadRevision: head, RequiredChecks: []string{"ci/unit"},
+	}); err == nil {
+		t.Fatal("VerifyPullRequestDelivery(different repository) error = nil")
+	}
 }
 
 func TestGitHubAdapter_RefusesSharedCredentialsChangedHeadAndUnboundedResponses(t *testing.T) {
