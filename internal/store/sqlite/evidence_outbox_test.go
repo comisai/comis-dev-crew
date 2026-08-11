@@ -2,8 +2,11 @@ package sqlite
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,5 +102,201 @@ func TestCandidateEvidenceStore_RejectsAlteredPublicationReplay(t *testing.T) {
 		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt, publications,
 	); !errors.Is(err, application.ErrConflict) {
 		t.Fatalf("CommitCandidateEvidence(altered publication) error = %v, want ErrConflict", err)
+	}
+}
+
+func TestComisEvidenceOutbox_PersistsReportArtifactDelivery(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	task := candidateEvidenceTask(t, "task-report-artifact")
+	task.Shape = domain.ShapeScout
+	task.DeliveryMode = domain.DeliveryReport
+	task, err = task.PinBriefRevision()
+	if err != nil {
+		t.Fatalf("PinBriefRevision() error = %v", err)
+	}
+	if err := task.Validate(); err != nil {
+		t.Fatalf("report task is invalid: %v", err)
+	}
+	if err := store.CreateTask(context.Background(), task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	body := []byte("bounded scout report")
+	contentHash := fmt.Sprintf("%x", sha256.Sum256(body))
+	producedAt := task.UpdatedAt.Add(4 * time.Minute)
+	head := strings.Repeat("b", 40)
+	sealed, err := domain.SealDeliveryEvidence(domain.DeliveryEvidenceBundle{
+		SchemaVersion: 1, TaskHandle: task.Handle, RepositoryIdentity: task.RepositoryID,
+		BaseRevision: task.BaseRevision, HeadRevision: head, WorktreeCleanliness: domain.WorktreeClean,
+		ValidationReceipts: []domain.ValidationEvidenceReceipt{{
+			CheckID: "unit", ProgramID: "go-test", HeadRevision: head,
+			Conclusion: domain.CheckPassed, Required: true, OutputHash: strings.Repeat("d", 64),
+			StartedAt: producedAt.Add(-time.Minute), CompletedAt: producedAt,
+		}},
+		ReportArtifact: &domain.ReportArtifactEvidence{
+			ContentHash: contentHash, Size: int64(len(body)), MediaType: "text/plain",
+		},
+		ProducedAt: producedAt, ExpiresAt: producedAt.Add(10 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("SealDeliveryEvidence() error = %v", err)
+	}
+	expiresAt := sealed.Bundle().ExpiresAt
+	publications := []application.ComisEvidencePublication{
+		{
+			OperationID: "put-report-bundle", TaskHandle: task.Handle,
+			EvidenceRef: "report-bundle", Kind: "candidate_bundle", SubjectDigest: sealed.Digest(),
+			ObservedAt: producedAt, ExpiresAt: &expiresAt, ContentHash: sealed.Digest(),
+			VerificationLevel: application.ComisEvidenceAdapterVerified, Body: sealed.Canonical(),
+		},
+		{
+			OperationID: "put-report-artifact", TaskHandle: task.Handle,
+			EvidenceRef: "report-artifact", Kind: "report_artifact", SubjectDigest: sealed.Digest(),
+			ObservedAt: producedAt, ExpiresAt: &expiresAt, ContentHash: contentHash,
+			VerificationLevel: application.ComisEvidenceAdapterVerified, Body: body,
+			Delivery: &application.ComisEvidenceDeliveryRequest{
+				Kind: application.ComisEvidenceAttachment, FileName: "report.txt", MediaType: "text/plain",
+			},
+		},
+	}
+	if _, judgment, err := store.CommitCandidateEvidence(
+		context.Background(), task.Handle, sealed, []string{"unit"}, nil, producedAt.Add(time.Minute), publications,
+	); err != nil || judgment.Outcome != domain.CandidateAccepted {
+		t.Fatalf("CommitCandidateEvidence(report) = %#v, %v", judgment, err)
+	}
+	first, found, err := store.NextComisEvidence(context.Background())
+	if err != nil || !found || first.Delivery == nil || first.Delivery.Kind != application.ComisEvidenceAttachment ||
+		first.Delivery.FileName != "report.txt" || first.Delivery.MediaType != "text/plain" {
+		t.Fatalf("NextComisEvidence(attachment) = %#v, %t, %v", first, found, err)
+	}
+	if err := store.MarkComisEvidenceDelivered(context.Background(), first.OperationID, application.ComisEvidenceAcknowledgement{
+		ManagedRunID: first.ManagedRunID, EvidenceRef: first.EvidenceRef,
+		ContentHash: first.ContentHash, VerificationLevel: first.VerificationLevel,
+	}, producedAt.Add(2*time.Minute)); err != nil {
+		t.Fatalf("MarkComisEvidenceDelivered(bundle) error = %v", err)
+	}
+	second, found, err := store.NextComisEvidence(context.Background())
+	if err != nil || !found || second.Delivery != nil {
+		t.Fatalf("NextComisEvidence(bundle) = %#v, %t, %v", second, found, err)
+	}
+}
+
+func TestCandidatePublicationValidation_RejectsMalformedAndDuplicatedItems(t *testing.T) {
+	task := candidateEvidenceTask(t, "task-publication-validation")
+	sealed := candidateEvidence(t, task, strings.Repeat("b", 40))
+	publications := candidateEvidencePublications(t, task, sealed)
+	if err := validateCandidatePublications(task, nil, publications); err == nil {
+		t.Fatal("validateCandidatePublications(nil evidence) error = nil")
+	}
+	invalid := append([]application.ComisEvidencePublication(nil), publications...)
+	invalid[0].TaskHandle = "task-other"
+	if err := validateCandidatePublications(task, sealed, invalid); err == nil {
+		t.Fatal("validateCandidatePublications(invalid publication) error = nil")
+	}
+	duplicateOperation := append([]application.ComisEvidencePublication(nil), publications...)
+	duplicateOperation[1].OperationID = duplicateOperation[0].OperationID
+	if err := validateCandidatePublications(task, sealed, duplicateOperation); err == nil {
+		t.Fatal("validateCandidatePublications(duplicate operation) error = nil")
+	}
+	duplicateReference := append([]application.ComisEvidencePublication(nil), publications...)
+	duplicateReference[1].EvidenceRef = duplicateReference[0].EvidenceRef
+	if err := validateCandidatePublications(task, sealed, duplicateReference); err == nil {
+		t.Fatal("validateCandidatePublications(duplicate reference) error = nil")
+	}
+	wrongOutcome := append([]application.ComisEvidencePublication(nil), publications...)
+	wrongOutcome[0].Kind = "delivery_reference"
+	if err := validateCandidatePublications(task, sealed, wrongOutcome); err == nil {
+		t.Fatal("validateCandidatePublications(wrong outcome) error = nil")
+	}
+	badReference := append([]application.ComisEvidencePublication(nil), publications...)
+	badReference[1].Body = []byte("https://user@example.com/pull/17")
+	badReference[1].ContentHash = fmt.Sprintf("%x", sha256.Sum256(badReference[1].Body))
+	if err := validateCandidatePublications(task, sealed, badReference); err == nil {
+		t.Fatal("validateCandidatePublications(bad reference) error = nil")
+	}
+}
+
+func TestComisEvidenceOutbox_RejectsInvalidAcknowledgementsAndCorruptRows(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	task := candidateEvidenceTask(t, "task-evidence-errors")
+	if err := store.CreateTask(context.Background(), task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	sealed := candidateEvidence(t, task, strings.Repeat("b", 40))
+	publications := candidateEvidencePublications(t, task, sealed)
+	judgedAt := task.UpdatedAt.Add(5 * time.Minute)
+	if _, _, err := store.CommitCandidateEvidence(
+		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt, publications,
+	); err != nil {
+		t.Fatalf("CommitCandidateEvidence() error = %v", err)
+	}
+	if err := store.MarkComisEvidenceDelivered(context.Background(), "", application.ComisEvidenceAcknowledgement{}, time.Time{}); err == nil {
+		t.Fatal("MarkComisEvidenceDelivered(invalid) error = nil")
+	}
+	first, found, err := store.NextComisEvidence(context.Background())
+	if err != nil || !found {
+		t.Fatalf("NextComisEvidence() = %#v, %t, %v", first, found, err)
+	}
+	badRetention := judgedAt
+	ack := application.ComisEvidenceAcknowledgement{
+		ManagedRunID: first.ManagedRunID, EvidenceRef: first.EvidenceRef,
+		ContentHash: first.ContentHash, VerificationLevel: first.VerificationLevel,
+		RetainedUntil: &badRetention,
+	}
+	if err := store.MarkComisEvidenceDelivered(context.Background(), first.OperationID, ack, judgedAt); err == nil {
+		t.Fatal("MarkComisEvidenceDelivered(bad retention) error = nil")
+	}
+	ack.RetainedUntil = nil
+	if err := store.MarkComisEvidenceDelivered(context.Background(), "evidence-unknown", ack, judgedAt); !errors.Is(err, application.ErrNotFound) {
+		t.Fatalf("MarkComisEvidenceDelivered(unknown) error = %v, want ErrNotFound", err)
+	}
+	altered := ack
+	altered.EvidenceRef = "evidence-altered"
+	if err := store.MarkComisEvidenceDelivered(context.Background(), first.OperationID, altered, judgedAt); !errors.Is(err, application.ErrConflict) {
+		t.Fatalf("MarkComisEvidenceDelivered(altered) error = %v, want ErrConflict", err)
+	}
+	retainedUntil := judgedAt.Add(time.Hour)
+	ack.RetainedUntil = &retainedUntil
+	if err := store.MarkComisEvidenceDelivered(context.Background(), first.OperationID, ack, judgedAt); err != nil {
+		t.Fatalf("MarkComisEvidenceDelivered() error = %v", err)
+	}
+	ack.RetainedUntil = nil
+	if err := store.MarkComisEvidenceDelivered(context.Background(), first.OperationID, ack, judgedAt); !errors.Is(err, application.ErrConflict) {
+		t.Fatalf("MarkComisEvidenceDelivered(altered replay) error = %v, want ErrConflict", err)
+	}
+	if _, err := store.db.Exec("UPDATE comis_evidence_outbox SET observed_at = 'not-a-time' WHERE operation_id = ?", publications[1].OperationID); err != nil {
+		t.Fatalf("corrupt evidence row: %v", err)
+	}
+	if _, _, err := store.NextComisEvidence(context.Background()); err == nil {
+		t.Fatal("NextComisEvidence(corrupt observation time) error = nil")
+	}
+	if _, err := store.db.Exec("UPDATE comis_evidence_outbox SET observed_at = ?, expires_at = 'not-a-time' WHERE operation_id = ?",
+		formatTime(publications[1].ObservedAt), publications[1].OperationID); err != nil {
+		t.Fatalf("corrupt evidence expiry: %v", err)
+	}
+	if _, _, err := store.NextComisEvidence(context.Background()); err == nil {
+		t.Fatal("NextComisEvidence(corrupt expiry time) error = nil")
+	}
+	if _, err := store.db.Exec("UPDATE comis_evidence_outbox SET expires_at = NULL, content_hash = ? WHERE operation_id = ?",
+		strings.Repeat("0", 64), publications[1].OperationID); err != nil {
+		t.Fatalf("corrupt evidence hash: %v", err)
+	}
+	if _, _, err := store.NextComisEvidence(context.Background()); err == nil {
+		t.Fatal("NextComisEvidence(corrupt durable publication) error = nil")
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.NextComisEvidence(context.Background()); err == nil {
+		t.Fatal("NextComisEvidence(closed) error = nil")
+	}
+	if err := store.MarkComisEvidenceDelivered(context.Background(), first.OperationID, ack, judgedAt); err == nil {
+		t.Fatal("MarkComisEvidenceDelivered(closed) error = nil")
 	}
 }
