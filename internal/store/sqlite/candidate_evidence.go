@@ -54,6 +54,7 @@ func (store *Store) CommitCandidateEvidence(
 	requiredLocalChecks []string,
 	requiredForgeChecks []string,
 	judgedAt time.Time,
+	publications []application.ComisEvidencePublication,
 ) (domain.Task, domain.CandidateJudgment, error) {
 	if store == nil || store.db == nil || ctx == nil || evidence == nil || domain.ValidateTaskHandle(taskHandle) != nil ||
 		judgedAt.IsZero() || judgedAt.Location() != time.UTC {
@@ -81,7 +82,22 @@ func (store *Store) CommitCandidateEvidence(
 			return domain.Task{}, domain.CandidateJudgment{}, fmt.Errorf("candidate evidence altered replay: %w", application.ErrConflict)
 		}
 		task, readErr := getTask(ctx, transaction, taskHandle)
-		return task, existing.judgment, readErr
+		if readErr != nil {
+			return domain.Task{}, domain.CandidateJudgment{}, readErr
+		}
+		if existing.judgment.Outcome == domain.CandidateAccepted {
+			if err := validateCandidatePublications(task, evidence, publications); err != nil {
+				return domain.Task{}, domain.CandidateJudgment{}, fmt.Errorf("candidate publication altered replay: %w", application.ErrConflict)
+			}
+			matches, matchErr := candidatePublicationsMatch(ctx, transaction, publications)
+			if matchErr != nil {
+				return domain.Task{}, domain.CandidateJudgment{}, matchErr
+			}
+			if !matches {
+				return domain.Task{}, domain.CandidateJudgment{}, fmt.Errorf("candidate publication altered replay: %w", application.ErrConflict)
+			}
+		}
+		return task, existing.judgment, nil
 	}
 	task, err := getTask(ctx, transaction, taskHandle)
 	if err != nil {
@@ -125,6 +141,11 @@ func (store *Store) CommitCandidateEvidence(
 	}
 	if err := insertCandidateEvidence(ctx, transaction, row); err != nil {
 		return domain.Task{}, domain.CandidateJudgment{}, err
+	}
+	if judgment.Outcome == domain.CandidateAccepted {
+		if err := insertCandidatePublications(ctx, transaction, task, evidence, publications, stateVersion); err != nil {
+			return domain.Task{}, domain.CandidateJudgment{}, err
+		}
 	}
 	if err := transaction.Commit(); err != nil {
 		return domain.Task{}, domain.CandidateJudgment{}, fmt.Errorf("commit candidate evidence: %w", err)

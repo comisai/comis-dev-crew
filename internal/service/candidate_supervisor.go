@@ -21,7 +21,7 @@ type candidateEvidenceStore interface {
 	GetTask(context.Context, string) (domain.Task, error)
 	GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error)
 	ListAcceptedReports(context.Context, string) ([]domain.AcceptedReport, error)
-	CommitCandidateEvidence(context.Context, string, *domain.SealedDeliveryEvidence, []string, []string, time.Time) (domain.Task, domain.CandidateJudgment, error)
+	CommitCandidateEvidence(context.Context, string, *domain.SealedDeliveryEvidence, []string, []string, time.Time, []application.ComisEvidencePublication) (domain.Task, domain.CandidateJudgment, error)
 }
 
 type candidateGitInspector interface {
@@ -37,6 +37,12 @@ type candidatePullRequestDeliverer interface {
 }
 
 type candidateArtifactInspector func(context.Context, string, int64, string) (delivery.InspectedReportArtifact, error)
+
+type candidateDeliveryMaterial struct {
+	referenceURL string
+	artifact     *delivery.InspectedReportArtifact
+	fileName     string
+}
 
 type candidateSupervisorConfig struct {
 	Store           candidateEvidenceStore
@@ -163,7 +169,7 @@ func (supervisor *candidateSupervisor) ValidateTask(
 		WorktreeCleanliness: candidateCleanliness(snapshot.Cleanliness), ValidationReceipts: receipts,
 		UnresolvedDecisionCount: openDecisions,
 	}
-	requiredForge, err := supervisor.attachDeliveryEvidence(ctx, task, profile, snapshot, &bundle)
+	requiredForge, material, err := supervisor.attachDeliveryEvidence(ctx, task, profile, snapshot, &bundle)
 	if err != nil {
 		return domain.Task{}, domain.CandidateJudgment{}, err
 	}
@@ -177,8 +183,12 @@ func (supervisor *candidateSupervisor) ValidateTask(
 	if err != nil {
 		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: evidence could not be sealed")
 	}
+	publications, err := candidateEvidencePublications(task, sealed, material)
+	if err != nil {
+		return domain.Task{}, domain.CandidateJudgment{}, err
+	}
 	return supervisor.config.Store.CommitCandidateEvidence(
-		ctx, taskHandle, sealed, requiredLocal, requiredForge, producedAt,
+		ctx, taskHandle, sealed, requiredLocal, requiredForge, producedAt, publications,
 	)
 }
 
@@ -227,12 +237,12 @@ func (supervisor *candidateSupervisor) attachDeliveryEvidence(
 	profile validation.Profile,
 	snapshot devgit.CandidateSnapshot,
 	bundle *domain.DeliveryEvidenceBundle,
-) ([]string, error) {
+) ([]string, candidateDeliveryMaterial, error) {
 	switch task.Shape {
 	case domain.ShapeShip:
 		required := requiredForgeCheckNames(profile.ForgeChecks)
 		if len(required) == 0 {
-			return nil, errors.New("validate task candidate: ship profile has no required forge check")
+			return nil, candidateDeliveryMaterial{}, errors.New("validate task candidate: ship profile has no required forge check")
 		}
 		truth, err := supervisor.config.PullRequests.DeliverPullRequest(ctx, forge.PullRequestRequest{
 			OperationID:  candidateDeliveryOperationID(task.Handle, snapshot.HeadRevision),
@@ -240,25 +250,93 @@ func (supervisor *candidateSupervisor) attachDeliveryEvidence(
 			Title: "Task " + task.Handle, RequiredChecks: required,
 		})
 		if err != nil {
-			return nil, errors.New("validate task candidate: pull-request truth is unavailable")
+			return nil, candidateDeliveryMaterial{}, errors.New("validate task candidate: pull-request truth is unavailable")
 		}
 		bundle.ForgeEvidence = &truth.Evidence
-		return required, nil
+		return required, candidateDeliveryMaterial{referenceURL: truth.URL}, nil
 	case domain.ShapeScout:
 		if len(profile.ArtifactRules) != 1 {
-			return nil, errors.New("validate task candidate: scout artifact rule is unavailable")
+			return nil, candidateDeliveryMaterial{}, errors.New("validate task candidate: scout artifact rule is unavailable")
 		}
 		rule := profile.ArtifactRules[0]
 		artifact, err := supervisor.config.InspectArtifact(
 			ctx, filepath.Join(snapshot.WorktreePath, rule.RelativePath), rule.MaxBytes, rule.MediaType,
 		)
 		if err != nil {
-			return nil, errors.New("validate task candidate: report artifact is unavailable")
+			return nil, candidateDeliveryMaterial{}, errors.New("validate task candidate: report artifact is unavailable")
 		}
 		bundle.ReportArtifact = &artifact.ReportArtifactEvidence
-		return nil, nil
+		return nil, candidateDeliveryMaterial{
+			artifact: &artifact, fileName: filepath.Base(rule.RelativePath),
+		}, nil
 	default:
-		return nil, errors.New("validate task candidate: task shape is invalid")
+		return nil, candidateDeliveryMaterial{}, errors.New("validate task candidate: task shape is invalid")
+	}
+}
+
+func candidateEvidencePublications(
+	task domain.Task,
+	sealed *domain.SealedDeliveryEvidence,
+	material candidateDeliveryMaterial,
+) ([]application.ComisEvidencePublication, error) {
+	if sealed == nil || sealed.Digest() == "" || task.ManagedRunID == "" {
+		return nil, errors.New("validate task candidate: publication identity is unavailable")
+	}
+	bundle := sealed.Bundle()
+	expiresAt := bundle.ExpiresAt
+	publications := []application.ComisEvidencePublication{
+		candidateEvidencePublication(
+			task.Handle, sealed.Digest(), "bundle", "candidate_bundle", sealed.Canonical(),
+			bundle.ProducedAt, &expiresAt, nil,
+		),
+	}
+	switch {
+	case bundle.ForgeEvidence != nil && material.referenceURL != "":
+		publications = append(publications, candidateEvidencePublication(
+			task.Handle, sealed.Digest(), "delivery", "delivery_reference", []byte(material.referenceURL),
+			bundle.ProducedAt, &expiresAt,
+			&application.ComisEvidenceDeliveryRequest{Kind: application.ComisEvidenceReference},
+		))
+	case bundle.ReportArtifact != nil && material.artifact != nil:
+		body := material.artifact.Body
+		if int64(len(body)) != bundle.ReportArtifact.Size ||
+			fmt.Sprintf("%x", sha256.Sum256(body)) != bundle.ReportArtifact.ContentHash ||
+			material.artifact.MediaType != bundle.ReportArtifact.MediaType || material.fileName == "" {
+			return nil, errors.New("validate task candidate: report publication differs from inspected artifact")
+		}
+		publications = append(publications, candidateEvidencePublication(
+			task.Handle, sealed.Digest(), "delivery", "report_artifact", body,
+			bundle.ProducedAt, &expiresAt,
+			&application.ComisEvidenceDeliveryRequest{
+				Kind: application.ComisEvidenceAttachment, FileName: material.fileName,
+				MediaType: bundle.ReportArtifact.MediaType,
+			},
+		))
+	default:
+		return nil, errors.New("validate task candidate: delivery publication is unavailable")
+	}
+	return publications, nil
+}
+
+func candidateEvidencePublication(
+	taskHandle string,
+	subjectDigest string,
+	suffix string,
+	kind string,
+	body []byte,
+	observedAt time.Time,
+	expiresAt *time.Time,
+	deliveryRequest *application.ComisEvidenceDeliveryRequest,
+) application.ComisEvidencePublication {
+	evidenceRef := "evidence-" + suffix + "-" + subjectDigest[:32]
+	operationDigest := sha256.Sum256([]byte(taskHandle + "\x00" + evidenceRef))
+	return application.ComisEvidencePublication{
+		OperationID: "put-evidence-" + fmt.Sprintf("%x", operationDigest[:16]),
+		TaskHandle:  taskHandle, EvidenceRef: evidenceRef, Kind: kind,
+		SubjectDigest: subjectDigest, ObservedAt: observedAt, ExpiresAt: expiresAt,
+		ContentHash:       fmt.Sprintf("%x", sha256.Sum256(body)),
+		VerificationLevel: application.ComisEvidenceAdapterVerified,
+		Body:              append([]byte(nil), body...), Delivery: deliveryRequest,
 	}
 }
 

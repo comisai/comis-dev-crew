@@ -362,8 +362,18 @@ func (store *candidateSupervisorStore) CommitCandidateEvidence(
 	requiredLocalChecks []string,
 	requiredForgeChecks []string,
 	judgedAt time.Time,
+	publications []application.ComisEvidencePublication,
 ) (domain.Task, domain.CandidateJudgment, error) {
 	store.evidence = evidence
+	for _, publication := range publications {
+		store.publicationKinds = append(store.publicationKinds, publication.Kind)
+		if publication.Delivery == nil {
+			store.publicationDeliveries = append(store.publicationDeliveries, "")
+		} else {
+			store.publicationDeliveries = append(store.publicationDeliveries, string(publication.Delivery.Kind))
+		}
+		store.publicationBodies = append(store.publicationBodies, append([]byte(nil), publication.Body...))
+	}
 	judgment := domain.JudgeCandidate(domain.CandidateJudgeInput{
 		Task: store.task, Evidence: evidence, RequiredLocalChecks: requiredLocalChecks,
 		RequiredForgeChecks: requiredForgeChecks, Now: judgedAt,

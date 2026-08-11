@@ -2,7 +2,9 @@ package sqlite
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -14,7 +16,7 @@ import (
 )
 
 type candidateEvidenceStore interface {
-	CommitCandidateEvidence(context.Context, string, *domain.SealedDeliveryEvidence, []string, []string, time.Time) (domain.Task, domain.CandidateJudgment, error)
+	CommitCandidateEvidence(context.Context, string, *domain.SealedDeliveryEvidence, []string, []string, time.Time, []application.ComisEvidencePublication) (domain.Task, domain.CandidateJudgment, error)
 	LatestCandidateEvidence(context.Context, string) (*domain.SealedDeliveryEvidence, domain.CandidateJudgment, error)
 }
 
@@ -33,9 +35,10 @@ func TestCandidateEvidenceStore_PersistsExactJudgmentAndAdvancesAcceptedTaskOnce
 		t.Fatalf("CreateTask() error = %v", err)
 	}
 	sealed := candidateEvidence(t, task, strings.Repeat("b", 40))
+	publications := candidateEvidencePublications(t, task, sealed)
 	judgedAt := task.UpdatedAt.Add(5 * time.Minute)
 	updated, judgment, err := evidenceStore.CommitCandidateEvidence(
-		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt,
+		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt, publications,
 	)
 	if err != nil || judgment.Outcome != domain.CandidateAccepted || updated.State != domain.TaskCandidateComplete {
 		t.Fatalf("CommitCandidateEvidence() = %#v, %#v, %v", updated, judgment, err)
@@ -44,7 +47,7 @@ func TestCandidateEvidenceStore_PersistsExactJudgmentAndAdvancesAcceptedTaskOnce
 		t.Fatalf("candidate state version = %d, want %d", updated.StateVersion, task.StateVersion+1)
 	}
 	replayed, replayJudgment, err := evidenceStore.CommitCandidateEvidence(
-		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt,
+		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt, publications,
 	)
 	if err != nil || !reflect.DeepEqual(replayed, updated) || replayJudgment != judgment {
 		t.Fatalf("CommitCandidateEvidence(replay) = %#v, %#v, %v", replayed, replayJudgment, err)
@@ -88,19 +91,20 @@ func TestCandidateEvidenceStore_RefusesCrossTaskStaleAndCorruptEvidence(t *testi
 		}
 	}
 	sealed := candidateEvidence(t, task, strings.Repeat("b", 40))
+	publications := candidateEvidencePublications(t, task, sealed)
 	if _, _, err := evidenceStore.CommitCandidateEvidence(
-		context.Background(), other.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, task.UpdatedAt.Add(5*time.Minute),
+		context.Background(), other.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, task.UpdatedAt.Add(5*time.Minute), publications,
 	); err == nil {
 		t.Fatal("CommitCandidateEvidence(cross task) error = nil")
 	}
 	unknown, judgment, err := evidenceStore.CommitCandidateEvidence(
-		context.Background(), task.Handle, sealed, []string{"missing"}, []string{"ci/unit"}, task.UpdatedAt.Add(5*time.Minute),
+		context.Background(), task.Handle, sealed, []string{"missing"}, []string{"ci/unit"}, task.UpdatedAt.Add(5*time.Minute), nil,
 	)
 	if err != nil || judgment.Outcome != domain.CandidateUnknown || unknown.State != domain.TaskValidating {
 		t.Fatalf("CommitCandidateEvidence(missing check) = %#v, %#v, %v", unknown, judgment, err)
 	}
 	if _, _, err := evidenceStore.CommitCandidateEvidence(
-		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, task.UpdatedAt.Add(20*time.Minute),
+		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, task.UpdatedAt.Add(20*time.Minute), publications,
 	); err == nil {
 		t.Fatal("CommitCandidateEvidence(altered replay) error = nil")
 	}
@@ -158,30 +162,30 @@ func TestCandidateEvidenceStore_FailsClosedForInvalidInputsStateAndVerdicts(t *t
 	}
 	sealed := candidateEvidence(t, prepared, strings.Repeat("b", 40))
 	if _, _, err := store.CommitCandidateEvidence(
-		context.Background(), prepared.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, now,
+		context.Background(), prepared.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, now, nil,
 	); !errors.Is(err, application.ErrPrecondition) {
 		t.Fatalf("CommitCandidateEvidence(prepared) error = %v, want ErrPrecondition", err)
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, _, err := store.CommitCandidateEvidence(cancelled, prepared.Handle, sealed, nil, nil, now); !errors.Is(err, context.Canceled) {
+	if _, _, err := store.CommitCandidateEvidence(cancelled, prepared.Handle, sealed, nil, nil, now, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("CommitCandidateEvidence(cancelled) error = %v", err)
 	}
 	if _, _, err := store.LatestCandidateEvidence(cancelled, prepared.Handle); !errors.Is(err, context.Canceled) {
 		t.Fatalf("LatestCandidateEvidence(cancelled) error = %v", err)
 	}
 	//lint:ignore SA1012 The boundary test proves nil contexts are rejected before database work.
-	if _, _, err := store.CommitCandidateEvidence(nil, prepared.Handle, sealed, nil, nil, now); err == nil {
+	if _, _, err := store.CommitCandidateEvidence(nil, prepared.Handle, sealed, nil, nil, now, nil); err == nil {
 		t.Fatal("CommitCandidateEvidence(nil context) error = nil")
 	}
-	if _, _, err := store.CommitCandidateEvidence(context.Background(), "bad handle", sealed, nil, nil, now); err == nil {
+	if _, _, err := store.CommitCandidateEvidence(context.Background(), "bad handle", sealed, nil, nil, now, nil); err == nil {
 		t.Fatal("CommitCandidateEvidence(invalid handle) error = nil")
 	}
-	if _, _, err := store.CommitCandidateEvidence(context.Background(), prepared.Handle, nil, nil, nil, now); err == nil {
+	if _, _, err := store.CommitCandidateEvidence(context.Background(), prepared.Handle, nil, nil, nil, now, nil); err == nil {
 		t.Fatal("CommitCandidateEvidence(nil evidence) error = nil")
 	}
 	if _, _, err := store.CommitCandidateEvidence(
-		context.Background(), prepared.Handle, sealed, nil, nil, now.In(time.FixedZone("other", 0)),
+		context.Background(), prepared.Handle, sealed, nil, nil, now.In(time.FixedZone("other", 0)), nil,
 	); err == nil {
 		t.Fatal("CommitCandidateEvidence(non-UTC time) error = nil")
 	}
@@ -195,13 +199,13 @@ func TestCandidateEvidenceStore_FailsClosedForInvalidInputsStateAndVerdicts(t *t
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	if _, _, err := store.CommitCandidateEvidence(context.Background(), prepared.Handle, sealed, nil, nil, now); err == nil {
+	if _, _, err := store.CommitCandidateEvidence(context.Background(), prepared.Handle, sealed, nil, nil, now, nil); err == nil {
 		t.Fatal("CommitCandidateEvidence(closed store) error = nil")
 	}
 	if _, _, err := store.LatestCandidateEvidence(context.Background(), prepared.Handle); err == nil {
 		t.Fatal("LatestCandidateEvidence(closed store) error = nil")
 	}
-	if _, _, err := (*Store)(nil).CommitCandidateEvidence(context.Background(), prepared.Handle, sealed, nil, nil, now); err == nil {
+	if _, _, err := (*Store)(nil).CommitCandidateEvidence(context.Background(), prepared.Handle, sealed, nil, nil, now, nil); err == nil {
 		t.Fatal("CommitCandidateEvidence(nil store) error = nil")
 	}
 	if _, _, err := (*Store)(nil).LatestCandidateEvidence(context.Background(), prepared.Handle); err == nil {
@@ -220,12 +224,13 @@ func TestCandidateEvidenceStore_RollsBackStorageFailuresAndRejectsCorruptMetadat
 		t.Fatalf("CreateTask() error = %v", err)
 	}
 	sealed := candidateEvidence(t, task, strings.Repeat("b", 40))
+	publications := candidateEvidencePublications(t, task, sealed)
 	judgedAt := task.UpdatedAt.Add(5 * time.Minute)
 	if _, err := store.db.Exec(`CREATE TRIGGER reject_candidate_task_update BEFORE UPDATE ON tasks BEGIN SELECT RAISE(FAIL, 'blocked'); END`); err != nil {
 		t.Fatalf("create task update trigger: %v", err)
 	}
 	if _, _, err := store.CommitCandidateEvidence(
-		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt,
+		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt, publications,
 	); err == nil {
 		t.Fatal("CommitCandidateEvidence(blocked task update) error = nil")
 	}
@@ -236,7 +241,7 @@ func TestCandidateEvidenceStore_RollsBackStorageFailuresAndRejectsCorruptMetadat
 		t.Fatalf("create evidence insert trigger: %v", err)
 	}
 	if _, _, err := store.CommitCandidateEvidence(
-		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt,
+		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt, publications,
 	); err == nil {
 		t.Fatal("CommitCandidateEvidence(blocked evidence insert) error = nil")
 	}
@@ -244,7 +249,7 @@ func TestCandidateEvidenceStore_RollsBackStorageFailuresAndRejectsCorruptMetadat
 		t.Fatalf("drop evidence insert trigger: %v", err)
 	}
 	if _, _, err := store.CommitCandidateEvidence(
-		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt,
+		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt, publications,
 	); err != nil {
 		t.Fatalf("CommitCandidateEvidence() error = %v", err)
 	}
@@ -309,4 +314,31 @@ func candidateEvidence(t *testing.T, task domain.Task, head string) *domain.Seal
 		t.Fatalf("SealDeliveryEvidence() error = %v", err)
 	}
 	return sealed
+}
+
+func candidateEvidencePublications(
+	t *testing.T,
+	task domain.Task,
+	sealed *domain.SealedDeliveryEvidence,
+) []application.ComisEvidencePublication {
+	t.Helper()
+	bundle := sealed.Bundle()
+	expiresAt := bundle.ExpiresAt
+	referenceBody := []byte("https://example.com/pull/17")
+	return []application.ComisEvidencePublication{
+		{
+			OperationID: "put-evidence-bundle", TaskHandle: task.Handle,
+			EvidenceRef: "evidence-bundle", Kind: "candidate_bundle", SubjectDigest: sealed.Digest(),
+			ObservedAt: bundle.ProducedAt, ExpiresAt: &expiresAt, ContentHash: sealed.Digest(),
+			VerificationLevel: application.ComisEvidenceAdapterVerified, Body: sealed.Canonical(),
+		},
+		{
+			OperationID: "put-evidence-delivery", TaskHandle: task.Handle,
+			EvidenceRef: "evidence-delivery", Kind: "delivery_reference", SubjectDigest: sealed.Digest(),
+			ObservedAt: bundle.ProducedAt, ExpiresAt: &expiresAt,
+			ContentHash:       fmt.Sprintf("%x", sha256.Sum256(referenceBody)),
+			VerificationLevel: application.ComisEvidenceAdapterVerified, Body: referenceBody,
+			Delivery: &application.ComisEvidenceDeliveryRequest{Kind: application.ComisEvidenceReference},
+		},
+	}
 }

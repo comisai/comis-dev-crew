@@ -344,7 +344,10 @@ func (store *Store) migrate(ctx context.Context) error {
 	if err := store.applyVersionedMigration(ctx, 12, validationProcessMigration); err != nil {
 		return err
 	}
-	return store.applyVersionedMigration(ctx, 13, candidateEvidenceMigration)
+	if err := store.applyVersionedMigration(ctx, 13, candidateEvidenceMigration); err != nil {
+		return err
+	}
+	return store.applyVersionedMigration(ctx, 14, comisEvidenceOutboxMigration)
 }
 
 func (store *Store) applyComisReportOutboxMigration(ctx context.Context) error {
