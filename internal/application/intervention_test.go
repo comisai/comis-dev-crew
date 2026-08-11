@@ -49,6 +49,13 @@ func TestInterventions_HandbackInspectsExactPausedWorkspaceBeforeCommit(t *testi
 		store.mutation.Snapshot != inspector.snapshot || store.mutation.At != now || len(store.mutation.SubjectDigest) != 64 {
 		t.Fatalf("handback mutation = %#v", store.mutation)
 	}
+	if store.mutation.CandidateReport.LocalReportID != command.OperationID ||
+		store.mutation.CandidateReport.BriefRevision != task.BriefRevision ||
+		store.mutation.CandidateReport.BriefRevisionHash != task.BriefRevisionHash ||
+		store.mutation.CandidateReport.Kind != domain.ReportCandidateComplete ||
+		len(store.mutation.CandidateReportDigest) != 64 {
+		t.Fatalf("handback candidate report = %#v", store.mutation.CandidateReport)
+	}
 }
 
 func TestInterventions_HandbackReplaysBeforeInspectionAndRejectsUnsafeInputs(t *testing.T) {

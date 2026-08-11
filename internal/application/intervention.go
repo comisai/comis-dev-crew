@@ -55,12 +55,14 @@ func (snapshot WorkspaceSnapshot) Validate() error {
 
 // TaskHandbackMutation is the exact durable paused-to-validation transaction.
 type TaskHandbackMutation struct {
-	OperationID   string
-	SubjectDigest string
-	TaskHandle    string
-	Action        HandbackAction
-	Snapshot      WorkspaceSnapshot
-	At            time.Time
+	OperationID           string
+	SubjectDigest         string
+	TaskHandle            string
+	Action                HandbackAction
+	Snapshot              WorkspaceSnapshot
+	CandidateReport       domain.WorkerReport
+	CandidateReportDigest string
+	At                    time.Time
 }
 
 // HandbackTaskCommand requests one closed E0 intervention action.
@@ -154,9 +156,23 @@ func (interventions *Interventions) HandbackTask(
 		snapshot.WorktreePath != preparation.RequestedWorkspaceRoot {
 		return MutationResult{}, &dependencyFailure{message: "handback workspace inspection returned different authority"}
 	}
+	candidateReport := domain.WorkerReport{
+		SchemaVersion: 1, LocalReportID: command.OperationID,
+		BriefRevision: task.BriefRevision, BriefRevisionHash: task.BriefRevisionHash,
+		Kind:    domain.ReportCandidateComplete,
+		Summary: "Developer work was handed back for service validation.",
+	}
+	candidateReportDigest, err := digestMutationSubject(domain.AuthenticatedReport{
+		TaskHandle: task.Handle, Report: candidateReport,
+	})
+	if err != nil {
+		return MutationResult{}, mutationValidationFailure("handback candidate report cannot be encoded")
+	}
 	result, err := interventions.store.CommitTaskHandback(ctx, TaskHandbackMutation{
 		OperationID: command.OperationID, SubjectDigest: subjectDigest,
-		TaskHandle: task.Handle, Action: command.Action, Snapshot: snapshot, At: interventions.clock(),
+		TaskHandle: task.Handle, Action: command.Action, Snapshot: snapshot,
+		CandidateReport: candidateReport, CandidateReportDigest: candidateReportDigest,
+		At: interventions.clock(),
 	})
 	if err != nil {
 		return MutationResult{}, mutationCommitFailure(err)

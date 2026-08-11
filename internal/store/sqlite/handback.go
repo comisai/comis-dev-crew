@@ -79,7 +79,7 @@ func (store *Store) CommitTaskHandback(
 	if activeProcesses != 0 {
 		return application.MutationResult{}, fmt.Errorf("task handback validation process remains: %w", application.ErrPrecondition)
 	}
-	updated, err := task.ApplyTransition(domain.TransitionValidationStarted, mutation.At)
+	updated, err := task.AcceptWorkerReport(mutation.CandidateReport, mutation.At)
 	if err != nil {
 		return application.MutationResult{}, fmt.Errorf("apply task handback: %w", err)
 	}
@@ -88,7 +88,17 @@ func (store *Store) CommitTaskHandback(
 		return application.MutationResult{}, err
 	}
 	updated.StateVersion = stateVersion
-	if err := updateTaskState(ctx, transaction, updated); err != nil {
+	if err := updateReportedTask(ctx, transaction, updated); err != nil {
+		return application.MutationResult{}, err
+	}
+	accepted := domain.AcceptedReport{
+		TaskHandle: task.Handle, Report: mutation.CandidateReport,
+		SubjectDigest: mutation.CandidateReportDigest, StateVersion: stateVersion, AcceptedAt: mutation.At,
+	}
+	if err := insertAcceptedReport(ctx, transaction, accepted); err != nil {
+		return application.MutationResult{}, err
+	}
+	if err := insertComisReport(ctx, transaction, task, accepted); err != nil {
 		return application.MutationResult{}, err
 	}
 	operation := completedMutationOperation(
@@ -118,7 +128,11 @@ func (store *Store) CommitTaskHandback(
 func validateTaskHandbackMutation(mutation application.TaskHandbackMutation) error {
 	if domain.ValidateOperationID(mutation.OperationID) != nil || len(mutation.SubjectDigest) != 64 ||
 		domain.ValidateTaskHandle(mutation.TaskHandle) != nil || mutation.Action != application.HandbackValidateDeveloperWork ||
-		mutation.Snapshot.Validate() != nil || mutation.At.IsZero() || mutation.At.Location() != time.UTC {
+		mutation.Snapshot.Validate() != nil || mutation.CandidateReport.Validate() != nil ||
+		mutation.CandidateReport.LocalReportID != mutation.OperationID ||
+		mutation.CandidateReport.Kind != domain.ReportCandidateComplete ||
+		len(mutation.CandidateReportDigest) != 64 ||
+		mutation.At.IsZero() || mutation.At.Location() != time.UTC {
 		return errors.New("commit task handback: invalid mutation")
 	}
 	return nil

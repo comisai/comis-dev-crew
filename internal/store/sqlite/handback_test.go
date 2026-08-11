@@ -26,7 +26,9 @@ func TestTaskHandback_PersistsFreshSnapshotAndStartsDeveloperWorkValidation(t *t
 			Branch: "devcrew/task-handback-clean", HeadRevision: strings.Repeat("b", 40),
 			Cleanliness: application.WorkspaceClean,
 		},
-		At: now.Add(7 * time.Minute),
+		CandidateReport:       handbackCandidateReport(task, "operation-handback-clean"),
+		CandidateReportDigest: strings.Repeat("a", 64),
+		At:                    now.Add(7 * time.Minute),
 	}
 	handbacks := any(store).(durableHandbackStore)
 	result, err := handbacks.CommitTaskHandback(context.Background(), mutation)
@@ -75,7 +77,9 @@ func TestTaskHandback_RefusesLiveTerminalAndAlteredWorkspaceAuthority(t *testing
 			Branch: "devcrew/task-handback-refusal", HeadRevision: strings.Repeat("c", 40),
 			Cleanliness: application.WorkspaceDirty,
 		},
-		At: now.Add(7 * time.Minute),
+		CandidateReport:       handbackCandidateReport(task, "operation-handback-refusal"),
+		CandidateReportDigest: strings.Repeat("b", 64),
+		At:                    now.Add(7 * time.Minute),
 	}
 	if _, err := store.db.Exec(`UPDATE task_terminal_bindings SET latest_transition = 'running' WHERE task_handle = ?`, task.Handle); err != nil {
 		t.Fatal(err)
@@ -88,9 +92,30 @@ func TestTaskHandback_RefusesLiveTerminalAndAlteredWorkspaceAuthority(t *testing
 	}
 	altered := base
 	altered.OperationID = "operation-handback-altered"
+	altered.CandidateReport.LocalReportID = altered.OperationID
 	altered.Snapshot.WorktreePath = workspace + "-other"
 	if _, err := store.CommitTaskHandback(context.Background(), altered); !errors.Is(err, application.ErrPrecondition) {
 		t.Fatalf("CommitTaskHandback(altered workspace) error = %v", err)
+	}
+	invalidReport := base
+	invalidReport.OperationID = "operation-handback-invalid-report"
+	invalidReport.CandidateReport.LocalReportID = invalidReport.OperationID
+	invalidReport.CandidateReport.Kind = domain.ReportProgress
+	if _, err := store.CommitTaskHandback(context.Background(), invalidReport); err == nil {
+		t.Fatal("CommitTaskHandback(invalid candidate report) error = nil")
+	}
+	unchanged, err := store.GetTask(context.Background(), task.Handle)
+	if err != nil || unchanged.State != domain.TaskPaused || unchanged.ReportCursor != task.ReportCursor {
+		t.Fatalf("task after refused handback = %#v, %v", unchanged, err)
+	}
+}
+
+func handbackCandidateReport(task domain.Task, operationID string) domain.WorkerReport {
+	return domain.WorkerReport{
+		SchemaVersion: 1, LocalReportID: operationID,
+		BriefRevision: task.BriefRevision, BriefRevisionHash: task.BriefRevisionHash,
+		Kind:    domain.ReportCandidateComplete,
+		Summary: "Developer work was handed back for service validation.",
 	}
 }
 
