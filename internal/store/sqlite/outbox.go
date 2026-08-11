@@ -132,17 +132,22 @@ func (store *Store) MarkComisReportDelivered(
 	}
 	defer func() { _ = transaction.Rollback() }()
 	const query = `SELECT
-        t.managed_run_id, o.service_report_id, o.accepted_sequence,
+        t.managed_run_id, o.service_report_id, o.task_handle, r.kind, o.accepted_sequence,
         o.retained_until, o.delivered_at
-    FROM comis_report_outbox o JOIN tasks t ON t.handle = o.task_handle
+    FROM comis_report_outbox o
+    JOIN tasks t ON t.handle = o.task_handle
+    JOIN reports r ON r.task_handle = o.task_handle AND r.local_report_id = o.local_report_id
     WHERE o.operation_id = ?`
 	var managedRunID string
 	var serviceReportID string
+	var taskHandle string
+	var reportKind domain.WorkerReportKind
 	var acceptedSequence sql.NullInt64
 	var retainedUntil sql.NullString
 	var priorDeliveredAt sql.NullString
 	if err := transaction.QueryRowContext(ctx, query, operationID).Scan(
-		&managedRunID, &serviceReportID, &acceptedSequence, &retainedUntil, &priorDeliveredAt,
+		&managedRunID, &serviceReportID, &taskHandle, &reportKind,
+		&acceptedSequence, &retainedUntil, &priorDeliveredAt,
 	); errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("mark Comis report delivered: %w", application.ErrNotFound)
 	} else if err != nil {
@@ -167,6 +172,28 @@ func (store *Store) MarkComisReportDelivered(
 	rows, err := result.RowsAffected()
 	if err != nil || rows != 1 {
 		return errors.New("write Comis report acknowledgement: exact item was not updated")
+	}
+	if reportKind == domain.ReportCandidateComplete {
+		task, err := getTask(ctx, transaction, taskHandle)
+		if err != nil {
+			return err
+		}
+		delivering, err := task.ApplyTransition(domain.TransitionDeliveryStarted, deliveredAt)
+		if err != nil {
+			return fmt.Errorf("start acknowledged candidate delivery: %w", err)
+		}
+		delivered, err := delivering.ApplyTransition(domain.TransitionDeliveryAccepted, deliveredAt)
+		if err != nil {
+			return fmt.Errorf("accept acknowledged candidate delivery: %w", err)
+		}
+		stateVersion, err := nextMutationStateVersion(ctx, transaction)
+		if err != nil {
+			return err
+		}
+		delivered.StateVersion = stateVersion
+		if err := updateTaskState(ctx, transaction, delivered); err != nil {
+			return err
+		}
 	}
 	if err := transaction.Commit(); err != nil {
 		return fmt.Errorf("commit Comis report acknowledgement: %w", err)
