@@ -19,6 +19,7 @@ var (
 	identifierPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,63}$`)
 	revisionPattern   = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 	literalPattern    = regexp.MustCompile(`^[A-Za-z0-9_./:=,+@%~-]+$`)
+	mediaTypePattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9.+-]{0,63}/[a-z0-9][a-z0-9.+-]{0,63}$`)
 )
 
 // ArgumentKind is the closed reviewed validation-argument vocabulary.
@@ -73,8 +74,10 @@ type ForgeCheck struct {
 
 // ArtifactRule bounds one immutable task artifact.
 type ArtifactRule struct {
-	Kind     ArtifactKind
-	MaxBytes int64
+	Kind         ArtifactKind
+	RelativePath string
+	MediaType    string
+	MaxBytes     int64
 }
 
 // Profile is one complete operator-reviewed validation policy.
@@ -179,12 +182,29 @@ func validateProfile(profile Profile, programs map[string]Program) error {
 		}
 		forgeNames[check.Name] = struct{}{}
 	}
+	if len(profile.ArtifactRules) > 1 {
+		return errors.New("create validation catalog: artifact rules are ambiguous")
+	}
 	for _, rule := range profile.ArtifactRules {
-		if rule.Kind != ArtifactRegularFile || rule.MaxBytes <= 0 || rule.MaxBytes > 1<<30 {
+		if rule.Kind != ArtifactRegularFile || rule.MaxBytes <= 0 || rule.MaxBytes > 1<<30 ||
+			!validArtifactPath(rule.RelativePath) || !mediaTypePattern.MatchString(rule.MediaType) {
 			return errors.New("create validation catalog: artifact rule is invalid")
 		}
 	}
 	return nil
+}
+
+func validArtifactPath(path string) bool {
+	if path == "" || len(path) > 256 || filepath.IsAbs(path) || filepath.Clean(path) != path ||
+		path == "." || strings.ContainsAny(path, "\x00\r\n") {
+		return false
+	}
+	for _, component := range strings.Split(path, string(filepath.Separator)) {
+		if component == ".." || component == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func validArgumentTemplate(argument ArgumentTemplate) bool {
