@@ -34,7 +34,10 @@ func TestTaskCleanupStore_PersistsReleaseBeforeExactRemovalAuthorizationAndCompl
 		!reflect.DeepEqual(record.RequiredForgeChecks, []string{"ci/unit"}) {
 		t.Fatalf("BeginTaskCleanup() = %#v", record)
 	}
-	replay, err := store.BeginTaskCleanup(context.Background(), mutation)
+	laterReplay := mutation
+	laterReplay.ReleasedAt = beginAt.Add(time.Minute)
+	laterReplay.At = laterReplay.ReleasedAt
+	replay, err := store.BeginTaskCleanup(context.Background(), laterReplay)
 	if err != nil || !reflect.DeepEqual(replay, record) {
 		t.Fatalf("BeginTaskCleanup(replay) = %#v, %v", replay, err)
 	}
