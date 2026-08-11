@@ -19,6 +19,7 @@ const serviceUsage = `Usage: devcrew-service [--database PATH] [--socket PATH]
          --comis-handshake-operation ID --codex-profile ID --codex-executable PATH
          --codex-version VERSION --codex-model MODEL --codex-effort EFFORT
          --codex-terminal-allow-entry ID --codex-network POSTURE --codex-concurrency N
+         --candidate-config PATH
 
 Run the sole durable comis-dev-crew service authority.
 
@@ -46,6 +47,7 @@ Options:
   --codex-terminal-allow-entry ID Reviewed Comis terminal allow-entry identity
   --codex-network POSTURE         disabled, restricted, or host
   --codex-concurrency N           Reviewed profile concurrency limit
+  --candidate-config PATH         Owner-private validation and forge policy
   --help, -h                      Show this help
   --version                       Show version
 `
@@ -87,6 +89,7 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	var codexTerminalAllowEntry string
 	var codexNetwork string
 	var codexConcurrency int
+	var candidateConfigPath string
 	preparationTTL := 10 * time.Minute
 	var help bool
 	var version bool
@@ -113,6 +116,7 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	flags.StringVar(&codexTerminalAllowEntry, "codex-terminal-allow-entry", "", "reviewed Comis terminal allow-entry identity")
 	flags.StringVar(&codexNetwork, "codex-network", "", "reviewed network posture")
 	flags.IntVar(&codexConcurrency, "codex-concurrency", 0, "reviewed profile concurrency limit")
+	flags.StringVar(&candidateConfigPath, "candidate-config", "", "owner-private validation and forge policy")
 	flags.BoolVar(&help, "help", false, "show help")
 	flags.BoolVar(&help, "h", false, "show help")
 	flags.BoolVar(&version, "version", false, "show version")
@@ -142,6 +146,7 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 		mcpSocketPath, runtimeRoot, serviceInstanceID, gitExecutable, approvedRoot, repositoryID, repositoryPrimary,
 		worktreeRoot, repositoryDefaultBranch, comisSocketPath, comisCredentialFile, comisHandshakeOperationID,
 		codexProfileID, codexExecutable, codexVersion, codexModel, codexEffort, codexTerminalAllowEntry, codexNetwork,
+		candidateConfigPath,
 	}
 	installed := preparationTTLConfigured || codexConcurrency != 0
 	for _, value := range installedValues {
@@ -181,6 +186,12 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 			Model: codexModel, Effort: codexEffort, TerminalAllowEntryID: codexTerminalAllowEntry,
 			Network: workers.NetworkPosture(codexNetwork), ConcurrencyLimit: codexConcurrency,
 		}
+		validationComposition, forgeComposition, readErr := readCandidateComposition(candidateConfigPath)
+		if readErr != nil {
+			return writeServiceDiagnostic(stderr, "devcrew-service: candidate configuration is invalid\nHint: provide one canonical owner-private reviewed candidate policy\n", 2)
+		}
+		serviceConfig.ValidationComposition = validationComposition
+		serviceConfig.ForgeComposition = forgeComposition
 	}
 	if err := runService(ctx, serviceConfig); err != nil {
 		return writeServiceDiagnostic(stderr, "devcrew-service: service stopped with an error\nHint: inspect local configuration and service health\n", 1)

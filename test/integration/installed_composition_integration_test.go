@@ -62,6 +62,7 @@ func TestInstalledComposition_JoinsMCPActivationAndReviewedCodexLaunchPlan(t *te
 	serviceBinary := buildInstalledBinary(t, "devcrew-service")
 	mcpBinary := buildInstalledBinary(t, "devcrew-mcp")
 	codexExecutable := installedCodexExecutable(t, root)
+	candidateConfig := installedCandidateConfig(t, root)
 	operatorSocket := filepath.Join(runRoot, "operator.sock")
 	mcpSocket := filepath.Join(runRoot, "mcp.sock")
 	database := filepath.Join(root, "state", "devcrew.db")
@@ -80,6 +81,7 @@ func TestInstalledComposition_JoinsMCPActivationAndReviewedCodexLaunchPlan(t *te
 		"--codex-version", "codex-cli 0.147.0", "--codex-model", "gpt-5.5-codex",
 		"--codex-effort", "high", "--codex-terminal-allow-entry", "codex-confined",
 		"--codex-network", "restricted", "--codex-concurrency", "2",
+		"--candidate-config", candidateConfig,
 	)
 	serviceCommand.Stderr = serviceStderr
 	if err := serviceCommand.Start(); err != nil {
@@ -417,6 +419,58 @@ func installedCodexExecutable(t *testing.T, root string) string {
 		t.Fatal(err)
 	}
 	return executable
+}
+
+func installedCandidateConfig(t *testing.T, root string) string {
+	t.Helper()
+	trueExecutable, err := exec.LookPath("true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	trueExecutable, err = filepath.EvalSymlinks(trueExecutable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configRoot := filepath.Join(root, "config")
+	credentialRoot := filepath.Join(root, "forge-credentials")
+	if err := os.MkdirAll(credentialRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	readCredential := filepath.Join(configRoot, "forge-read.credential")
+	pushCredential := filepath.Join(configRoot, "forge-push.credential")
+	if err := os.WriteFile(readCredential, []byte("installed_forge_read_credential"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pushCredential, []byte("installed_forge_push_credential"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	document := map[string]any{
+		"programs": []map[string]any{{"id": "repo-check", "executable": trueExecutable}},
+		"profiles": []map[string]any{{
+			"id": "go-default", "evidenceTtl": "24h",
+			"localChecks": []map[string]any{{
+				"id": "unit", "programId": "repo-check", "timeout": "1m", "required": true,
+				"arguments": []map[string]any{{"kind": "literal", "value": "--version"}},
+			}},
+			"forgeChecks": []map[string]any{{"name": "ci/unit", "required": true}},
+		}},
+		"maxOutputBytes": 65536, "pollInterval": "250ms",
+		"forge": map[string]any{
+			"apiBaseUrl": "https://api.github.com", "owner": "comisai", "repository": "product-api",
+			"remoteUrl":          "https://github.com/comisai/product-api.git",
+			"readCredentialFile": readCredential, "pushCredentialFile": pushCredential,
+			"credentialDirectory": credentialRoot,
+		},
+	}
+	contents, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(configRoot, "candidate.json")
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func installedGitExecutable(t *testing.T) string {

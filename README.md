@@ -254,8 +254,15 @@ devcrew-service \
   --codex-effort high \
   --codex-terminal-allow-entry codex-confined \
   --codex-network restricted \
-  --codex-concurrency 2
+  --codex-concurrency 2 \
+  --candidate-config /absolute/private/candidate.json
 ```
+
+The candidate configuration is a strict owner-private JSON document. It fixes absolute validation
+programs, typed argument templates, local and forge checks, evidence lifetimes, output and polling
+bounds, and one GitHub route. The route names distinct owner-private read and push credential files;
+the service rejects shared identities. `localFixtureRemoteRoot` permits a `file://` remote only for
+an explicitly bounded local test fixture and must be absent for the production HTTPS route.
 
 Expose the replaceable official-SDK stdio MCP facade to the MCP client as a separate process:
 
