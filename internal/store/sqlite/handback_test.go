@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -107,6 +108,114 @@ func TestTaskHandback_RefusesLiveTerminalAndAlteredWorkspaceAuthority(t *testing
 	unchanged, err := store.GetTask(context.Background(), task.Handle)
 	if err != nil || unchanged.State != domain.TaskPaused || unchanged.ReportCursor != task.ReportCursor {
 		t.Fatalf("task after refused handback = %#v, %v", unchanged, err)
+	}
+}
+
+func TestTaskHandback_RejectsReplayConflictsAndUnavailableDurableDependencies(t *testing.T) {
+	store, task, workspace, now := openPausedHandbackFixture(t, "task-handback-replay")
+	mutation := handbackMutation(task, workspace, now, "operation-handback-replay")
+	if _, err := store.CommitTaskHandback(context.Background(), mutation); err != nil {
+		t.Fatalf("CommitTaskHandback() error = %v", err)
+	}
+	altered := mutation
+	altered.SubjectDigest = strings.Repeat("e", 64)
+	if _, err := store.CommitTaskHandback(context.Background(), altered); !errors.Is(err, application.ErrConflict) {
+		t.Fatalf("CommitTaskHandback(altered replay) error = %v, want ErrConflict", err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*Store, *application.TaskHandbackMutation)
+	}{
+		{name: "unknown task", mutate: func(_ *Store, mutation *application.TaskHandbackMutation) {
+			mutation.OperationID = "operation-handback-unknown"
+			mutation.TaskHandle = "task-handback-unknown"
+			mutation.Snapshot.TaskHandle = mutation.TaskHandle
+			mutation.CandidateReport.LocalReportID = mutation.OperationID
+		}},
+		{name: "missing preparation table", mutate: func(store *Store, _ *application.TaskHandbackMutation) {
+			_, _ = store.db.Exec("ALTER TABLE task_preparations RENAME TO unavailable_task_preparations")
+		}},
+		{name: "missing terminal table", mutate: func(store *Store, _ *application.TaskHandbackMutation) {
+			_, _ = store.db.Exec("ALTER TABLE task_terminal_bindings RENAME TO unavailable_terminal_bindings")
+		}},
+		{name: "missing validation table", mutate: func(store *Store, _ *application.TaskHandbackMutation) {
+			_, _ = store.db.Exec("ALTER TABLE validation_processes RENAME TO unavailable_validation_processes")
+		}},
+		{name: "active validation process", mutate: func(store *Store, mutation *application.TaskHandbackMutation) {
+			_, _ = store.db.Exec(`INSERT INTO validation_processes(
+                    operation_id, task_handle, program_id, executable_label, pid,
+                    start_identity, process_group_identity, state, started_at, observed_at)
+                VALUES ('validate-handback-active', ?, 'go-test', 'go', 123,
+                    'start-123', 'group-123', 'running', ?, ?)`, mutation.TaskHandle,
+				formatTime(mutation.At.Add(-time.Minute)), formatTime(mutation.At.Add(-time.Minute)))
+		}},
+		{name: "candidate brief mismatch", mutate: func(_ *Store, mutation *application.TaskHandbackMutation) {
+			mutation.CandidateReport.BriefRevision++
+		}},
+		{name: "exhausted state version", mutate: func(store *Store, _ *application.TaskHandbackMutation) {
+			operation := storeOperation("operation-handback-max-version", math.MaxInt64)
+			if err := store.RecordOperation(context.Background(), operation); err != nil {
+				t.Fatalf("RecordOperation(max version) error = %v", err)
+			}
+		}},
+		{name: "task update failure", mutate: func(store *Store, _ *application.TaskHandbackMutation) {
+			_, _ = store.db.Exec(`CREATE TRIGGER fail_handback_task_update BEFORE UPDATE ON tasks
+                    BEGIN SELECT RAISE(FAIL, 'task update unavailable'); END`)
+		}},
+		{name: "report insert failure", mutate: func(store *Store, _ *application.TaskHandbackMutation) {
+			_, _ = store.db.Exec(`CREATE TRIGGER fail_handback_report_insert BEFORE INSERT ON reports
+                    BEGIN SELECT RAISE(FAIL, 'report insert unavailable'); END`)
+		}},
+		{name: "outbox insert failure", mutate: func(store *Store, _ *application.TaskHandbackMutation) {
+			_, _ = store.db.Exec(`CREATE TRIGGER fail_handback_outbox_insert BEFORE INSERT ON comis_report_outbox
+                    BEGIN SELECT RAISE(FAIL, 'outbox insert unavailable'); END`)
+		}},
+		{name: "operation insert failure", mutate: func(store *Store, _ *application.TaskHandbackMutation) {
+			_, _ = store.db.Exec(`CREATE TRIGGER fail_handback_operation_insert BEFORE INSERT ON operations
+                    BEGIN SELECT RAISE(FAIL, 'operation insert unavailable'); END`)
+		}},
+		{name: "snapshot insert failure", mutate: func(store *Store, _ *application.TaskHandbackMutation) {
+			_, _ = store.db.Exec(`CREATE TRIGGER fail_handback_snapshot_insert BEFORE INSERT ON task_handbacks
+                    BEGIN SELECT RAISE(FAIL, 'snapshot insert unavailable'); END`)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store, task, workspace, now := openPausedHandbackFixture(t, "task-handback-failure")
+			t.Cleanup(func() { _ = store.Close() })
+			mutation := handbackMutation(task, workspace, now, "operation-handback-failure")
+			test.mutate(store, &mutation)
+			if _, err := store.CommitTaskHandback(context.Background(), mutation); err == nil {
+				t.Fatal("CommitTaskHandback(failure) error = nil")
+			}
+		})
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	closedMutation := handbackMutation(task, workspace, now, "operation-handback-closed")
+	if _, err := store.CommitTaskHandback(context.Background(), closedMutation); err == nil {
+		t.Fatal("CommitTaskHandback(closed) error = nil")
+	}
+}
+
+func handbackMutation(
+	task domain.Task,
+	workspace string,
+	now time.Time,
+	operationID string,
+) application.TaskHandbackMutation {
+	return application.TaskHandbackMutation{
+		OperationID: operationID, SubjectDigest: strings.Repeat("d", 64),
+		TaskHandle: task.Handle, Action: application.HandbackValidateDeveloperWork,
+		Snapshot: application.WorkspaceSnapshot{
+			TaskHandle: task.Handle, RepositoryID: task.RepositoryID, WorktreePath: workspace,
+			Branch: "devcrew/" + task.Handle, HeadRevision: strings.Repeat("b", 40),
+			Cleanliness: application.WorkspaceClean,
+		},
+		CandidateReport:       handbackCandidateReport(task, operationID),
+		CandidateReportDigest: strings.Repeat("a", 64),
+		At:                    now.Add(7 * time.Minute),
 	}
 }
 
