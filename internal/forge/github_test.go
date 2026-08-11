@@ -93,6 +93,48 @@ func TestGitHubAdapter_UsesSeparateAuthoritiesAndRereadsExactPullRequestTruth(t 
 	}
 }
 
+func TestGitHubAdapter_VerifiesRecordedPullRequestWithReadAuthorityOnly(t *testing.T) {
+	head := strings.Repeat("d", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer read-token" {
+			t.Errorf("authorization header = %q", request.Header.Get("Authorization"))
+		}
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/repos/comisai/fixture/pulls/23":
+			_, _ = response.Write([]byte(`{"number":23,"state":"open","html_url":"https://example.com/comisai/fixture/pull/23","head":{"sha":"` + head + `","ref":"devcrew/task-recorded"},"base":{"ref":"main"}}`))
+		case "/repos/comisai/fixture/commits/" + head + "/check-runs":
+			_, _ = response.Write([]byte(`{"check_runs":[{"name":"ci/unit","status":"completed","conclusion":"success"}]}`))
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	pusher := &recordingBranchPusher{}
+	configuration := validGitHubConfig(server)
+	configuration.Pusher = pusher
+	configuration.PushCredentials = failingCredentialSource{}
+	adapter, err := NewGitHubAdapter(configuration)
+	if err != nil {
+		t.Fatalf("NewGitHubAdapter() error = %v", err)
+	}
+	truth, err := adapter.VerifyPullRequest(context.Background(), PullRequestVerificationRequest{
+		Branch: "devcrew/task-recorded", HeadRevision: head,
+		PullRequestID: "github-pr-23", RequiredChecks: []string{"ci/unit"},
+	})
+	if err != nil {
+		t.Fatalf("VerifyPullRequest() error = %v", err)
+	}
+	if truth.URL != "https://example.com/comisai/fixture/pull/23" ||
+		truth.Evidence.PullRequestID != "github-pr-23" || truth.Evidence.HeadRevision != head ||
+		len(truth.Evidence.CheckConclusions) != 1 || truth.Evidence.CheckConclusions[0].Conclusion != domain.CheckPassed {
+		t.Fatalf("VerifyPullRequest() = %#v", truth)
+	}
+	if pusher.calls != 0 {
+		t.Fatalf("read-only verification push calls = %d", pusher.calls)
+	}
+}
+
 func TestGitHubAdapter_RefusesSharedCredentialsChangedHeadAndUnboundedResponses(t *testing.T) {
 	head := strings.Repeat("b", 40)
 	changedHead := strings.Repeat("c", 40)
