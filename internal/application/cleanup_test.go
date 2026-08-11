@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -71,9 +72,14 @@ func TestCleanupCoordinator_RefusesDirtyWorkspaceBeforeHostRelease(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := coordinator.CleanupTask(context.Background(), CleanupTaskCommand{
+	_, cleanupErr := coordinator.CleanupTask(context.Background(), CleanupTaskCommand{
 		OperationID: record.OperationID, TaskHandle: record.TaskHandle,
-	}); err == nil {
+	})
+	var failure *domain.Failure
+	if !errors.As(cleanupErr, &failure) || failure.Code != domain.ErrorPrecondition {
+		t.Fatalf("CleanupTask(dirty workspace) error = %v, want precondition failure", cleanupErr)
+	}
+	if cleanupErr == nil {
 		t.Fatal("CleanupTask(dirty workspace) error = nil")
 	}
 	if releaser.calls != 0 || remover.calls != 0 || store.releaseCalls != 0 {
