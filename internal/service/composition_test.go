@@ -12,6 +12,7 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 	"github.com/comisai/comis-dev-crew/internal/store/sqlite"
+	"github.com/comisai/comis-dev-crew/internal/validation"
 	"github.com/comisai/comis-dev-crew/internal/workers"
 )
 
@@ -24,6 +25,11 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 	}
 	if configured.Repositories == nil || configured.Workspaces == nil {
 		t.Fatalf("installed repository configuration = %#v", configured)
+	}
+	if configured.candidateGit == nil || configured.validationCatalog == nil ||
+		configured.pullRequests == nil || configured.validationMaxOutputBytes != 64<<10 ||
+		configured.validationPollInterval != 25*time.Millisecond {
+		t.Fatalf("installed candidate validation configuration = %#v", configured)
 	}
 	adapter, err := configured.WorkerHarnesses.ResolveWorkerHarness("codex-reviewed")
 	if err != nil {
@@ -148,6 +154,16 @@ func TestInstalledRuntime_RejectsPartialMixedAndUnverifiedConfiguration(t *testi
 	configuration.RepositoryComposition.GitExecutable = "relative-git"
 	if _, err := composeInstalledRuntime(context.Background(), configuration); err == nil {
 		t.Fatal("composeInstalledRuntime(invalid Git) error = nil")
+	}
+	configuration = installedServiceConfig(t, shortTempDir(t))
+	configuration.ValidationComposition = nil
+	if _, err := composeInstalledRuntime(context.Background(), configuration); err == nil {
+		t.Fatal("composeInstalledRuntime(missing validation) error = nil")
+	}
+	configuration = installedServiceConfig(t, shortTempDir(t))
+	configuration.ForgeComposition.PushCredentialFile = configuration.ForgeComposition.ReadCredentialFile
+	if _, err := composeInstalledRuntime(context.Background(), configuration); err == nil {
+		t.Fatal("composeInstalledRuntime(shared forge credential) error = nil")
 	}
 }
 
@@ -290,6 +306,26 @@ func installedServiceConfig(t *testing.T, root string) Config {
 	runServiceGit(t, primary, "commit", "-m", "fixture")
 	credentialFile := filepath.Join(root, "config", "comis.credential")
 	writeServiceCredential(t, credentialFile, "installed_service_bearer_0123456789abcdef", 0o600)
+	readCredentialFile := filepath.Join(root, "config", "forge-read.credential")
+	pushCredentialFile := filepath.Join(root, "config", "forge-push.credential")
+	writeServiceCredential(t, readCredentialFile, "forge_read_bearer_0123456789abcdef", 0o600)
+	writeServiceCredential(t, pushCredentialFile, "forge_push_bearer_0123456789abcdef", 0o600)
+	credentialDirectory := filepath.Join(root, "forge-credentials")
+	if err := os.MkdirAll(credentialDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	validationExecutable, err := exec.LookPath("true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	validationExecutable, err = filepath.Abs(validationExecutable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validationExecutable, err = filepath.EvalSymlinks(validationExecutable)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return Config{
 		DatabasePath: filepath.Join(root, "state", "devcrew.db"), SocketPath: filepath.Join(root, "operator.sock"),
 		MCPSocketPath: filepath.Join(root, "mcp.sock"), RuntimeRoot: filepath.Join(root, "runtime"), ServiceInstanceID: "service-instance-fixture",
@@ -306,6 +342,24 @@ func installedServiceConfig(t *testing.T, root string) Config {
 			ProfileID: "codex-reviewed", Executable: serviceCodexExecutable(t, root),
 			ExpectedVersion: "codex-cli 0.147.0", Model: "gpt-5.5-codex", Effort: "high",
 			TerminalAllowEntryID: "codex-confined", Network: workers.NetworkRestricted, ConcurrencyLimit: 2,
+		},
+		ValidationComposition: &ValidationComposition{
+			Programs: []validation.Program{{ID: "repo-check", Executable: validationExecutable}},
+			Profiles: []validation.Profile{{
+				ID: "required", EvidenceTTL: 10 * time.Minute,
+				LocalChecks: []validation.LocalCheck{{
+					ID: "unit", ProgramID: "repo-check", Required: true, Timeout: time.Minute,
+					Arguments: []validation.ArgumentTemplate{{Kind: validation.ArgumentLiteral, Value: "--version"}},
+				}},
+				ForgeChecks: []validation.ForgeCheck{{Name: "ci/unit", Required: true}},
+			}},
+			MaxOutputBytes: 64 << 10, PollInterval: 25 * time.Millisecond,
+		},
+		ForgeComposition: &ForgeComposition{
+			APIBaseURL: "http://127.0.0.1:1", Owner: "fixture-owner", Repository: "fixture-repository",
+			RemoteURL: "file://" + filepath.Join(root, "forge", "fixture.git"),
+			ReadCredentialFile: readCredentialFile, PushCredentialFile: pushCredentialFile,
+			CredentialDirectory: credentialDirectory, LocalFixtureRemoteRoot: root,
 		},
 	}
 }
