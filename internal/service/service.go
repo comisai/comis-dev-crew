@@ -30,6 +30,7 @@ const (
 // by the service. The concrete control adapter also carries durable reports.
 type ComisControl interface {
 	comiswire.ReportSender
+	comiswire.EvidenceSender
 	Run(context.Context) error
 }
 
@@ -274,8 +275,17 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if err != nil {
 		return fmt.Errorf("run service Comis report forwarder: %w", err)
 	}
+	evidenceForwarder, err := comiswire.NewEvidenceForwarder(comiswire.EvidenceForwarderConfig{
+		Outbox: store, Sender: control, Clock: clock,
+		PollInterval: comisReportPollInterval, MinimumBackoff: comisReportMinimumBackoff,
+		MaximumBackoff: comisReportMaximumBackoff,
+	})
+	if err != nil {
+		return fmt.Errorf("run service Comis evidence forwarder: %w", err)
+	}
 	components := []func(context.Context) error{
 		control.Run,
+		evidenceForwarder.Run,
 		forwarder.Run,
 	}
 	if attachmentSupervisor != nil {
