@@ -396,6 +396,9 @@ func TestControlConnectionRejectsInvalidEvidenceAndReleaseBeforeDispatch(t *test
 	}); err == nil {
 		t.Fatal("Release(nil context) error = nil")
 	}
+	if _, err := connection.Release(context.Background(), ReleaseRequestParams{}); err == nil {
+		t.Fatal("Release(invalid request) error = nil")
+	}
 	if _, err := connection.ReleaseManagedRun(context.Background(), application.ManagedRunReleaseRequest{}); err == nil {
 		t.Fatal("ReleaseManagedRun(invalid request) error = nil")
 	}

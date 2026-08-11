@@ -277,6 +277,11 @@ func TestDecodeWireResponseRejectsEveryEnvelopeContradiction(t *testing.T) {
 	if err := contextOrTransportError(context.Background(), "read", errors.New("cause")); err == nil || !strings.Contains(err.Error(), "cause") {
 		t.Fatalf("transport cause was not preserved: %v", err)
 	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := contextOrTransportError(canceled, "read", errors.New("cause")); !errors.Is(err, context.Canceled) {
+		t.Fatalf("transport cancellation = %v, want context.Canceled", err)
+	}
 	for _, malformed := range []string{`{"name":1`, `[1`, `[}`} {
 		if err := rejectDuplicateJSONNames([]byte(malformed)); err == nil {
 			t.Fatalf("rejectDuplicateJSONNames(%q) error = nil", malformed)
