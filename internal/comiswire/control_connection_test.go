@@ -15,6 +15,10 @@ import (
 	"time"
 )
 
+var _ interface {
+	Release(context.Context, ReleaseRequestParams) (ReleaseResponseResult, error)
+} = (*ControlConnection)(nil)
+
 const controlTestBearer = "control_test_bearer_0123456789abcdef"
 
 type durableControlHandler struct {
