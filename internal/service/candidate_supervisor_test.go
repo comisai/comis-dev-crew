@@ -171,6 +171,19 @@ func TestCandidateSupervisor_FailsClosedForUnavailableDependenciesTimeAndShape(t
 }
 
 func TestCandidateSupervisor_RunRecoversDurableValidatingTaskAndJoinsCancellation(t *testing.T) {
+	if err := (*candidateSupervisor)(nil).Run(context.Background()); err == nil {
+		t.Fatal("Run(nil supervisor) error = nil")
+	}
+	alreadyCancelled, cancelAlready := context.WithCancel(context.Background())
+	cancelAlready()
+	fixtureForCancellation := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	cancelledSupervisor, err := newCandidateSupervisor(fixtureForCancellation.config())
+	if err != nil {
+		t.Fatalf("newCandidateSupervisor(cancelled) error = %v", err)
+	}
+	if err := cancelledSupervisor.Run(alreadyCancelled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run(already cancelled) error = %v", err)
+	}
 	fixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
 	ctx, cancel := context.WithCancel(context.Background())
 	fixture.store.onCommit = cancel

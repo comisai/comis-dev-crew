@@ -16,6 +16,7 @@ import (
 )
 
 type candidateEvidenceStore interface {
+	ListTasks(context.Context) ([]domain.Task, error)
 	GetTask(context.Context, string) (domain.Task, error)
 	GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error)
 	ListAcceptedReports(context.Context, string) ([]domain.AcceptedReport, error)
@@ -44,6 +45,7 @@ type candidateSupervisorConfig struct {
 	PullRequests    candidatePullRequestDeliverer
 	InspectArtifact candidateArtifactInspector
 	Clock           application.Clock
+	PollInterval    time.Duration
 }
 
 type candidateSupervisor struct {
@@ -52,10 +54,49 @@ type candidateSupervisor struct {
 
 func newCandidateSupervisor(config candidateSupervisorConfig) (*candidateSupervisor, error) {
 	if config.Store == nil || config.Git == nil || config.Catalog == nil || config.Runner == nil ||
-		config.PullRequests == nil || config.InspectArtifact == nil || config.Clock == nil {
+		config.PullRequests == nil || config.InspectArtifact == nil || config.Clock == nil ||
+		config.PollInterval <= 0 || config.PollInterval > time.Minute {
 		return nil, errors.New("create candidate supervisor: evidence dependencies are required")
 	}
 	return &candidateSupervisor{config: config}, nil
+}
+
+// Run recovers the durable validating-task queue and stops on any ambiguous
+// evidence outcome. A service-manager restart safely re-runs current checks.
+func (supervisor *candidateSupervisor) Run(ctx context.Context) error {
+	if supervisor == nil || ctx == nil {
+		return errors.New("run candidate supervisor: supervisor and context are required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for {
+		tasks, err := supervisor.config.Store.ListTasks(ctx)
+		if err != nil {
+			return errors.New("run candidate supervisor: durable task queue is unavailable")
+		}
+		for _, task := range tasks {
+			if task.State != domain.TaskValidating {
+				continue
+			}
+			_, judgment, err := supervisor.ValidateTask(ctx, task.Handle)
+			if err != nil {
+				return fmt.Errorf("run candidate supervisor: %w", err)
+			}
+			if judgment.Outcome != domain.CandidateAccepted {
+				return errors.New("run candidate supervisor: candidate evidence was not accepted")
+			}
+		}
+		timer := time.NewTimer(supervisor.config.PollInterval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 // ValidateTask produces evidence only from current service, Git, process,
