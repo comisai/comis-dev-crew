@@ -98,6 +98,33 @@ func TestStartupReconciliationMarksOnlyAmbiguousTasksAndIncompleteOperationsUnkn
 	}
 }
 
+func TestStartupReconciliationPreservesValidatingTaskForEvidenceRecovery(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	task := reconciliationTask(1, domain.TaskValidating)
+	if err := store.CreateTask(context.Background(), task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+
+	result, err := store.ReconcileStartup(context.Background(), task.UpdatedAt.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("ReconcileStartup() error = %v", err)
+	}
+	if result.TasksMarkedUnknown != 0 {
+		t.Fatalf("TasksMarkedUnknown = %d, want 0", result.TasksMarkedUnknown)
+	}
+	got, err := store.GetTask(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	if got.State != domain.TaskValidating || got.StateVersion != task.StateVersion {
+		t.Fatalf("task after startup reconciliation = %#v, want validating version %d", got, task.StateVersion)
+	}
+}
+
 func TestStartupReconciliation_FailsClosedOnInvalidTimeEvidenceAndStorage(t *testing.T) {
 	t.Run("invalid time", func(t *testing.T) {
 		store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
