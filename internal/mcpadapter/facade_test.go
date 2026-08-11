@@ -108,6 +108,31 @@ func TestFacade_ReadToolsUseOneCanonicalCommandAndIgnoreForgedRunMetadata(t *tes
 	}
 }
 
+func TestFacade_HandbackTaskUsesAuthenticatedCanonicalMutation(t *testing.T) {
+	client := &fakeClient{handbackResult: localapi.TaskMutationResult{
+		SchemaVersion: 1, OperationID: "handback-0001", TaskHandle: "task-0001",
+		State: domain.TaskValidating, StateVersion: 18, SideEffect: localapi.SideEffectMutate,
+	}}
+	facade, err := New(Config{
+		Client: client, ServiceInstanceID: "service-instance-0001", Version: "test",
+		NewOperationID: func() (string, error) { return "reconcile-0001", nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := connectFacade(t, facade)
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Meta: callMeta("handback-0001", "service-instance-0001"), Name: ToolHandbackTask,
+		Arguments: HandbackTaskInput{TaskHandle: "task-0001", Action: application.HandbackValidateDeveloperWork},
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("CallTool(handback_task) = %#v, %v", result, err)
+	}
+	if got := strings.Join(client.calls, ","); got != "handback:handback-0001:task-0001:validate-developer-work" {
+		t.Fatalf("handback calls = %q", got)
+	}
+}
+
 func TestFacade_RejectsHostilePrivateMetadataBeforeAuthority(t *testing.T) {
 	unknown := callMeta("read-0001", "service-instance-0001")
 	unknown[CallContextMetaKey].(map[string]any)["authority"] = "broaden"
@@ -184,7 +209,7 @@ func TestFacade_UncertainPreparationReconcilesBeforeOneExactRetry(t *testing.T) 
 
 func assertToolCatalog(t *testing.T, tools []*mcp.Tool) {
 	t.Helper()
-	want := map[string]bool{ToolPrepareTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true}
+	want := map[string]bool{ToolPrepareTask: false, ToolHandbackTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true}
 	if len(tools) != len(want) {
 		t.Fatalf("tool count = %d, want %d", len(tools), len(want))
 	}
@@ -251,6 +276,16 @@ type fakeClient struct {
 	prepareErrors  []error
 	operation      application.OperationView
 	operationError error
+	handbackResult localapi.TaskMutationResult
+}
+
+func (client *fakeClient) HandbackTask(
+	_ context.Context,
+	operationID string,
+	input localapi.HandbackTaskInput,
+) (localapi.TaskMutationResult, error) {
+	client.calls = append(client.calls, "handback:"+operationID+":"+input.TaskHandle+":"+string(input.Action))
+	return client.handbackResult, nil
 }
 
 func (client *fakeClient) PrepareTask(_ context.Context, operationID string, _ localapi.PrepareTaskInput) (localapi.PrepareTaskResult, error) {
