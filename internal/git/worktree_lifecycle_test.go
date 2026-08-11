@@ -396,6 +396,47 @@ func TestRegistry_CleanupWorktreeRefusesAmbiguityAndRemovesOnlyExactCleanBase(t 
 	})
 }
 
+func TestRegistry_RemoveDeliveredWorktreeUsesExactHeadAndConvergesAfterRemoval(t *testing.T) {
+	fixture := newRepositoryFixture(t, "product-api")
+	registry := newLifecycleRegistry(t, fixture)
+	prepare := lifecycleRequest(t, fixture, "prepare-delivered", "task-delivered")
+	prepared, err := registry.PrepareWorktree(context.Background(), prepare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(prepared.CanonicalPath, "candidate.txt")
+	if err := os.WriteFile(artifact, []byte("candidate\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath, "add", "candidate.txt")
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath,
+		"-c", "user.name=DevCrew Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "candidate")
+	head := gitOutput(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath, "rev-parse", "HEAD")
+	request := devgit.DeliveredWorktreeCleanupRequest{
+		PreparationOperationID: prepare.OperationID, TaskHandle: prepare.TaskHandle,
+		RepositoryID: prepare.RepositoryID, WorktreePath: prepared.CanonicalPath,
+		Branch: prepared.Branch, HeadRevision: head,
+	}
+	if err := os.WriteFile(filepath.Join(prepared.CanonicalPath, "dirty.txt"), []byte("preserve\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.RemoveDeliveredWorktree(context.Background(), request); err == nil {
+		t.Fatal("RemoveDeliveredWorktree(dirty) error = nil")
+	}
+	if err := os.Remove(filepath.Join(prepared.CanonicalPath, "dirty.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.RemoveDeliveredWorktree(context.Background(), request); err != nil {
+		t.Fatalf("RemoveDeliveredWorktree() error = %v", err)
+	}
+	if err := registry.RemoveDeliveredWorktree(context.Background(), request); err != nil {
+		t.Fatalf("RemoveDeliveredWorktree(replay) error = %v", err)
+	}
+	if _, err := os.Lstat(prepared.CanonicalPath); !os.IsNotExist(err) {
+		t.Fatalf("delivered worktree remains: %v", err)
+	}
+}
+
 func newLifecycleRegistry(t *testing.T, fixture repositoryFixture) *devgit.Registry {
 	t.Helper()
 	registry, err := devgit.NewRegistry(context.Background(), devgit.RegistryConfig{
