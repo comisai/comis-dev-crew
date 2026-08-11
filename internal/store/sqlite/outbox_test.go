@@ -94,6 +94,42 @@ func TestComisReportOutbox_HoldsCandidateReportUntilEvidenceDeliveryCompletes(t 
 	if next, found, err := store.NextComisReport(context.Background()); err != nil || found {
 		t.Fatalf("NextComisReport(candidate before evidence) = %#v, %t, %v, want held", next, found, err)
 	}
+	validating, err := store.GetTask(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	sealed := candidateEvidence(t, validating, strings.Repeat("b", 40))
+	publications := candidateEvidencePublications(t, validating, sealed)
+	judgedAt := validating.UpdatedAt.Add(5 * time.Minute)
+	if _, _, err := store.CommitCandidateEvidence(
+		context.Background(), validating.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt, publications,
+	); err != nil {
+		t.Fatalf("CommitCandidateEvidence() error = %v", err)
+	}
+	if next, found, err := store.NextComisReport(context.Background()); err != nil || found {
+		t.Fatalf("NextComisReport(candidate before acknowledgements) = %#v, %t, %v, want held", next, found, err)
+	}
+	for range publications {
+		evidence, found, err := store.NextComisEvidence(context.Background())
+		if err != nil || !found {
+			t.Fatalf("NextComisEvidence() = %#v, %t, %v", evidence, found, err)
+		}
+		deliveredAt := judgedAt.Add(time.Minute)
+		retainedUntil := deliveredAt.Add(24 * time.Hour)
+		if err := store.MarkComisEvidenceDelivered(context.Background(), evidence.OperationID, application.ComisEvidenceAcknowledgement{
+			ManagedRunID: evidence.ManagedRunID, EvidenceRef: evidence.EvidenceRef,
+			ContentHash: evidence.ContentHash, VerificationLevel: evidence.VerificationLevel,
+			RetainedUntil: &retainedUntil,
+		}, deliveredAt); err != nil {
+			t.Fatalf("MarkComisEvidenceDelivered() error = %v", err)
+		}
+	}
+	pending, found, err := store.NextComisReport(context.Background())
+	if err != nil || !found || !reflect.DeepEqual(pending.ArtifactRefs, []string{
+		publications[0].EvidenceRef, publications[1].EvidenceRef,
+	}) {
+		t.Fatalf("NextComisReport(candidate with evidence) = %#v, %t, %v", pending, found, err)
+	}
 }
 
 func TestComisReportOutbox_ValidationAndCorruptionFailClosed(t *testing.T) {
