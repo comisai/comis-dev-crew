@@ -9,8 +9,10 @@ import (
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/comiswire"
+	"github.com/comisai/comis-dev-crew/internal/delivery"
 	"github.com/comisai/comis-dev-crew/internal/localapi"
 	"github.com/comisai/comis-dev-crew/internal/store/sqlite"
+	"github.com/comisai/comis-dev-crew/internal/validation"
 	"github.com/comisai/comis-dev-crew/internal/workers"
 )
 
@@ -33,25 +35,32 @@ type ComisControl interface {
 
 // Config identifies the service-owned database and operator endpoint.
 type Config struct {
-	DatabasePath          string
-	SocketPath            string
-	MCPSocketPath         string
-	RuntimeRoot           string
-	ServiceInstanceID     string
-	Repositories          application.RepositoryCatalog
-	Workspaces            application.WorkspacePreparer
-	RuntimeAttachments    application.RuntimeAttachmentCoordinator
-	WorkerHarnesses       application.WorkerHarnessResolver
-	TaskIDs               application.TaskIDSource
-	RegistrationNonces    application.RegistrationNonceSource
-	PreparationTTL        time.Duration
-	Clock                 application.Clock
-	ComisControl          ComisControl
-	RepositoryComposition *RepositoryComposition
-	ComisComposition      *ComisComposition
-	CodexComposition      *CodexComposition
-	FixtureComposition    *FixtureComposition
-	Ready                 func()
+	DatabasePath             string
+	SocketPath               string
+	MCPSocketPath            string
+	RuntimeRoot              string
+	ServiceInstanceID        string
+	Repositories             application.RepositoryCatalog
+	Workspaces               application.WorkspacePreparer
+	RuntimeAttachments       application.RuntimeAttachmentCoordinator
+	WorkerHarnesses          application.WorkerHarnessResolver
+	TaskIDs                  application.TaskIDSource
+	RegistrationNonces       application.RegistrationNonceSource
+	PreparationTTL           time.Duration
+	Clock                    application.Clock
+	ComisControl             ComisControl
+	RepositoryComposition    *RepositoryComposition
+	ComisComposition         *ComisComposition
+	CodexComposition         *CodexComposition
+	ValidationComposition    *ValidationComposition
+	ForgeComposition         *ForgeComposition
+	FixtureComposition       *FixtureComposition
+	Ready                    func()
+	candidateGit             candidateGitInspector
+	validationCatalog        *validation.Catalog
+	validationMaxOutputBytes int64
+	validationPollInterval   time.Duration
+	pullRequests             candidatePullRequestDeliverer
 }
 
 // RepositoryComposition is the installed single-repository fixture lane.
@@ -84,6 +93,27 @@ type CodexComposition struct {
 	TerminalAllowEntryID string
 	Network              workers.NetworkPosture
 	ConcurrencyLimit     int
+}
+
+// ValidationComposition is the immutable operator-reviewed candidate policy.
+type ValidationComposition struct {
+	Programs       []validation.Program
+	Profiles       []validation.Profile
+	MaxOutputBytes int64
+	PollInterval   time.Duration
+}
+
+// ForgeComposition fixes the sole E0 pull-request route and keeps its read and
+// push credentials in distinct owner-private files.
+type ForgeComposition struct {
+	APIBaseURL             string
+	Owner                  string
+	Repository             string
+	RemoteURL              string
+	ReadCredentialFile     string
+	PushCredentialFile     string
+	CredentialDirectory    string
+	LocalFixtureRemoteRoot string
 }
 
 // FixtureComposition enables the reviewed deterministic worker with one fixed
@@ -126,6 +156,27 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	}
 	if _, err := reconciler.Reconcile(ctx); err != nil {
 		return fmt.Errorf("run service startup reconciliation: %w", err)
+	}
+	var candidate *candidateSupervisor
+	if config.validationCatalog != nil {
+		runner, runnerErr := validation.NewRunner(validation.RunnerConfig{
+			Catalog: config.validationCatalog, Processes: store,
+			MaxOutputBytes: config.validationMaxOutputBytes, Clock: clock,
+		})
+		if runnerErr != nil {
+			return fmt.Errorf("run service validation runner: %w", runnerErr)
+		}
+		if _, recoverErr := runner.Recover(ctx); recoverErr != nil {
+			return fmt.Errorf("run service validation recovery: %w", recoverErr)
+		}
+		candidate, runnerErr = newCandidateSupervisor(candidateSupervisorConfig{
+			Store: store, Git: config.candidateGit, Catalog: config.validationCatalog,
+			Runner: runner, PullRequests: config.pullRequests, InspectArtifact: delivery.InspectReportArtifact,
+			Clock: clock, PollInterval: config.validationPollInterval,
+		})
+		if runnerErr != nil {
+			return fmt.Errorf("run service candidate supervisor: %w", runnerErr)
+		}
 	}
 	queries, err := application.NewQueries(application.QueryConfig{
 		Repository: store, Harnesses: config.WorkerHarnesses, Clock: clock,
@@ -232,6 +283,9 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	}
 	if fixture != nil {
 		components = append(components, fixture.Run)
+	}
+	if candidate != nil {
+		components = append(components, candidate.Run)
 	}
 	return serveServiceComponents(ctx, servers, components, config.Ready)
 }

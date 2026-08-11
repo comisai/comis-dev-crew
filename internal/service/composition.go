@@ -8,28 +8,36 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/comiswire"
 	"github.com/comisai/comis-dev-crew/internal/domain"
+	"github.com/comisai/comis-dev-crew/internal/forge"
 	devgit "github.com/comisai/comis-dev-crew/internal/git"
+	"github.com/comisai/comis-dev-crew/internal/validation"
 	"github.com/comisai/comis-dev-crew/internal/workers"
 )
 
 func composeInstalledRuntime(ctx context.Context, config Config) (Config, error) {
-	configured := config.RepositoryComposition != nil || config.ComisComposition != nil || config.CodexComposition != nil
+	configured := config.RepositoryComposition != nil || config.ComisComposition != nil || config.CodexComposition != nil ||
+		config.ValidationComposition != nil || config.ForgeComposition != nil
 	if !configured {
 		return config, nil
 	}
-	if config.RepositoryComposition == nil || config.ComisComposition == nil || config.CodexComposition == nil || config.FixtureComposition != nil ||
+	if config.RepositoryComposition == nil || config.ComisComposition == nil || config.CodexComposition == nil ||
+		config.ValidationComposition == nil || config.ForgeComposition == nil || config.FixtureComposition != nil ||
 		config.MCPSocketPath == "" || config.RuntimeRoot == "" || config.ServiceInstanceID == "" {
 		return Config{}, errors.New("run service: installed composition is incomplete")
 	}
 	if config.Repositories != nil || config.Workspaces != nil || config.TaskIDs != nil ||
-		config.RuntimeAttachments != nil || config.WorkerHarnesses != nil || config.RegistrationNonces != nil || config.ComisControl != nil {
+		config.RuntimeAttachments != nil || config.WorkerHarnesses != nil || config.RegistrationNonces != nil || config.ComisControl != nil ||
+		config.candidateGit != nil || config.validationCatalog != nil || config.pullRequests != nil ||
+		config.validationMaxOutputBytes != 0 || config.validationPollInterval != 0 {
 		return Config{}, errors.New("run service: installed and injected composition cannot be combined")
 	}
 	repositoryConfig := config.RepositoryComposition
@@ -77,6 +85,52 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	if probe.Availability != application.HarnessAvailable || probe.Version != codexConfig.ExpectedVersion {
 		return Config{}, errors.New("run service: exact Codex version is unavailable")
 	}
+	validationConfig := config.ValidationComposition
+	catalog, err := validation.NewCatalog(validation.CatalogConfig{
+		Programs: validationConfig.Programs, Profiles: validationConfig.Profiles,
+	})
+	if err != nil {
+		return Config{}, fmt.Errorf("run service validation composition: %w", err)
+	}
+	if validationConfig.MaxOutputBytes < 1 || validationConfig.MaxOutputBytes > 16<<20 ||
+		validationConfig.PollInterval <= 0 || validationConfig.PollInterval > time.Minute {
+		return Config{}, errors.New("run service: validation execution bounds are invalid")
+	}
+	forgeConfig := config.ForgeComposition
+	readCredential, err := readOwnerCredential(forgeConfig.ReadCredentialFile)
+	if err != nil {
+		return Config{}, fmt.Errorf("run service forge read credential: %w", err)
+	}
+	pushCredential, err := readOwnerCredential(forgeConfig.PushCredentialFile)
+	if err != nil {
+		return Config{}, fmt.Errorf("run service forge push credential: %w", err)
+	}
+	if forgeConfig.ReadCredentialFile == forgeConfig.PushCredentialFile || readCredential == pushCredential {
+		return Config{}, errors.New("run service: forge read and push identities must differ")
+	}
+	pusher, err := forge.NewGitBranchPusher(forge.GitBranchPusherConfig{
+		GitExecutable: repositoryConfig.GitExecutable, RemoteURL: forgeConfig.RemoteURL,
+		CredentialDirectory: forgeConfig.CredentialDirectory, LocalFixtureRemoteRoot: forgeConfig.LocalFixtureRemoteRoot,
+	})
+	if err != nil {
+		return Config{}, fmt.Errorf("run service forge push composition: %w", err)
+	}
+	pullRequests, err := forge.NewGitHubAdapter(forge.GitHubConfig{
+		APIBaseURL: forgeConfig.APIBaseURL, Owner: forgeConfig.Owner, Repository: forgeConfig.Repository,
+		RepositoryIdentity: repositoryConfig.RepositoryID, BaseBranch: repositoryConfig.DefaultBranch,
+		HTTPClient: &http.Client{Timeout: 30 * time.Second}, Pusher: pusher,
+		ReadCredentials: ownerCredentialSource{
+			path: forgeConfig.ReadCredentialFile, kind: forge.CredentialRead,
+			scopes: []forge.CredentialScope{forge.ScopeContentsRead, forge.ScopePullRequestsRead, forge.ScopeChecksRead},
+		},
+		PushCredentials: ownerCredentialSource{
+			path: forgeConfig.PushCredentialFile, kind: forge.CredentialPush,
+			scopes: []forge.CredentialScope{forge.ScopeContentsWrite},
+		},
+	})
+	if err != nil {
+		return Config{}, fmt.Errorf("run service GitHub composition: %w", err)
+	}
 	config.Repositories = registry
 	config.Workspaces = registry
 	config.TaskIDs = func(operationID string) (string, error) {
@@ -84,7 +138,32 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	}
 	config.RegistrationNonces = func() (string, error) { return randomIdentity("registration-nonce", 16) }
 	config.WorkerHarnesses = exactWorkerHarnesses{profileID: codexConfig.ProfileID, adapter: adapter}
+	config.candidateGit = registry
+	config.validationCatalog = catalog
+	config.validationMaxOutputBytes = validationConfig.MaxOutputBytes
+	config.validationPollInterval = validationConfig.PollInterval
+	config.pullRequests = pullRequests
 	return config, nil
+}
+
+type ownerCredentialSource struct {
+	path   string
+	kind   forge.CredentialKind
+	scopes []forge.CredentialScope
+}
+
+func (source ownerCredentialSource) Resolve(ctx context.Context) (forge.Credential, error) {
+	if ctx == nil {
+		return forge.Credential{}, errors.New("resolve forge credential: context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return forge.Credential{}, err
+	}
+	secret, err := readOwnerCredential(source.path)
+	if err != nil {
+		return forge.Credential{}, errors.New("resolve forge credential: owner file is unavailable")
+	}
+	return forge.Credential{Kind: source.kind, Secret: secret, Scopes: append([]forge.CredentialScope(nil), source.scopes...)}, nil
 }
 
 type exactWorkerHarnesses struct {

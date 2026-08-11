@@ -357,7 +357,7 @@ func installedServiceConfig(t *testing.T, root string) Config {
 		},
 		ForgeComposition: &ForgeComposition{
 			APIBaseURL: "http://127.0.0.1:1", Owner: "fixture-owner", Repository: "fixture-repository",
-			RemoteURL: "file://" + filepath.Join(root, "forge", "fixture.git"),
+			RemoteURL:          "file://" + filepath.Join(root, "forge", "fixture.git"),
 			ReadCredentialFile: readCredentialFile, PushCredentialFile: pushCredentialFile,
 			CredentialDirectory: credentialDirectory, LocalFixtureRemoteRoot: root,
 		},
