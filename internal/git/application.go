@@ -45,5 +45,19 @@ func (registry *Registry) InspectWorkspace(
 	}, nil
 }
 
+// RemoveDeliveredWorkspace implements the application cleanup port using the
+// exact operation-bound Git remover.
+func (registry *Registry) RemoveDeliveredWorkspace(
+	ctx context.Context,
+	request application.DeliveredWorkspaceRemoval,
+) error {
+	return registry.RemoveDeliveredWorktree(ctx, DeliveredWorktreeCleanupRequest{
+		PreparationOperationID: request.PreparationOperationID, TaskHandle: request.TaskHandle,
+		RepositoryID: request.RepositoryID, WorktreePath: request.WorktreePath,
+		Branch: request.Branch, HeadRevision: request.HeadRevision,
+	})
+}
+
 var _ application.WorkspacePreparer = (*Registry)(nil)
 var _ application.WorkspaceInspector = (*Registry)(nil)
+var _ application.DeliveredWorkspaceRemover = (*Registry)(nil)
