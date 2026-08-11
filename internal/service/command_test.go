@@ -109,6 +109,14 @@ func TestRunCommand_ComposesInstalledComisCodexLaneFromExplicitConfiguration(t *
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	var got Config
+	root := shortTempDir(t)
+	candidateConfigPath := root + "/candidate.json"
+	writeCandidateConfig(t, candidateConfigPath, `{
+  "programs":[{"id":"repo-check","executable":"/usr/bin/true"}],
+  "profiles":[{"id":"required","localChecks":[{"id":"unit","programId":"repo-check","arguments":[{"kind":"literal","value":"--version"}],"timeout":"2m","required":true}],"forgeChecks":[{"name":"ci/unit","required":true}],"evidenceTtl":"24h"}],
+  "maxOutputBytes":65536,"pollInterval":"250ms",
+  "forge":{"apiBaseUrl":"https://api.github.com","owner":"comisai","repository":"product-api","remoteUrl":"https://github.com/comisai/product-api.git","readCredentialFile":"/private/config/forge-read.credential","pushCredentialFile":"/private/config/forge-push.credential","credentialDirectory":"/private/run/forge-credentials"}
+}`, 0o600)
 	exitCode := RunCommand(context.Background(), []string{
 		"--database", "/private/state/devcrew.db",
 		"--socket", "/private/run/operator.sock",
@@ -133,6 +141,7 @@ func TestRunCommand_ComposesInstalledComisCodexLaneFromExplicitConfiguration(t *
 		"--codex-terminal-allow-entry", "codex-confined",
 		"--codex-network", "restricted",
 		"--codex-concurrency", "2",
+		"--candidate-config", candidateConfigPath,
 	}, &stdout, &stderr, CommandConfig{
 		RunService: func(_ context.Context, config Config) error {
 			got = config
@@ -161,6 +170,11 @@ func TestRunCommand_ComposesInstalledComisCodexLaneFromExplicitConfiguration(t *
 		got.PreparationTTL != 15*time.Minute || !reflect.DeepEqual(got.RepositoryComposition, wantRepository) ||
 		!reflect.DeepEqual(got.ComisComposition, wantComis) || !reflect.DeepEqual(got.CodexComposition, wantCodex) || got.FixtureComposition != nil {
 		t.Fatalf("installed service config = %#v", got)
+	}
+	if got.ValidationComposition == nil || got.ForgeComposition == nil ||
+		got.ValidationComposition.MaxOutputBytes != 64<<10 || got.ValidationComposition.PollInterval != 250*time.Millisecond ||
+		got.ForgeComposition.Repository != "product-api" {
+		t.Fatalf("candidate service config = %#v, %#v", got.ValidationComposition, got.ForgeComposition)
 	}
 }
 
