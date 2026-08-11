@@ -12,8 +12,9 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
-// ReconcileStartup atomically converts runtime-sensitive task states and
+// ReconcileStartup atomically converts worker-runtime-sensitive task states and
 // accepted operation outcomes to unknown before the service becomes ready.
+// Validating tasks remain durable so the candidate supervisor can recover them.
 func (store *Store) ReconcileStartup(ctx context.Context, at time.Time) (application.StartupReconciliation, error) {
 	if at.IsZero() || at.Location() != time.UTC {
 		return application.StartupReconciliation{}, errors.New("reconcile startup: UTC service time is required")
@@ -83,7 +84,7 @@ func runtimeSensitiveState(state domain.TaskState) bool {
 	switch state {
 	case domain.TaskLaunching, domain.TaskWorking, domain.TaskAwaitingDecision,
 		domain.TaskBlocked, domain.TaskPaused, domain.TaskReconciling,
-		domain.TaskValidating, domain.TaskCandidateComplete, domain.TaskDelivering:
+		domain.TaskCandidateComplete, domain.TaskDelivering:
 		return true
 	default:
 		return false
