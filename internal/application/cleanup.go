@@ -212,7 +212,8 @@ func (coordinator *CleanupCoordinator) CleanupTask(ctx context.Context, command 
 	if err != nil {
 		return MutationResult{}, mutationValidationFailure("cleanup subject cannot be encoded")
 	}
-	now := coordinator.config.Clock()
+	observed := coordinator.config.Clock()
+	now := time.UnixMilli(observed.UnixMilli()).UTC()
 	record, err := coordinator.config.Store.BeginTaskCleanup(ctx, TaskCleanupMutation{
 		OperationID: command.OperationID, SubjectDigest: digest, TaskHandle: command.TaskHandle,
 		ReleaseOperationID: cleanupReleaseOperationID(command.OperationID, command.TaskHandle),
