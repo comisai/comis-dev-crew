@@ -27,6 +27,9 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if reporterMetadataCommand(args) {
+		return reporter.RunCommand(ctx, args, stdout, stderr, reporter.CommandConfig{Version: command.Version})
+	}
 	capability, err := reporter.NewMountedRuntimeClient(
 		os.Getenv(application.RuntimeAttachmentPathEnvironment),
 		os.Getenv(application.RuntimeAttachmentTargetEnvironment),
@@ -44,6 +47,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		NewLocalReportID: newLocalReportID, WorkingDirectory: canonicalWorkingDirectory,
 		Version: command.Version,
 	})
+}
+
+func reporterMetadataCommand(args []string) bool {
+	return len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "--version")
 }
 
 func canonicalWorkingDirectory() (string, error) {
