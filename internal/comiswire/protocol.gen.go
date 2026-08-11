@@ -760,3 +760,26 @@ func (client *Client) PutEvidence(ctx context.Context, params PutEvidenceRequest
 	}
 	return response.Result, nil
 }
+
+func (client *Client) Release(ctx context.Context, params ReleaseRequestParams) (ReleaseResponseResult, error) {
+	if ctx == nil {
+		return ReleaseResponseResult{}, fmt.Errorf("release context is required")
+	}
+	request := ReleaseRequest{JSONRPC: JSONRPCVersion, ID: params.OperationID, Method: MethodManagedRunsRelease, Params: params}
+	if err := validateGeneratedDocument(schemaReleaseRequest, request); err != nil {
+		return ReleaseResponseResult{}, fmt.Errorf("validate release request: %w", err)
+	}
+	var response ReleaseResponse
+	if err := client.transport.roundTrip(ctx, request, &response); err != nil {
+		return ReleaseResponseResult{}, err
+	}
+	if err := validateGeneratedDocument(schemaReleaseResponse, response); err != nil {
+		return ReleaseResponseResult{}, fmt.Errorf("validate release response: %w", err)
+	}
+	if response.ID != request.ID || response.Result.ManagedRunID != params.ManagedRunID ||
+		response.Result.WorkspaceLeaseID != params.WorkspaceLeaseID || response.Result.Disposition != params.Disposition ||
+		response.Result.ReleasedAtMs != params.ReleasedAtMs || response.Result.State != ManagedRunState("released") {
+		return ReleaseResponseResult{}, fmt.Errorf("release response identity does not match request")
+	}
+	return response.Result, nil
+}

@@ -74,6 +74,7 @@ func TestGenerateProducesDeterministicClosedPinnedClient(t *testing.T) {
 		"func (client *Client) Health(",
 		"func (client *Client) Report(",
 		"func (client *Client) PutEvidence(",
+		"func (client *Client) Release(",
 	} {
 		if !strings.Contains(source, required) {
 			t.Errorf("generated source is missing %q", required)
