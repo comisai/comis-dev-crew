@@ -32,6 +32,25 @@ type apiCleanup struct {
 	err     error
 }
 
+func TestDecodePrepareTaskInput_UsesStrictBoundedPayload(t *testing.T) {
+	input, err := DecodePrepareTaskInput([]byte(`{
+        "shape":"scout","repositoryId":"product-api",
+        "baseRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "acceptanceCriteria":["Return one bounded report."],
+        "constraints":["Do not deliver."],"validationProfile":"go-default",
+        "deliveryMode":"report","workerProfileId":"fixture-worker"
+    }`))
+	if err != nil || input.Shape != domain.ShapeScout || input.RepositoryID != "product-api" {
+		t.Fatalf("DecodePrepareTaskInput() = %#v, %v", input, err)
+	}
+	if _, err := DecodePrepareTaskInput(nil); err == nil {
+		t.Fatal("DecodePrepareTaskInput(empty) error = nil")
+	}
+	if _, err := DecodePrepareTaskInput([]byte(`{"shape":"scout","unexpected":true}`)); err == nil {
+		t.Fatal("DecodePrepareTaskInput(unknown field) error = nil")
+	}
+}
+
 func (cleanup *apiCleanup) CleanupTask(
 	_ context.Context,
 	command application.CleanupTaskCommand,
