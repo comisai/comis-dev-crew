@@ -63,14 +63,14 @@ func TestProcessRecord_RejectsIncompleteAndRegressiveEvidence(t *testing.T) {
 		mutate func(*ProcessRecord)
 	}{
 		{name: "invalid task", mutate: func(record *ProcessRecord) { record.TaskHandle = "bad task" }},
-		{name: "changed executable label", mutate: func(record *ProcessRecord) { record.ExecutableLabel = "node-test" }},
+		{name: "invalid executable label", mutate: func(record *ProcessRecord) { record.ExecutableLabel = "bad label" }},
 		{name: "non utc time", mutate: func(record *ProcessRecord) { record.ObservedAt = record.ObservedAt.In(time.FixedZone("other", 0)) }},
 		{name: "observation before start", mutate: func(record *ProcessRecord) { record.ObservedAt = startedAt.Add(-time.Second) }},
 		{name: "missing pid", mutate: func(record *ProcessRecord) { record.PID = 0 }},
 		{name: "running exit", mutate: func(record *ProcessRecord) { value := 1; record.ExitCode = &value }},
 		{name: "unknown state", mutate: func(record *ProcessRecord) { record.State = "forged" }},
 		{name: "starting with pid", mutate: func(record *ProcessRecord) { record.State = ProcessStarting }},
-		{name: "exited without code", mutate: func(record *ProcessRecord) { record.State = ProcessExited }},
+		{name: "exited missing identity", mutate: func(record *ProcessRecord) { record.State = ProcessExited; record.StartIdentity = "" }},
 		{name: "unknown with code", mutate: func(record *ProcessRecord) { value := 1; record.State = ProcessUnknown; record.ExitCode = &value }},
 	} {
 		t.Run(test.name, func(t *testing.T) {

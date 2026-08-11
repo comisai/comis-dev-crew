@@ -11,7 +11,7 @@ var processIdentityPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._~-]{0,2
 // Validate rejects contentful, incomplete, or contradictory process evidence.
 func (record ProcessRecord) Validate() error {
 	if !identifierPattern.MatchString(record.TaskHandle) || !identifierPattern.MatchString(record.OperationID) ||
-		!identifierPattern.MatchString(record.ProgramID) || record.ExecutableLabel != record.ProgramID {
+		!identifierPattern.MatchString(record.ProgramID) || !processIdentityPattern.MatchString(record.ExecutableLabel) {
 		return errors.New("validate validation process: record identity is invalid")
 	}
 	if record.StartedAt.IsZero() || record.ObservedAt.IsZero() ||
@@ -31,11 +31,11 @@ func (record ProcessRecord) Validate() error {
 			return errors.New("validate validation process: running evidence is incomplete")
 		}
 	case ProcessExited:
-		if !hasProcessIdentity || record.ExitCode == nil {
+		if !hasProcessIdentity {
 			return errors.New("validate validation process: exited evidence is incomplete")
 		}
 	case ProcessUnknown:
-		if !hasProcessIdentity || record.ExitCode != nil {
+		if record.ExitCode != nil || (record.PID != 0 && !hasProcessIdentity) {
 			return errors.New("validate validation process: unknown evidence is incomplete")
 		}
 	default:
@@ -65,6 +65,9 @@ func (record ProcessRecord) CanFollow(previous ProcessRecord) error {
 		return nil
 	}
 	if previous.State == ProcessStarting && record.State == ProcessRunning {
+		return nil
+	}
+	if previous.State == ProcessStarting && record.State == ProcessUnknown && record.PID == 0 {
 		return nil
 	}
 	if previous.State == ProcessRunning && (record.State == ProcessExited || record.State == ProcessUnknown) &&

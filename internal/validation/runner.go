@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"hash"
 	"os/exec"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -43,6 +42,23 @@ type ProcessStore interface {
 	Record(context.Context, ProcessRecord) error
 }
 
+// ProcessRecoveryStore exposes active durable records only to startup recovery.
+type ProcessRecoveryStore interface {
+	ProcessStore
+	ListActiveValidationProcesses(context.Context) ([]ProcessRecord, error)
+}
+
+// ProcessObservation is current OS truth for one PID without argv or environment.
+type ProcessObservation struct {
+	PID                  int
+	StartIdentity        string
+	ProcessGroupIdentity string
+	ExecutableLabel      string
+}
+
+// ErrProcessAbsent means the recorded PID is no longer present.
+var ErrProcessAbsent = errors.New("validation process is absent")
+
 // RunRequest binds one validation operation to exact task-owned fields.
 type RunRequest struct {
 	OperationID string
@@ -74,6 +90,7 @@ type RunnerConfig struct {
 	Processes      ProcessStore
 	MaxOutputBytes int64
 	Clock          func() time.Time
+	ObserveProcess func(context.Context, int) (ProcessObservation, error)
 }
 
 type activeProcess struct {
@@ -87,6 +104,7 @@ type Runner struct {
 	processes      ProcessStore
 	maxOutputBytes int64
 	clock          func() time.Time
+	observeProcess func(context.Context, int) (ProcessObservation, error)
 	mu             sync.Mutex
 	active         map[string]activeProcess
 }
@@ -102,7 +120,8 @@ func NewRunner(config RunnerConfig) (*Runner, error) {
 	}
 	return &Runner{
 		catalog: config.Catalog, processes: config.Processes, maxOutputBytes: config.MaxOutputBytes,
-		clock: clock, active: make(map[string]activeProcess),
+		clock: clock, observeProcess: resolvedProcessObserver(config.ObserveProcess),
+		active: make(map[string]activeProcess),
 	}, nil
 }
 
@@ -133,7 +152,7 @@ func (runner *Runner) Run(ctx context.Context, request RunRequest) (Receipt, err
 	startedAt := runner.clock()
 	starting := ProcessRecord{
 		TaskHandle: request.TaskHandle, OperationID: request.OperationID,
-		ProgramID: resolved.ProgramID, ExecutableLabel: resolved.ProgramID,
+		ProgramID: resolved.ProgramID, ExecutableLabel: expectedExecutableLabel(resolved.Executable),
 		State: ProcessStarting, StartedAt: startedAt, ObservedAt: startedAt,
 	}
 	if err := runner.processes.Record(ctx, starting); err != nil {
@@ -146,11 +165,17 @@ func (runner *Runner) Run(ctx context.Context, request RunRequest) (Receipt, err
 	if err := command.Start(); err != nil {
 		return Receipt{}, errors.New("run validation: fixed program did not start")
 	}
-	startIdentity := processStartIdentity(request.OperationID, command.Process.Pid, startedAt)
+	observation, err := runner.observeProcess(context.WithoutCancel(ctx), command.Process.Pid)
+	if err != nil || observation.PID != command.Process.Pid ||
+		observation.ExecutableLabel != expectedExecutableLabel(resolved.Executable) {
+		_ = terminateProcessGroup(command.Process.Pid)
+		_ = command.Wait()
+		return Receipt{}, errors.New("run validation: process identity could not be established")
+	}
 	running := starting
-	running.PID = command.Process.Pid
-	running.StartIdentity = startIdentity
-	running.ProcessGroupIdentity = strconv.Itoa(command.Process.Pid)
+	running.PID = observation.PID
+	running.StartIdentity = observation.StartIdentity
+	running.ProcessGroupIdentity = observation.ProcessGroupIdentity
 	running.State = ProcessRunning
 	running.ObservedAt = runner.clock()
 	if err := runner.processes.Record(context.WithoutCancel(ctx), running); err != nil {
@@ -185,6 +210,76 @@ func (runner *Runner) Run(ctx context.Context, request RunRequest) (Receipt, err
 		return receipt, errors.New("run validation: fixed program failed")
 	}
 	return receipt, nil
+}
+
+// RecoveryResult summarizes current durable validation-process truth.
+type RecoveryResult struct {
+	Observed int
+	Running  int
+	Exited   int
+	Unknown  int
+}
+
+// Recover rechecks every non-exited record against OS start, group, and executable identity.
+func (runner *Runner) Recover(ctx context.Context) (RecoveryResult, error) {
+	if runner == nil || ctx == nil {
+		return RecoveryResult{}, errors.New("recover validation processes: runner and context are required")
+	}
+	if err := ctx.Err(); err != nil {
+		return RecoveryResult{}, err
+	}
+	store, ok := runner.processes.(ProcessRecoveryStore)
+	if !ok {
+		return RecoveryResult{}, errors.New("recover validation processes: durable recovery store is unavailable")
+	}
+	records, err := store.ListActiveValidationProcesses(ctx)
+	if err != nil {
+		return RecoveryResult{}, fmt.Errorf("recover validation processes: %w", err)
+	}
+	result := RecoveryResult{Observed: len(records)}
+	for _, record := range records {
+		next := record
+		next.ObservedAt = runner.clock()
+		switch record.State {
+		case ProcessStarting:
+			next.State = ProcessUnknown
+			result.Unknown++
+		case ProcessRunning:
+			observation, observeErr := runner.observeProcess(ctx, record.PID)
+			switch {
+			case errors.Is(observeErr, ErrProcessAbsent):
+				next.State = ProcessExited
+				next.ExitCode = nil
+				result.Exited++
+			case observeErr != nil || !matchesProcessObservation(record, observation):
+				next.State = ProcessUnknown
+				result.Unknown++
+			default:
+				result.Running++
+			}
+		case ProcessUnknown:
+			result.Unknown++
+		default:
+			return RecoveryResult{}, errors.New("recover validation processes: active state is invalid")
+		}
+		if err := store.Record(ctx, next); err != nil {
+			return RecoveryResult{}, fmt.Errorf("recover validation processes: persist observation: %w", err)
+		}
+	}
+	return result, nil
+}
+
+func resolvedProcessObserver(observer func(context.Context, int) (ProcessObservation, error)) func(context.Context, int) (ProcessObservation, error) {
+	if observer != nil {
+		return observer
+	}
+	return observeOSProcess
+}
+
+func matchesProcessObservation(record ProcessRecord, observation ProcessObservation) bool {
+	return observation.PID == record.PID && observation.StartIdentity == record.StartIdentity &&
+		observation.ProcessGroupIdentity == record.ProcessGroupIdentity &&
+		observation.ExecutableLabel == record.ExecutableLabel
 }
 
 // Stop terminates only the exact operation-owned validation process group.
@@ -250,10 +345,6 @@ func (writer *boundedHashWriter) Write(contents []byte) (int, error) {
 
 func (writer *boundedHashWriter) sum() string {
 	return fmt.Sprintf("%x", writer.hash.Sum(nil))
-}
-
-func processStartIdentity(operationID string, pid int, startedAt time.Time) string {
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(operationID+"\x00"+strconv.Itoa(pid)+"\x00"+startedAt.Format(time.RFC3339Nano))))
 }
 
 func processGroupAttributes() *syscall.SysProcAttr {
