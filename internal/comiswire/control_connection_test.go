@@ -2,6 +2,8 @@ package comiswire
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -195,6 +197,77 @@ func TestControlConnectionPersistsAcrossBidirectionalTrafficAndReplaysAfterRecon
 	cancel()
 	if err := <-serverDone; err != nil {
 		t.Fatalf("control fixture server error = %v", err)
+	}
+}
+
+func TestControlConnectionSendsVerifiedEvidenceOnAuthenticatedPersistentSession(t *testing.T) {
+	socketPath, listener := controlTestListener(t)
+	handler := &durableControlHandler{activations: make(map[OperationID]ActivateRequestParams)}
+	connection, err := NewControlConnection(ControlConnectionConfig{
+		SocketPath: socketPath, Credential: controlTestBearer,
+		ServiceInstanceID: "service-instance_a", HandshakeOperationID: "operation_handshake_a",
+		Handler: handler, RequestTimeout: time.Second,
+		MinimumBackoff: time.Millisecond, MaximumBackoff: 2 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewControlConnection() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- connection.Run(ctx) }()
+	serverDone := make(chan error, 1)
+	body := []byte("verified candidate evidence")
+	contentHash := fmt.Sprintf("%x", sha256.Sum256(body))
+	go func() {
+		peer, acceptErr := listener.AcceptUnix()
+		if acceptErr != nil {
+			serverDone <- acceptErr
+			return
+		}
+		defer peer.Close()
+		if handshakeErr := serveHandshake(peer); handshakeErr != nil {
+			serverDone <- handshakeErr
+			return
+		}
+		var request authenticatedPutEvidenceRequest
+		if readErr := readControlFrame(peer, &request); readErr != nil {
+			serverDone <- readErr
+			return
+		}
+		if request.Bearer != controlTestBearer || request.Method != MethodManagedRunsPutEvidence ||
+			request.Params.BodyBase64 != base64.StdEncoding.EncodeToString(body) {
+			serverDone <- errors.New("evidence did not use authenticated persistent connection")
+			return
+		}
+		retainedUntil := int64(1_800_000_000_000)
+		serverDone <- writeControlFrame(peer, PutEvidenceResponse{
+			JSONRPC: JSONRPCVersion, ID: request.ID,
+			Result: PutEvidenceResponseResult{
+				ManagedRunID: request.Params.ManagedRunID, EvidenceRef: request.Params.EvidenceRef,
+				ContentHash: request.Params.ContentHash, VerificationLevel: request.Params.VerificationLevel,
+				RetainedUntilMs: &retainedUntil,
+			},
+		})
+	}()
+
+	result, err := connection.PutEvidence(context.Background(), PutEvidenceRequestParams{
+		OperationID: "operation_evidence_a", ManagedRunID: "managed-run_a", EvidenceRef: "evidence_a",
+		Kind: "candidate_bundle", SubjectDigest: contentHash, ObservedAtMs: 1_700_000_000_000,
+		ContentHash: contentHash, VerificationLevel: EvidenceVerificationLevelAdapterVerified,
+		BodyBase64: base64.StdEncoding.EncodeToString(body),
+	})
+	if err != nil {
+		t.Fatalf("PutEvidence() error = %v", err)
+	}
+	if result.EvidenceRef != "evidence_a" || result.ContentHash != contentHash || result.RetainedUntilMs == nil {
+		t.Fatalf("PutEvidence() = %#v", result)
+	}
+	if serverErr := <-serverDone; serverErr != nil {
+		t.Fatalf("control fixture server error = %v", serverErr)
+	}
+	cancel()
+	if err := <-runDone; err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v", err)
 	}
 }
 
