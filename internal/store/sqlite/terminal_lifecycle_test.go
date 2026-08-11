@@ -165,6 +165,37 @@ func TestTerminalLifecycle_DeterministicFixtureAcknowledgesWithoutTerminal(t *te
 	}
 }
 
+func TestTerminalLifecycle_ExpectedExitPreservesSafePausedCustody(t *testing.T) {
+	store, task, workspace, now := openTerminalLifecycleFixture(t, "task-terminal-paused-exit", true)
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.CommitTerminalEvent(context.Background(), terminalEventMutation(
+		task, "operation-terminal-paused-running", application.TerminalRunning, now.Add(3*time.Minute),
+	)); err != nil {
+		t.Fatalf("CommitTerminalEvent(running) error = %v", err)
+	}
+	if _, err := store.CommitWorkerLaunchAcknowledgement(context.Background(), application.WorkerLaunchAcknowledgementMutation{
+		OperationID: "operation-terminal-paused-ack", SubjectDigest: strings.Repeat("8", 64),
+		Acknowledgement: terminalLaunchAcknowledgement(task, workspace), At: now.Add(3 * time.Minute),
+	}); err != nil {
+		t.Fatalf("CommitWorkerLaunchAcknowledgement() error = %v", err)
+	}
+	client := reportClient(t, store, task, now.Add(4*time.Minute))
+	paused := sqliteWorkerReport(task, "report-terminal-paused", domain.ReportPaused)
+	if _, err := client.Report(context.Background(), paused); err != nil {
+		t.Fatalf("Report(paused) error = %v", err)
+	}
+
+	result, err := store.CommitTerminalEvent(context.Background(), terminalEventMutation(
+		task, "operation-terminal-paused-exit", application.TerminalExited, now.Add(5*time.Minute),
+	))
+	if err != nil {
+		t.Fatalf("CommitTerminalEvent(exited) error = %v", err)
+	}
+	if result.Task.State != domain.TaskPaused {
+		t.Fatalf("terminal exit state = %q, want %q", result.Task.State, domain.TaskPaused)
+	}
+}
+
 func TestTerminalLifecycle_StorageHelpersFailClosed(t *testing.T) {
 	t.Run("missing preparation", func(t *testing.T) {
 		store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
