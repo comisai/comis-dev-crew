@@ -33,6 +33,7 @@ Commands:
   task operation OPERATION [--format text|json]
   task prepare --input FILE|- [--operation OPERATION] [--format json]
   task handback TASK --action validate-developer-work [--operation OPERATION] [--format json]
+  task cleanup TASK [--operation OPERATION] [--format json]
 
 Global options:
   --socket PATH  Owner-only service Unix socket
@@ -51,6 +52,7 @@ type ReadClient interface {
 	Operation(context.Context, string, string) (application.OperationView, error)
 	PrepareTask(context.Context, string, localapi.PrepareTaskInput) (localapi.PrepareTaskResult, error)
 	HandbackTask(context.Context, string, localapi.HandbackTaskInput) (localapi.TaskMutationResult, error)
+	CleanupTask(context.Context, string, localapi.CleanupTaskInput) (localapi.TaskMutationResult, error)
 }
 
 // Config injects host paths, client creation, and operation identity.
@@ -76,6 +78,7 @@ const (
 	commandOperation
 	commandPrepareTask
 	commandHandbackTask
+	commandCleanupTask
 )
 
 type parsedCommand struct {
@@ -89,7 +92,7 @@ type parsedCommand struct {
 	handbackAction application.HandbackAction
 }
 
-// Run parses one read-only command, calls the canonical local client, and
+// Run parses one canonical command, calls the local client, and
 // returns a stable process exit code.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer, config Config) int {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
@@ -192,6 +195,9 @@ func parseTaskCommand(command parsedCommand, args []string) (parsedCommand, erro
 	if len(args) > 0 && args[0] == "handback" {
 		return parseHandbackTaskCommand(command, args[1:])
 	}
+	if len(args) > 0 && args[0] == "cleanup" {
+		return parseCleanupTaskCommand(command, args[1:])
+	}
 	if len(args) < 2 {
 		return parsedCommand{}, errors.New("task subcommand and reference are required")
 	}
@@ -227,6 +233,39 @@ func parseTaskCommand(command parsedCommand, args []string) (parsedCommand, erro
 		return parsedCommand{}, err
 	}
 	command.format = format
+	return command, nil
+}
+
+func parseCleanupTaskCommand(command parsedCommand, args []string) (parsedCommand, error) {
+	if len(args) < 1 || domain.ValidateTaskHandle(args[0]) != nil {
+		return parsedCommand{}, errors.New("cleanup task reference is required")
+	}
+	command.kind = commandCleanupTask
+	command.reference = args[0]
+	command.format = "json"
+	args = args[1:]
+	seen := make(map[string]bool)
+	for len(args) > 0 {
+		if len(args) < 2 || seen[args[0]] {
+			return parsedCommand{}, errors.New("invalid cleanup arguments")
+		}
+		name, value := args[0], args[1]
+		seen[name] = true
+		switch name {
+		case "--operation":
+			if domain.ValidateOperationID(value) != nil {
+				return parsedCommand{}, errors.New("invalid cleanup operation")
+			}
+			command.operationID = value
+		case "--format":
+			if value != "json" {
+				return parsedCommand{}, errors.New("cleanup format must be JSON")
+			}
+		default:
+			return parsedCommand{}, errors.New("unknown cleanup option")
+		}
+		args = args[2:]
+	}
 	return command, nil
 }
 
@@ -375,6 +414,8 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 		return client.HandbackTask(ctx, operationID, localapi.HandbackTaskInput{
 			TaskHandle: command.reference, Action: command.handbackAction,
 		})
+	case commandCleanupTask:
+		return client.CleanupTask(ctx, operationID, localapi.CleanupTaskInput{TaskHandle: command.reference})
 	default:
 		return nil, errors.New("unknown parsed command")
 	}
