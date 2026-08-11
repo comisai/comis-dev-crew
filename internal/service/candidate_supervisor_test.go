@@ -80,6 +80,27 @@ func TestCandidateSupervisor_BuildsScoutEvidenceOnlyFromReviewedArtifactPath(t *
 	}
 }
 
+func TestCandidateSupervisorUsesFreshProcessIdentityForValidationRetry(t *testing.T) {
+	fixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	supervisor, err := newCandidateSupervisor(fixture.config())
+	if err != nil {
+		t.Fatalf("newCandidateSupervisor() error = %v", err)
+	}
+	profile, err := fixture.catalog.ResolveProfile(fixture.task.ValidationProfile)
+	if err != nil {
+		t.Fatalf("ResolveProfile() error = %v", err)
+	}
+	for range 2 {
+		if _, _, err := supervisor.runLocalChecks(context.Background(), fixture.task, profile, fixture.snapshot); err != nil {
+			t.Fatalf("runLocalChecks() error = %v", err)
+		}
+	}
+	if len(fixture.runner.requests) != 2 ||
+		fixture.runner.requests[0].OperationID == fixture.runner.requests[1].OperationID {
+		t.Fatalf("validation operation IDs = %#v, want two fresh process identities", fixture.runner.requests)
+	}
+}
+
 func TestCandidateSupervisor_RefusesChangedHeadOpenDecisionAndIncompleteValidation(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -435,13 +456,15 @@ func (git *candidateSupervisorGit) InspectCandidate(context.Context, devgit.Cand
 }
 
 type candidateSupervisorRunner struct {
-	receipt validation.Receipt
-	err     error
-	calls   int
+	receipt  validation.Receipt
+	err      error
+	calls    int
+	requests []validation.RunRequest
 }
 
-func (runner *candidateSupervisorRunner) Run(context.Context, validation.RunRequest) (validation.Receipt, error) {
+func (runner *candidateSupervisorRunner) Run(_ context.Context, request validation.RunRequest) (validation.Receipt, error) {
 	runner.calls++
+	runner.requests = append(runner.requests, request)
 	return runner.receipt, runner.err
 }
 
