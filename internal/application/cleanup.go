@@ -11,8 +11,6 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
-const commandCleanupTask = "CleanupTask"
-
 // TaskCleanupStage is the durable crash-recovery point for exact cleanup.
 type TaskCleanupStage string
 

@@ -301,7 +301,7 @@ func (store *Store) MarkComisEvidenceDelivered(
 	}
 	if managedRunID != ack.ManagedRunID || evidenceRef != ack.EvidenceRef ||
 		contentHash != ack.ContentHash || verification != ack.VerificationLevel {
-		return fmt.Errorf("Comis evidence acknowledgement identity: %w", application.ErrConflict)
+		return fmt.Errorf("evidence acknowledgement identity: %w", application.ErrConflict)
 	}
 	wantRetention := ""
 	if ack.RetainedUntil != nil {
@@ -309,7 +309,7 @@ func (store *Store) MarkComisEvidenceDelivered(
 	}
 	if priorDeliveredAt.Valid {
 		if retainedUntil.String != wantRetention {
-			return fmt.Errorf("Comis evidence acknowledgement replay: %w", application.ErrConflict)
+			return fmt.Errorf("evidence acknowledgement replay: %w", application.ErrConflict)
 		}
 		return nil
 	}

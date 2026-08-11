@@ -191,7 +191,7 @@ func evidenceForwarderAcknowledgement(
 	if err != nil || result.ManagedRunID != ManagedRunID(delivery.ManagedRunID) ||
 		result.EvidenceRef != EvidenceRef(delivery.EvidenceRef) || result.ContentHash != delivery.ContentHash ||
 		result.VerificationLevel != verification || deliveredAt.IsZero() || deliveredAt.Location() != time.UTC {
-		return application.ComisEvidenceAcknowledgement{}, errors.New("Comis evidence acknowledgement identity is invalid")
+		return application.ComisEvidenceAcknowledgement{}, errors.New("evidence acknowledgement identity is invalid")
 	}
 	ack := application.ComisEvidenceAcknowledgement{
 		ManagedRunID: delivery.ManagedRunID, EvidenceRef: delivery.EvidenceRef,
@@ -200,7 +200,7 @@ func evidenceForwarderAcknowledgement(
 	if result.RetainedUntilMs != nil {
 		retainedUntil := time.UnixMilli(*result.RetainedUntilMs).UTC()
 		if !retainedUntil.After(deliveredAt) {
-			return application.ComisEvidenceAcknowledgement{}, errors.New("Comis evidence acknowledgement retention is invalid")
+			return application.ComisEvidenceAcknowledgement{}, errors.New("evidence acknowledgement retention is invalid")
 		}
 		ack.RetainedUntil = &retainedUntil
 	}
