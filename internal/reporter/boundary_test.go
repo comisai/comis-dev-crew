@@ -221,7 +221,7 @@ func TestMountedRuntimeClientReproducesRealJailMountShape(t *testing.T) {
 	}{
 		{
 			name: "broad mount mode",
-			want: "runtime mounted attachment directory permissions are unsafe: require 0700",
+			want: "runtime mounted attachment directory permissions are unsafe: group or other access is forbidden",
 			make: func(t *testing.T) (string, string) {
 				mountDirectory := mountedRuntimeTestDirectory(t)
 				socketPath := filepath.Join(mountDirectory, targetName)

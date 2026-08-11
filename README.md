@@ -176,9 +176,13 @@ selector. `brief` reads the exact pinned contract;
 directory, and brief revision before task state may become `working`;
 `progress`, `decision`, `blocked`, `paused`, `candidate-complete`, `failed`, and `resolved`
 append bounded sparse reports. A candidate report remains non-terminal until service validation.
-This boundary treats both environment values as untrusted selectors: the fixed directory, exact
-assigned-name equality, owner-only canonical mount, socket type/mode, and pinned inode must all
-agree. Any missing, altered, symlinked, or differently named target fails closed.
+This boundary treats both environment values as untrusted selectors. The mount directory must
+already exist without group/other access and must equal its `EvalSymlinks` result; the socket must
+already exist at client construction, be a Unix socket with mode `0600`, and keep its pinned inode.
+The fixed directory and exact assigned-name equality must also agree. Any missing, altered,
+symlinked, or differently named target fails closed. Client-construction failures are written to
+worker stderr with their concrete safe reason before command dispatch; a nil capability is never
+used.
 
 The first real harness adapter builds a fixed no-shell `codex exec --json` descriptor from an
 exact-version static profile. The descriptor validates the activation-returned attachment ID and

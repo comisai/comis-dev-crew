@@ -18,6 +18,8 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/reporter"
 )
 
+const reporterStartupFailureExitCode = 1
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -25,11 +27,18 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	capability, _ := reporter.NewMountedRuntimeClient(
+	capability, err := reporter.NewMountedRuntimeClient(
 		os.Getenv(application.RuntimeAttachmentPathEnvironment),
 		os.Getenv(application.RuntimeAttachmentTargetEnvironment),
 		5*time.Second,
 	)
+	if err != nil {
+		if stderr == nil {
+			stderr = io.Discard
+		}
+		fmt.Fprintf(stderr, "devcrew-report: initialize protected attachment: %v\n", err)
+		return reporterStartupFailureExitCode
+	}
 	return reporter.RunCommand(ctx, args, stdout, stderr, reporter.CommandConfig{
 		Capability: capability, Clock: func() time.Time { return time.Now().UTC() },
 		NewLocalReportID: newLocalReportID, WorkingDirectory: canonicalWorkingDirectory,

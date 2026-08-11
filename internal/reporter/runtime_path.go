@@ -47,8 +47,17 @@ func openRuntimeClient(socketPath string, timeout time.Duration) (*RuntimeClient
 		return nil, errors.New("create runtime attachment client: timeout is invalid")
 	}
 	info, err := os.Lstat(socketPath)
-	if err != nil || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 {
-		return nil, errors.New("create runtime attachment client: socket is unavailable or unsafe")
+	if os.IsNotExist(err) {
+		return nil, errors.New("create runtime attachment client: socket does not exist")
+	}
+	if err != nil {
+		return nil, errors.New("create runtime attachment client: socket identity is unavailable")
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return nil, errors.New("create runtime attachment client: target is not a Unix socket")
+	}
+	if info.Mode().Perm() != 0o600 {
+		return nil, errors.New("create runtime attachment client: socket permissions are unsafe: require 0600")
 	}
 	return &RuntimeClient{socketPath: socketPath, socketInfo: info, timeout: timeout}, nil
 }
@@ -81,8 +90,20 @@ func validRuntimeMountDirectory(path string) bool {
 
 func pinRuntimeMountDirectory(path string) (os.FileInfo, error) {
 	info, err := os.Lstat(path)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
-		return nil, errors.New("runtime mounted attachment directory is unavailable or unsafe")
+	if os.IsNotExist(err) {
+		return nil, errors.New("runtime mounted attachment directory does not exist")
+	}
+	if err != nil {
+		return nil, errors.New("runtime mounted attachment directory identity is unavailable")
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("runtime mounted attachment directory is not canonical")
+	}
+	if !info.IsDir() {
+		return nil, errors.New("runtime mounted attachment path is not a directory")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return nil, errors.New("runtime mounted attachment directory permissions are unsafe: group or other access is forbidden")
 	}
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil || resolved != path {
