@@ -21,7 +21,8 @@ func TestStartupReconciliationMarksOnlyAmbiguousTasksAndIncompleteOperationsUnkn
 	states := []domain.TaskState{
 		domain.TaskPrepared, domain.TaskReady, domain.TaskLaunching, domain.TaskWorking,
 		domain.TaskAwaitingDecision, domain.TaskReconciling, domain.TaskUnknown,
-		domain.TaskDelivered, domain.TaskFailed, domain.TaskCancelled, domain.TaskCleaned,
+		domain.TaskDelivered, domain.TaskFailed, domain.TaskCancelled, domain.TaskCleanupHeld,
+		domain.TaskCleaned,
 	}
 	for index, state := range states {
 		task := reconciliationTask(index+1, state)
