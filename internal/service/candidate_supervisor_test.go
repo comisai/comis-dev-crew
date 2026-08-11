@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/delivery"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 	"github.com/comisai/comis-dev-crew/internal/forge"
 	devgit "github.com/comisai/comis-dev-crew/internal/git"
@@ -289,8 +290,11 @@ func newCandidateSupervisorFixture(t *testing.T, shape domain.TaskShape) *candid
 			CheckConclusions: []domain.ForgeCheckEvidence{{Name: "ci/unit", Conclusion: domain.CheckPassed}},
 		},
 	}}
-	fixture.artifact = &candidateSupervisorArtifact{evidence: domain.ReportArtifactEvidence{
-		ContentHash: strings.Repeat("e", 64), Size: 100, MediaType: "text/markdown",
+	fixture.artifact = &candidateSupervisorArtifact{artifact: delivery.InspectedReportArtifact{
+		ReportArtifactEvidence: domain.ReportArtifactEvidence{
+			ContentHash: strings.Repeat("e", 64), Size: 100, MediaType: "text/markdown",
+		},
+		Body: []byte("report body"),
 	}}
 	return fixture
 }
@@ -397,7 +401,7 @@ func (pullRequests *candidateSupervisorPullRequests) DeliverPullRequest(
 }
 
 type candidateSupervisorArtifact struct {
-	evidence     domain.ReportArtifactEvidence
+	artifact     delivery.InspectedReportArtifact
 	path         string
 	maximumBytes int64
 	mediaType    string
@@ -410,10 +414,10 @@ func (artifact *candidateSupervisorArtifact) inspect(
 	path string,
 	maximumBytes int64,
 	mediaType string,
-) (domain.ReportArtifactEvidence, error) {
+) (delivery.InspectedReportArtifact, error) {
 	artifact.calls++
 	artifact.path = path
 	artifact.maximumBytes = maximumBytes
 	artifact.mediaType = mediaType
-	return artifact.evidence, artifact.err
+	return artifact.artifact, artifact.err
 }

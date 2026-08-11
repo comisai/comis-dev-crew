@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/delivery"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 	"github.com/comisai/comis-dev-crew/internal/forge"
 	devgit "github.com/comisai/comis-dev-crew/internal/git"
@@ -35,7 +36,7 @@ type candidatePullRequestDeliverer interface {
 	DeliverPullRequest(context.Context, forge.PullRequestRequest) (forge.PullRequestTruth, error)
 }
 
-type candidateArtifactInspector func(context.Context, string, int64, string) (domain.ReportArtifactEvidence, error)
+type candidateArtifactInspector func(context.Context, string, int64, string) (delivery.InspectedReportArtifact, error)
 
 type candidateSupervisorConfig struct {
 	Store           candidateEvidenceStore
@@ -254,7 +255,7 @@ func (supervisor *candidateSupervisor) attachDeliveryEvidence(
 		if err != nil {
 			return nil, errors.New("validate task candidate: report artifact is unavailable")
 		}
-		bundle.ReportArtifact = &artifact
+		bundle.ReportArtifact = &artifact.ReportArtifactEvidence
 		return nil, nil
 	default:
 		return nil, errors.New("validate task candidate: task shape is invalid")

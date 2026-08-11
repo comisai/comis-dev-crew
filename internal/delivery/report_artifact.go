@@ -2,6 +2,7 @@
 package delivery
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -24,13 +25,20 @@ type reportArtifactDependencies struct {
 	open  func(string) (*os.File, error)
 }
 
+// InspectedReportArtifact binds immutable evidence to the exact bytes hashed
+// during one stable-file inspection.
+type InspectedReportArtifact struct {
+	domain.ReportArtifactEvidence
+	Body []byte
+}
+
 // InspectReportArtifact hashes one stable, bounded, non-symlink regular file.
 func InspectReportArtifact(
 	ctx context.Context,
 	path string,
 	maximumBytes int64,
 	mediaType string,
-) (domain.ReportArtifactEvidence, error) {
+) (InspectedReportArtifact, error) {
 	return inspectReportArtifact(ctx, path, maximumBytes, mediaType, reportArtifactDependencies{
 		lstat: os.Lstat,
 		open:  os.Open,
@@ -43,24 +51,24 @@ func inspectReportArtifact(
 	maximumBytes int64,
 	mediaType string,
 	dependencies reportArtifactDependencies,
-) (domain.ReportArtifactEvidence, error) {
+) (InspectedReportArtifact, error) {
 	if ctx == nil || dependencies.lstat == nil || dependencies.open == nil || !filepath.IsAbs(path) || filepath.Clean(path) != path ||
 		maximumBytes < 1 || maximumBytes > maximumReportArtifactBytes || !reportMediaTypePattern.MatchString(mediaType) {
-		return domain.ReportArtifactEvidence{}, errors.New("inspect report artifact: input is invalid")
+		return InspectedReportArtifact{}, errors.New("inspect report artifact: input is invalid")
 	}
 	if err := ctx.Err(); err != nil {
-		return domain.ReportArtifactEvidence{}, err
+		return InspectedReportArtifact{}, err
 	}
 	before, err := dependencies.lstat(path)
 	if err != nil {
-		return domain.ReportArtifactEvidence{}, errors.New("inspect report artifact: file is unavailable")
+		return InspectedReportArtifact{}, errors.New("inspect report artifact: file is unavailable")
 	}
 	if !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || before.Size() < 1 || before.Size() > maximumBytes {
-		return domain.ReportArtifactEvidence{}, errors.New("inspect report artifact: file is not a bounded regular file")
+		return InspectedReportArtifact{}, errors.New("inspect report artifact: file is not a bounded regular file")
 	}
 	file, err := dependencies.open(path)
 	if err != nil {
-		return domain.ReportArtifactEvidence{}, errors.New("inspect report artifact: file could not be opened")
+		return InspectedReportArtifact{}, errors.New("inspect report artifact: file could not be opened")
 	}
 	closed := false
 	defer func() {
@@ -70,30 +78,34 @@ func inspectReportArtifact(
 	}()
 	opened, err := file.Stat()
 	if err != nil || !sameArtifactFile(before, opened) {
-		return domain.ReportArtifactEvidence{}, errors.New("inspect report artifact: file identity changed during open")
+		return InspectedReportArtifact{}, errors.New("inspect report artifact: file identity changed during open")
 	}
 	hasher := sha256.New()
-	written, err := io.Copy(hasher, io.LimitReader(file, maximumBytes+1))
+	var body bytes.Buffer
+	written, err := io.Copy(io.MultiWriter(hasher, &body), io.LimitReader(file, maximumBytes+1))
 	if err != nil {
-		return domain.ReportArtifactEvidence{}, errors.New("inspect report artifact: file could not be hashed")
+		return InspectedReportArtifact{}, errors.New("inspect report artifact: file could not be hashed")
 	}
 	if written != before.Size() || written > maximumBytes {
-		return domain.ReportArtifactEvidence{}, errors.New("inspect report artifact: file size changed during hashing")
+		return InspectedReportArtifact{}, errors.New("inspect report artifact: file size changed during hashing")
 	}
 	afterOpen, statErr := file.Stat()
 	afterPath, lstatErr := dependencies.lstat(path)
 	if statErr != nil || lstatErr != nil || !sameArtifactFile(before, afterOpen) || !sameArtifactFile(before, afterPath) {
-		return domain.ReportArtifactEvidence{}, errors.New("inspect report artifact: file changed during hashing")
+		return InspectedReportArtifact{}, errors.New("inspect report artifact: file changed during hashing")
 	}
 	if err := ctx.Err(); err != nil {
-		return domain.ReportArtifactEvidence{}, err
+		return InspectedReportArtifact{}, err
 	}
 	if err := file.Close(); err != nil {
-		return domain.ReportArtifactEvidence{}, errors.New("inspect report artifact: file close failed")
+		return InspectedReportArtifact{}, errors.New("inspect report artifact: file close failed")
 	}
 	closed = true
-	return domain.ReportArtifactEvidence{
-		ContentHash: fmt.Sprintf("%x", hasher.Sum(nil)), Size: written, MediaType: mediaType,
+	return InspectedReportArtifact{
+		ReportArtifactEvidence: domain.ReportArtifactEvidence{
+			ContentHash: fmt.Sprintf("%x", hasher.Sum(nil)), Size: written, MediaType: mediaType,
+		},
+		Body: append([]byte(nil), body.Bytes()...),
 	}, nil
 }
 
