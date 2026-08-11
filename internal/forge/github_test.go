@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
@@ -132,6 +133,15 @@ func TestGitHubAdapter_VerifiesRecordedPullRequestWithReadAuthorityOnly(t *testi
 	}
 	if pusher.calls != 0 {
 		t.Fatalf("read-only verification push calls = %d", pusher.calls)
+	}
+	var throughPort application.PullRequestDeliveryVerifier = adapter
+	ported, err := throughPort.VerifyPullRequestDelivery(context.Background(), application.PullRequestDeliveryVerification{
+		RepositoryID: "fixture-repository", PullRequestID: "github-pr-23",
+		Branch: "devcrew/task-recorded", HeadRevision: head, RequiredChecks: []string{"ci/unit"},
+	})
+	if err != nil || ported.RepositoryID != "fixture-repository" || ported.PullRequestID != "github-pr-23" ||
+		len(ported.Checks) != 1 || ported.Checks[0].Conclusion != domain.CheckPassed {
+		t.Fatalf("VerifyPullRequestDelivery() = %#v, %v", ported, err)
 	}
 }
 
