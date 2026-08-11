@@ -25,6 +25,7 @@ var (
 	operationIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,127}$`)
 	branchPattern      = regexp.MustCompile(`^devcrew/[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$`)
 	revisionPattern    = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
+	pullRequestPattern = regexp.MustCompile(`^github-pr-[1-9][0-9]{0,9}$`)
 )
 
 // GitHubConfig supplies one fixed repository and separate non-merge identities.
@@ -114,6 +115,55 @@ func (adapter *GitHubAdapter) DeliverPullRequest(ctx context.Context, request Pu
 			Repository:    adapter.config.RepositoryIdentity,
 			PullRequestID: "github-pr-" + strconv.Itoa(number), HeadRevision: request.HeadRevision,
 			CheckConclusions: checks,
+		},
+	}, nil
+}
+
+// VerifyPullRequest re-reads an exact recorded pull request and its required
+// checks using only the separately configured read authority.
+func (adapter *GitHubAdapter) VerifyPullRequest(
+	ctx context.Context,
+	request PullRequestVerificationRequest,
+) (PullRequestTruth, error) {
+	if adapter == nil || ctx == nil {
+		return PullRequestTruth{}, errors.New("verify GitHub pull request: adapter and context are required")
+	}
+	if err := ctx.Err(); err != nil {
+		return PullRequestTruth{}, err
+	}
+	if !branchPattern.MatchString(request.Branch) || strings.Contains(request.Branch, "..") ||
+		!revisionPattern.MatchString(request.HeadRevision) || !pullRequestPattern.MatchString(request.PullRequestID) ||
+		validateRequiredChecks(request.RequiredChecks) != nil {
+		return PullRequestTruth{}, errors.New("verify GitHub pull request: request is invalid")
+	}
+	number, err := strconv.Atoi(strings.TrimPrefix(request.PullRequestID, "github-pr-"))
+	if err != nil || number < 1 || "github-pr-"+strconv.Itoa(number) != request.PullRequestID {
+		return PullRequestTruth{}, errors.New("verify GitHub pull request: pull-request identity is invalid")
+	}
+	readCredential, err := adapter.config.ReadCredentials.Resolve(ctx)
+	if err != nil || !validReadCredential(readCredential) {
+		return PullRequestTruth{}, errors.New("verify GitHub pull request: read credential is unavailable")
+	}
+	pull, err := adapter.readPullRequest(ctx, readCredential.Secret, number)
+	if err != nil {
+		return PullRequestTruth{}, err
+	}
+	if pull.State != "open" || pull.Head.SHA != request.HeadRevision || pull.Head.Ref != request.Branch ||
+		pull.Base.Ref != adapter.config.BaseBranch {
+		return PullRequestTruth{}, errors.New("verify GitHub pull request: re-read identity differs")
+	}
+	if err := validatePullRequestURL(pull.HTMLURL); err != nil {
+		return PullRequestTruth{}, err
+	}
+	checks, err := adapter.readChecks(ctx, readCredential.Secret, request.HeadRevision, request.RequiredChecks)
+	if err != nil {
+		return PullRequestTruth{}, err
+	}
+	return PullRequestTruth{
+		URL: pull.HTMLURL,
+		Evidence: domain.ForgeEvidence{
+			Repository: adapter.config.RepositoryIdentity, PullRequestID: request.PullRequestID,
+			HeadRevision: request.HeadRevision, CheckConclusions: checks,
 		},
 	}, nil
 }
@@ -295,16 +345,23 @@ func validatePullRequestRequest(request PullRequestRequest) error {
 		filepath.Clean(request.WorktreePath) != request.WorktreePath || !branchPattern.MatchString(request.Branch) ||
 		strings.Contains(request.Branch, "..") || !revisionPattern.MatchString(request.HeadRevision) ||
 		request.Title == "" || len(request.Title) > 256 || strings.TrimSpace(request.Title) != request.Title ||
-		strings.ContainsAny(request.Title, "\x00\r\n") || len(request.RequiredChecks) == 0 || len(request.RequiredChecks) > 64 {
+		strings.ContainsAny(request.Title, "\x00\r\n") || validateRequiredChecks(request.RequiredChecks) != nil {
 		return errors.New("deliver GitHub pull request: request is invalid")
 	}
-	seen := make(map[string]struct{}, len(request.RequiredChecks))
-	for _, check := range request.RequiredChecks {
+	return nil
+}
+
+func validateRequiredChecks(required []string) error {
+	if len(required) == 0 || len(required) > 64 {
+		return errors.New("required checks are invalid")
+	}
+	seen := make(map[string]struct{}, len(required))
+	for _, check := range required {
 		if check == "" || len(check) > 128 || strings.TrimSpace(check) != check || strings.ContainsAny(check, "\x00\r\n") {
-			return errors.New("deliver GitHub pull request: required check is invalid")
+			return errors.New("required check is invalid")
 		}
 		if _, exists := seen[check]; exists {
-			return errors.New("deliver GitHub pull request: required check is duplicated")
+			return errors.New("required check is duplicated")
 		}
 		seen[check] = struct{}{}
 	}

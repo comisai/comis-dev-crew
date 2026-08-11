@@ -60,6 +60,15 @@ type PullRequestRequest struct {
 	RequiredChecks []string
 }
 
+// PullRequestVerificationRequest re-reads one recorded delivery without push
+// or pull-request creation authority.
+type PullRequestVerificationRequest struct {
+	Branch         string
+	HeadRevision   string
+	PullRequestID  string
+	RequiredChecks []string
+}
+
 // PullRequestTruth contains only the re-read reference and typed evidence.
 type PullRequestTruth struct {
 	URL      string
