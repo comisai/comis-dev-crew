@@ -8,6 +8,7 @@ import (
 	"io"
 	"math/big"
 	"regexp"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -172,7 +173,8 @@ func validateWireString(schema wireSchema, value any, path string) error {
 		return fmt.Errorf("%s is longer than %d characters", path, *schema.MaxLength)
 	}
 	if schema.Pattern != "" {
-		pattern, err := regexp.Compile(schema.Pattern)
+		patternText := strings.ReplaceAll(schema.Pattern, `\u0000`, `\x00`)
+		pattern, err := regexp.Compile(patternText)
 		if err != nil {
 			return fmt.Errorf("compile %s pattern: %w", path, err)
 		}
