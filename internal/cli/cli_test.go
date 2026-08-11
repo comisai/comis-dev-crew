@@ -91,6 +91,29 @@ func TestRun_HandbackValidatesDeveloperWorkThroughCanonicalClient(t *testing.T) 
 	}
 }
 
+func TestRun_CleanupUsesStableReleaseBeforeRemovalCommand(t *testing.T) {
+	client := fixtureClient()
+	client.taskMutation = localapi.TaskMutationResult{
+		SchemaVersion: 1, OperationID: "operation-cleanup-cli", TaskHandle: "task-0001",
+		State: domain.TaskCleaned, StateVersion: 22, SideEffect: localapi.SideEffectMutate,
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := Run(context.Background(), []string{
+		"task", "cleanup", "task-0001", "--operation", "operation-cleanup-cli", "--format", "json",
+	}, &stdout, &stderr, testConfig(client))
+	if exitCode != ExitSuccess {
+		t.Fatalf("Run() exit = %d, stderr = %q", exitCode, stderr.String())
+	}
+	if len(client.calls) != 1 || client.calls[0] != "cleanup:task-0001" || client.operationID != "operation-cleanup-cli" {
+		t.Fatalf("client calls/operation = %v/%q", client.calls, client.operationID)
+	}
+	var result localapi.TaskMutationResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || result != client.taskMutation {
+		t.Fatalf("cleanup JSON = %#v, %v", result, err)
+	}
+}
+
 func TestRun_HelpAndVersionDoNotConnect(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -318,6 +341,15 @@ type fakeClient struct {
 	err          error
 	calls        []string
 	operationID  string
+}
+
+func (client *fakeClient) CleanupTask(
+	_ context.Context,
+	operationID string,
+	input localapi.CleanupTaskInput,
+) (localapi.TaskMutationResult, error) {
+	client.record(operationID, "cleanup:"+input.TaskHandle)
+	return client.taskMutation, client.err
 }
 
 func (client *fakeClient) HandbackTask(
