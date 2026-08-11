@@ -20,6 +20,20 @@ type apiMutations struct {
 	err     error
 }
 
+type apiInterventions struct {
+	command application.HandbackTaskCommand
+	result  application.MutationResult
+	err     error
+}
+
+func (interventions *apiInterventions) HandbackTask(
+	_ context.Context,
+	command application.HandbackTaskCommand,
+) (application.MutationResult, error) {
+	interventions.command = command
+	return interventions.result, interventions.err
+}
+
 func (mutations *apiMutations) PrepareTask(_ context.Context, command application.PrepareTaskCommand) (application.MutationResult, error) {
 	mutations.command = command
 	return mutations.result, mutations.err
@@ -69,6 +83,41 @@ func TestServerClient_PrepareTaskUsesCanonicalMutationAndPrivateRegistration(t *
 		mutations.command.RepositoryID != input.RepositoryID ||
 		mutations.command.Shape != input.Shape {
 		t.Fatalf("canonical mutation command = %#v", mutations.command)
+	}
+}
+
+func TestServerClient_HandbackUsesCanonicalRevalidationMutation(t *testing.T) {
+	interventions := &apiInterventions{result: application.MutationResult{
+		Task: domain.Task{Handle: "task-handback-local", State: domain.TaskValidating, StateVersion: 21},
+		Operation: domain.OperationRecord{
+			ID: "operation-handback-local", Status: domain.OperationCompleted, StateVersion: 21,
+		},
+	}}
+	handler, err := NewHandler(HandlerConfig{
+		Queries: &apiQueries{}, Interventions: interventions, Clock: time.Now,
+	})
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	socketPath := startHandlerServer(t, handler, CallerMCPFacade)
+	client, err := NewClient(socketPath, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := HandbackTaskInput{
+		TaskHandle: "task-handback-local", Action: application.HandbackValidateDeveloperWork,
+	}
+	result, err := client.HandbackTask(context.Background(), "operation-handback-local", input)
+	if err != nil {
+		t.Fatalf("HandbackTask() error = %v", err)
+	}
+	if result.TaskHandle != input.TaskHandle || result.State != domain.TaskValidating ||
+		result.StateVersion != 21 || result.SideEffect != SideEffectMutate {
+		t.Fatalf("HandbackTask() = %#v", result)
+	}
+	if interventions.command.OperationID != "operation-handback-local" ||
+		interventions.command.TaskHandle != input.TaskHandle || interventions.command.Action != input.Action {
+		t.Fatalf("canonical handback command = %#v", interventions.command)
 	}
 }
 
