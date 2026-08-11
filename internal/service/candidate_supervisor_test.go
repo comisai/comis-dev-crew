@@ -98,6 +98,78 @@ func TestCandidateSupervisor_RefusesChangedHeadOpenDecisionAndIncompleteValidati
 	}
 }
 
+func TestCandidateSupervisor_FailsClosedForUnavailableDependenciesTimeAndShape(t *testing.T) {
+	if _, err := newCandidateSupervisor(candidateSupervisorConfig{}); err == nil {
+		t.Fatal("newCandidateSupervisor(empty) error = nil")
+	}
+	fixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	supervisor, err := newCandidateSupervisor(fixture.config())
+	if err != nil {
+		t.Fatalf("newCandidateSupervisor() error = %v", err)
+	}
+	if _, _, err := (*candidateSupervisor)(nil).ValidateTask(context.Background(), fixture.task.Handle); err == nil {
+		t.Fatal("ValidateTask(nil supervisor) error = nil")
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := supervisor.ValidateTask(cancelled, fixture.task.Handle); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ValidateTask(cancelled) error = %v", err)
+	}
+	if _, _, err := supervisor.ValidateTask(context.Background(), "bad handle"); err == nil {
+		t.Fatal("ValidateTask(invalid handle) error = nil")
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*candidateSupervisorFixture)
+	}{
+		{name: "missing profile", mutate: func(fixture *candidateSupervisorFixture) {
+			fixture.store.task.ValidationProfile = "missing-profile"
+		}},
+		{name: "forge failure", mutate: func(fixture *candidateSupervisorFixture) {
+			fixture.pullRequests.err = errors.New("forge unavailable")
+		}},
+		{name: "invalid clock", mutate: func(fixture *candidateSupervisorFixture) {
+			fixture.now = fixture.now.In(time.FixedZone("other", 0))
+		}},
+		{name: "invalid shape", mutate: func(fixture *candidateSupervisorFixture) {
+			fixture.store.task.Shape = "invented"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := newCandidateSupervisorFixture(t, domain.ShapeShip)
+			test.mutate(candidate)
+			configured, configureErr := newCandidateSupervisor(candidate.config())
+			if configureErr != nil {
+				t.Fatalf("newCandidateSupervisor() error = %v", configureErr)
+			}
+			if _, _, err := configured.ValidateTask(context.Background(), candidate.task.Handle); err == nil {
+				t.Fatal("ValidateTask() error = nil")
+			}
+		})
+	}
+	scout := newCandidateSupervisorFixture(t, domain.ShapeScout)
+	scout.artifact.err = errors.New("artifact unavailable")
+	scoutSupervisor, err := newCandidateSupervisor(scout.config())
+	if err != nil {
+		t.Fatalf("newCandidateSupervisor(scout) error = %v", err)
+	}
+	if _, _, err := scoutSupervisor.ValidateTask(context.Background(), scout.task.Handle); err == nil {
+		t.Fatal("ValidateTask(artifact failure) error = nil")
+	}
+	if candidateCleanliness(devgit.CandidateClean) != domain.WorktreeClean ||
+		candidateCleanliness(devgit.CandidateDirty) != domain.WorktreeDirty ||
+		candidateCleanliness("invented") != domain.WorktreeUnknown {
+		t.Fatal("candidateCleanliness() did not fail closed")
+	}
+	decisionReports := []domain.AcceptedReport{
+		{Report: domain.WorkerReport{Kind: domain.ReportDecision, ExternalKey: "decision-one"}},
+		{Report: domain.WorkerReport{Kind: domain.ReportResolution, ExternalKey: "decision-one"}},
+	}
+	if unresolvedDecisionCount(decisionReports) != 0 {
+		t.Fatal("resolved decision remained open")
+	}
+}
+
 type candidateSupervisorFixture struct {
 	task         domain.Task
 	preparation  application.ManagedRunPreparation
@@ -155,7 +227,7 @@ func newCandidateSupervisorFixture(t *testing.T, shape domain.TaskShape) *candid
 		HeadRevision: head, Cleanliness: devgit.CandidateClean,
 	}
 	receipt := validation.Receipt{
-		OperationID: "validation-unit", TaskHandle: task.Handle, ProfileID: task.ValidationProfile,
+		OperationID: candidateValidationOperationID(task.Handle, head, "unit"), TaskHandle: task.Handle, ProfileID: task.ValidationProfile,
 		CheckID: "unit", ProgramID: "go-test", HeadRevision: head,
 		StartedAt: now.Add(-2 * time.Minute), CompletedAt: now.Add(-time.Minute), ExitCode: 0, Passed: true,
 		OutputHash: strings.Repeat("d", 64), OutputBytes: 16,
@@ -258,6 +330,7 @@ type candidateSupervisorPullRequests struct {
 	truth   forge.PullRequestTruth
 	request forge.PullRequestRequest
 	calls   int
+	err     error
 }
 
 func (pullRequests *candidateSupervisorPullRequests) DeliverPullRequest(
@@ -266,7 +339,7 @@ func (pullRequests *candidateSupervisorPullRequests) DeliverPullRequest(
 ) (forge.PullRequestTruth, error) {
 	pullRequests.calls++
 	pullRequests.request = request
-	return pullRequests.truth, nil
+	return pullRequests.truth, pullRequests.err
 }
 
 type candidateSupervisorArtifact struct {
@@ -275,6 +348,7 @@ type candidateSupervisorArtifact struct {
 	maximumBytes int64
 	mediaType    string
 	calls        int
+	err          error
 }
 
 func (artifact *candidateSupervisorArtifact) inspect(
@@ -287,5 +361,5 @@ func (artifact *candidateSupervisorArtifact) inspect(
 	artifact.path = path
 	artifact.maximumBytes = maximumBytes
 	artifact.mediaType = mediaType
-	return artifact.evidence, nil
+	return artifact.evidence, artifact.err
 }

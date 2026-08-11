@@ -1,0 +1,272 @@
+package service
+
+import (
+	"context"
+	"crypto/sha256"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"time"
+
+	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
+	"github.com/comisai/comis-dev-crew/internal/forge"
+	devgit "github.com/comisai/comis-dev-crew/internal/git"
+	"github.com/comisai/comis-dev-crew/internal/validation"
+)
+
+type candidateEvidenceStore interface {
+	GetTask(context.Context, string) (domain.Task, error)
+	GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error)
+	ListAcceptedReports(context.Context, string) ([]domain.AcceptedReport, error)
+	CommitCandidateEvidence(context.Context, string, *domain.SealedDeliveryEvidence, []string, []string, time.Time) (domain.Task, domain.CandidateJudgment, error)
+}
+
+type candidateGitInspector interface {
+	InspectCandidate(context.Context, devgit.CandidateSnapshotRequest) (devgit.CandidateSnapshot, error)
+}
+
+type candidateValidationRunner interface {
+	Run(context.Context, validation.RunRequest) (validation.Receipt, error)
+}
+
+type candidatePullRequestDeliverer interface {
+	DeliverPullRequest(context.Context, forge.PullRequestRequest) (forge.PullRequestTruth, error)
+}
+
+type candidateArtifactInspector func(context.Context, string, int64, string) (domain.ReportArtifactEvidence, error)
+
+type candidateSupervisorConfig struct {
+	Store           candidateEvidenceStore
+	Git             candidateGitInspector
+	Catalog         *validation.Catalog
+	Runner          candidateValidationRunner
+	PullRequests    candidatePullRequestDeliverer
+	InspectArtifact candidateArtifactInspector
+	Clock           application.Clock
+}
+
+type candidateSupervisor struct {
+	config candidateSupervisorConfig
+}
+
+func newCandidateSupervisor(config candidateSupervisorConfig) (*candidateSupervisor, error) {
+	if config.Store == nil || config.Git == nil || config.Catalog == nil || config.Runner == nil ||
+		config.PullRequests == nil || config.InspectArtifact == nil || config.Clock == nil {
+		return nil, errors.New("create candidate supervisor: evidence dependencies are required")
+	}
+	return &candidateSupervisor{config: config}, nil
+}
+
+// ValidateTask produces evidence only from current service, Git, process,
+// artifact, and forge facts, then delegates the sole durable domain judgment.
+func (supervisor *candidateSupervisor) ValidateTask(
+	ctx context.Context,
+	taskHandle string,
+) (domain.Task, domain.CandidateJudgment, error) {
+	if supervisor == nil || ctx == nil || domain.ValidateTaskHandle(taskHandle) != nil {
+		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: supervisor, context, and task are required")
+	}
+	if err := ctx.Err(); err != nil {
+		return domain.Task{}, domain.CandidateJudgment{}, err
+	}
+	task, err := supervisor.config.Store.GetTask(ctx, taskHandle)
+	if err != nil {
+		return domain.Task{}, domain.CandidateJudgment{}, fmt.Errorf("validate task candidate: read task: %w", err)
+	}
+	if task.Handle != taskHandle || task.State != domain.TaskValidating {
+		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: task is not validating")
+	}
+	preparation, err := supervisor.config.Store.GetManagedRunPreparation(ctx, taskHandle)
+	if err != nil || preparation.RequestedWorkspaceRoot == "" {
+		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: durable worktree is unavailable")
+	}
+	profile, err := supervisor.config.Catalog.ResolveProfile(task.ValidationProfile)
+	if err != nil {
+		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: reviewed profile is unavailable")
+	}
+	reports, err := supervisor.config.Store.ListAcceptedReports(ctx, taskHandle)
+	if err != nil {
+		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: decision inventory is unavailable")
+	}
+	openDecisions := unresolvedDecisionCount(reports)
+	if openDecisions != 0 {
+		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: unresolved decisions remain")
+	}
+	snapshot, err := supervisor.config.Git.InspectCandidate(ctx, devgit.CandidateSnapshotRequest{
+		TaskHandle: taskHandle, RepositoryID: task.RepositoryID, WorktreePath: preparation.RequestedWorkspaceRoot,
+	})
+	if err != nil {
+		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: Git evidence is unavailable")
+	}
+	receipts, requiredLocal, err := supervisor.runLocalChecks(ctx, task, profile, snapshot)
+	if err != nil {
+		return domain.Task{}, domain.CandidateJudgment{}, err
+	}
+	afterChecks, err := supervisor.config.Git.InspectCandidate(ctx, devgit.CandidateSnapshotRequest{
+		TaskHandle: taskHandle, RepositoryID: task.RepositoryID, WorktreePath: preparation.RequestedWorkspaceRoot,
+	})
+	if err != nil || afterChecks != snapshot {
+		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: Git evidence changed during validation")
+	}
+	bundle := domain.DeliveryEvidenceBundle{
+		SchemaVersion: 1, TaskHandle: task.Handle, RepositoryIdentity: task.RepositoryID,
+		BaseRevision: task.BaseRevision, HeadRevision: snapshot.HeadRevision,
+		WorktreeCleanliness: candidateCleanliness(snapshot.Cleanliness), ValidationReceipts: receipts,
+		UnresolvedDecisionCount: openDecisions,
+	}
+	requiredForge, err := supervisor.attachDeliveryEvidence(ctx, task, profile, snapshot, &bundle)
+	if err != nil {
+		return domain.Task{}, domain.CandidateJudgment{}, err
+	}
+	producedAt := supervisor.config.Clock()
+	if producedAt.IsZero() || producedAt.Location() != time.UTC {
+		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: evidence time is invalid")
+	}
+	bundle.ProducedAt = producedAt
+	bundle.ExpiresAt = producedAt.Add(profile.EvidenceTTL).UTC()
+	sealed, err := domain.SealDeliveryEvidence(bundle)
+	if err != nil {
+		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: evidence could not be sealed")
+	}
+	return supervisor.config.Store.CommitCandidateEvidence(
+		ctx, taskHandle, sealed, requiredLocal, requiredForge, producedAt,
+	)
+}
+
+func (supervisor *candidateSupervisor) runLocalChecks(
+	ctx context.Context,
+	task domain.Task,
+	profile validation.Profile,
+	snapshot devgit.CandidateSnapshot,
+) ([]domain.ValidationEvidenceReceipt, []string, error) {
+	receipts := make([]domain.ValidationEvidenceReceipt, 0, len(profile.LocalChecks))
+	required := make([]string, 0, len(profile.LocalChecks))
+	fields := validation.TaskFields{
+		TaskHandle: task.Handle, WorktreePath: snapshot.WorktreePath,
+		BaseRevision: task.BaseRevision, HeadRevision: snapshot.HeadRevision,
+	}
+	for _, check := range profile.LocalChecks {
+		operationID := candidateValidationOperationID(task.Handle, snapshot.HeadRevision, check.ID)
+		receipt, runErr := supervisor.config.Runner.Run(ctx, validation.RunRequest{
+			OperationID: operationID, TaskHandle: task.Handle, ProfileID: profile.ID, CheckID: check.ID, Fields: fields,
+		})
+		if !completeValidationReceipt(receipt, task, profile, check, snapshot) {
+			return nil, nil, errors.New("validate task candidate: validation receipt is incomplete")
+		}
+		conclusion := domain.CheckFailed
+		if runErr == nil && receipt.Passed {
+			conclusion = domain.CheckPassed
+		}
+		receipts = append(receipts, domain.ValidationEvidenceReceipt{
+			CheckID: check.ID, ProgramID: receipt.ProgramID, HeadRevision: receipt.HeadRevision,
+			Conclusion: conclusion, Required: check.Required, OutputHash: receipt.OutputHash,
+			StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt,
+		})
+		if check.Required {
+			required = append(required, check.ID)
+		}
+	}
+	if len(required) == 0 {
+		return nil, nil, errors.New("validate task candidate: profile has no required local check")
+	}
+	return receipts, required, nil
+}
+
+func (supervisor *candidateSupervisor) attachDeliveryEvidence(
+	ctx context.Context,
+	task domain.Task,
+	profile validation.Profile,
+	snapshot devgit.CandidateSnapshot,
+	bundle *domain.DeliveryEvidenceBundle,
+) ([]string, error) {
+	switch task.Shape {
+	case domain.ShapeShip:
+		required := requiredForgeCheckNames(profile.ForgeChecks)
+		if len(required) == 0 {
+			return nil, errors.New("validate task candidate: ship profile has no required forge check")
+		}
+		truth, err := supervisor.config.PullRequests.DeliverPullRequest(ctx, forge.PullRequestRequest{
+			OperationID:  candidateDeliveryOperationID(task.Handle, snapshot.HeadRevision),
+			WorktreePath: snapshot.WorktreePath, Branch: snapshot.Branch, HeadRevision: snapshot.HeadRevision,
+			Title: "Task " + task.Handle, RequiredChecks: required,
+		})
+		if err != nil {
+			return nil, errors.New("validate task candidate: pull-request truth is unavailable")
+		}
+		bundle.ForgeEvidence = &truth.Evidence
+		return required, nil
+	case domain.ShapeScout:
+		if len(profile.ArtifactRules) != 1 {
+			return nil, errors.New("validate task candidate: scout artifact rule is unavailable")
+		}
+		rule := profile.ArtifactRules[0]
+		artifact, err := supervisor.config.InspectArtifact(
+			ctx, filepath.Join(snapshot.WorktreePath, rule.RelativePath), rule.MaxBytes, rule.MediaType,
+		)
+		if err != nil {
+			return nil, errors.New("validate task candidate: report artifact is unavailable")
+		}
+		bundle.ReportArtifact = &artifact
+		return nil, nil
+	default:
+		return nil, errors.New("validate task candidate: task shape is invalid")
+	}
+}
+
+func unresolvedDecisionCount(reports []domain.AcceptedReport) int {
+	open := make(map[string]struct{})
+	for _, accepted := range reports {
+		switch accepted.Report.Kind {
+		case domain.ReportDecision:
+			open[accepted.Report.ExternalKey] = struct{}{}
+		case domain.ReportResolution:
+			delete(open, accepted.Report.ExternalKey)
+		}
+	}
+	return len(open)
+}
+
+func requiredForgeCheckNames(checks []validation.ForgeCheck) []string {
+	required := make([]string, 0, len(checks))
+	for _, check := range checks {
+		if check.Required {
+			required = append(required, check.Name)
+		}
+	}
+	return required
+}
+
+func completeValidationReceipt(
+	receipt validation.Receipt,
+	task domain.Task,
+	profile validation.Profile,
+	check validation.LocalCheck,
+	snapshot devgit.CandidateSnapshot,
+) bool {
+	return receipt.OperationID == candidateValidationOperationID(task.Handle, snapshot.HeadRevision, check.ID) &&
+		receipt.TaskHandle == task.Handle && receipt.ProfileID == profile.ID && receipt.CheckID == check.ID &&
+		receipt.ProgramID == check.ProgramID && receipt.HeadRevision == snapshot.HeadRevision &&
+		receipt.StartedAt.Location() == time.UTC && receipt.CompletedAt.Location() == time.UTC &&
+		!receipt.CompletedAt.Before(receipt.StartedAt) && len(receipt.OutputHash) == 64
+}
+
+func candidateCleanliness(cleanliness devgit.CandidateCleanliness) domain.WorktreeCleanliness {
+	if cleanliness == devgit.CandidateClean {
+		return domain.WorktreeClean
+	}
+	if cleanliness == devgit.CandidateDirty {
+		return domain.WorktreeDirty
+	}
+	return domain.WorktreeUnknown
+}
+
+func candidateValidationOperationID(taskHandle, head, checkID string) string {
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(taskHandle+"\x00"+head+"\x00"+checkID)))
+	return "validation-" + digest[:32]
+}
+
+func candidateDeliveryOperationID(taskHandle, head string) string {
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(taskHandle+"\x00"+head)))
+	return "delivery-" + digest[:32]
+}
