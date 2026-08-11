@@ -18,7 +18,10 @@ func TestGitBranchPusher_PushesExactHeadAndRemovesCredentialMaterial(t *testing.
 	if err != nil {
 		t.Fatalf("resolve git executable: %v", err)
 	}
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve fixture root: %v", err)
+	}
 	primary := filepath.Join(root, "primary")
 	remote := filepath.Join(root, "remote.git")
 	credentials := filepath.Join(root, "credentials")
@@ -56,6 +59,37 @@ func TestGitBranchPusher_PushesExactHeadAndRemovesCredentialMaterial(t *testing.
 	if err := pusher.Push(context.Background(), credential, request); err != nil {
 		t.Fatalf("Push(replay) error = %v", err)
 	}
+	wrongHead := request
+	wrongHead.HeadRevision = strings.Repeat("c", 40)
+	if err := pusher.Push(context.Background(), credential, wrongHead); err == nil {
+		t.Fatal("Push(wrong head) error = nil")
+	}
+	wrongBranch := request
+	wrongBranch.Branch = "devcrew/task-other"
+	if err := pusher.Push(context.Background(), credential, wrongBranch); err == nil {
+		t.Fatal("Push(wrong branch) error = nil")
+	}
+	dirtyPath := filepath.Join(primary, "dirty.txt")
+	if err := os.WriteFile(dirtyPath, []byte("dirty"), 0o600); err != nil {
+		t.Fatalf("write dirty file: %v", err)
+	}
+	if err := pusher.Push(context.Background(), credential, request); err == nil {
+		t.Fatal("Push(dirty) error = nil")
+	}
+	if err := os.Remove(dirtyPath); err != nil {
+		t.Fatalf("remove dirty file: %v", err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := pusher.Push(cancelled, credential, request); err == nil {
+		t.Fatal("Push(cancelled) error = nil")
+	}
+	if err := pusher.Push(context.Background(), Credential{}, request); err == nil {
+		t.Fatal("Push(invalid credential) error = nil")
+	}
+	if err := (*GitBranchPusher)(nil).Push(context.Background(), credential, request); err == nil {
+		t.Fatal("Push(nil pusher) error = nil")
+	}
 	remoteHead := fixtureGitOutput(t, gitExecutable, primary, "ls-remote", "file://"+remote, "refs/heads/devcrew/task-fixture")
 	if !strings.HasPrefix(remoteHead, head+"\t") {
 		t.Fatalf("remote head = %q, want %q", remoteHead, head)
@@ -78,7 +112,10 @@ func TestGitBranchPusher_RefusesDirtyWrongHeadAndEscapedRemote(t *testing.T) {
 		t.Skip("git executable is unavailable")
 	}
 	gitExecutable, _ = filepath.EvalSymlinks(gitExecutable)
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve fixture root: %v", err)
+	}
 	credentials := filepath.Join(root, "credentials")
 	if err := os.Mkdir(credentials, 0o700); err != nil {
 		t.Fatalf("create credentials: %v", err)
@@ -88,6 +125,10 @@ func TestGitBranchPusher_RefusesDirtyWrongHeadAndEscapedRemote(t *testing.T) {
 		CredentialDirectory: credentials, LocalFixtureRemoteRoot: root,
 	}); err == nil {
 		t.Fatal("NewGitBranchPusher(escaped remote) error = nil")
+	}
+	buffer := &boundedGitBuffer{limit: 1}
+	if _, err := buffer.Write([]byte("oversized")); err == nil {
+		t.Fatal("boundedGitBuffer.Write(oversized) error = nil")
 	}
 }
 
