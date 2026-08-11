@@ -35,6 +35,11 @@ func ValidateBriefRevisionHash(value string) error {
 	return validateSHA256("briefRevisionHash", value)
 }
 
+// ValidateGitRevision rejects values that are not full lowercase Git object identities.
+func ValidateGitRevision(value string) error {
+	return validateRevision(value)
+}
+
 // ValidateLocalReportID rejects report identities outside the bounded opaque form.
 func ValidateLocalReportID(value string) error {
 	return validateOpaqueID("localReportId", value)
