@@ -74,3 +74,27 @@ type CleanupWorktreeRequest struct {
 	BaseRevision   string
 	LiveLeasePaths []string
 }
+
+// CandidateCleanliness is the closed candidate worktree posture.
+type CandidateCleanliness string
+
+const (
+	CandidateClean CandidateCleanliness = "clean"
+	CandidateDirty CandidateCleanliness = "dirty"
+)
+
+// CandidateSnapshotRequest binds inspection to one configured task root.
+type CandidateSnapshotRequest struct {
+	TaskHandle   string
+	RepositoryID string
+	WorktreePath string
+}
+
+// CandidateSnapshot is current machine-readable Git truth.
+type CandidateSnapshot struct {
+	RepositoryID string
+	WorktreePath string
+	Branch       string
+	HeadRevision string
+	Cleanliness  CandidateCleanliness
+}

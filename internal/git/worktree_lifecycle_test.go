@@ -119,6 +119,50 @@ func TestRegistry_InspectCandidateReturnsExactHeadBranchAndCleanliness(t *testin
 	}); err == nil {
 		t.Fatal("InspectCandidate(cross task) error = nil")
 	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := registry.InspectCandidate(cancelled, devgit.CandidateSnapshotRequest{}); err == nil {
+		t.Fatal("InspectCandidate(cancelled) error = nil")
+	}
+	if _, err := (*devgit.Registry)(nil).InspectCandidate(context.Background(), devgit.CandidateSnapshotRequest{}); err == nil {
+		t.Fatal("InspectCandidate(nil registry) error = nil")
+	}
+	if _, err := registry.InspectCandidate(context.Background(), devgit.CandidateSnapshotRequest{
+		TaskHandle: "bad task", RepositoryID: request.RepositoryID, WorktreePath: prepared.CanonicalPath,
+	}); err == nil {
+		t.Fatal("InspectCandidate(invalid task) error = nil")
+	}
+	if _, err := registry.InspectCandidate(context.Background(), devgit.CandidateSnapshotRequest{
+		TaskHandle: request.TaskHandle, RepositoryID: "missing-repository", WorktreePath: prepared.CanonicalPath,
+	}); err == nil {
+		t.Fatal("InspectCandidate(missing repository) error = nil")
+	}
+	gitMarker := filepath.Join(prepared.CanonicalPath, ".git")
+	savedMarker := filepath.Join(prepared.CanonicalPath, ".git.saved")
+	if err := os.Rename(gitMarker, savedMarker); err != nil {
+		t.Fatalf("hide worktree marker: %v", err)
+	}
+	if _, err := registry.InspectCandidate(context.Background(), devgit.CandidateSnapshotRequest{
+		TaskHandle: request.TaskHandle, RepositoryID: request.RepositoryID, WorktreePath: prepared.CanonicalPath,
+	}); err == nil {
+		t.Fatal("InspectCandidate(missing marker) error = nil")
+	}
+	if err := os.Rename(savedMarker, gitMarker); err != nil {
+		t.Fatalf("restore worktree marker: %v", err)
+	}
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary, "worktree", "lock", prepared.CanonicalPath)
+	if _, err := registry.InspectCandidate(context.Background(), devgit.CandidateSnapshotRequest{
+		TaskHandle: request.TaskHandle, RepositoryID: request.RepositoryID, WorktreePath: prepared.CanonicalPath,
+	}); err == nil {
+		t.Fatal("InspectCandidate(locked) error = nil")
+	}
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary, "worktree", "unlock", prepared.CanonicalPath)
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath, "checkout", "--detach")
+	if _, err := registry.InspectCandidate(context.Background(), devgit.CandidateSnapshotRequest{
+		TaskHandle: request.TaskHandle, RepositoryID: request.RepositoryID, WorktreePath: prepared.CanonicalPath,
+	}); err == nil {
+		t.Fatal("InspectCandidate(detached) error = nil")
+	}
 }
 
 func TestRegistry_PrepareWorktreeRefusesUnsafeBaseTargetsAndAdoption(t *testing.T) {
