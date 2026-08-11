@@ -27,7 +27,8 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 		t.Fatalf("installed repository configuration = %#v", configured)
 	}
 	if configured.candidateGit == nil || configured.validationCatalog == nil ||
-		configured.pullRequests == nil || configured.validationMaxOutputBytes != 64<<10 ||
+		configured.pullRequests == nil || configured.cleanupRemover == nil || configured.cleanupForge == nil ||
+		configured.validationMaxOutputBytes != 64<<10 ||
 		configured.validationPollInterval != 25*time.Millisecond {
 		t.Fatalf("installed candidate validation configuration = %#v", configured)
 	}
