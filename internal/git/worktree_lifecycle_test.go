@@ -2,6 +2,7 @@ package git_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -105,6 +106,15 @@ func TestRegistry_InspectCandidateReturnsExactHeadBranchAndCleanliness(t *testin
 		snapshot.Cleanliness != devgit.CandidateClean {
 		t.Fatalf("InspectCandidate() = %#v", snapshot)
 	}
+	var inspector application.WorkspaceInspector = registry
+	ported, err := inspector.InspectWorkspace(context.Background(), application.WorkspaceSnapshotRequest{
+		TaskHandle: request.TaskHandle, RepositoryID: request.RepositoryID, WorktreePath: prepared.CanonicalPath,
+	})
+	if err != nil || ported.TaskHandle != request.TaskHandle || ported.RepositoryID != request.RepositoryID ||
+		ported.WorktreePath != prepared.CanonicalPath || ported.Branch != prepared.Branch ||
+		ported.HeadRevision != prepared.HeadRevision || ported.Cleanliness != application.WorkspaceClean {
+		t.Fatalf("InspectWorkspace() = %#v, %v", ported, err)
+	}
 	if err := os.WriteFile(filepath.Join(prepared.CanonicalPath, "candidate.txt"), []byte("candidate\n"), 0o600); err != nil {
 		t.Fatalf("write candidate: %v", err)
 	}
@@ -113,6 +123,17 @@ func TestRegistry_InspectCandidateReturnsExactHeadBranchAndCleanliness(t *testin
 	})
 	if err != nil || dirty.Cleanliness != devgit.CandidateDirty {
 		t.Fatalf("InspectCandidate(dirty) = %#v, %v", dirty, err)
+	}
+	portedDirty, err := inspector.InspectWorkspace(context.Background(), application.WorkspaceSnapshotRequest{
+		TaskHandle: request.TaskHandle, RepositoryID: request.RepositoryID, WorktreePath: prepared.CanonicalPath,
+	})
+	if err != nil || portedDirty.Cleanliness != application.WorkspaceDirty {
+		t.Fatalf("InspectWorkspace(dirty) = %#v, %v", portedDirty, err)
+	}
+	if _, err := inspector.InspectWorkspace(context.Background(), application.WorkspaceSnapshotRequest{
+		TaskHandle: "task-other", RepositoryID: request.RepositoryID, WorktreePath: prepared.CanonicalPath,
+	}); err == nil {
+		t.Fatal("InspectWorkspace(cross task) error = nil")
 	}
 	if _, err := registry.InspectCandidate(context.Background(), devgit.CandidateSnapshotRequest{
 		TaskHandle: "task-other", RepositoryID: request.RepositoryID, WorktreePath: prepared.CanonicalPath,
@@ -417,6 +438,49 @@ func TestRegistry_RemoveDeliveredWorktreeUsesExactHeadAndConvergesAfterRemoval(t
 		RepositoryID: prepare.RepositoryID, WorktreePath: prepared.CanonicalPath,
 		Branch: prepared.Branch, HeadRevision: head,
 	}
+	if err := (*devgit.Registry)(nil).RemoveDeliveredWorktree(context.Background(), request); err == nil {
+		t.Fatal("RemoveDeliveredWorktree(nil registry) error = nil")
+	}
+	if err := registry.RemoveDeliveredWorktree(nil, request); err == nil {
+		t.Fatal("RemoveDeliveredWorktree(nil context) error = nil")
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := registry.RemoveDeliveredWorktree(cancelled, request); !errors.Is(err, context.Canceled) {
+		t.Fatalf("RemoveDeliveredWorktree(cancelled) error = %v, want context.Canceled", err)
+	}
+	if err := registry.RemoveDeliveredWorktree(context.Background(), devgit.DeliveredWorktreeCleanupRequest{}); err == nil {
+		t.Fatal("RemoveDeliveredWorktree(invalid request) error = nil")
+	}
+	missingRepository := request
+	missingRepository.RepositoryID = "missing-repository"
+	if err := registry.RemoveDeliveredWorktree(context.Background(), missingRepository); err == nil {
+		t.Fatal("RemoveDeliveredWorktree(missing repository) error = nil")
+	}
+	wrongTarget := request
+	wrongTarget.WorktreePath += "-other"
+	if err := registry.RemoveDeliveredWorktree(context.Background(), wrongTarget); err == nil {
+		t.Fatal("RemoveDeliveredWorktree(wrong target) error = nil")
+	}
+	wrongBranch := request
+	wrongBranch.Branch = "devcrew/wrong-branch"
+	if err := registry.RemoveDeliveredWorktree(context.Background(), wrongBranch); err == nil {
+		t.Fatal("RemoveDeliveredWorktree(wrong branch) error = nil")
+	}
+	wrongHead := request
+	wrongHead.HeadRevision = strings.Repeat("f", 40)
+	if err := registry.RemoveDeliveredWorktree(context.Background(), wrongHead); err == nil {
+		t.Fatal("RemoveDeliveredWorktree(wrong head) error = nil")
+	}
+	operationSuffix := prepared.Branch[len(prepared.Branch)-24:]
+	ambiguousBranch := "devcrew/other-task-" + operationSuffix
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary,
+		"branch", ambiguousBranch, request.HeadRevision)
+	if err := registry.RemoveDeliveredWorktree(context.Background(), request); err == nil {
+		t.Fatal("RemoveDeliveredWorktree(ambiguous operation branch) error = nil")
+	}
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary,
+		"branch", "-D", ambiguousBranch)
 	if err := os.WriteFile(filepath.Join(prepared.CanonicalPath, "dirty.txt"), []byte("preserve\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -440,6 +504,91 @@ func TestRegistry_RemoveDeliveredWorktreeUsesExactHeadAndConvergesAfterRemoval(t
 	if _, err := os.Lstat(prepared.CanonicalPath); !os.IsNotExist(err) {
 		t.Fatalf("delivered worktree remains: %v", err)
 	}
+	if err := os.Symlink(fixture.primary, prepared.CanonicalPath); err != nil {
+		t.Fatalf("create unsafe delivered target: %v", err)
+	}
+	if err := registry.RemoveDeliveredWorktree(context.Background(), request); err == nil {
+		t.Fatal("RemoveDeliveredWorktree(symlink target) error = nil")
+	}
+	if err := os.Remove(prepared.CanonicalPath); err != nil {
+		t.Fatalf("remove unsafe delivered target: %v", err)
+	}
+}
+
+func TestRegistry_RemoveDeliveredWorktreeRefusesAmbiguousAbsentAndChangedBranches(t *testing.T) {
+	t.Run("absent path retained in inventory", func(t *testing.T) {
+		fixture := newRepositoryFixture(t, "product-api")
+		registry := newLifecycleRegistry(t, fixture)
+		prepare := lifecycleRequest(t, fixture, "prepare-absent-listed", "task-absent-listed")
+		prepared, err := registry.PrepareWorktree(context.Background(), prepare)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.RemoveAll(prepared.CanonicalPath); err != nil {
+			t.Fatalf("remove fixture path: %v", err)
+		}
+		if err := registry.RemoveDeliveredWorktree(context.Background(), devgit.DeliveredWorktreeCleanupRequest{
+			PreparationOperationID: prepare.OperationID, TaskHandle: prepare.TaskHandle,
+			RepositoryID: prepare.RepositoryID, WorktreePath: prepared.CanonicalPath,
+			Branch: prepared.Branch, HeadRevision: prepared.HeadRevision,
+		}); err == nil {
+			t.Fatal("RemoveDeliveredWorktree(absent listed target) error = nil")
+		}
+	})
+
+	t.Run("branch head changed after raw worktree removal", func(t *testing.T) {
+		fixture := newRepositoryFixture(t, "product-api")
+		registry := newLifecycleRegistry(t, fixture)
+		prepare := lifecycleRequest(t, fixture, "prepare-changed-branch", "task-changed-branch")
+		prepared, err := registry.PrepareWorktree(context.Background(), prepare)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary,
+			"worktree", "remove", "--", prepared.CanonicalPath)
+		if err := os.WriteFile(filepath.Join(fixture.primary, "advanced.txt"), []byte("advanced\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary, "add", "advanced.txt")
+		runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary,
+			"-c", "user.name=DevCrew Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "advance main")
+		advancedHead := gitOutput(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary, "rev-parse", "HEAD")
+		runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary,
+			"update-ref", "refs/heads/"+prepared.Branch, advancedHead, prepared.HeadRevision)
+		if err := registry.RemoveDeliveredWorktree(context.Background(), devgit.DeliveredWorktreeCleanupRequest{
+			PreparationOperationID: prepare.OperationID, TaskHandle: prepare.TaskHandle,
+			RepositoryID: prepare.RepositoryID, WorktreePath: prepared.CanonicalPath,
+			Branch: prepared.Branch, HeadRevision: prepared.HeadRevision,
+		}); err == nil {
+			t.Fatal("RemoveDeliveredWorktree(changed branch head) error = nil")
+		}
+	})
+
+	t.Run("exact branch update is locked", func(t *testing.T) {
+		fixture := newRepositoryFixture(t, "product-api")
+		registry := newLifecycleRegistry(t, fixture)
+		prepare := lifecycleRequest(t, fixture, "prepare-locked-ref", "task-locked-ref")
+		prepared, err := registry.PrepareWorktree(context.Background(), prepare)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary,
+			"worktree", "remove", "--", prepared.CanonicalPath)
+		lockPath := filepath.Join(fixture.primary, ".git", "refs", "heads", prepared.Branch+".lock")
+		if err := os.WriteFile(lockPath, []byte("locked\n"), 0o600); err != nil {
+			t.Fatalf("create branch lock: %v", err)
+		}
+		if err := registry.RemoveDeliveredWorktree(context.Background(), devgit.DeliveredWorktreeCleanupRequest{
+			PreparationOperationID: prepare.OperationID, TaskHandle: prepare.TaskHandle,
+			RepositoryID: prepare.RepositoryID, WorktreePath: prepared.CanonicalPath,
+			Branch: prepared.Branch, HeadRevision: prepared.HeadRevision,
+		}); err == nil {
+			t.Fatal("RemoveDeliveredWorktree(locked branch) error = nil")
+		}
+		if err := os.Remove(lockPath); err != nil {
+			t.Fatalf("remove branch lock: %v", err)
+		}
+	})
 }
 
 func newLifecycleRegistry(t *testing.T, fixture repositoryFixture) *devgit.Registry {
