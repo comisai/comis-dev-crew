@@ -215,6 +215,20 @@ func TestManifestMethodCollectionsCompareByNameRatherThanPosition(t *testing.T) 
 	}
 }
 
+func TestManifestAcceptsEvidenceServiceScope(t *testing.T) {
+	root, _ := writeFixtureBundle(t)
+	verified, err := Open(root)
+	if err != nil {
+		t.Fatalf("open fixture bundle: %v", err)
+	}
+	manifest := cloneManifest(verified.Manifest)
+	scope := "evidence"
+	manifest.MethodCatalog[0].RequiredServiceScope = &scope
+	if err := validateManifest(manifest); err != nil {
+		t.Fatalf("validateManifest(evidence scope) error = %v", err)
+	}
+}
+
 func TestOpenRejectsMalformedDuplicateAndTrailingManifestJSON(t *testing.T) {
 	tests := []struct {
 		name   string
