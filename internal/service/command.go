@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/workers"
@@ -194,9 +195,36 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 		serviceConfig.ForgeComposition = forgeComposition
 	}
 	if err := runService(ctx, serviceConfig); err != nil {
-		return writeServiceDiagnostic(stderr, "devcrew-service: service stopped with an error\nHint: inspect local configuration and service health\n", 1)
+		return writeServiceDiagnostic(stderr, fmt.Sprintf(
+			"devcrew-service: service stopped with an error\nFailure class: %s\nHint: inspect local configuration and service health\n",
+			serviceFailureClass(err),
+		), 1)
 	}
 	return 0
+}
+
+func serviceFailureClass(err error) string {
+	message := err.Error()
+	switch {
+	case strings.Contains(message, "run service candidate supervisor: validate task candidate: pull-request truth is unavailable"):
+		return "candidate_pull_request_truth"
+	case strings.Contains(message, "run service candidate supervisor: candidate evidence was not accepted"):
+		return "candidate_evidence_rejected"
+	case strings.Contains(message, "run service candidate supervisor"):
+		return "candidate_supervision"
+	case strings.Contains(message, "run service validation recovery"):
+		return "validation_process_recovery"
+	case strings.Contains(message, "run service startup reconciliation"):
+		return "startup_reconciliation"
+	case strings.Contains(message, "run service local endpoint"):
+		return "operator_endpoint"
+	case strings.Contains(message, "run service MCP endpoint"):
+		return "mcp_endpoint"
+	case strings.Contains(message, "run service store"):
+		return "state_store"
+	default:
+		return "service_runtime"
+	}
 }
 
 func writeServiceDiagnostic(destination io.Writer, message string, successCode int) int {
