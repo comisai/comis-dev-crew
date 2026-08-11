@@ -242,6 +242,59 @@ func TestFacade_UncertainPreparationReconcilesBeforeOneExactRetry(t *testing.T) 
 	}
 }
 
+func TestFacade_UncertainTerminalMutationsReconcileBeforeExactRetry(t *testing.T) {
+	unavailable, err := domain.NewFailure(domain.ErrorUnavailable, true, "local service is unavailable", "reconcile the operation", errors.New("private disconnect"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name    string
+		command string
+		call    func(*Facade, context.Context, *mcp.CallToolRequest) (localapi.TaskMutationResult, error)
+		want    string
+	}{
+		{
+			name: "handback", command: "HandbackTask", want: "handback:handback-0001:task-0001:validate-developer-work,operation:reconcile-0001:handback-0001,handback:handback-0001:task-0001:validate-developer-work",
+			call: func(facade *Facade, ctx context.Context, request *mcp.CallToolRequest) (localapi.TaskMutationResult, error) {
+				_, result, callErr := facade.handbackTask(ctx, request, HandbackTaskInput{TaskHandle: "task-0001", Action: application.HandbackValidateDeveloperWork})
+				return result, callErr
+			},
+		},
+		{
+			name: "cleanup", command: "CleanupTask", want: "cleanup:cleanup-0001:task-0001,operation:reconcile-0001:cleanup-0001,cleanup:cleanup-0001:task-0001",
+			call: func(facade *Facade, ctx context.Context, request *mcp.CallToolRequest) (localapi.TaskMutationResult, error) {
+				_, result, callErr := facade.cleanupTask(ctx, request, TaskInput{TaskHandle: "task-0001"})
+				return result, callErr
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			operationID := test.name + "-0001"
+			client := &fakeClient{
+				operation:      application.OperationView{SchemaVersion: 1, OperationID: operationID, Command: test.command, Status: domain.OperationCompleted, StateVersion: 7},
+				handbackResult: localapi.TaskMutationResult{TaskHandle: "task-0001", State: domain.TaskValidating},
+				cleanupResult:  localapi.TaskMutationResult{TaskHandle: "task-0001", State: domain.TaskCleaned},
+				handbackErrors: []error{unavailable, nil}, cleanupErrors: []error{unavailable, nil},
+			}
+			facade, createErr := New(Config{Client: client, ServiceInstanceID: "service-instance-0001", Version: "test", NewOperationID: func() (string, error) { return "reconcile-0001", nil }, ReconcileTimeout: time.Second})
+			if createErr != nil {
+				t.Fatal(createErr)
+			}
+			request := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Meta: callMeta(operationID, "service-instance-0001")}}
+			canceled, cancel := context.WithCancel(context.Background())
+			cancel()
+			result, callErr := test.call(facade, canceled, request)
+			if callErr != nil || result.TaskHandle != "task-0001" {
+				t.Fatalf("terminal mutation = %#v, %v", result, callErr)
+			}
+			if got := strings.Join(client.calls, ","); got != test.want {
+				t.Fatalf("calls = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func assertToolCatalog(t *testing.T, tools []*mcp.Tool) {
 	t.Helper()
 	want := map[string]bool{ToolPrepareTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true}
@@ -314,6 +367,8 @@ type fakeClient struct {
 	operationError error
 	handbackResult localapi.TaskMutationResult
 	cleanupResult  localapi.TaskMutationResult
+	handbackErrors []error
+	cleanupErrors  []error
 }
 
 func (client *fakeClient) CleanupTask(
@@ -322,7 +377,12 @@ func (client *fakeClient) CleanupTask(
 	input localapi.CleanupTaskInput,
 ) (localapi.TaskMutationResult, error) {
 	client.calls = append(client.calls, "cleanup:"+operationID+":"+input.TaskHandle)
-	return client.cleanupResult, nil
+	if len(client.cleanupErrors) == 0 {
+		return client.cleanupResult, nil
+	}
+	err := client.cleanupErrors[0]
+	client.cleanupErrors = client.cleanupErrors[1:]
+	return client.cleanupResult, err
 }
 
 func (client *fakeClient) HandbackTask(
@@ -331,7 +391,12 @@ func (client *fakeClient) HandbackTask(
 	input localapi.HandbackTaskInput,
 ) (localapi.TaskMutationResult, error) {
 	client.calls = append(client.calls, "handback:"+operationID+":"+input.TaskHandle+":"+string(input.Action))
-	return client.handbackResult, nil
+	if len(client.handbackErrors) == 0 {
+		return client.handbackResult, nil
+	}
+	err := client.handbackErrors[0]
+	client.handbackErrors = client.handbackErrors[1:]
+	return client.handbackResult, err
 }
 
 func (client *fakeClient) PrepareTask(_ context.Context, operationID string, _ localapi.PrepareTaskInput) (localapi.PrepareTaskResult, error) {
