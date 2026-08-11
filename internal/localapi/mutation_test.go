@@ -26,6 +26,20 @@ type apiInterventions struct {
 	err     error
 }
 
+type apiCleanup struct {
+	command application.CleanupTaskCommand
+	result  application.MutationResult
+	err     error
+}
+
+func (cleanup *apiCleanup) CleanupTask(
+	_ context.Context,
+	command application.CleanupTaskCommand,
+) (application.MutationResult, error) {
+	cleanup.command = command
+	return cleanup.result, cleanup.err
+}
+
 func (interventions *apiInterventions) HandbackTask(
 	_ context.Context,
 	command application.HandbackTaskCommand,
@@ -118,6 +132,39 @@ func TestServerClient_HandbackUsesCanonicalRevalidationMutation(t *testing.T) {
 	if interventions.command.OperationID != "operation-handback-local" ||
 		interventions.command.TaskHandle != input.TaskHandle || interventions.command.Action != input.Action {
 		t.Fatalf("canonical handback command = %#v", interventions.command)
+	}
+}
+
+func TestServerClient_CleanupUsesCanonicalReleaseBeforeRemovalMutation(t *testing.T) {
+	cleanup := &apiCleanup{result: application.MutationResult{
+		Task: domain.Task{Handle: "task-cleanup-local", State: domain.TaskCleaned, StateVersion: 34},
+		Operation: domain.OperationRecord{
+			ID: "operation-cleanup-local", Status: domain.OperationCompleted, StateVersion: 34,
+		},
+	}}
+	handler, err := NewHandler(HandlerConfig{
+		Queries: &apiQueries{}, Cleanup: cleanup, Clock: time.Now,
+	})
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	socketPath := startHandlerServer(t, handler, CallerMCPFacade)
+	client, err := NewClient(socketPath, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.CleanupTask(context.Background(), "operation-cleanup-local", CleanupTaskInput{
+		TaskHandle: "task-cleanup-local",
+	})
+	if err != nil {
+		t.Fatalf("CleanupTask() error = %v", err)
+	}
+	if result.TaskHandle != "task-cleanup-local" || result.State != domain.TaskCleaned ||
+		result.StateVersion != 34 || result.SideEffect != SideEffectMutate {
+		t.Fatalf("CleanupTask() = %#v", result)
+	}
+	if cleanup.command.OperationID != "operation-cleanup-local" || cleanup.command.TaskHandle != "task-cleanup-local" {
+		t.Fatalf("canonical cleanup command = %#v", cleanup.command)
 	}
 }
 
