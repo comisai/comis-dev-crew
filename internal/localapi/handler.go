@@ -17,6 +17,7 @@ const unknownRequestID = "request-unknown"
 type Handler struct {
 	queries           ReadQueries
 	mutations         TaskMutations
+	interventions     TaskInterventions
 	serviceInstanceID string
 	clock             application.Clock
 }
@@ -35,7 +36,7 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 		return nil, errors.New("create local API handler: service instance identity is required for mutations")
 	}
 	return &Handler{
-		queries: config.Queries, mutations: config.Mutations,
+		queries: config.Queries, mutations: config.Mutations, interventions: config.Interventions,
 		serviceInstanceID: config.ServiceInstanceID, clock: config.Clock,
 	}, nil
 }
@@ -133,9 +134,41 @@ func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 			WorkerProfileID: input.WorkerProfileID,
 		})
 		return handler.prepareOutcome(request.OperationID, result, err)
+	case MethodHandbackTask:
+		var input HandbackTaskInput
+		if err := decodeObject(request.Payload, &input); err != nil {
+			return invalidPayload(request.OperationID, err)
+		}
+		if handler.interventions == nil {
+			return rejectedOutcome(request.OperationID, domain.ErrorUnavailable, true, "intervention service is unavailable", "inspect service configuration", nil)
+		}
+		result, err := handler.interventions.HandbackTask(ctx, application.HandbackTaskCommand{
+			OperationID: request.OperationID, TaskHandle: input.TaskHandle, Action: input.Action,
+		})
+		return handler.taskMutationOutcome(request.OperationID, MethodHandbackTask, result, err)
 	default:
 		return rejectedOutcome(request.OperationID, domain.ErrorInvalidArgument, false, "unknown local API method", "use a method from the closed catalog", nil)
 	}
+}
+
+func (handler *Handler) taskMutationOutcome(
+	operationID string,
+	method Method,
+	mutation application.MutationResult,
+	err error,
+) Outcome {
+	if err != nil {
+		return outcomeFromError(operationID, err)
+	}
+	if mutation.Task.Handle == "" || mutation.Task.StateVersion <= 0 || mutation.Operation.ID != operationID ||
+		mutation.Operation.Status != domain.OperationCompleted || mutation.Operation.StateVersion != mutation.Task.StateVersion {
+		return rejectedOutcome(operationID, domain.ErrorInternal, false, "mutation outcome is incomplete", "inspect durable service state", nil)
+	}
+	result := TaskMutationResult{
+		SchemaVersion: 1, OperationID: operationID, TaskHandle: mutation.Task.Handle,
+		State: mutation.Task.State, StateVersion: mutation.Task.StateVersion, SideEffect: method.SideEffect(),
+	}
+	return queryOutcome(operationID, result.StateVersion, result, nil)
 }
 
 func (handler *Handler) prepareOutcome(operationID string, mutation application.MutationResult, err error) Outcome {

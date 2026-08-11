@@ -50,11 +50,12 @@ const (
 	MethodGetLaunchPlan Method = "GetLaunchPlan"
 	MethodOperation     Method = "GetOperation"
 	MethodPrepareTask   Method = "PrepareTask"
+	MethodHandbackTask  Method = "HandbackTask"
 )
 
 func (method Method) valid() bool {
 	switch method {
-	case MethodDiagnose, MethodFleet, MethodListTasks, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan, MethodOperation, MethodPrepareTask:
+	case MethodDiagnose, MethodFleet, MethodListTasks, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan, MethodOperation, MethodPrepareTask, MethodHandbackTask:
 		return true
 	default:
 		return false
@@ -72,7 +73,7 @@ const (
 
 // SideEffect returns the authoritative method classification.
 func (method Method) SideEffect() SideEffectClass {
-	if method == MethodPrepareTask {
+	if method == MethodPrepareTask || method == MethodHandbackTask {
 		return SideEffectMutate
 	}
 	return SideEffectRead
@@ -121,12 +122,34 @@ type TaskMutations interface {
 	PrepareTask(context.Context, application.PrepareTaskCommand) (application.MutationResult, error)
 }
 
+// TaskInterventions is the canonical paused-worktree handback surface.
+type TaskInterventions interface {
+	HandbackTask(context.Context, application.HandbackTaskCommand) (application.MutationResult, error)
+}
+
 // HandlerConfig binds local endpoint authority to canonical application seams.
 type HandlerConfig struct {
 	Queries           ReadQueries
 	Mutations         TaskMutations
+	Interventions     TaskInterventions
 	ServiceInstanceID string
 	Clock             application.Clock
+}
+
+// HandbackTaskInput selects one paused task and closed E0 action.
+type HandbackTaskInput struct {
+	TaskHandle string                     `json:"taskHandle"`
+	Action     application.HandbackAction `json:"action"`
+}
+
+// TaskMutationResult is the common public projection for post-prepare task mutations.
+type TaskMutationResult struct {
+	SchemaVersion int              `json:"schemaVersion"`
+	OperationID   string           `json:"operationId"`
+	TaskHandle    string           `json:"taskHandle"`
+	State         domain.TaskState `json:"state"`
+	StateVersion  int64            `json:"stateVersion"`
+	SideEffect    SideEffectClass  `json:"sideEffect"`
 }
 
 // PrepareTaskInput is the strict public task contract. Service identity and

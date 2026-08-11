@@ -92,6 +92,13 @@ func (client *Client) PrepareTask(ctx context.Context, operationID string, input
 	return result, err
 }
 
+// HandbackTask executes one canonical idempotent paused-worktree handback.
+func (client *Client) HandbackTask(ctx context.Context, operationID string, input HandbackTaskInput) (TaskMutationResult, error) {
+	var result TaskMutationResult
+	err := client.call(ctx, operationID, MethodHandbackTask, input, &result)
+	return result, err
+}
+
 func (client *Client) call(ctx context.Context, operationID string, method Method, payload any, result any) error {
 	if ctx == nil {
 		return errors.New("call local API: context is required")
@@ -172,6 +179,8 @@ func projectedStateVersion(result any) (int64, bool) {
 	case *application.OperationView:
 		return projection.StateVersion, true
 	case *PrepareTaskResult:
+		return projection.StateVersion, true
+	case *TaskMutationResult:
 		return projection.StateVersion, true
 	default:
 		return 0, false
