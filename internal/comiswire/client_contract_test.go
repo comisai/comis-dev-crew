@@ -63,6 +63,23 @@ func TestGeneratedClientBuildsClosedOperationEnvelopes(t *testing.T) {
 			},
 		},
 		{
+			name: "release",
+			invoke: func(client *Client) error {
+				_, err := client.Release(context.Background(), ReleaseRequestParams{
+					OperationID: "operation_release", ManagedRunID: "managed-run_a",
+					WorkspaceLeaseID: "workspace-lease_a", Disposition: "reap_safe", ReleasedAtMs: 1_800_000_000_000,
+				})
+				return err
+			},
+			assert: func(t *testing.T, request any) {
+				t.Helper()
+				envelope, ok := request.(ReleaseRequest)
+				if !ok || envelope.ID != envelope.Params.OperationID || envelope.Method != MethodManagedRunsRelease {
+					t.Fatalf("unexpected release envelope: %#v", request)
+				}
+			},
+		},
+		{
 			name: "report",
 			invoke: func(client *Client) error {
 				_, err := client.Report(context.Background(), ReportRequestParams{
