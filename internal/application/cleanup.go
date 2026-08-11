@@ -1,0 +1,326 @@
+package application
+
+import (
+	"context"
+	"crypto/sha256"
+	"errors"
+	"fmt"
+	"reflect"
+	"time"
+
+	"github.com/comisai/comis-dev-crew/internal/domain"
+)
+
+const commandCleanupTask = "CleanupTask"
+
+// TaskCleanupStage is the durable crash-recovery point for exact cleanup.
+type TaskCleanupStage string
+
+const (
+	CleanupPrepared          TaskCleanupStage = "prepared"
+	CleanupHostReleased      TaskCleanupStage = "host_released"
+	CleanupRemovalAuthorized TaskCleanupStage = "removal_authorized"
+	CleanupCompleted         TaskCleanupStage = "completed"
+)
+
+// ManagedRunReleaseDisposition is the closed host release behavior.
+type ManagedRunReleaseDisposition string
+
+const ManagedRunReleaseReapSafe ManagedRunReleaseDisposition = "reap_safe"
+
+// ManagedRunReleaseState is the exact terminal host acknowledgement.
+type ManagedRunReleaseState string
+
+const ManagedRunReleased ManagedRunReleaseState = "released"
+
+// ForgeCheckTruth is one current required-check observation.
+type ForgeCheckTruth struct {
+	Name       string
+	Conclusion domain.CheckConclusion
+}
+
+// PullRequestDeliveryVerification selects exact recorded delivery truth.
+type PullRequestDeliveryVerification struct {
+	RepositoryID   string
+	PullRequestID  string
+	Branch         string
+	HeadRevision   string
+	RequiredChecks []string
+}
+
+// PullRequestDeliveryTruth is current read-only forge truth.
+type PullRequestDeliveryTruth struct {
+	RepositoryID  string
+	PullRequestID string
+	HeadRevision  string
+	Checks        []ForgeCheckTruth
+}
+
+// ManagedRunReleaseRequest revokes exact run capabilities and its lease.
+type ManagedRunReleaseRequest struct {
+	OperationID      string
+	ManagedRunID     string
+	WorkspaceLeaseID string
+	Disposition      ManagedRunReleaseDisposition
+	ReleasedAt       time.Time
+}
+
+// ManagedRunReleaseReceipt is the exact host release acknowledgement.
+type ManagedRunReleaseReceipt struct {
+	ManagedRunID     string
+	WorkspaceLeaseID string
+	Disposition      ManagedRunReleaseDisposition
+	ReleasedAt       time.Time
+	State            ManagedRunReleaseState
+}
+
+// DeliveredWorkspaceRemoval carries only a previously authorized Git identity.
+type DeliveredWorkspaceRemoval struct {
+	PreparationOperationID string
+	TaskHandle             string
+	RepositoryID           string
+	WorktreePath           string
+	Branch                 string
+	HeadRevision           string
+}
+
+// TaskCleanupRecord is one durable staged cleanup operation.
+type TaskCleanupRecord struct {
+	OperationID            string
+	SubjectDigest          string
+	TaskHandle             string
+	PreparationOperationID string
+	ManagedRunID           string
+	WorkspaceLeaseID       string
+	RepositoryID           string
+	WorktreePath           string
+	HeadRevision           string
+	EvidenceDigest         string
+	PullRequestID          string
+	RequiredForgeChecks    []string
+	ReportArtifactHash     string
+	Stage                  TaskCleanupStage
+	ReleaseOperationID     string
+	ReleasedAt             time.Time
+	Snapshot               WorkspaceSnapshot
+}
+
+// CleanupTaskCommand is the stable operator mutation.
+type CleanupTaskCommand struct {
+	OperationID string
+	TaskHandle  string
+}
+
+// TaskCleanupMutation begins or replays one durable hold.
+type TaskCleanupMutation struct {
+	OperationID        string
+	SubjectDigest      string
+	TaskHandle         string
+	ReleaseOperationID string
+	ReleasedAt         time.Time
+	At                 time.Time
+}
+
+// TaskCleanupHostReleaseMutation records exact host acknowledgement only
+// after fresh workspace and delivery verification.
+type TaskCleanupHostReleaseMutation struct {
+	OperationID   string
+	SubjectDigest string
+	Snapshot      WorkspaceSnapshot
+	DeliveryTruth PullRequestDeliveryTruth
+	Receipt       ManagedRunReleaseReceipt
+	At            time.Time
+}
+
+// TaskCleanupRemovalAuthorization records the second fresh safety proof after
+// host capability and lease release.
+type TaskCleanupRemovalAuthorization struct {
+	OperationID   string
+	SubjectDigest string
+	Snapshot      WorkspaceSnapshot
+	DeliveryTruth PullRequestDeliveryTruth
+	At            time.Time
+}
+
+// TaskCleanupCompletion records convergence after exact Git removal.
+type TaskCleanupCompletion struct {
+	OperationID   string
+	SubjectDigest string
+	At            time.Time
+}
+
+// TaskCleanupStore owns durable stage changes and database safety proofs.
+type TaskCleanupStore interface {
+	BeginTaskCleanup(context.Context, TaskCleanupMutation) (TaskCleanupRecord, error)
+	RecordTaskCleanupHostRelease(context.Context, TaskCleanupHostReleaseMutation) (TaskCleanupRecord, error)
+	AuthorizeTaskCleanupRemoval(context.Context, TaskCleanupRemovalAuthorization) (TaskCleanupRecord, error)
+	CompleteTaskCleanup(context.Context, TaskCleanupCompletion) (MutationResult, error)
+}
+
+// PullRequestDeliveryVerifier re-reads delivery with no mutation authority.
+type PullRequestDeliveryVerifier interface {
+	VerifyPullRequestDelivery(context.Context, PullRequestDeliveryVerification) (PullRequestDeliveryTruth, error)
+}
+
+// ManagedRunReleaser revokes host authority using one stable request.
+type ManagedRunReleaser interface {
+	ReleaseManagedRun(context.Context, ManagedRunReleaseRequest) (ManagedRunReleaseReceipt, error)
+}
+
+// DeliveredWorkspaceRemover removes one previously authorized exact workspace.
+type DeliveredWorkspaceRemover interface {
+	RemoveDeliveredWorkspace(context.Context, DeliveredWorkspaceRemoval) error
+}
+
+// CleanupCoordinatorConfig supplies the complete E0 cleanup authority set.
+type CleanupCoordinatorConfig struct {
+	Store      TaskCleanupStore
+	Workspaces WorkspaceInspector
+	Forge      PullRequestDeliveryVerifier
+	Releaser   ManagedRunReleaser
+	Remover    DeliveredWorkspaceRemover
+	Clock      Clock
+}
+
+// CleanupCoordinator executes the durable release-before-remove sequence.
+type CleanupCoordinator struct {
+	config CleanupCoordinatorConfig
+}
+
+// NewCleanupCoordinator rejects partial cleanup authority.
+func NewCleanupCoordinator(config CleanupCoordinatorConfig) (*CleanupCoordinator, error) {
+	if config.Store == nil || config.Workspaces == nil || config.Forge == nil || config.Releaser == nil ||
+		config.Remover == nil || config.Clock == nil {
+		return nil, errors.New("create cleanup coordinator: complete cleanup authority is required")
+	}
+	return &CleanupCoordinator{config: config}, nil
+}
+
+// CleanupTask holds the task, releases exact host authority, re-proves current
+// safety, removes the exact worktree, and records completion.
+func (coordinator *CleanupCoordinator) CleanupTask(ctx context.Context, command CleanupTaskCommand) (MutationResult, error) {
+	if coordinator == nil || ctx == nil {
+		return MutationResult{}, errors.New("cleanup task: coordinator and context are required")
+	}
+	if err := ctx.Err(); err != nil {
+		return MutationResult{}, err
+	}
+	if domain.ValidateOperationID(command.OperationID) != nil || domain.ValidateTaskHandle(command.TaskHandle) != nil {
+		return MutationResult{}, mutationValidationFailure("cleanup command identity is invalid")
+	}
+	digest, err := digestMutationSubject(command)
+	if err != nil {
+		return MutationResult{}, mutationValidationFailure("cleanup subject cannot be encoded")
+	}
+	now := coordinator.config.Clock()
+	record, err := coordinator.config.Store.BeginTaskCleanup(ctx, TaskCleanupMutation{
+		OperationID: command.OperationID, SubjectDigest: digest, TaskHandle: command.TaskHandle,
+		ReleaseOperationID: cleanupReleaseOperationID(command.OperationID, command.TaskHandle),
+		ReleasedAt:         now, At: now,
+	})
+	if err != nil {
+		return MutationResult{}, mutationCommitFailure(err)
+	}
+	for {
+		if record.OperationID != command.OperationID || record.SubjectDigest != digest || record.TaskHandle != command.TaskHandle {
+			return MutationResult{}, errors.New("cleanup task: durable operation identity differs")
+		}
+		switch record.Stage {
+		case CleanupPrepared:
+			snapshot, truth, verifyErr := coordinator.verifyCurrentSafety(ctx, record)
+			if verifyErr != nil {
+				return MutationResult{}, verifyErr
+			}
+			receipt, releaseErr := coordinator.config.Releaser.ReleaseManagedRun(ctx, ManagedRunReleaseRequest{
+				OperationID: record.ReleaseOperationID, ManagedRunID: record.ManagedRunID,
+				WorkspaceLeaseID: record.WorkspaceLeaseID, Disposition: ManagedRunReleaseReapSafe,
+				ReleasedAt: record.ReleasedAt,
+			})
+			if releaseErr != nil {
+				return MutationResult{}, &dependencyFailure{message: "managed run release failed", cause: releaseErr}
+			}
+			if receipt.ManagedRunID != record.ManagedRunID || receipt.WorkspaceLeaseID != record.WorkspaceLeaseID ||
+				receipt.Disposition != ManagedRunReleaseReapSafe || !receipt.ReleasedAt.Equal(record.ReleasedAt) ||
+				receipt.State != ManagedRunReleased {
+				return MutationResult{}, errors.New("cleanup task: host release acknowledgement differs")
+			}
+			record, err = coordinator.config.Store.RecordTaskCleanupHostRelease(ctx, TaskCleanupHostReleaseMutation{
+				OperationID: command.OperationID, SubjectDigest: digest, Snapshot: snapshot,
+				DeliveryTruth: truth, Receipt: receipt, At: coordinator.config.Clock(),
+			})
+		case CleanupHostReleased:
+			snapshot, truth, verifyErr := coordinator.verifyCurrentSafety(ctx, record)
+			if verifyErr != nil {
+				return MutationResult{}, verifyErr
+			}
+			record, err = coordinator.config.Store.AuthorizeTaskCleanupRemoval(ctx, TaskCleanupRemovalAuthorization{
+				OperationID: command.OperationID, SubjectDigest: digest, Snapshot: snapshot,
+				DeliveryTruth: truth, At: coordinator.config.Clock(),
+			})
+		case CleanupRemovalAuthorized:
+			if err := coordinator.config.Remover.RemoveDeliveredWorkspace(ctx, DeliveredWorkspaceRemoval{
+				PreparationOperationID: record.PreparationOperationID, TaskHandle: record.TaskHandle,
+				RepositoryID: record.RepositoryID, WorktreePath: record.Snapshot.WorktreePath,
+				Branch: record.Snapshot.Branch, HeadRevision: record.Snapshot.HeadRevision,
+			}); err != nil {
+				return MutationResult{}, &dependencyFailure{message: "delivered workspace removal failed", cause: err}
+			}
+			return coordinator.config.Store.CompleteTaskCleanup(ctx, TaskCleanupCompletion{
+				OperationID: command.OperationID, SubjectDigest: digest, At: coordinator.config.Clock(),
+			})
+		case CleanupCompleted:
+			return coordinator.config.Store.CompleteTaskCleanup(ctx, TaskCleanupCompletion{
+				OperationID: command.OperationID, SubjectDigest: digest, At: coordinator.config.Clock(),
+			})
+		default:
+			return MutationResult{}, errors.New("cleanup task: durable stage is invalid")
+		}
+		if err != nil {
+			return MutationResult{}, mutationCommitFailure(err)
+		}
+	}
+}
+
+func (coordinator *CleanupCoordinator) verifyCurrentSafety(
+	ctx context.Context,
+	record TaskCleanupRecord,
+) (WorkspaceSnapshot, PullRequestDeliveryTruth, error) {
+	snapshot, err := coordinator.config.Workspaces.InspectWorkspace(ctx, WorkspaceSnapshotRequest{
+		TaskHandle: record.TaskHandle, RepositoryID: record.RepositoryID, WorktreePath: record.WorktreePath,
+	})
+	if err != nil {
+		return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, &dependencyFailure{message: "cleanup workspace inspection failed", cause: err}
+	}
+	if snapshot.Validate() != nil || snapshot.TaskHandle != record.TaskHandle || snapshot.RepositoryID != record.RepositoryID ||
+		snapshot.WorktreePath != record.WorktreePath || snapshot.HeadRevision != record.HeadRevision ||
+		snapshot.Cleanliness != WorkspaceClean {
+		return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, fmt.Errorf("cleanup workspace safety differs: %w", ErrPrecondition)
+	}
+	if record.PullRequestID == "" {
+		if record.ReportArtifactHash == "" {
+			return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, errors.New("cleanup delivery evidence is unavailable")
+		}
+		return snapshot, PullRequestDeliveryTruth{}, nil
+	}
+	truth, err := coordinator.config.Forge.VerifyPullRequestDelivery(ctx, PullRequestDeliveryVerification{
+		RepositoryID: record.RepositoryID, PullRequestID: record.PullRequestID, Branch: snapshot.Branch,
+		HeadRevision: record.HeadRevision, RequiredChecks: append([]string(nil), record.RequiredForgeChecks...),
+	})
+	if err != nil {
+		return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, &dependencyFailure{message: "cleanup pull request verification failed", cause: err}
+	}
+	wantChecks := make([]ForgeCheckTruth, len(record.RequiredForgeChecks))
+	for index, name := range record.RequiredForgeChecks {
+		wantChecks[index] = ForgeCheckTruth{Name: name, Conclusion: domain.CheckPassed}
+	}
+	if truth.RepositoryID != record.RepositoryID || truth.PullRequestID != record.PullRequestID ||
+		truth.HeadRevision != record.HeadRevision || !reflect.DeepEqual(truth.Checks, wantChecks) {
+		return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, fmt.Errorf("cleanup pull request truth differs: %w", ErrPrecondition)
+	}
+	return snapshot, truth, nil
+}
+
+func cleanupReleaseOperationID(operationID, taskHandle string) string {
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(operationID+"\x00"+taskHandle)))
+	return "release-" + digest[:32]
+}
