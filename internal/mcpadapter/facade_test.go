@@ -133,6 +133,41 @@ func TestFacade_HandbackTaskUsesAuthenticatedCanonicalMutation(t *testing.T) {
 	}
 }
 
+func TestFacade_CleanupTaskDeclaresDestructiveOpenWorldMutation(t *testing.T) {
+	client := &fakeClient{cleanupResult: localapi.TaskMutationResult{
+		SchemaVersion: 1, OperationID: "cleanup-0001", TaskHandle: "task-0001",
+		State: domain.TaskCleaned, StateVersion: 27, SideEffect: localapi.SideEffectMutate,
+	}}
+	facade, err := New(Config{
+		Client: client, ServiceInstanceID: "service-instance-0001", Version: "test",
+		NewOperationID: func() (string, error) { return "reconcile-0001", nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := connectFacade(t, facade)
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Meta: callMeta("cleanup-0001", "service-instance-0001"), Name: ToolCleanupTask,
+		Arguments: TaskInput{TaskHandle: "task-0001"},
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("CallTool(cleanup_task) = %#v, %v", result, err)
+	}
+	if got := strings.Join(client.calls, ","); got != "cleanup:cleanup-0001:task-0001" {
+		t.Fatalf("cleanup calls = %q", got)
+	}
+	tools, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, listed := range tools.Tools {
+		if listed.Name == ToolCleanupTask && (listed.Annotations == nil || listed.Annotations.DestructiveHint == nil ||
+			!*listed.Annotations.DestructiveHint || listed.Annotations.OpenWorldHint == nil || !*listed.Annotations.OpenWorldHint) {
+			t.Fatalf("cleanup annotations = %#v", listed.Annotations)
+		}
+	}
+}
+
 func TestFacade_RejectsHostilePrivateMetadataBeforeAuthority(t *testing.T) {
 	unknown := callMeta("read-0001", "service-instance-0001")
 	unknown[CallContextMetaKey].(map[string]any)["authority"] = "broaden"
@@ -209,15 +244,16 @@ func TestFacade_UncertainPreparationReconcilesBeforeOneExactRetry(t *testing.T) 
 
 func assertToolCatalog(t *testing.T, tools []*mcp.Tool) {
 	t.Helper()
-	want := map[string]bool{ToolPrepareTask: false, ToolHandbackTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true}
+	want := map[string]bool{ToolPrepareTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true}
 	if len(tools) != len(want) {
 		t.Fatalf("tool count = %d, want %d", len(tools), len(want))
 	}
 	for _, tool := range tools {
 		readOnly, ok := want[tool.Name]
+		destructive := tool.Name == ToolCleanupTask
 		if !ok || tool.Annotations == nil || tool.Annotations.ReadOnlyHint != readOnly ||
-			!tool.Annotations.IdempotentHint || tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint ||
-			tool.Annotations.OpenWorldHint == nil || *tool.Annotations.OpenWorldHint {
+			!tool.Annotations.IdempotentHint || tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint != destructive ||
+			tool.Annotations.OpenWorldHint == nil || *tool.Annotations.OpenWorldHint != destructive {
 			t.Fatalf("tool %q annotations = %#v", tool.Name, tool.Annotations)
 		}
 		delete(want, tool.Name)
@@ -277,6 +313,16 @@ type fakeClient struct {
 	operation      application.OperationView
 	operationError error
 	handbackResult localapi.TaskMutationResult
+	cleanupResult  localapi.TaskMutationResult
+}
+
+func (client *fakeClient) CleanupTask(
+	_ context.Context,
+	operationID string,
+	input localapi.CleanupTaskInput,
+) (localapi.TaskMutationResult, error) {
+	client.calls = append(client.calls, "cleanup:"+operationID+":"+input.TaskHandle)
+	return client.cleanupResult, nil
 }
 
 func (client *fakeClient) HandbackTask(
