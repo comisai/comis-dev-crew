@@ -82,6 +82,7 @@ func TestControlHandshakeRequestsCompleteRequiredScopeSet(t *testing.T) {
 	})
 	want := []ServiceScope{
 		ServiceScopeHealth,
+		ServiceScopeEvidence,
 		ServiceScopeReport,
 		ServiceScopeWorkspaceLease,
 		ServiceScopeTerminalEvents,

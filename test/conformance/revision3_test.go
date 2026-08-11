@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	revision3SourceCommit = "b84577fe790829bf1f043af6c2626f6b27ef7b89"
-	revision3BundleDigest = "94ec7bd173cd20f0de2cb4e9ab719d392f240236ac80d56e3a7ea1abe4e20cb8"
+	revision3SourceCommit = "59ef46c3cfbff25dffedea05fdb181b179ceb144"
+	revision3BundleDigest = "418f92fd129f8df03b3fbf49b7cc79a1d924533e7739e8496d7552ae2af393c7"
 )
 
 func TestContractRevision3PinsPreparedAttachmentAuthority(t *testing.T) {
@@ -22,7 +22,7 @@ func TestContractRevision3PinsPreparedAttachmentAuthority(t *testing.T) {
 	if pinned.Manifest.ProtocolID != "comis.capability-service/1" ||
 		pinned.Manifest.BundleDigest != revision3BundleDigest ||
 		pinned.Provenance.SourceCommit != revision3SourceCommit ||
-		len(pinned.Manifest.Artifacts) != 24 {
+		len(pinned.Manifest.Artifacts) != 26 {
 		t.Fatalf("revision-3 identity = protocol:%q digest:%q source:%q artifacts:%d",
 			pinned.Manifest.ProtocolID, pinned.Manifest.BundleDigest,
 			pinned.Provenance.SourceCommit, len(pinned.Manifest.Artifacts))
@@ -33,7 +33,7 @@ func TestContractRevision3PinsPreparedAttachmentAuthority(t *testing.T) {
 		t.Fatalf("prepared attachment metadata rejected: %v", err)
 	}
 
-	handshake := []byte(`{"jsonrpc":"2.0","id":"operation_handshake_attachment","method":"capabilityServices.handshake","params":{"protocolId":"comis.capability-service/1","bundleDigest":"` + revision3BundleDigest + `","operationId":"operation_handshake_attachment","serviceInstanceId":"service-instance_attachment","requestedScopes":["health","report","workspace_lease","terminal_events","execution_attachment"]}}`)
+	handshake := []byte(`{"jsonrpc":"2.0","id":"operation_handshake_attachment","method":"capabilityServices.handshake","params":{"protocolId":"comis.capability-service/1","bundleDigest":"` + revision3BundleDigest + `","operationId":"operation_handshake_attachment","serviceInstanceId":"service-instance_attachment","requestedScopes":["health","evidence","report","workspace_lease","terminal_events","execution_attachment"]}}`)
 	if err := comiswire.ValidatePayload(comiswire.PayloadRequest, handshake); err != nil {
 		t.Fatalf("revision-3 scopes rejected: %v", err)
 	}

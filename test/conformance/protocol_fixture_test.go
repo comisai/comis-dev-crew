@@ -370,7 +370,7 @@ func decodeObjectValue(payload []byte) map[string]any {
 
 func knownMethod(method string) bool {
 	switch comiswire.Method(method) {
-	case comiswire.MethodCapabilityServicesHandshake, comiswire.MethodCapabilityServicesHealth, comiswire.MethodManagedRunsAbandon, comiswire.MethodManagedRunsActivate, comiswire.MethodManagedRunsReport, comiswire.MethodManagedRunsTerminalEvent:
+	case comiswire.MethodCapabilityServicesHandshake, comiswire.MethodCapabilityServicesHealth, comiswire.MethodManagedRunsAbandon, comiswire.MethodManagedRunsActivate, comiswire.MethodManagedRunsPutEvidence, comiswire.MethodManagedRunsReport, comiswire.MethodManagedRunsTerminalEvent:
 		return true
 	default:
 		return false
