@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -23,6 +24,9 @@ func TestReportArtifactInspector_HashesOnlyStableBoundedRegularFile(t *testing.T
 	if evidence.Size != int64(len(contents)) || evidence.MediaType != "text/markdown" ||
 		evidence.ContentHash != "b5f53d83148f51570cd0e9115929e5bbe6b457ca61c88855c0ff980040925b96" {
 		t.Fatalf("InspectReportArtifact() = %#v", evidence)
+	}
+	if !bytes.Equal(evidence.Body, contents) {
+		t.Fatalf("InspectReportArtifact() body = %q, want %q", evidence.Body, contents)
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("artifact was changed: %v", err)
