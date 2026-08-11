@@ -33,8 +33,22 @@ func TestTaskHandback_PersistsFreshSnapshotAndStartsDeveloperWorkValidation(t *t
 	if err != nil {
 		t.Fatalf("CommitTaskHandback() error = %v", err)
 	}
-	if result.Task.State != domain.TaskValidating || result.Operation.ID != mutation.OperationID {
+	if result.Task.State != domain.TaskValidating || result.Task.ReportCursor != task.ReportCursor+1 ||
+		result.Operation.ID != mutation.OperationID {
 		t.Fatalf("CommitTaskHandback() = %#v", result)
+	}
+	var reportKind domain.WorkerReportKind
+	var reportDelivered *string
+	if err := store.db.QueryRow(`SELECT reports.kind, outbox.delivered_at
+        FROM reports JOIN comis_report_outbox AS outbox
+          ON outbox.task_handle = reports.task_handle
+          AND outbox.local_report_id = reports.local_report_id
+        WHERE reports.task_handle = ? AND reports.local_report_id = ?`, task.Handle, mutation.OperationID).
+		Scan(&reportKind, &reportDelivered); err != nil {
+		t.Fatalf("read handback candidate report: %v", err)
+	}
+	if reportKind != domain.ReportCandidateComplete || reportDelivered != nil {
+		t.Fatalf("handback candidate report = %q/%v", reportKind, reportDelivered)
 	}
 	replay, err := handbacks.CommitTaskHandback(context.Background(), mutation)
 	if err != nil || replay.Task.State != domain.TaskValidating || replay.Operation != result.Operation {
