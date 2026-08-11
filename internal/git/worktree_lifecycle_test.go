@@ -429,8 +429,13 @@ func TestRegistry_RemoveDeliveredWorktreeUsesExactHeadAndConvergesAfterRemoval(t
 	if err := registry.RemoveDeliveredWorktree(context.Background(), request); err != nil {
 		t.Fatalf("RemoveDeliveredWorktree() error = %v", err)
 	}
-	if err := registry.RemoveDeliveredWorktree(context.Background(), request); err != nil {
-		t.Fatalf("RemoveDeliveredWorktree(replay) error = %v", err)
+	var throughPort application.DeliveredWorkspaceRemover = registry
+	if err := throughPort.RemoveDeliveredWorkspace(context.Background(), application.DeliveredWorkspaceRemoval{
+		PreparationOperationID: request.PreparationOperationID, TaskHandle: request.TaskHandle,
+		RepositoryID: request.RepositoryID, WorktreePath: request.WorktreePath,
+		Branch: request.Branch, HeadRevision: request.HeadRevision,
+	}); err != nil {
+		t.Fatalf("RemoveDeliveredWorkspace(replay) error = %v", err)
 	}
 	if _, err := os.Lstat(prepared.CanonicalPath); !os.IsNotExist(err) {
 		t.Fatalf("delivered worktree remains: %v", err)
