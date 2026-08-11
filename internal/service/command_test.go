@@ -63,7 +63,7 @@ func TestRunCommand_UsesExplicitPathsAndSafeFailure(t *testing.T) {
 	var stderr bytes.Buffer
 	wantDatabase := "/private/tmp/explicit.db"
 	wantSocket := "/private/tmp/explicit.sock"
-	privateCause := errors.New("run service candidate supervisor: validate task candidate: pull-request truth is unavailable: private database and socket path detail")
+	privateCause := errors.New("run candidate supervisor: validate task candidate: pull-request truth is unavailable: private database and socket path detail")
 	called := false
 	exitCode := RunCommand(context.Background(), []string{
 		"--database", wantDatabase,
