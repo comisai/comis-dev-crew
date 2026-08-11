@@ -350,7 +350,10 @@ func (store *Store) migrate(ctx context.Context) error {
 	if err := store.applyVersionedMigration(ctx, 14, comisEvidenceOutboxMigration); err != nil {
 		return err
 	}
-	return store.applyVersionedMigration(ctx, 15, taskHandbackMigration)
+	if err := store.applyVersionedMigration(ctx, 15, taskHandbackMigration); err != nil {
+		return err
+	}
+	return store.applyVersionedMigration(ctx, 16, taskCleanupMigration)
 }
 
 func (store *Store) applyComisReportOutboxMigration(ctx context.Context) error {

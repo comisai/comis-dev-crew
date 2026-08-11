@@ -111,7 +111,9 @@ func TestTaskCleanupStore_RefusesOpenHoldUnsettledRuntimeAndUndeliveredEvidence(
 				task.Handle, formatTime(task.UpdatedAt), formatTime(task.UpdatedAt))
 		}},
 		{name: "undelivered evidence", mutate: func(store *Store, task domain.Task) {
-			_, _ = store.db.Exec("UPDATE comis_evidence_outbox SET delivered_at = NULL WHERE task_handle = ? LIMIT 1", task.Handle)
+			_, _ = store.db.Exec(`UPDATE comis_evidence_outbox SET delivered_at = NULL
+                WHERE operation_id = (SELECT operation_id FROM comis_evidence_outbox
+                    WHERE task_handle = ? ORDER BY operation_id LIMIT 1)`, task.Handle)
 		}},
 		{name: "unresolved decision", mutate: func(store *Store, task domain.Task) {
 			_, _ = store.db.Exec(`INSERT INTO reports(
