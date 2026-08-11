@@ -362,7 +362,7 @@ func TestControlConnectionRejectsInvalidEvidenceAndReleaseBeforeDispatch(t *test
 		ContentHash: contentHash, VerificationLevel: EvidenceVerificationLevelAdapterVerified,
 		BodyBase64: base64.StdEncoding.EncodeToString(body),
 	}
-	if _, err := connection.PutEvidence(nil, params); err == nil {
+	if _, err := connection.PutEvidence(missingContext(), params); err == nil {
 		t.Fatal("PutEvidence(nil context) error = nil")
 	}
 	invalidBody := params
@@ -390,7 +390,7 @@ func TestControlConnectionRejectsInvalidEvidenceAndReleaseBeforeDispatch(t *test
 	if _, err := connection.PutEvidence(canceled, params); !errors.Is(err, context.Canceled) {
 		t.Fatalf("PutEvidence(canceled) error = %v, want context.Canceled", err)
 	}
-	if _, err := connection.Release(nil, ReleaseRequestParams{
+	if _, err := connection.Release(missingContext(), ReleaseRequestParams{
 		OperationID: "operation_release_validation", ManagedRunID: "managed-run_a",
 		WorkspaceLeaseID: "workspace-lease_a", Disposition: "reap_safe", ReleasedAtMs: 1_800_000_000_000,
 	}); err == nil {

@@ -441,7 +441,7 @@ func TestRegistry_RemoveDeliveredWorktreeUsesExactHeadAndConvergesAfterRemoval(t
 	if err := (*devgit.Registry)(nil).RemoveDeliveredWorktree(context.Background(), request); err == nil {
 		t.Fatal("RemoveDeliveredWorktree(nil registry) error = nil")
 	}
-	if err := registry.RemoveDeliveredWorktree(nil, request); err == nil {
+	if err := registry.RemoveDeliveredWorktree(missingGitContext(), request); err == nil {
 		t.Fatal("RemoveDeliveredWorktree(nil context) error = nil")
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
@@ -618,6 +618,8 @@ func lifecycleRequest(t *testing.T, fixture repositoryFixture, operationID, task
 func cleanupRequest(request devgit.PrepareWorktreeRequest) devgit.CleanupWorktreeRequest {
 	return devgit.CleanupWorktreeRequest(request)
 }
+
+func missingGitContext() context.Context { return nil }
 
 func gitOutput(t *testing.T, executable string, arguments ...string) string {
 	t.Helper()

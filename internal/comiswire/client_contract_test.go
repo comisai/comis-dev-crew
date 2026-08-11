@@ -189,7 +189,7 @@ func TestGeneratedClientPutEvidenceValidatesBodyAuthorityAndResponseIdentity(t *
 		ContentHash: contentHash, VerificationLevel: EvidenceVerificationLevelAdapterVerified,
 		BodyBase64: base64.StdEncoding.EncodeToString(body),
 	}
-	if _, err := newClient(&recordingTransport{}).PutEvidence(nil, params); err == nil {
+	if _, err := newClient(&recordingTransport{}).PutEvidence(missingContext(), params); err == nil {
 		t.Fatal("PutEvidence(nil context) error = nil")
 	}
 	invalidBody := params
@@ -252,7 +252,7 @@ func TestGeneratedClientReleaseValidatesRequestAndResponseAuthority(t *testing.T
 		OperationID: "operation_release", ManagedRunID: "managed-run_a",
 		WorkspaceLeaseID: "workspace-lease_a", Disposition: "reap_safe", ReleasedAtMs: 1_800_000_000_000,
 	}
-	if _, err := newClient(&recordingTransport{}).Release(nil, params); err == nil {
+	if _, err := newClient(&recordingTransport{}).Release(missingContext(), params); err == nil {
 		t.Fatal("Release(nil context) error = nil")
 	}
 	invalid := params
