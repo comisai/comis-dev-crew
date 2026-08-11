@@ -2,6 +2,8 @@ package comiswire
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -116,6 +118,50 @@ func (connection *ControlConnection) Report(ctx context.Context, params ReportRe
 	}
 	if response.Result.ManagedRunID != params.ManagedRunID || response.Result.ServiceReportID != params.ServiceReportID {
 		return ReportResponseResult{}, errors.New("report to Comis: acknowledgement identity differs")
+	}
+	return response.Result, nil
+}
+
+// PutEvidence sends one already-durable immutable evidence body on the current
+// authenticated connection. An error leaves the host outcome uncertain.
+func (connection *ControlConnection) PutEvidence(
+	ctx context.Context,
+	params PutEvidenceRequestParams,
+) (PutEvidenceResponseResult, error) {
+	if ctx == nil {
+		return PutEvidenceResponseResult{}, errors.New("put evidence to Comis: context is required")
+	}
+	body, err := base64.StdEncoding.DecodeString(params.BodyBase64)
+	if err != nil || len(body) == 0 || len(body) > MaxEvidenceBytes {
+		return PutEvidenceResponseResult{}, errors.New("put evidence to Comis: body is invalid")
+	}
+	if fmt.Sprintf("%x", sha256.Sum256(body)) != params.ContentHash {
+		return PutEvidenceResponseResult{}, errors.New("put evidence to Comis: body hash differs")
+	}
+	if params.VerificationLevel == EvidenceVerificationLevelHostVerified {
+		return PutEvidenceResponseResult{}, errors.New("put evidence to Comis: host verification is reserved")
+	}
+	request := PutEvidenceRequest{
+		JSONRPC: JSONRPCVersion, ID: params.OperationID, Method: MethodManagedRunsPutEvidence, Params: params,
+	}
+	if err := validateGeneratedDocument(schemaPutEvidenceRequest, request); err != nil {
+		return PutEvidenceResponseResult{}, fmt.Errorf("put evidence to Comis: invalid request: %w", err)
+	}
+	session, err := connection.awaitSession(ctx)
+	if err != nil {
+		return PutEvidenceResponseResult{}, err
+	}
+	var response PutEvidenceResponse
+	authenticated := authenticatedPutEvidenceRequest{PutEvidenceRequest: request, Bearer: connection.config.Credential}
+	if err := session.call(ctx, authenticated, params.OperationID, &response); err != nil {
+		return PutEvidenceResponseResult{}, fmt.Errorf("put evidence to Comis: outcome uncertain: %w", err)
+	}
+	if err := validateGeneratedDocument(schemaPutEvidenceResponse, response); err != nil {
+		return PutEvidenceResponseResult{}, fmt.Errorf("put evidence to Comis: invalid response: %w", err)
+	}
+	if response.Result.ManagedRunID != params.ManagedRunID || response.Result.EvidenceRef != params.EvidenceRef ||
+		response.Result.ContentHash != params.ContentHash || response.Result.VerificationLevel != params.VerificationLevel {
+		return PutEvidenceResponseResult{}, errors.New("put evidence to Comis: acknowledgement identity differs")
 	}
 	return response.Result, nil
 }

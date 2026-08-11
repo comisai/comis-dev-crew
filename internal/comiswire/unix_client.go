@@ -40,6 +40,11 @@ type authenticatedReportRequest struct {
 	Bearer string `json:"bearer"`
 }
 
+type authenticatedPutEvidenceRequest struct {
+	PutEvidenceRequest
+	Bearer string `json:"bearer"`
+}
+
 type responseEnvelope struct {
 	Error   json.RawMessage `json:"error"`
 	ID      json.RawMessage `json:"id"`
