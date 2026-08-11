@@ -3,6 +3,7 @@ package forge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -137,6 +138,104 @@ func TestGitHubAdapter_RefusesSharedCredentialsChangedHeadAndUnboundedResponses(
 	if _, err := adapter.DeliverPullRequest(context.Background(), request); err == nil {
 		t.Fatal("DeliverPullRequest(changed head) error = nil")
 	}
+	var oversized map[string]any
+	if err := adapter.requestJSON(context.Background(), "read-token", http.MethodGet, adapter.repositoryPath("oversized"), nil, nil, &oversized); err == nil {
+		t.Fatal("requestJSON(oversized) error = nil")
+	}
+}
+
+func TestGitHubAdapter_RejectsInvalidConfigurationRequestsAndDependencies(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+	for _, mutate := range []func(*GitHubConfig){
+		func(config *GitHubConfig) { config.APIBaseURL = "http://example.com" },
+		func(config *GitHubConfig) { config.Owner = "bad owner" },
+		func(config *GitHubConfig) { config.RepositoryIdentity = "x" },
+		func(config *GitHubConfig) { config.Pusher = nil },
+		func(config *GitHubConfig) { config.ReadCredentials = nil },
+	} {
+		configuration := validGitHubConfig(server)
+		mutate(&configuration)
+		if _, err := NewGitHubAdapter(configuration); err == nil {
+			t.Fatal("NewGitHubAdapter(invalid) error = nil")
+		}
+	}
+	configuration := validGitHubConfig(server)
+	adapter, err := NewGitHubAdapter(configuration)
+	if err != nil {
+		t.Fatalf("NewGitHubAdapter() error = %v", err)
+	}
+	valid := PullRequestRequest{
+		OperationID: "deliver-fixture", WorktreePath: "/approved/worktrees/task-fixture",
+		Branch: "devcrew/task-fixture", HeadRevision: strings.Repeat("b", 40), Title: "Task fixture",
+		RequiredChecks: []string{"ci/unit"},
+	}
+	for _, mutate := range []func(*PullRequestRequest){
+		func(request *PullRequestRequest) { request.OperationID = "bad operation" },
+		func(request *PullRequestRequest) { request.WorktreePath = "relative" },
+		func(request *PullRequestRequest) { request.Branch = "main" },
+		func(request *PullRequestRequest) { request.HeadRevision = "invalid" },
+		func(request *PullRequestRequest) { request.Title = " bad" },
+		func(request *PullRequestRequest) { request.RequiredChecks = nil },
+		func(request *PullRequestRequest) { request.RequiredChecks = []string{"ci/unit", "ci/unit"} },
+	} {
+		request := valid
+		mutate(&request)
+		if _, err := adapter.DeliverPullRequest(context.Background(), request); err == nil {
+			t.Fatal("DeliverPullRequest(invalid request) error = nil")
+		}
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := adapter.DeliverPullRequest(cancelled, valid); !errors.Is(err, context.Canceled) {
+		t.Fatalf("DeliverPullRequest(cancelled) error = %v", err)
+	}
+	if _, err := (*GitHubAdapter)(nil).DeliverPullRequest(context.Background(), valid); err == nil {
+		t.Fatal("DeliverPullRequest(nil adapter) error = nil")
+	}
+	configuration.ReadCredentials = failingCredentialSource{}
+	adapter, _ = NewGitHubAdapter(configuration)
+	if _, err := adapter.DeliverPullRequest(context.Background(), valid); err == nil {
+		t.Fatal("DeliverPullRequest(read credential failure) error = nil")
+	}
+	configuration = validGitHubConfig(server)
+	configuration.PushCredentials = failingCredentialSource{}
+	adapter, _ = NewGitHubAdapter(configuration)
+	if _, err := adapter.DeliverPullRequest(context.Background(), valid); err == nil {
+		t.Fatal("DeliverPullRequest(push credential failure) error = nil")
+	}
+	configuration = validGitHubConfig(server)
+	configuration.Pusher = failingBranchPusher{}
+	adapter, _ = NewGitHubAdapter(configuration)
+	if _, err := adapter.DeliverPullRequest(context.Background(), valid); err == nil {
+		t.Fatal("DeliverPullRequest(push failure) error = nil")
+	}
+}
+
+func TestGitHubCheckConclusion_MapsEveryExternalPostureFailClosed(t *testing.T) {
+	value := func(value string) *string { return &value }
+	for _, test := range []struct {
+		status     string
+		conclusion *string
+		want       domain.CheckConclusion
+	}{
+		{status: "queued", want: domain.CheckPending},
+		{status: "in_progress", want: domain.CheckPending},
+		{status: "invented", want: domain.CheckUnknown},
+		{status: "completed", want: domain.CheckUnknown},
+		{status: "completed", conclusion: value("success"), want: domain.CheckPassed},
+		{status: "completed", conclusion: value("neutral"), want: domain.CheckPassed},
+		{status: "completed", conclusion: value("failure"), want: domain.CheckFailed},
+		{status: "completed", conclusion: value("cancelled"), want: domain.CheckFailed},
+		{status: "completed", conclusion: value("invented"), want: domain.CheckUnknown},
+	} {
+		if got := githubCheckConclusion(test.status, test.conclusion); got != test.want {
+			t.Fatalf("githubCheckConclusion(%q, %v) = %q, want %q", test.status, test.conclusion, got, test.want)
+		}
+	}
 }
 
 type staticCredentialSource struct{ credential Credential }
@@ -145,10 +244,22 @@ func (source staticCredentialSource) Resolve(context.Context) (Credential, error
 	return source.credential, nil
 }
 
+type failingCredentialSource struct{}
+
+func (failingCredentialSource) Resolve(context.Context) (Credential, error) {
+	return Credential{}, errors.New("credential unavailable")
+}
+
 type recordingBranchPusher struct {
 	calls      int
 	credential Credential
 	request    BranchPushRequest
+}
+
+type failingBranchPusher struct{}
+
+func (failingBranchPusher) Push(context.Context, Credential, BranchPushRequest) error {
+	return errors.New("push failed")
 }
 
 func (pusher *recordingBranchPusher) Push(_ context.Context, credential Credential, request BranchPushRequest) error {
