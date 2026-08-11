@@ -2,6 +2,8 @@ package domain
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -135,6 +137,96 @@ func TestDeliveryEvidenceSeal_IsCanonicalImmutableAndRejectsAmbiguity(t *testing
 	invalid.ExpiresAt = invalid.ProducedAt
 	if _, err := SealDeliveryEvidence(invalid); err == nil {
 		t.Fatal("SealDeliveryEvidence(invalid expiry) error = nil")
+	}
+}
+
+func TestDeliveryEvidenceSeal_RejectsEveryIncompleteEvidenceClass(t *testing.T) {
+	task := validTask(ShapeShip, DeliveryPullRequest)
+	tests := []struct {
+		name   string
+		mutate func(*DeliveryEvidenceBundle)
+	}{
+		{name: "schema", mutate: func(bundle *DeliveryEvidenceBundle) { bundle.SchemaVersion = 2 }},
+		{name: "worktree posture", mutate: func(bundle *DeliveryEvidenceBundle) { bundle.WorktreeCleanliness = "forged" }},
+		{name: "missing receipts", mutate: func(bundle *DeliveryEvidenceBundle) { bundle.ValidationReceipts = nil }},
+		{name: "invalid receipt identity", mutate: func(bundle *DeliveryEvidenceBundle) { bundle.ValidationReceipts[0].CheckID = "bad check" }},
+		{name: "invalid receipt conclusion", mutate: func(bundle *DeliveryEvidenceBundle) { bundle.ValidationReceipts[0].Conclusion = "forged" }},
+		{name: "invalid receipt time", mutate: func(bundle *DeliveryEvidenceBundle) {
+			bundle.ValidationReceipts[0].CompletedAt = bundle.ValidationReceipts[0].StartedAt.Add(-time.Second)
+		}},
+		{name: "ambiguous artifacts", mutate: func(bundle *DeliveryEvidenceBundle) {
+			bundle.ReportArtifact = &ReportArtifactEvidence{ContentHash: strings.Repeat("e", 64), Size: 1, MediaType: "text/plain"}
+		}},
+		{name: "invalid forge identity", mutate: func(bundle *DeliveryEvidenceBundle) { bundle.ForgeEvidence.Repository = "bad repository" }},
+		{name: "missing forge checks", mutate: func(bundle *DeliveryEvidenceBundle) { bundle.ForgeEvidence.CheckConclusions = nil }},
+		{name: "invalid forge check", mutate: func(bundle *DeliveryEvidenceBundle) { bundle.ForgeEvidence.CheckConclusions[0].Name = " bad" }},
+		{name: "duplicate forge check", mutate: func(bundle *DeliveryEvidenceBundle) {
+			bundle.ForgeEvidence.CheckConclusions = append(bundle.ForgeEvidence.CheckConclusions, bundle.ForgeEvidence.CheckConclusions[0])
+		}},
+		{name: "negative decisions", mutate: func(bundle *DeliveryEvidenceBundle) { bundle.UnresolvedDecisionCount = -1 }},
+		{name: "non utc production", mutate: func(bundle *DeliveryEvidenceBundle) {
+			bundle.ProducedAt = bundle.ProducedAt.In(time.FixedZone("other", 0))
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			bundle := shipEvidence(task)
+			test.mutate(&bundle)
+			if _, err := SealDeliveryEvidence(bundle); err == nil {
+				t.Fatal("SealDeliveryEvidence() error = nil")
+			}
+		})
+	}
+	invalidReport := shipEvidence(validTask(ShapeScout, DeliveryReport))
+	invalidReport.ForgeEvidence = nil
+	invalidReport.ReportArtifact = &ReportArtifactEvidence{ContentHash: "invalid", Size: 0, MediaType: "text"}
+	if _, err := SealDeliveryEvidence(invalidReport); err == nil {
+		t.Fatal("SealDeliveryEvidence(invalid report) error = nil")
+	}
+}
+
+func TestDeliveryEvidenceParse_RejectsMalformedNonCanonicalAndNilAccess(t *testing.T) {
+	var nilEvidence *SealedDeliveryEvidence
+	if nilEvidence.Digest() != "" || nilEvidence.Canonical() != nil || nilEvidence.Bundle().SchemaVersion != 0 {
+		t.Fatal("nil sealed evidence returned content")
+	}
+	if _, err := ParseDeliveryEvidence(nil, "invalid"); err == nil {
+		t.Fatal("ParseDeliveryEvidence(invalid envelope) error = nil")
+	}
+	for _, content := range [][]byte{
+		[]byte(`{"unknown":true}`),
+		[]byte(`{} {}`),
+		[]byte(" {}"),
+	} {
+		digest := fmt.Sprintf("%x", sha256.Sum256(content))
+		if _, err := ParseDeliveryEvidence(content, digest); err == nil {
+			t.Fatalf("ParseDeliveryEvidence(%q) error = nil", content)
+		}
+	}
+}
+
+func TestCandidateJudge_RejectsInvalidRequirementsAndMissingDeliveryEvidence(t *testing.T) {
+	ship := validTask(ShapeShip, DeliveryPullRequest)
+	shipBundle := shipEvidence(ship)
+	shipBundle.ForgeEvidence = nil
+	tests := []struct {
+		name  string
+		input CandidateJudgeInput
+		want  CandidateReason
+	}{
+		{name: "nil evidence", input: CandidateJudgeInput{Task: ship, Now: ship.UpdatedAt}, want: CandidateEvidenceInvalid},
+		{name: "no local requirements", input: CandidateJudgeInput{Task: ship, Evidence: sealCandidateEvidence(t, shipEvidence(ship)), Now: ship.UpdatedAt.Add(5 * time.Minute), RequiredForgeChecks: []string{"ci/unit"}}, want: CandidateValidationMissing},
+		{name: "duplicate local requirements", input: CandidateJudgeInput{Task: ship, Evidence: sealCandidateEvidence(t, shipEvidence(ship)), Now: ship.UpdatedAt.Add(5 * time.Minute), RequiredLocalChecks: []string{"unit", "unit"}, RequiredForgeChecks: []string{"ci/unit"}}, want: CandidateValidationMissing},
+		{name: "missing forge evidence", input: CandidateJudgeInput{Task: ship, Evidence: sealCandidateEvidence(t, shipBundle), Now: ship.UpdatedAt.Add(5 * time.Minute), RequiredLocalChecks: []string{"unit"}, RequiredForgeChecks: []string{"ci/unit"}}, want: CandidateForgeMissing},
+		{name: "duplicate forge requirements", input: CandidateJudgeInput{Task: ship, Evidence: sealCandidateEvidence(t, shipEvidence(ship)), Now: ship.UpdatedAt.Add(5 * time.Minute), RequiredLocalChecks: []string{"unit"}, RequiredForgeChecks: []string{"ci/unit", "ci/unit"}}, want: CandidateForgeMissing},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := JudgeCandidate(test.input)
+			if got.Outcome != CandidateUnknown || got.Reason != test.want {
+				t.Fatalf("JudgeCandidate() = %#v", got)
+			}
+		})
 	}
 }
 
