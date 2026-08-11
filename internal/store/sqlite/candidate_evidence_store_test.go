@@ -115,6 +115,167 @@ func TestCandidateEvidenceStore_RefusesCrossTaskStaleAndCorruptEvidence(t *testi
 	}
 }
 
+func TestCandidateEvidenceStore_FailsClosedForInvalidInputsStateAndVerdicts(t *testing.T) {
+	now := time.Date(2026, time.August, 11, 18, 0, 0, 0, time.UTC)
+	invalidJudgments := []domain.CandidateJudgment{
+		{},
+		{Outcome: domain.CandidateAccepted, Reason: domain.CandidateEvidenceInvalid},
+		{Outcome: domain.CandidateRejected, Reason: domain.CandidateEvidenceAccepted},
+		{Outcome: domain.CandidateUnknown, Reason: domain.CandidateEvidenceAccepted},
+		{Outcome: "forged", Reason: domain.CandidateEvidenceInvalid},
+	}
+	for _, judgment := range invalidJudgments {
+		if validCandidateJudgment(judgment) {
+			t.Fatalf("validCandidateJudgment(%#v) = true", judgment)
+		}
+	}
+	validJudgments := []domain.CandidateJudgment{
+		{Outcome: domain.CandidateAccepted, Reason: domain.CandidateEvidenceAccepted},
+		{Outcome: domain.CandidateRejected, Reason: domain.CandidateValidationFailed},
+		{Outcome: domain.CandidateRejected, Reason: domain.CandidateForgeFailed},
+	}
+	for _, reason := range []domain.CandidateReason{
+		domain.CandidateEvidenceInvalid, domain.CandidateEvidenceStale, domain.CandidateEvidenceConflicting,
+		domain.CandidateWorktreeUnverified, domain.CandidateDecisionUnresolved, domain.CandidateValidationMissing,
+		domain.CandidateValidationUnknown, domain.CandidateForgeMissing, domain.CandidateForgeUnknown,
+		domain.CandidateReportMissing,
+	} {
+		validJudgments = append(validJudgments, domain.CandidateJudgment{Outcome: domain.CandidateUnknown, Reason: reason})
+	}
+	for _, judgment := range validJudgments {
+		if !validCandidateJudgment(judgment) {
+			t.Fatalf("validCandidateJudgment(%#v) = false", judgment)
+		}
+	}
+
+	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	prepared := storeTask("task-prepared-evidence", 1)
+	if err := store.CreateTask(context.Background(), prepared); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	sealed := candidateEvidence(t, prepared, strings.Repeat("b", 40))
+	if _, _, err := store.CommitCandidateEvidence(
+		context.Background(), prepared.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, now,
+	); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("CommitCandidateEvidence(prepared) error = %v, want ErrPrecondition", err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := store.CommitCandidateEvidence(cancelled, prepared.Handle, sealed, nil, nil, now); !errors.Is(err, context.Canceled) {
+		t.Fatalf("CommitCandidateEvidence(cancelled) error = %v", err)
+	}
+	if _, _, err := store.LatestCandidateEvidence(cancelled, prepared.Handle); !errors.Is(err, context.Canceled) {
+		t.Fatalf("LatestCandidateEvidence(cancelled) error = %v", err)
+	}
+	//lint:ignore SA1012 The boundary test proves nil contexts are rejected before database work.
+	if _, _, err := store.CommitCandidateEvidence(nil, prepared.Handle, sealed, nil, nil, now); err == nil {
+		t.Fatal("CommitCandidateEvidence(nil context) error = nil")
+	}
+	if _, _, err := store.CommitCandidateEvidence(context.Background(), "bad handle", sealed, nil, nil, now); err == nil {
+		t.Fatal("CommitCandidateEvidence(invalid handle) error = nil")
+	}
+	if _, _, err := store.CommitCandidateEvidence(context.Background(), prepared.Handle, nil, nil, nil, now); err == nil {
+		t.Fatal("CommitCandidateEvidence(nil evidence) error = nil")
+	}
+	if _, _, err := store.CommitCandidateEvidence(
+		context.Background(), prepared.Handle, sealed, nil, nil, now.In(time.FixedZone("other", 0)),
+	); err == nil {
+		t.Fatal("CommitCandidateEvidence(non-UTC time) error = nil")
+	}
+	//lint:ignore SA1012 The boundary test proves nil contexts are rejected before database work.
+	if _, _, err := store.LatestCandidateEvidence(nil, prepared.Handle); err == nil {
+		t.Fatal("LatestCandidateEvidence(nil context) error = nil")
+	}
+	if _, _, err := store.LatestCandidateEvidence(context.Background(), "bad handle"); err == nil {
+		t.Fatal("LatestCandidateEvidence(invalid handle) error = nil")
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if _, _, err := store.CommitCandidateEvidence(context.Background(), prepared.Handle, sealed, nil, nil, now); err == nil {
+		t.Fatal("CommitCandidateEvidence(closed store) error = nil")
+	}
+	if _, _, err := store.LatestCandidateEvidence(context.Background(), prepared.Handle); err == nil {
+		t.Fatal("LatestCandidateEvidence(closed store) error = nil")
+	}
+	if _, _, err := (*Store)(nil).CommitCandidateEvidence(context.Background(), prepared.Handle, sealed, nil, nil, now); err == nil {
+		t.Fatal("CommitCandidateEvidence(nil store) error = nil")
+	}
+	if _, _, err := (*Store)(nil).LatestCandidateEvidence(context.Background(), prepared.Handle); err == nil {
+		t.Fatal("LatestCandidateEvidence(nil store) error = nil")
+	}
+}
+
+func TestCandidateEvidenceStore_RollsBackStorageFailuresAndRejectsCorruptMetadata(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	task := candidateEvidenceTask(t, "task-evidence-storage")
+	if err := store.CreateTask(context.Background(), task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	sealed := candidateEvidence(t, task, strings.Repeat("b", 40))
+	judgedAt := task.UpdatedAt.Add(5 * time.Minute)
+	if _, err := store.db.Exec(`CREATE TRIGGER reject_candidate_task_update BEFORE UPDATE ON tasks BEGIN SELECT RAISE(FAIL, 'blocked'); END`); err != nil {
+		t.Fatalf("create task update trigger: %v", err)
+	}
+	if _, _, err := store.CommitCandidateEvidence(
+		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt,
+	); err == nil {
+		t.Fatal("CommitCandidateEvidence(blocked task update) error = nil")
+	}
+	if _, err := store.db.Exec(`DROP TRIGGER reject_candidate_task_update`); err != nil {
+		t.Fatalf("drop task update trigger: %v", err)
+	}
+	if _, err := store.db.Exec(`CREATE TRIGGER reject_candidate_evidence_insert BEFORE INSERT ON candidate_evidence BEGIN SELECT RAISE(FAIL, 'blocked'); END`); err != nil {
+		t.Fatalf("create evidence insert trigger: %v", err)
+	}
+	if _, _, err := store.CommitCandidateEvidence(
+		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt,
+	); err == nil {
+		t.Fatal("CommitCandidateEvidence(blocked evidence insert) error = nil")
+	}
+	if _, err := store.db.Exec(`DROP TRIGGER reject_candidate_evidence_insert`); err != nil {
+		t.Fatalf("drop evidence insert trigger: %v", err)
+	}
+	if _, _, err := store.CommitCandidateEvidence(
+		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt,
+	); err != nil {
+		t.Fatalf("CommitCandidateEvidence() error = %v", err)
+	}
+	transaction, err := store.db.Begin()
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	row, found, err := findCandidateEvidence(context.Background(), transaction, task.Handle, sealed.Digest())
+	if err != nil || !found {
+		t.Fatalf("findCandidateEvidence() = %#v, %v, %v", row, found, err)
+	}
+	if err := insertCandidateEvidence(context.Background(), transaction, row); !errors.Is(err, application.ErrConflict) {
+		t.Fatalf("insertCandidateEvidence(duplicate) error = %v, want ErrConflict", err)
+	}
+	if err := transaction.Rollback(); err != nil {
+		t.Fatalf("Rollback() error = %v", err)
+	}
+	if _, err := store.db.Exec(`UPDATE candidate_evidence SET outcome = 'forged' WHERE task_handle = ?`, task.Handle); err != nil {
+		t.Fatalf("corrupt candidate outcome: %v", err)
+	}
+	if _, _, err := store.LatestCandidateEvidence(context.Background(), task.Handle); err == nil {
+		t.Fatal("LatestCandidateEvidence(corrupt outcome) error = nil")
+	}
+	if _, err := store.db.Exec(`UPDATE candidate_evidence SET outcome = 'accepted', reason = 'evidence_accepted', judged_at = 'invalid' WHERE task_handle = ?`, task.Handle); err != nil {
+		t.Fatalf("corrupt candidate time: %v", err)
+	}
+	if _, _, err := store.LatestCandidateEvidence(context.Background(), task.Handle); err == nil {
+		t.Fatal("LatestCandidateEvidence(corrupt time) error = nil")
+	}
+}
+
 func candidateEvidenceTask(t *testing.T, handle string) domain.Task {
 	t.Helper()
 	task := storeTask(handle, 1)

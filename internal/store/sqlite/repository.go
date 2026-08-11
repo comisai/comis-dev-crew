@@ -261,6 +261,8 @@ func currentStateVersion(ctx context.Context, source queryer) (int64, error) {
         SELECT state_version FROM operations
 		UNION ALL
 		SELECT state_version FROM reports
+		UNION ALL
+		SELECT state_version FROM candidate_evidence
     )`
 	var version int64
 	if err := source.QueryRowContext(ctx, query).Scan(&version); err != nil {
