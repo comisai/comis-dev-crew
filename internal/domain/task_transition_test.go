@@ -77,6 +77,21 @@ func TestTaskApplyTransition_ModelsDecisionBlockAndPauseWithoutWideningState(t *
 	}
 }
 
+func TestTaskApplyTransition_RevalidatesDeveloperWorkFromSafePause(t *testing.T) {
+	task := transitionTaskToWorking(t)
+	paused, err := task.ApplyTransition(TransitionPaused, task.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatalf("ApplyTransition(paused) error = %v", err)
+	}
+	validating, err := paused.ApplyTransition(TransitionValidationStarted, paused.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatalf("ApplyTransition(validation started) error = %v", err)
+	}
+	if validating.State != TaskValidating {
+		t.Fatalf("handback state = %q, want %q", validating.State, TaskValidating)
+	}
+}
+
 func TestTaskApplyTransition_ReconciliationFailsClosed(t *testing.T) {
 	task := transitionTaskToWorking(t)
 	var err error
