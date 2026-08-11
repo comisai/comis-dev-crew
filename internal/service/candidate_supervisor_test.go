@@ -227,6 +227,37 @@ func TestCandidateSupervisor_RunRecoversDurableValidatingTaskAndJoinsCancellatio
 	if err := queueSupervisor.Run(queueContext); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run(queue cancellation) error = %v", err)
 	}
+	unavailableFixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	unavailableFixture.store.list = func(context.Context) ([]domain.Task, error) {
+		return nil, errors.New("durable queue unavailable")
+	}
+	unavailableSupervisor, err := newCandidateSupervisor(unavailableFixture.config())
+	if err != nil {
+		t.Fatalf("newCandidateSupervisor(unavailable queue) error = %v", err)
+	}
+	if err := unavailableSupervisor.Run(context.Background()); err == nil {
+		t.Fatal("Run(unavailable queue) error = nil")
+	}
+	validationFailureFixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	validationFailureFixture.git.snapshots = nil
+	validationFailureSupervisor, err := newCandidateSupervisor(validationFailureFixture.config())
+	if err != nil {
+		t.Fatalf("newCandidateSupervisor(validation failure) error = %v", err)
+	}
+	if err := validationFailureSupervisor.Run(context.Background()); err == nil {
+		t.Fatal("Run(validation failure) error = nil")
+	}
+	rejectedFixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	rejectedFixture.runner.receipt.Passed = false
+	rejectedFixture.runner.receipt.ExitCode = 1
+	rejectedFixture.runner.err = errors.New("required check failed")
+	rejectedSupervisor, err := newCandidateSupervisor(rejectedFixture.config())
+	if err != nil {
+		t.Fatalf("newCandidateSupervisor(rejected evidence) error = %v", err)
+	}
+	if err := rejectedSupervisor.Run(context.Background()); err == nil {
+		t.Fatal("Run(rejected evidence) error = nil")
+	}
 }
 
 type candidateSupervisorFixture struct {
