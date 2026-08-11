@@ -18,6 +18,7 @@ type Handler struct {
 	queries           ReadQueries
 	mutations         TaskMutations
 	interventions     TaskInterventions
+	cleanup           TaskCleanup
 	serviceInstanceID string
 	clock             application.Clock
 }
@@ -36,7 +37,7 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 		return nil, errors.New("create local API handler: service instance identity is required for mutations")
 	}
 	return &Handler{
-		queries: config.Queries, mutations: config.Mutations, interventions: config.Interventions,
+		queries: config.Queries, mutations: config.Mutations, interventions: config.Interventions, cleanup: config.Cleanup,
 		serviceInstanceID: config.ServiceInstanceID, clock: config.Clock,
 	}, nil
 }
@@ -146,6 +147,18 @@ func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 			OperationID: request.OperationID, TaskHandle: input.TaskHandle, Action: input.Action,
 		})
 		return handler.taskMutationOutcome(request.OperationID, MethodHandbackTask, result, err)
+	case MethodCleanupTask:
+		var input CleanupTaskInput
+		if err := decodeObject(request.Payload, &input); err != nil {
+			return invalidPayload(request.OperationID, err)
+		}
+		if handler.cleanup == nil {
+			return rejectedOutcome(request.OperationID, domain.ErrorUnavailable, true, "cleanup service is unavailable", "inspect service configuration", nil)
+		}
+		result, err := handler.cleanup.CleanupTask(ctx, application.CleanupTaskCommand{
+			OperationID: request.OperationID, TaskHandle: input.TaskHandle,
+		})
+		return handler.taskMutationOutcome(request.OperationID, MethodCleanupTask, result, err)
 	default:
 		return rejectedOutcome(request.OperationID, domain.ErrorInvalidArgument, false, "unknown local API method", "use a method from the closed catalog", nil)
 	}

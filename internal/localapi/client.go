@@ -99,6 +99,13 @@ func (client *Client) HandbackTask(ctx context.Context, operationID string, inpu
 	return result, err
 }
 
+// CleanupTask executes one canonical idempotent release-before-removal cleanup.
+func (client *Client) CleanupTask(ctx context.Context, operationID string, input CleanupTaskInput) (TaskMutationResult, error) {
+	var result TaskMutationResult
+	err := client.call(ctx, operationID, MethodCleanupTask, input, &result)
+	return result, err
+}
+
 func (client *Client) call(ctx context.Context, operationID string, method Method, payload any, result any) error {
 	if ctx == nil {
 		return errors.New("call local API: context is required")

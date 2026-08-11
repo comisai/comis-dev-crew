@@ -51,11 +51,13 @@ const (
 	MethodOperation     Method = "GetOperation"
 	MethodPrepareTask   Method = "PrepareTask"
 	MethodHandbackTask  Method = "HandbackTask"
+	MethodCleanupTask   Method = "CleanupTask"
 )
 
 func (method Method) valid() bool {
 	switch method {
-	case MethodDiagnose, MethodFleet, MethodListTasks, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan, MethodOperation, MethodPrepareTask, MethodHandbackTask:
+	case MethodDiagnose, MethodFleet, MethodListTasks, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
+		MethodOperation, MethodPrepareTask, MethodHandbackTask, MethodCleanupTask:
 		return true
 	default:
 		return false
@@ -73,7 +75,7 @@ const (
 
 // SideEffect returns the authoritative method classification.
 func (method Method) SideEffect() SideEffectClass {
-	if method == MethodPrepareTask || method == MethodHandbackTask {
+	if method == MethodPrepareTask || method == MethodHandbackTask || method == MethodCleanupTask {
 		return SideEffectMutate
 	}
 	return SideEffectRead
@@ -127,11 +129,17 @@ type TaskInterventions interface {
 	HandbackTask(context.Context, application.HandbackTaskCommand) (application.MutationResult, error)
 }
 
+// TaskCleanup is the canonical release-before-removal mutation surface.
+type TaskCleanup interface {
+	CleanupTask(context.Context, application.CleanupTaskCommand) (application.MutationResult, error)
+}
+
 // HandlerConfig binds local endpoint authority to canonical application seams.
 type HandlerConfig struct {
 	Queries           ReadQueries
 	Mutations         TaskMutations
 	Interventions     TaskInterventions
+	Cleanup           TaskCleanup
 	ServiceInstanceID string
 	Clock             application.Clock
 }
@@ -140,6 +148,11 @@ type HandlerConfig struct {
 type HandbackTaskInput struct {
 	TaskHandle string                     `json:"taskHandle"`
 	Action     application.HandbackAction `json:"action"`
+}
+
+// CleanupTaskInput selects one durably delivered task.
+type CleanupTaskInput struct {
+	TaskHandle string `json:"taskHandle"`
 }
 
 // TaskMutationResult is the common public projection for post-prepare task mutations.
