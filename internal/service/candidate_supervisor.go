@@ -73,6 +73,9 @@ func (supervisor *candidateSupervisor) Run(ctx context.Context) error {
 	for {
 		tasks, err := supervisor.config.Store.ListTasks(ctx)
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			return errors.New("run candidate supervisor: durable task queue is unavailable")
 		}
 		for _, task := range tasks {
@@ -81,6 +84,9 @@ func (supervisor *candidateSupervisor) Run(ctx context.Context) error {
 			}
 			_, judgment, err := supervisor.ValidateTask(ctx, task.Handle)
 			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				return fmt.Errorf("run candidate supervisor: %w", err)
 			}
 			if judgment.Outcome != domain.CandidateAccepted {
