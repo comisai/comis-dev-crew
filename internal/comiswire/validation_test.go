@@ -206,10 +206,24 @@ func TestGeneratedErrorAndDiscriminatorContractsAreClosed(t *testing.T) {
 		t.Fatal("error kind contract is not closed")
 	}
 	for _, valid := range []interface{ Valid() bool }{
-		AbandonReasonOwnerCancelled, HealthStatusHealthy, ReportKindProgress, ServiceScopeHealth, ManagedRunStateActive,
+		AbandonDispositionReapSafe, AbandonReasonOwnerCancelled,
+		AbandonTerminalTransitionUnboundPreparationAbandoned,
+		CapabilityTerminalTransitionRunning, EvidenceDeliveryKindAttachment,
+		EvidenceVerificationLevelAdapterVerified, ExecutionAttachmentKindUnixSocket,
+		HealthStatusHealthy, ManagedRunStateActive, ReportKindProgress, ServiceScopeHealth,
 	} {
 		if !valid.Valid() {
 			t.Fatal("generated discriminator rejected a defined value")
+		}
+	}
+	for _, invalid := range []interface{ Valid() bool }{
+		AbandonDisposition("invented"), AbandonReason("invented"), AbandonTerminalTransition("invented"),
+		CapabilityTerminalTransition("invented"), EvidenceDeliveryKind("invented"),
+		EvidenceVerificationLevel("invented"), ExecutionAttachmentKind("invented"),
+		HealthStatus("invented"), ManagedRunState("invented"), ReportKind("invented"), ServiceScope("invented"),
+	} {
+		if invalid.Valid() {
+			t.Fatal("generated discriminator accepted an undefined value")
 		}
 	}
 	encoded, err := json.Marshal(failure)
