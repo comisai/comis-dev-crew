@@ -338,7 +338,7 @@ func newCandidateSupervisorFixture(t *testing.T, shape domain.TaskShape) *candid
 		HeadRevision: head, Cleanliness: devgit.CandidateClean,
 	}
 	receipt := validation.Receipt{
-		OperationID: candidateValidationOperationID(task.Handle, head, "unit"), TaskHandle: task.Handle, ProfileID: task.ValidationProfile,
+		OperationID: "validation-attempt-0001", TaskHandle: task.Handle, ProfileID: task.ValidationProfile,
 		CheckID: "unit", ProgramID: "go-test", HeadRevision: head,
 		StartedAt: now.Add(-2 * time.Minute), CompletedAt: now.Add(-time.Minute), ExitCode: 0, Passed: true,
 		OutputHash: strings.Repeat("d", 64), OutputBytes: 16,
@@ -369,9 +369,14 @@ func newCandidateSupervisorFixture(t *testing.T, shape domain.TaskShape) *candid
 }
 
 func (fixture *candidateSupervisorFixture) config() candidateSupervisorConfig {
+	validationSequence := 0
 	return candidateSupervisorConfig{
 		Store: fixture.store, Git: fixture.git, Catalog: fixture.catalog, Runner: fixture.runner,
 		PullRequests: fixture.pullRequests, InspectArtifact: fixture.artifact.inspect,
+		NewValidationOperationID: func() (string, error) {
+			validationSequence++
+			return fmt.Sprintf("validation-attempt-%04d", validationSequence), nil
+		},
 		Clock: func() time.Time { return fixture.now }, PollInterval: time.Millisecond,
 	}
 }
@@ -465,7 +470,9 @@ type candidateSupervisorRunner struct {
 func (runner *candidateSupervisorRunner) Run(_ context.Context, request validation.RunRequest) (validation.Receipt, error) {
 	runner.calls++
 	runner.requests = append(runner.requests, request)
-	return runner.receipt, runner.err
+	receipt := runner.receipt
+	receipt.OperationID = request.OperationID
+	return receipt, runner.err
 }
 
 type candidateSupervisorPullRequests struct {

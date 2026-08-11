@@ -177,7 +177,8 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		candidate, runnerErr = newCandidateSupervisor(candidateSupervisorConfig{
 			Store: store, Git: config.candidateGit, Catalog: config.validationCatalog,
 			Runner: runner, PullRequests: config.pullRequests, InspectArtifact: delivery.InspectReportArtifact,
-			Clock: clock, PollInterval: config.validationPollInterval,
+			NewValidationOperationID: func() (string, error) { return randomIdentity("validation", 16) },
+			Clock:                    clock, PollInterval: config.validationPollInterval,
 		})
 		if runnerErr != nil {
 			return fmt.Errorf("run service candidate supervisor: %w", runnerErr)

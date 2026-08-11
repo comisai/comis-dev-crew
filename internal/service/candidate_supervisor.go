@@ -45,14 +45,15 @@ type candidateDeliveryMaterial struct {
 }
 
 type candidateSupervisorConfig struct {
-	Store           candidateEvidenceStore
-	Git             candidateGitInspector
-	Catalog         *validation.Catalog
-	Runner          candidateValidationRunner
-	PullRequests    candidatePullRequestDeliverer
-	InspectArtifact candidateArtifactInspector
-	Clock           application.Clock
-	PollInterval    time.Duration
+	Store                    candidateEvidenceStore
+	Git                      candidateGitInspector
+	Catalog                  *validation.Catalog
+	Runner                   candidateValidationRunner
+	PullRequests             candidatePullRequestDeliverer
+	InspectArtifact          candidateArtifactInspector
+	NewValidationOperationID func() (string, error)
+	Clock                    application.Clock
+	PollInterval             time.Duration
 }
 
 type candidateSupervisor struct {
@@ -62,6 +63,7 @@ type candidateSupervisor struct {
 func newCandidateSupervisor(config candidateSupervisorConfig) (*candidateSupervisor, error) {
 	if config.Store == nil || config.Git == nil || config.Catalog == nil || config.Runner == nil ||
 		config.PullRequests == nil || config.InspectArtifact == nil || config.Clock == nil ||
+		config.NewValidationOperationID == nil ||
 		config.PollInterval <= 0 || config.PollInterval > time.Minute {
 		return nil, errors.New("create candidate supervisor: evidence dependencies are required")
 	}
@@ -205,11 +207,14 @@ func (supervisor *candidateSupervisor) runLocalChecks(
 		BaseRevision: task.BaseRevision, HeadRevision: snapshot.HeadRevision,
 	}
 	for _, check := range profile.LocalChecks {
-		operationID := candidateValidationOperationID(task.Handle, snapshot.HeadRevision, check.ID)
+		operationID, operationErr := supervisor.config.NewValidationOperationID()
+		if operationErr != nil {
+			return nil, nil, errors.New("validate task candidate: validation process identity is unavailable")
+		}
 		receipt, runErr := supervisor.config.Runner.Run(ctx, validation.RunRequest{
 			OperationID: operationID, TaskHandle: task.Handle, ProfileID: profile.ID, CheckID: check.ID, Fields: fields,
 		})
-		if !completeValidationReceipt(receipt, task, profile, check, snapshot) {
+		if !completeValidationReceipt(receipt, operationID, task, profile, check, snapshot) {
 			return nil, nil, errors.New("validate task candidate: validation receipt is incomplete")
 		}
 		conclusion := domain.CheckFailed
@@ -365,12 +370,13 @@ func requiredForgeCheckNames(checks []validation.ForgeCheck) []string {
 
 func completeValidationReceipt(
 	receipt validation.Receipt,
+	operationID string,
 	task domain.Task,
 	profile validation.Profile,
 	check validation.LocalCheck,
 	snapshot devgit.CandidateSnapshot,
 ) bool {
-	return receipt.OperationID == candidateValidationOperationID(task.Handle, snapshot.HeadRevision, check.ID) &&
+	return receipt.OperationID == operationID &&
 		receipt.TaskHandle == task.Handle && receipt.ProfileID == profile.ID && receipt.CheckID == check.ID &&
 		receipt.ProgramID == check.ProgramID && receipt.HeadRevision == snapshot.HeadRevision &&
 		receipt.StartedAt.Location() == time.UTC && receipt.CompletedAt.Location() == time.UTC &&
@@ -385,11 +391,6 @@ func candidateCleanliness(cleanliness devgit.CandidateCleanliness) domain.Worktr
 		return domain.WorktreeDirty
 	}
 	return domain.WorktreeUnknown
-}
-
-func candidateValidationOperationID(taskHandle, head, checkID string) string {
-	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(taskHandle+"\x00"+head+"\x00"+checkID)))
-	return "validation-" + digest[:32]
 }
 
 func candidateDeliveryOperationID(taskHandle, head string) string {
