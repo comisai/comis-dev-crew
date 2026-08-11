@@ -66,6 +66,31 @@ func TestRun_PrepareTaskRejectsAuthorityFieldsBeforeConnecting(t *testing.T) {
 	}
 }
 
+func TestRun_HandbackValidatesDeveloperWorkThroughCanonicalClient(t *testing.T) {
+	client := fixtureClient()
+	client.taskMutation = localapi.TaskMutationResult{
+		SchemaVersion: 1, OperationID: "operation-handback-cli", TaskHandle: "task-0001",
+		State: domain.TaskValidating, StateVersion: 14, SideEffect: localapi.SideEffectMutate,
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := Run(context.Background(), []string{
+		"task", "handback", "task-0001", "--action", "validate-developer-work",
+		"--operation", "operation-handback-cli", "--format", "json",
+	}, &stdout, &stderr, testConfig(client))
+	if exitCode != ExitSuccess {
+		t.Fatalf("Run() exit = %d, stderr = %q", exitCode, stderr.String())
+	}
+	if len(client.calls) != 1 || client.calls[0] != "handback:task-0001:validate-developer-work" ||
+		client.operationID != "operation-handback-cli" {
+		t.Fatalf("client calls/operation = %v/%q", client.calls, client.operationID)
+	}
+	var result localapi.TaskMutationResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || result != client.taskMutation {
+		t.Fatalf("handback JSON = %#v, %v", result, err)
+	}
+}
+
 func TestRun_HelpAndVersionDoNotConnect(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -281,17 +306,27 @@ func TestRun_FactoryIDAndWriterFailuresAreSafe(t *testing.T) {
 }
 
 type fakeClient struct {
-	diagnostic  application.DiagnosticReport
-	fleet       application.FleetSnapshot
-	list        application.TaskList
-	detail      application.TaskDetail
-	explanation application.TaskExplanation
-	operation   application.OperationView
-	launchPlan  application.LaunchPlan
-	prepared    localapi.PrepareTaskResult
-	err         error
-	calls       []string
-	operationID string
+	diagnostic   application.DiagnosticReport
+	fleet        application.FleetSnapshot
+	list         application.TaskList
+	detail       application.TaskDetail
+	explanation  application.TaskExplanation
+	operation    application.OperationView
+	launchPlan   application.LaunchPlan
+	prepared     localapi.PrepareTaskResult
+	taskMutation localapi.TaskMutationResult
+	err          error
+	calls        []string
+	operationID  string
+}
+
+func (client *fakeClient) HandbackTask(
+	_ context.Context,
+	operationID string,
+	input localapi.HandbackTaskInput,
+) (localapi.TaskMutationResult, error) {
+	client.record(operationID, "handback:"+input.TaskHandle+":"+string(input.Action))
+	return client.taskMutation, client.err
 }
 
 func (client *fakeClient) PrepareTask(_ context.Context, operationID string, input localapi.PrepareTaskInput) (localapi.PrepareTaskResult, error) {
