@@ -13,6 +13,7 @@ func renderClient(manifest bundle.Manifest) (string, error) {
 		"capabilityServices.health":    false,
 		"managedRuns.abandon":          false,
 		"managedRuns.activate":         false,
+		"managedRuns.putEvidence":      false,
 		"managedRuns.report":           false,
 		"managedRuns.terminalEvent":    false,
 	}
@@ -137,6 +138,40 @@ func (client *Client) Report(ctx context.Context, params ReportRequestParams) (R
 	}
 	if response.ID != request.ID || response.Result.ManagedRunID != params.ManagedRunID || response.Result.ServiceReportID != params.ServiceReportID {
 		return ReportResponseResult{}, fmt.Errorf("report response identity does not match request")
+	}
+	return response.Result, nil
+}
+
+func (client *Client) PutEvidence(ctx context.Context, params PutEvidenceRequestParams) (PutEvidenceResponseResult, error) {
+	if ctx == nil {
+		return PutEvidenceResponseResult{}, fmt.Errorf("put evidence context is required")
+	}
+	body, err := base64.StdEncoding.DecodeString(params.BodyBase64)
+	if err != nil || len(body) == 0 || len(body) > MaxEvidenceBytes {
+		return PutEvidenceResponseResult{}, fmt.Errorf("evidence body is invalid")
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256(body))
+	if digest != params.ContentHash {
+		return PutEvidenceResponseResult{}, fmt.Errorf("evidence body differs from its content hash")
+	}
+	if params.VerificationLevel == EvidenceVerificationLevelHostVerified {
+		return PutEvidenceResponseResult{}, fmt.Errorf("host verification is reserved")
+	}
+	request := PutEvidenceRequest{JSONRPC: JSONRPCVersion, ID: params.OperationID, Method: MethodManagedRunsPutEvidence, Params: params}
+	if err := validateGeneratedDocument(schemaPutEvidenceRequest, request); err != nil {
+		return PutEvidenceResponseResult{}, fmt.Errorf("validate put evidence request: %w", err)
+	}
+	var response PutEvidenceResponse
+	if err := client.transport.roundTrip(ctx, request, &response); err != nil {
+		return PutEvidenceResponseResult{}, err
+	}
+	if err := validateGeneratedDocument(schemaPutEvidenceResponse, response); err != nil {
+		return PutEvidenceResponseResult{}, fmt.Errorf("validate put evidence response: %w", err)
+	}
+	if response.ID != request.ID || response.Result.ManagedRunID != params.ManagedRunID ||
+		response.Result.EvidenceRef != params.EvidenceRef || response.Result.ContentHash != params.ContentHash ||
+		response.Result.VerificationLevel != params.VerificationLevel {
+		return PutEvidenceResponseResult{}, fmt.Errorf("put evidence response identity does not match request")
 	}
 	return response.Result, nil
 }

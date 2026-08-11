@@ -3,6 +3,7 @@ package generator
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -45,6 +46,7 @@ func renderContract(manifest bundle.Manifest, schemas []schemaSpec) (string, err
 		{name: "ReportKind", schema: "schemas/report.request.schema.json", path: []string{"params", "kind"}},
 		{name: "CapabilityTerminalTransition", schema: "schemas/terminalEvent.request.schema.json", path: []string{"params", "transition"}},
 		{name: "ExecutionAttachmentKind", schema: "schemas/mcp-managed-run-result.schema.json", path: []string{"requestedAttachment", "kind"}},
+		{name: "EvidenceVerificationLevel", schema: "schemas/putEvidence.request.schema.json", path: []string{"params", "verificationLevel"}},
 		{name: "ServiceScope", schema: "schemas/handshake.request.schema.json", path: []string{"params", "requestedScopes", "items"}},
 	} {
 		node, err := findNode(schemas, enum.schema, enum.path...)
@@ -58,6 +60,22 @@ func renderContract(manifest bundle.Manifest, schemas []schemaSpec) (string, err
 		if err := renderEnum(&output, enum.name, values); err != nil {
 			return "", err
 		}
+	}
+	deliveryNode, err := findNode(
+		schemas,
+		"schemas/putEvidence.request.schema.json",
+		"params",
+		"delivery",
+	)
+	if err != nil {
+		return "", err
+	}
+	deliveryKinds, err := objectVariantDiscriminatorValues(deliveryNode, "kind")
+	if err != nil {
+		return "", fmt.Errorf("read EvidenceDeliveryKind values: %w", err)
+	}
+	if err := renderEnum(&output, "EvidenceDeliveryKind", deliveryKinds); err != nil {
+		return "", err
 	}
 	terminalTransition, err := findNode(
 		schemas,
@@ -81,6 +99,27 @@ func renderContract(manifest bundle.Manifest, schemas []schemaSpec) (string, err
 		fmt.Fprintf(&output, "const %s = %s\n\n", schema.ConstName, strconv.Quote(string(schema.Contents)))
 	}
 	return output.String(), nil
+}
+
+func objectVariantDiscriminatorValues(node schemaNode, property string) ([]string, error) {
+	variants := objectVariants(node)
+	if len(variants) == 0 {
+		return nil, fmt.Errorf("schema has no object variants")
+	}
+	values := make([]string, 0, len(variants))
+	for _, variant := range variants {
+		discriminator, exists := variant.Properties[property]
+		if !exists || len(discriminator.Const) == 0 {
+			return nil, fmt.Errorf("variant has no %s discriminator", property)
+		}
+		value, err := rawString(discriminator.Const)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, value)
+	}
+	sort.Strings(values)
+	return values, nil
 }
 
 func renderEnum(output *bytes.Buffer, name string, values []string) error {

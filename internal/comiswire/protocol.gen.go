@@ -4,18 +4,20 @@ package comiswire
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 )
 
 const ProtocolID = "comis.capability-service/1"
-const BundleDigest = "94ec7bd173cd20f0de2cb4e9ab719d392f240236ac80d56e3a7ea1abe4e20cb8"
+const BundleDigest = "418f92fd129f8df03b3fbf49b7cc79a1d924533e7739e8496d7552ae2af393c7"
 const JSONRPCVersion = "2.0"
 
 const MaxEvidenceBytes = 1048576
 const MaxInFlightRequests = 32
-const MaxLineBytes = 65536
+const MaxLineBytes = 1441792
 const MaxReportBytes = 16384
-const MaxRequestBytes = 65536
+const MaxRequestBytes = 1441792
 const MaxResponseBytes = 65536
 const ReportRetentionDays = 30
 
@@ -26,6 +28,7 @@ const (
 	MethodCapabilityServicesHealth    Method = "capabilityServices.health"
 	MethodManagedRunsAbandon          Method = "managedRuns.abandon"
 	MethodManagedRunsActivate         Method = "managedRuns.activate"
+	MethodManagedRunsPutEvidence      Method = "managedRuns.putEvidence"
 	MethodManagedRunsReport           Method = "managedRuns.report"
 	MethodManagedRunsTerminalEvent    Method = "managedRuns.terminalEvent"
 )
@@ -182,10 +185,28 @@ func (value ExecutionAttachmentKind) Valid() bool {
 	}
 }
 
+type EvidenceVerificationLevel string
+
+const (
+	EvidenceVerificationLevelReported        EvidenceVerificationLevel = "reported"
+	EvidenceVerificationLevelAdapterVerified EvidenceVerificationLevel = "adapter_verified"
+	EvidenceVerificationLevelHostVerified    EvidenceVerificationLevel = "host_verified"
+)
+
+func (value EvidenceVerificationLevel) Valid() bool {
+	switch value {
+	case EvidenceVerificationLevelReported, EvidenceVerificationLevelAdapterVerified, EvidenceVerificationLevelHostVerified:
+		return true
+	default:
+		return false
+	}
+}
+
 type ServiceScope string
 
 const (
 	ServiceScopeHealth              ServiceScope = "health"
+	ServiceScopeEvidence            ServiceScope = "evidence"
 	ServiceScopeReport              ServiceScope = "report"
 	ServiceScopeWorkspaceLease      ServiceScope = "workspace_lease"
 	ServiceScopeTerminalEvents      ServiceScope = "terminal_events"
@@ -194,7 +215,23 @@ const (
 
 func (value ServiceScope) Valid() bool {
 	switch value {
-	case ServiceScopeHealth, ServiceScopeReport, ServiceScopeWorkspaceLease, ServiceScopeTerminalEvents, ServiceScopeExecutionAttachment:
+	case ServiceScopeHealth, ServiceScopeEvidence, ServiceScopeReport, ServiceScopeWorkspaceLease, ServiceScopeTerminalEvents, ServiceScopeExecutionAttachment:
+		return true
+	default:
+		return false
+	}
+}
+
+type EvidenceDeliveryKind string
+
+const (
+	EvidenceDeliveryKindAttachment EvidenceDeliveryKind = "attachment"
+	EvidenceDeliveryKindReference  EvidenceDeliveryKind = "reference"
+)
+
+func (value EvidenceDeliveryKind) Valid() bool {
+	switch value {
+	case EvidenceDeliveryKindAttachment, EvidenceDeliveryKindReference:
 		return true
 	default:
 		return false
@@ -230,9 +267,9 @@ const schemaErrorResponse = "{\n  \"$id\": \"https://schemas.comis.ai/capability
 
 const schemaExternalRunRef = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/external-run-ref.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"maxLength\": 256,\n  \"minLength\": 1,\n  \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n  \"type\": \"string\"\n}\n"
 
-const schemaHandshakeRequest = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/handshake.request.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"method\": {\n      \"const\": \"capabilityServices.handshake\",\n      \"type\": \"string\"\n    },\n    \"params\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"bundleDigest\": {\n          \"pattern\": \"^[a-f0-9]{64}$\",\n          \"type\": \"string\"\n        },\n        \"operationId\": {\n          \"maxLength\": 128,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"protocolId\": {\n          \"const\": \"comis.capability-service/1\",\n          \"type\": \"string\"\n        },\n        \"requestedScopes\": {\n          \"items\": {\n            \"enum\": [\n              \"health\",\n              \"report\",\n              \"workspace_lease\",\n              \"terminal_events\",\n              \"execution_attachment\"\n            ],\n            \"type\": \"string\"\n          },\n          \"maxItems\": 5,\n          \"minItems\": 1,\n          \"type\": \"array\"\n        },\n        \"serviceInstanceId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"protocolId\",\n        \"bundleDigest\",\n        \"operationId\",\n        \"serviceInstanceId\",\n        \"requestedScopes\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"method\",\n    \"params\"\n  ],\n  \"type\": \"object\"\n}\n"
+const schemaHandshakeRequest = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/handshake.request.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"method\": {\n      \"const\": \"capabilityServices.handshake\",\n      \"type\": \"string\"\n    },\n    \"params\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"bundleDigest\": {\n          \"pattern\": \"^[a-f0-9]{64}$\",\n          \"type\": \"string\"\n        },\n        \"operationId\": {\n          \"maxLength\": 128,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"protocolId\": {\n          \"const\": \"comis.capability-service/1\",\n          \"type\": \"string\"\n        },\n        \"requestedScopes\": {\n          \"items\": {\n            \"enum\": [\n              \"health\",\n              \"evidence\",\n              \"report\",\n              \"workspace_lease\",\n              \"terminal_events\",\n              \"execution_attachment\"\n            ],\n            \"type\": \"string\"\n          },\n          \"maxItems\": 6,\n          \"minItems\": 1,\n          \"type\": \"array\"\n        },\n        \"serviceInstanceId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"protocolId\",\n        \"bundleDigest\",\n        \"operationId\",\n        \"serviceInstanceId\",\n        \"requestedScopes\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"method\",\n    \"params\"\n  ],\n  \"type\": \"object\"\n}\n"
 
-const schemaHandshakeResponse = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/handshake.response.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"result\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"activeScopes\": {\n          \"items\": {\n            \"enum\": [\n              \"health\",\n              \"report\",\n              \"workspace_lease\",\n              \"terminal_events\",\n              \"execution_attachment\"\n            ],\n            \"type\": \"string\"\n          },\n          \"maxItems\": 5,\n          \"minItems\": 1,\n          \"type\": \"array\"\n        },\n        \"bundleDigest\": {\n          \"pattern\": \"^[a-f0-9]{64}$\",\n          \"type\": \"string\"\n        },\n        \"limits\": {\n          \"additionalProperties\": false,\n          \"properties\": {\n            \"maxEvidenceBytes\": {\n              \"const\": 1048576,\n              \"type\": \"number\"\n            },\n            \"maxInFlightRequests\": {\n              \"const\": 32,\n              \"type\": \"number\"\n            },\n            \"maxLineBytes\": {\n              \"const\": 65536,\n              \"type\": \"number\"\n            },\n            \"maxReportBytes\": {\n              \"const\": 16384,\n              \"type\": \"number\"\n            },\n            \"maxRequestBytes\": {\n              \"const\": 65536,\n              \"type\": \"number\"\n            },\n            \"maxResponseBytes\": {\n              \"const\": 65536,\n              \"type\": \"number\"\n            },\n            \"reportRetentionDays\": {\n              \"const\": 30,\n              \"type\": \"number\"\n            }\n          },\n          \"required\": [\n            \"maxEvidenceBytes\",\n            \"maxInFlightRequests\",\n            \"maxLineBytes\",\n            \"maxReportBytes\",\n            \"maxRequestBytes\",\n            \"maxResponseBytes\",\n            \"reportRetentionDays\"\n          ],\n          \"type\": \"object\"\n        },\n        \"protocolId\": {\n          \"const\": \"comis.capability-service/1\",\n          \"type\": \"string\"\n        },\n        \"serviceInstanceId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"protocolId\",\n        \"bundleDigest\",\n        \"serviceInstanceId\",\n        \"activeScopes\",\n        \"limits\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"result\"\n  ],\n  \"type\": \"object\"\n}\n"
+const schemaHandshakeResponse = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/handshake.response.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"result\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"activeScopes\": {\n          \"items\": {\n            \"enum\": [\n              \"health\",\n              \"evidence\",\n              \"report\",\n              \"workspace_lease\",\n              \"terminal_events\",\n              \"execution_attachment\"\n            ],\n            \"type\": \"string\"\n          },\n          \"maxItems\": 6,\n          \"minItems\": 1,\n          \"type\": \"array\"\n        },\n        \"bundleDigest\": {\n          \"pattern\": \"^[a-f0-9]{64}$\",\n          \"type\": \"string\"\n        },\n        \"limits\": {\n          \"additionalProperties\": false,\n          \"properties\": {\n            \"maxEvidenceBytes\": {\n              \"const\": 1048576,\n              \"type\": \"number\"\n            },\n            \"maxInFlightRequests\": {\n              \"const\": 32,\n              \"type\": \"number\"\n            },\n            \"maxLineBytes\": {\n              \"const\": 1441792,\n              \"type\": \"number\"\n            },\n            \"maxReportBytes\": {\n              \"const\": 16384,\n              \"type\": \"number\"\n            },\n            \"maxRequestBytes\": {\n              \"const\": 1441792,\n              \"type\": \"number\"\n            },\n            \"maxResponseBytes\": {\n              \"const\": 65536,\n              \"type\": \"number\"\n            },\n            \"reportRetentionDays\": {\n              \"const\": 30,\n              \"type\": \"number\"\n            }\n          },\n          \"required\": [\n            \"maxEvidenceBytes\",\n            \"maxInFlightRequests\",\n            \"maxLineBytes\",\n            \"maxReportBytes\",\n            \"maxRequestBytes\",\n            \"maxResponseBytes\",\n            \"reportRetentionDays\"\n          ],\n          \"type\": \"object\"\n        },\n        \"protocolId\": {\n          \"const\": \"comis.capability-service/1\",\n          \"type\": \"string\"\n        },\n        \"serviceInstanceId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"protocolId\",\n        \"bundleDigest\",\n        \"serviceInstanceId\",\n        \"activeScopes\",\n        \"limits\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"result\"\n  ],\n  \"type\": \"object\"\n}\n"
 
 const schemaHealthRequest = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/health.request.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"method\": {\n      \"const\": \"capabilityServices.health\",\n      \"type\": \"string\"\n    },\n    \"params\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"bundleDigest\": {\n          \"pattern\": \"^[a-f0-9]{64}$\",\n          \"type\": \"string\"\n        },\n        \"operationId\": {\n          \"maxLength\": 128,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"protocolId\": {\n          \"const\": \"comis.capability-service/1\",\n          \"type\": \"string\"\n        },\n        \"serviceInstanceId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"protocolId\",\n        \"bundleDigest\",\n        \"operationId\",\n        \"serviceInstanceId\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"method\",\n    \"params\"\n  ],\n  \"type\": \"object\"\n}\n"
 
@@ -241,6 +278,10 @@ const schemaHealthResponse = "{\n  \"$id\": \"https://schemas.comis.ai/capabilit
 const schemaMCPCallContext = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/mcp-call-context.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"agentId\": {\n      \"maxLength\": 256,\n      \"minLength\": 1,\n      \"type\": \"string\"\n    },\n    \"conversationRef\": {\n      \"maxLength\": 512,\n      \"minLength\": 1,\n      \"type\": \"string\"\n    },\n    \"managedRunGroupId\": {\n      \"maxLength\": 256,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"managedRunId\": {\n      \"maxLength\": 256,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"operationId\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"rootRunId\": {\n      \"maxLength\": 256,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"serviceInstanceId\": {\n      \"maxLength\": 256,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"traceId\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"type\": \"string\"\n    },\n    \"workspacePolicyHash\": {\n      \"pattern\": \"^[a-f0-9]{64}$\",\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"operationId\",\n    \"serviceInstanceId\",\n    \"agentId\",\n    \"conversationRef\",\n    \"workspacePolicyHash\",\n    \"rootRunId\",\n    \"traceId\"\n  ],\n  \"type\": \"object\"\n}\n"
 
 const schemaMCPManagedRunResult = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/mcp-managed-run-result.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"displayLabel\": {\n      \"maxLength\": 256,\n      \"minLength\": 1,\n      \"type\": \"string\"\n    },\n    \"expiresAt\": {\n      \"format\": \"date-time\",\n      \"pattern\": \"^(?:(?:\\\\d\\\\d[2468][048]|\\\\d\\\\d[13579][26]|\\\\d\\\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\\\d|30)|(?:02)-(?:0[1-9]|1\\\\d|2[0-8])))T(?:(?:[01]\\\\d|2[0-3]):[0-5]\\\\d(?::[0-5]\\\\d(?:\\\\.\\\\d+)?)?(?:Z))$\",\n      \"type\": \"string\"\n    },\n    \"externalRunRef\": {\n      \"maxLength\": 256,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"registrationNonce\": {\n      \"maxLength\": 256,\n      \"minLength\": 16,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"requestedAttachment\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"kind\": {\n          \"enum\": [\n            \"unix_socket\",\n            \"inherited_descriptor\"\n          ],\n          \"type\": \"string\"\n        },\n        \"sourcePath\": {\n          \"maxLength\": 4096,\n          \"minLength\": 1,\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"kind\",\n        \"sourcePath\"\n      ],\n      \"type\": \"object\"\n    },\n    \"requestedWorkspace\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"rootHint\": {\n          \"maxLength\": 512,\n          \"minLength\": 1,\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"rootHint\"\n      ],\n      \"type\": \"object\"\n    },\n    \"state\": {\n      \"const\": \"prepared\",\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"state\",\n    \"externalRunRef\",\n    \"registrationNonce\",\n    \"expiresAt\"\n  ],\n  \"type\": \"object\"\n}\n"
+
+const schemaPutEvidenceRequest = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/putEvidence.request.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"method\": {\n      \"const\": \"managedRuns.putEvidence\",\n      \"type\": \"string\"\n    },\n    \"params\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"bodyBase64\": {\n          \"maxLength\": 1398104,\n          \"pattern\": \"^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$\",\n          \"type\": \"string\"\n        },\n        \"contentHash\": {\n          \"pattern\": \"^[a-f0-9]{64}$\",\n          \"type\": \"string\"\n        },\n        \"delivery\": {\n          \"oneOf\": [\n            {\n              \"additionalProperties\": false,\n              \"properties\": {\n                \"kind\": {\n                  \"const\": \"reference\",\n                  \"type\": \"string\"\n                }\n              },\n              \"required\": [\n                \"kind\"\n              ],\n              \"type\": \"object\"\n            },\n            {\n              \"additionalProperties\": false,\n              \"properties\": {\n                \"fileName\": {\n                  \"maxLength\": 256,\n                  \"minLength\": 1,\n                  \"pattern\": \"^[^/\\\\\\\\\\\\u0000\\\\r\\\\n]+$\",\n                  \"type\": \"string\"\n                },\n                \"kind\": {\n                  \"const\": \"attachment\",\n                  \"type\": \"string\"\n                },\n                \"mediaType\": {\n                  \"pattern\": \"^[a-z0-9][a-z0-9.+-]{0,63}\\\\/[a-z0-9][a-z0-9.+-]{0,63}$\",\n                  \"type\": \"string\"\n                }\n              },\n              \"required\": [\n                \"kind\",\n                \"fileName\",\n                \"mediaType\"\n              ],\n              \"type\": \"object\"\n            }\n          ]\n        },\n        \"evidenceRef\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"expiresAtMs\": {\n          \"maximum\": 9007199254740991,\n          \"minimum\": 0,\n          \"type\": \"integer\"\n        },\n        \"kind\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"managedRunId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"observedAtMs\": {\n          \"maximum\": 9007199254740991,\n          \"minimum\": 0,\n          \"type\": \"integer\"\n        },\n        \"operationId\": {\n          \"maxLength\": 128,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"subjectDigest\": {\n          \"pattern\": \"^[a-f0-9]{64}$\",\n          \"type\": \"string\"\n        },\n        \"verificationLevel\": {\n          \"enum\": [\n            \"reported\",\n            \"adapter_verified\",\n            \"host_verified\"\n          ],\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"operationId\",\n        \"managedRunId\",\n        \"evidenceRef\",\n        \"kind\",\n        \"subjectDigest\",\n        \"observedAtMs\",\n        \"contentHash\",\n        \"verificationLevel\",\n        \"bodyBase64\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"method\",\n    \"params\"\n  ],\n  \"type\": \"object\"\n}\n"
+
+const schemaPutEvidenceResponse = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/putEvidence.response.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"result\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"contentHash\": {\n          \"pattern\": \"^[a-f0-9]{64}$\",\n          \"type\": \"string\"\n        },\n        \"evidenceRef\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"managedRunId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"retainedUntilMs\": {\n          \"maximum\": 9007199254740991,\n          \"minimum\": 0,\n          \"type\": \"integer\"\n        },\n        \"verificationLevel\": {\n          \"enum\": [\n            \"reported\",\n            \"adapter_verified\"\n          ],\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"managedRunId\",\n        \"evidenceRef\",\n        \"contentHash\",\n        \"verificationLevel\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"result\"\n  ],\n  \"type\": \"object\"\n}\n"
 
 const schemaReportRequest = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/report.request.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"method\": {\n      \"const\": \"managedRuns.report\",\n      \"type\": \"string\"\n    },\n    \"params\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"artifactRefs\": {\n          \"items\": {\n            \"maxLength\": 256,\n            \"minLength\": 1,\n            \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n            \"type\": \"string\"\n          },\n          \"maxItems\": 32,\n          \"type\": \"array\"\n        },\n        \"details\": {\n          \"maxLength\": 16384,\n          \"type\": \"string\"\n        },\n        \"externalKey\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"type\": \"string\"\n        },\n        \"kind\": {\n          \"enum\": [\n            \"attention\",\n            \"blocked\",\n            \"candidate_complete\",\n            \"failed\",\n            \"paused\",\n            \"progress\",\n            \"resolution\"\n          ],\n          \"type\": \"string\"\n        },\n        \"managedRunId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"observedAtMs\": {\n          \"maximum\": 9007199254740991,\n          \"minimum\": 0,\n          \"type\": \"integer\"\n        },\n        \"operationId\": {\n          \"maxLength\": 128,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"serviceReportId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"summary\": {\n          \"maxLength\": 16384,\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"operationId\",\n        \"managedRunId\",\n        \"serviceReportId\",\n        \"kind\",\n        \"summary\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"method\",\n    \"params\"\n  ],\n  \"type\": \"object\"\n}\n"
 
@@ -262,6 +303,8 @@ type AttachmentTargetName string
 type RegistrationNonce string
 type ServiceReportID string
 type ArtifactRef string
+type EvidenceRef string
+type EvidenceKind string
 type RootRunID string
 type AbandonRequest struct {
 	ID      OperationID          `json:"id"`
@@ -436,6 +479,47 @@ type MCPManagedRunResultRequestedWorkspace struct {
 	RootHint string `json:"rootHint"`
 }
 
+type PutEvidenceRequest struct {
+	ID      OperationID              `json:"id"`
+	JSONRPC string                   `json:"jsonrpc"`
+	Method  Method                   `json:"method"`
+	Params  PutEvidenceRequestParams `json:"params"`
+}
+
+type PutEvidenceRequestParams struct {
+	BodyBase64        string                            `json:"bodyBase64"`
+	ContentHash       string                            `json:"contentHash"`
+	Delivery          *PutEvidenceRequestParamsDelivery `json:"delivery,omitempty"`
+	EvidenceRef       EvidenceRef                       `json:"evidenceRef"`
+	ExpiresAtMs       *int64                            `json:"expiresAtMs,omitempty"`
+	Kind              EvidenceKind                      `json:"kind"`
+	ManagedRunID      ManagedRunID                      `json:"managedRunId"`
+	ObservedAtMs      int64                             `json:"observedAtMs"`
+	OperationID       OperationID                       `json:"operationId"`
+	SubjectDigest     string                            `json:"subjectDigest"`
+	VerificationLevel EvidenceVerificationLevel         `json:"verificationLevel"`
+}
+
+type PutEvidenceRequestParamsDelivery struct {
+	FileName  *string              `json:"fileName,omitempty"`
+	Kind      EvidenceDeliveryKind `json:"kind"`
+	MediaType *string              `json:"mediaType,omitempty"`
+}
+
+type PutEvidenceResponse struct {
+	ID      OperationID               `json:"id"`
+	JSONRPC string                    `json:"jsonrpc"`
+	Result  PutEvidenceResponseResult `json:"result"`
+}
+
+type PutEvidenceResponseResult struct {
+	ContentHash       string                    `json:"contentHash"`
+	EvidenceRef       EvidenceRef               `json:"evidenceRef"`
+	ManagedRunID      ManagedRunID              `json:"managedRunId"`
+	RetainedUntilMs   *int64                    `json:"retainedUntilMs,omitempty"`
+	VerificationLevel EvidenceVerificationLevel `json:"verificationLevel"`
+}
+
 type ReportRequest struct {
 	ID      OperationID         `json:"id"`
 	JSONRPC string              `json:"jsonrpc"`
@@ -605,6 +689,40 @@ func (client *Client) Report(ctx context.Context, params ReportRequestParams) (R
 	}
 	if response.ID != request.ID || response.Result.ManagedRunID != params.ManagedRunID || response.Result.ServiceReportID != params.ServiceReportID {
 		return ReportResponseResult{}, fmt.Errorf("report response identity does not match request")
+	}
+	return response.Result, nil
+}
+
+func (client *Client) PutEvidence(ctx context.Context, params PutEvidenceRequestParams) (PutEvidenceResponseResult, error) {
+	if ctx == nil {
+		return PutEvidenceResponseResult{}, fmt.Errorf("put evidence context is required")
+	}
+	body, err := base64.StdEncoding.DecodeString(params.BodyBase64)
+	if err != nil || len(body) == 0 || len(body) > MaxEvidenceBytes {
+		return PutEvidenceResponseResult{}, fmt.Errorf("evidence body is invalid")
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256(body))
+	if digest != params.ContentHash {
+		return PutEvidenceResponseResult{}, fmt.Errorf("evidence body differs from its content hash")
+	}
+	if params.VerificationLevel == EvidenceVerificationLevelHostVerified {
+		return PutEvidenceResponseResult{}, fmt.Errorf("host verification is reserved")
+	}
+	request := PutEvidenceRequest{JSONRPC: JSONRPCVersion, ID: params.OperationID, Method: MethodManagedRunsPutEvidence, Params: params}
+	if err := validateGeneratedDocument(schemaPutEvidenceRequest, request); err != nil {
+		return PutEvidenceResponseResult{}, fmt.Errorf("validate put evidence request: %w", err)
+	}
+	var response PutEvidenceResponse
+	if err := client.transport.roundTrip(ctx, request, &response); err != nil {
+		return PutEvidenceResponseResult{}, err
+	}
+	if err := validateGeneratedDocument(schemaPutEvidenceResponse, response); err != nil {
+		return PutEvidenceResponseResult{}, fmt.Errorf("validate put evidence response: %w", err)
+	}
+	if response.ID != request.ID || response.Result.ManagedRunID != params.ManagedRunID ||
+		response.Result.EvidenceRef != params.EvidenceRef || response.Result.ContentHash != params.ContentHash ||
+		response.Result.VerificationLevel != params.VerificationLevel {
+		return PutEvidenceResponseResult{}, fmt.Errorf("put evidence response identity does not match request")
 	}
 	return response.Result, nil
 }

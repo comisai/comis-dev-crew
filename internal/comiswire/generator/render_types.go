@@ -28,6 +28,8 @@ func renderTypes(schemas []schemaSpec) (string, error) {
 		"type RegistrationNonce string\n",
 		"type ServiceReportID string\n",
 		"type ArtifactRef string\n",
+		"type EvidenceRef string\n",
+		"type EvidenceKind string\n",
 		"type RootRunID string\n",
 	} {
 		renderer.buffer.WriteString(declaration)
@@ -203,6 +205,8 @@ func specialFieldType(parent, property string) string {
 		return "RegistrationNonce"
 	case "serviceReportId":
 		return "ServiceReportID"
+	case "evidenceRef":
+		return "EvidenceRef"
 	case "rootRunId":
 		return "RootRunID"
 	case "reason":
@@ -225,6 +229,12 @@ func specialFieldType(parent, property string) string {
 		if parent == "ReportRequestParams" {
 			return "ReportKind"
 		}
+		if parent == "PutEvidenceRequestParams" {
+			return "EvidenceKind"
+		}
+		if parent == "PutEvidenceRequestParamsDelivery" {
+			return "EvidenceDeliveryKind"
+		}
 		if parent == "MCPManagedRunResultRequestedAttachment" {
 			return "ExecutionAttachmentKind"
 		}
@@ -236,6 +246,8 @@ func specialFieldType(parent, property string) string {
 		return "ManagedRunState"
 	case "requestedScopes", "activeScopes":
 		return "[]ServiceScope"
+	case "verificationLevel":
+		return "EvidenceVerificationLevel"
 	case "artifactRefs":
 		return "[]ArtifactRef"
 	case "limits":
@@ -247,15 +259,23 @@ func specialFieldType(parent, property string) string {
 }
 
 func objectVariantUnion(node schemaNode) bool {
-	if len(node.AnyOf) < 2 {
+	variants := objectVariants(node)
+	if len(variants) < 2 {
 		return false
 	}
-	for _, variant := range node.AnyOf {
+	for _, variant := range variants {
 		if variant.Type != "object" {
 			return false
 		}
 	}
 	return true
+}
+
+func objectVariants(node schemaNode) []schemaNode {
+	if len(node.OneOf) > 0 {
+		return node.OneOf
+	}
+	return node.AnyOf
 }
 
 func mergeObjectVariants(node schemaNode) (schemaNode, error) {
@@ -269,13 +289,19 @@ func mergeObjectVariants(node schemaNode) (schemaNode, error) {
 		Properties:           make(map[string]schemaNode),
 	}
 	requiredCounts := make(map[string]int)
-	for _, variant := range node.AnyOf {
+	variants := objectVariants(node)
+	for _, variant := range variants {
 		if variant.AdditionalProperties == nil || *variant.AdditionalProperties {
 			return schemaNode{}, fmt.Errorf("object union variant is not closed")
 		}
 		for property, child := range variant.Properties {
 			if previous, exists := merged.Properties[property]; exists && !reflect.DeepEqual(previous, child) {
-				return schemaNode{}, fmt.Errorf("object union property %s has conflicting schemas", property)
+				combined, ok := mergeVariantStringConstants(previous, child)
+				if !ok {
+					return schemaNode{}, fmt.Errorf("object union property %s has conflicting schemas", property)
+				}
+				merged.Properties[property] = combined
+				continue
 			}
 			merged.Properties[property] = child
 		}
@@ -292,12 +318,34 @@ func mergeObjectVariants(node schemaNode) (schemaNode, error) {
 		}
 	}
 	for property, count := range requiredCounts {
-		if count == len(node.AnyOf) {
+		if count == len(variants) {
 			merged.Required = append(merged.Required, property)
 		}
 	}
 	sort.Strings(merged.Required)
 	return merged, nil
+}
+
+func mergeVariantStringConstants(left, right schemaNode) (schemaNode, bool) {
+	if left.Type != "string" || right.Type != "string" || len(left.Const) == 0 || len(right.Const) == 0 {
+		return schemaNode{}, false
+	}
+	leftValue, leftErr := rawString(left.Const)
+	rightValue, rightErr := rawString(right.Const)
+	if leftErr != nil || rightErr != nil || leftValue == rightValue {
+		return schemaNode{}, false
+	}
+	values := []string{leftValue, rightValue}
+	sort.Strings(values)
+	encoded := make([]json.RawMessage, 0, len(values))
+	for _, value := range values {
+		body, err := json.Marshal(value)
+		if err != nil {
+			return schemaNode{}, false
+		}
+		encoded = append(encoded, body)
+	}
+	return schemaNode{Type: "string", Enum: encoded}, true
 }
 
 func nestedTypeName(parent, field string) string {
