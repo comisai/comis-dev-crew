@@ -197,6 +197,19 @@ func TestCandidateSupervisor_RunRecoversDurableValidatingTaskAndJoinsCancellatio
 	if fixture.store.evidence == nil || fixture.store.task.State != domain.TaskCandidateComplete {
 		t.Fatal("Run() did not recover and validate the durable task")
 	}
+	queueFixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	queueContext, cancelQueue := context.WithCancel(context.Background())
+	queueFixture.store.list = func(ctx context.Context) ([]domain.Task, error) {
+		cancelQueue()
+		return nil, ctx.Err()
+	}
+	queueSupervisor, err := newCandidateSupervisor(queueFixture.config())
+	if err != nil {
+		t.Fatalf("newCandidateSupervisor(queue cancellation) error = %v", err)
+	}
+	if err := queueSupervisor.Run(queueContext); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run(queue cancellation) error = %v", err)
+	}
 }
 
 type candidateSupervisorFixture struct {
@@ -296,9 +309,13 @@ type candidateSupervisorStore struct {
 	reports     []domain.AcceptedReport
 	evidence    *domain.SealedDeliveryEvidence
 	onCommit    func()
+	list        func(context.Context) ([]domain.Task, error)
 }
 
-func (store *candidateSupervisorStore) ListTasks(context.Context) ([]domain.Task, error) {
+func (store *candidateSupervisorStore) ListTasks(ctx context.Context) ([]domain.Task, error) {
+	if store.list != nil {
+		return store.list(ctx)
+	}
 	return []domain.Task{store.task}, nil
 }
 
