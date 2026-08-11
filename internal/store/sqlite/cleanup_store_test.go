@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"math"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -385,6 +386,194 @@ func TestTaskCleanupProofAndRecordReadersRejectCorruptState(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTaskCleanupStore_FailsClosedWhenPreparationDependenciesAreUnavailable(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*Store, *application.TaskCleanupMutation)
+	}{
+		{name: "unknown task", mutate: func(_ *Store, mutation *application.TaskCleanupMutation) {
+			mutation.TaskHandle = "task-cleanup-unknown"
+		}},
+		{name: "cleanup hold storage", mutate: func(store *Store, _ *application.TaskCleanupMutation) {
+			_, _ = store.db.Exec("ALTER TABLE task_cleanup_holds RENAME TO unavailable_cleanup_holds")
+		}},
+		{name: "terminal storage", mutate: func(store *Store, _ *application.TaskCleanupMutation) {
+			_, _ = store.db.Exec("ALTER TABLE task_terminal_bindings RENAME TO unavailable_cleanup_terminals")
+		}},
+		{name: "evidence outbox storage", mutate: func(store *Store, _ *application.TaskCleanupMutation) {
+			_, _ = store.db.Exec("ALTER TABLE comis_evidence_outbox RENAME TO unavailable_cleanup_evidence_outbox")
+		}},
+		{name: "report storage", mutate: func(store *Store, _ *application.TaskCleanupMutation) {
+			_, _ = store.db.Exec("ALTER TABLE reports RENAME TO unavailable_cleanup_reports")
+		}},
+		{name: "preparation operation storage", mutate: func(store *Store, _ *application.TaskCleanupMutation) {
+			_, _ = store.db.Exec("ALTER TABLE operations RENAME TO unavailable_cleanup_operations")
+		}},
+		{name: "candidate evidence storage", mutate: func(store *Store, _ *application.TaskCleanupMutation) {
+			_, _ = store.db.Exec("ALTER TABLE candidate_evidence RENAME TO unavailable_candidate_evidence")
+		}},
+		{name: "exhausted state version", mutate: func(store *Store, _ *application.TaskCleanupMutation) {
+			operation := storeOperation("operation-cleanup-max-version", math.MaxInt64)
+			if err := store.RecordOperation(context.Background(), operation); err != nil {
+				t.Fatalf("RecordOperation(max version) error = %v", err)
+			}
+		}},
+		{name: "task update failure", mutate: func(store *Store, _ *application.TaskCleanupMutation) {
+			_, _ = store.db.Exec(`CREATE TRIGGER fail_cleanup_task_update BEFORE UPDATE ON tasks
+                    BEGIN SELECT RAISE(FAIL, 'task update unavailable'); END`)
+		}},
+		{name: "cleanup record insert failure", mutate: func(store *Store, _ *application.TaskCleanupMutation) {
+			_, _ = store.db.Exec(`CREATE TRIGGER fail_cleanup_record_insert BEFORE INSERT ON task_cleanup_operations
+                    BEGIN SELECT RAISE(FAIL, 'cleanup insert unavailable'); END`)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store, task, _ := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+			mutation := cleanupTestMutation(task, "cleanup-dependency-0001")
+			test.mutate(store, &mutation)
+			if _, err := store.BeginTaskCleanup(context.Background(), mutation); err == nil {
+				t.Fatal("BeginTaskCleanup(unavailable dependency) error = nil")
+			}
+		})
+	}
+}
+
+func TestTaskCleanupStore_FailsClosedWhenStagePersistenceIsUnavailable(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*Store)
+	}{
+		{name: "cleanup record storage", mutate: func(store *Store) {
+			_, _ = store.db.Exec("ALTER TABLE task_cleanup_operations RENAME TO unavailable_cleanup_records")
+		}},
+		{name: "task storage", mutate: func(store *Store) {
+			_, _ = store.db.Exec("ALTER TABLE tasks RENAME TO unavailable_cleanup_tasks")
+		}},
+		{name: "exhausted state version", mutate: func(store *Store) {
+			operation := storeOperation("operation-cleanup-stage-max-version", math.MaxInt64)
+			if err := store.RecordOperation(context.Background(), operation); err != nil {
+				t.Fatalf("RecordOperation(max version) error = %v", err)
+			}
+		}},
+		{name: "task update failure", mutate: func(store *Store) {
+			_, _ = store.db.Exec(`CREATE TRIGGER fail_cleanup_stage_task_update BEFORE UPDATE ON tasks
+                    BEGIN SELECT RAISE(FAIL, 'task update unavailable'); END`)
+		}},
+		{name: "cleanup stage update failure", mutate: func(store *Store) {
+			_, _ = store.db.Exec(`CREATE TRIGGER fail_cleanup_stage_update BEFORE UPDATE ON task_cleanup_operations
+                    BEGIN SELECT RAISE(FAIL, 'cleanup stage unavailable'); END`)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store, task, sealed := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+			mutation := cleanupTestMutation(task, "cleanup-stage-0001")
+			record, err := store.BeginTaskCleanup(context.Background(), mutation)
+			if err != nil {
+				t.Fatalf("BeginTaskCleanup() error = %v", err)
+			}
+			snapshot, truth, receipt := cleanupTestProof(task, sealed, record, mutation.ReleasedAt)
+			test.mutate(store)
+			if _, err := store.RecordTaskCleanupHostRelease(context.Background(), application.TaskCleanupHostReleaseMutation{
+				OperationID: mutation.OperationID, SubjectDigest: mutation.SubjectDigest,
+				Snapshot: snapshot, DeliveryTruth: truth, Receipt: receipt, At: mutation.At.Add(time.Minute),
+			}); err == nil {
+				t.Fatal("RecordTaskCleanupHostRelease(unavailable persistence) error = nil")
+			}
+		})
+	}
+}
+
+func TestTaskCleanupStore_FailsClosedWhenCompletionPersistenceIsUnavailable(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*Store, *application.TaskCleanupCompletion)
+	}{
+		{name: "altered digest", mutate: func(_ *Store, completion *application.TaskCleanupCompletion) {
+			completion.SubjectDigest = strings.Repeat("f", 64)
+		}},
+		{name: "stale completion", mutate: func(_ *Store, completion *application.TaskCleanupCompletion) {
+			completion.At = completion.At.Add(-3 * time.Minute)
+		}},
+		{name: "exhausted state version", mutate: func(store *Store, _ *application.TaskCleanupCompletion) {
+			operation := storeOperation("operation-cleanup-complete-max-version", math.MaxInt64)
+			if err := store.RecordOperation(context.Background(), operation); err != nil {
+				t.Fatalf("RecordOperation(max version) error = %v", err)
+			}
+		}},
+		{name: "task update failure", mutate: func(store *Store, _ *application.TaskCleanupCompletion) {
+			_, _ = store.db.Exec(`CREATE TRIGGER fail_cleanup_complete_task_update BEFORE UPDATE ON tasks
+                    BEGIN SELECT RAISE(FAIL, 'task update unavailable'); END`)
+		}},
+		{name: "operation insert failure", mutate: func(store *Store, _ *application.TaskCleanupCompletion) {
+			_, _ = store.db.Exec(`CREATE TRIGGER fail_cleanup_complete_operation_insert BEFORE INSERT ON operations
+                    BEGIN SELECT RAISE(FAIL, 'operation insert unavailable'); END`)
+		}},
+		{name: "cleanup record update failure", mutate: func(store *Store, _ *application.TaskCleanupCompletion) {
+			_, _ = store.db.Exec(`CREATE TRIGGER fail_cleanup_complete_record_update BEFORE UPDATE ON task_cleanup_operations
+                    BEGIN SELECT RAISE(FAIL, 'cleanup record unavailable'); END`)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store, task, sealed := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+			mutation := cleanupTestMutation(task, "cleanup-complete-0001")
+			record, err := store.BeginTaskCleanup(context.Background(), mutation)
+			if err != nil {
+				t.Fatalf("BeginTaskCleanup() error = %v", err)
+			}
+			snapshot, truth, receipt := cleanupTestProof(task, sealed, record, mutation.ReleasedAt)
+			if _, err := store.RecordTaskCleanupHostRelease(context.Background(), application.TaskCleanupHostReleaseMutation{
+				OperationID: mutation.OperationID, SubjectDigest: mutation.SubjectDigest,
+				Snapshot: snapshot, DeliveryTruth: truth, Receipt: receipt, At: mutation.At.Add(time.Minute),
+			}); err != nil {
+				t.Fatalf("RecordTaskCleanupHostRelease() error = %v", err)
+			}
+			if _, err := store.AuthorizeTaskCleanupRemoval(context.Background(), application.TaskCleanupRemovalAuthorization{
+				OperationID: mutation.OperationID, SubjectDigest: mutation.SubjectDigest,
+				Snapshot: snapshot, DeliveryTruth: truth, At: mutation.At.Add(2 * time.Minute),
+			}); err != nil {
+				t.Fatalf("AuthorizeTaskCleanupRemoval() error = %v", err)
+			}
+			completion := application.TaskCleanupCompletion{
+				OperationID: mutation.OperationID, SubjectDigest: mutation.SubjectDigest, At: mutation.At.Add(3 * time.Minute),
+			}
+			test.mutate(store, &completion)
+			if _, err := store.CompleteTaskCleanup(context.Background(), completion); err == nil {
+				t.Fatal("CompleteTaskCleanup(unavailable persistence) error = nil")
+			}
+		})
+	}
+}
+
+func cleanupTestMutation(task domain.Task, operationID string) application.TaskCleanupMutation {
+	at := task.UpdatedAt.Add(time.Minute)
+	return application.TaskCleanupMutation{
+		OperationID: operationID, SubjectDigest: strings.Repeat("e", 64),
+		TaskHandle: task.Handle, ReleaseOperationID: "release-" + operationID,
+		ReleasedAt: at, At: at,
+	}
+}
+
+func cleanupTestProof(
+	task domain.Task,
+	sealed *domain.SealedDeliveryEvidence,
+	record application.TaskCleanupRecord,
+	releasedAt time.Time,
+) (application.WorkspaceSnapshot, application.PullRequestDeliveryTruth, application.ManagedRunReleaseReceipt) {
+	return application.WorkspaceSnapshot{
+			TaskHandle: task.Handle, RepositoryID: task.RepositoryID,
+			WorktreePath: record.WorktreePath, Branch: "devcrew/task-cleanup",
+			HeadRevision: sealed.Bundle().HeadRevision, Cleanliness: application.WorkspaceClean,
+		}, application.PullRequestDeliveryTruth{
+			RepositoryID: task.RepositoryID, PullRequestID: record.PullRequestID,
+			HeadRevision: record.HeadRevision,
+			Checks:       []application.ForgeCheckTruth{{Name: "ci/unit", Conclusion: domain.CheckPassed}},
+		}, application.ManagedRunReleaseReceipt{
+			ManagedRunID: task.ManagedRunID, WorkspaceLeaseID: task.WorkspaceLeaseID,
+			Disposition: application.ManagedRunReleaseReapSafe, ReleasedAt: releasedAt,
+			State: application.ManagedRunReleased,
+		}
 }
 
 func deliveredCleanupFixture(t *testing.T, databasePath string) (*Store, domain.Task, *domain.SealedDeliveryEvidence) {
