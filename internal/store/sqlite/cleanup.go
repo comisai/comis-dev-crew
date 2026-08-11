@@ -74,7 +74,7 @@ func (store *Store) BeginTaskCleanup(
 		return application.TaskCleanupRecord{}, err
 	} else if found {
 		if existing.SubjectDigest != mutation.SubjectDigest || existing.TaskHandle != mutation.TaskHandle ||
-			existing.ReleaseOperationID != mutation.ReleaseOperationID || !existing.ReleasedAt.Equal(mutation.ReleasedAt) {
+			existing.ReleaseOperationID != mutation.ReleaseOperationID {
 			return application.TaskCleanupRecord{}, fmt.Errorf("task cleanup altered replay: %w", application.ErrConflict)
 		}
 		return existing, nil
