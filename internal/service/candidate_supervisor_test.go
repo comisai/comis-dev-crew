@@ -1,8 +1,11 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -43,6 +46,13 @@ func TestCandidateSupervisor_BuildsShipEvidenceFromChecksAndRereadForgeTruth(t *
 		!reflect.DeepEqual(fixture.pullRequests.request.RequiredChecks, []string{"ci/unit"}) {
 		t.Fatalf("pull request input = %#v", fixture.pullRequests.request)
 	}
+	if !reflect.DeepEqual(fixture.store.publicationKinds, []string{"candidate_bundle", "delivery_reference"}) ||
+		!reflect.DeepEqual(fixture.store.publicationDeliveries, []string{"", "reference"}) ||
+		len(fixture.store.publicationBodies) != 2 ||
+		!bytes.Equal(fixture.store.publicationBodies[0], fixture.store.evidence.Canonical()) ||
+		string(fixture.store.publicationBodies[1]) != fixture.pullRequests.truth.URL {
+		t.Fatalf("ship evidence publications = %#v, %#v", fixture.store.publicationKinds, fixture.store.publicationDeliveries)
+	}
 }
 
 func TestCandidateSupervisor_BuildsScoutEvidenceOnlyFromReviewedArtifactPath(t *testing.T) {
@@ -61,6 +71,12 @@ func TestCandidateSupervisor_BuildsScoutEvidenceOnlyFromReviewedArtifactPath(t *
 	}
 	if fixture.pullRequests.calls != 0 || fixture.store.evidence.Bundle().ReportArtifact == nil {
 		t.Fatal("scout evidence used the wrong delivery authority")
+	}
+	if !reflect.DeepEqual(fixture.store.publicationKinds, []string{"candidate_bundle", "report_artifact"}) ||
+		!reflect.DeepEqual(fixture.store.publicationDeliveries, []string{"", "attachment"}) ||
+		len(fixture.store.publicationBodies) != 2 ||
+		!bytes.Equal(fixture.store.publicationBodies[1], fixture.artifact.artifact.Body) {
+		t.Fatalf("scout evidence publications = %#v, %#v", fixture.store.publicationKinds, fixture.store.publicationDeliveries)
 	}
 }
 
@@ -290,11 +306,12 @@ func newCandidateSupervisorFixture(t *testing.T, shape domain.TaskShape) *candid
 			CheckConclusions: []domain.ForgeCheckEvidence{{Name: "ci/unit", Conclusion: domain.CheckPassed}},
 		},
 	}}
+	reportBody := []byte("report body")
 	fixture.artifact = &candidateSupervisorArtifact{artifact: delivery.InspectedReportArtifact{
 		ReportArtifactEvidence: domain.ReportArtifactEvidence{
-			ContentHash: strings.Repeat("e", 64), Size: 100, MediaType: "text/markdown",
+			ContentHash: fmt.Sprintf("%x", sha256.Sum256(reportBody)), Size: int64(len(reportBody)), MediaType: "text/markdown",
 		},
-		Body: []byte("report body"),
+		Body: reportBody,
 	}}
 	return fixture
 }
@@ -308,12 +325,15 @@ func (fixture *candidateSupervisorFixture) config() candidateSupervisorConfig {
 }
 
 type candidateSupervisorStore struct {
-	task        domain.Task
-	preparation application.ManagedRunPreparation
-	reports     []domain.AcceptedReport
-	evidence    *domain.SealedDeliveryEvidence
-	onCommit    func()
-	list        func(context.Context) ([]domain.Task, error)
+	task                  domain.Task
+	preparation           application.ManagedRunPreparation
+	reports               []domain.AcceptedReport
+	evidence              *domain.SealedDeliveryEvidence
+	publicationKinds      []string
+	publicationDeliveries []string
+	publicationBodies     [][]byte
+	onCommit              func()
+	list                  func(context.Context) ([]domain.Task, error)
 }
 
 func (store *candidateSupervisorStore) ListTasks(ctx context.Context) ([]domain.Task, error) {
