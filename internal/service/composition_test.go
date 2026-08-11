@@ -165,6 +165,26 @@ func TestInstalledRuntime_RejectsPartialMixedAndUnverifiedConfiguration(t *testi
 	if _, err := composeInstalledRuntime(context.Background(), configuration); err == nil {
 		t.Fatal("composeInstalledRuntime(shared forge credential) error = nil")
 	}
+	configuration = installedServiceConfig(t, shortTempDir(t))
+	configuration.ValidationComposition.MaxOutputBytes = 0
+	if _, err := composeInstalledRuntime(context.Background(), configuration); err == nil {
+		t.Fatal("composeInstalledRuntime(invalid validation bound) error = nil")
+	}
+	configuration = installedServiceConfig(t, shortTempDir(t))
+	configuration.ValidationComposition.Profiles = nil
+	if _, err := composeInstalledRuntime(context.Background(), configuration); err == nil {
+		t.Fatal("composeInstalledRuntime(invalid validation catalog) error = nil")
+	}
+	configuration = installedServiceConfig(t, shortTempDir(t))
+	configuration.ForgeComposition.ReadCredentialFile = filepath.Join(shortTempDir(t), "missing")
+	if _, err := composeInstalledRuntime(context.Background(), configuration); err == nil {
+		t.Fatal("composeInstalledRuntime(missing forge credential) error = nil")
+	}
+	configuration = installedServiceConfig(t, shortTempDir(t))
+	configuration.ForgeComposition.APIBaseURL = "http://example.com"
+	if _, err := composeInstalledRuntime(context.Background(), configuration); err == nil {
+		t.Fatal("composeInstalledRuntime(invalid forge route) error = nil")
+	}
 }
 
 func TestComisComposition_RequiresMutationsCredentialAndValidAuthority(t *testing.T) {

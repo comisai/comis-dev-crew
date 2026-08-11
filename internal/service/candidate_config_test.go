@@ -1,11 +1,15 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/comisai/comis-dev-crew/internal/forge"
 	"github.com/comisai/comis-dev-crew/internal/validation"
 )
 
@@ -77,6 +81,58 @@ func TestReadCandidateComposition_RejectsUntrustedFileAndUnknownPolicy(t *testin
 	}
 	if _, _, err := readCandidateComposition(symlink); err == nil {
 		t.Fatal("readCandidateComposition(symlink) error = nil")
+	}
+	for _, test := range []struct {
+		name     string
+		path     string
+		contents string
+	}{
+		{name: "relative path", path: "candidate.json", contents: valid},
+		{name: "missing file", path: filepath.Join(root, "missing.json"), contents: ""},
+		{name: "trailing document", path: filepath.Join(root, "trailing.json"), contents: valid + `{}`},
+		{name: "invalid evidence lifetime", path: filepath.Join(root, "lifetime.json"), contents: `{"pollInterval":"1ms","profiles":[{"evidenceTtl":"later"}]}`},
+		{name: "invalid check timeout", path: filepath.Join(root, "timeout.json"), contents: `{"pollInterval":"1ms","profiles":[{"evidenceTtl":"1h","localChecks":[{"timeout":"later"}]}]}`},
+		{name: "oversized file", path: filepath.Join(root, "oversized.json"), contents: strings.Repeat("x", maximumCandidateConfigurationBytes+1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if filepath.IsAbs(test.path) && test.contents != "" {
+				writeCandidateConfig(t, test.path, test.contents, 0o600)
+			}
+			if _, _, err := readCandidateComposition(test.path); err == nil {
+				t.Fatal("readCandidateComposition(invalid) error = nil")
+			}
+		})
+	}
+}
+
+func TestOwnerCredentialSource_ResolvesOneScopedPrivateIdentity(t *testing.T) {
+	path := filepath.Join(shortTempDir(t), "forge.credential")
+	writeCandidateConfig(t, path, "forge_identity_secret", 0o600)
+	source := ownerCredentialSource{
+		path: path, kind: forge.CredentialRead,
+		scopes: []forge.CredentialScope{forge.ScopeContentsRead, forge.ScopePullRequestsRead, forge.ScopeChecksRead},
+	}
+	credential, err := source.Resolve(context.Background())
+	if err != nil || credential.Kind != forge.CredentialRead || credential.Secret != "forge_identity_secret" ||
+		len(credential.Scopes) != 3 {
+		t.Fatalf("Resolve() = %#v, %v", credential, err)
+	}
+	source.scopes[0] = forge.ScopeContentsWrite
+	if credential.Scopes[0] != forge.ScopeContentsRead {
+		t.Fatal("resolved credential scopes alias mutable configuration")
+	}
+	//lint:ignore SA1012 This boundary test proves a nil context is rejected without dereferencing it.
+	if _, err := source.Resolve(nil); err == nil {
+		t.Fatal("Resolve(nil) error = nil")
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := source.Resolve(cancelled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Resolve(cancelled) error = %v", err)
+	}
+	source.path = filepath.Join(filepath.Dir(path), "missing")
+	if _, err := source.Resolve(context.Background()); err == nil {
+		t.Fatal("Resolve(missing) error = nil")
 	}
 }
 
