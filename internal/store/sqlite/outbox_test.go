@@ -82,6 +82,20 @@ func TestComisReportOutbox_IsAtomicReplaySafeAndRestartDurable(t *testing.T) {
 	}
 }
 
+func TestComisReportOutbox_HoldsCandidateReportUntilEvidenceDeliveryCompletes(t *testing.T) {
+	store, task := openReportFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	defer func() { _ = store.Close() }()
+	report := sqliteWorkerReport(task, "report-candidate-held", domain.ReportCandidateComplete)
+	if _, err := store.CommitReport(
+		context.Background(), directReportMutation(task, report, task.UpdatedAt.Add(time.Minute)),
+	); err != nil {
+		t.Fatalf("CommitReport() error = %v", err)
+	}
+	if next, found, err := store.NextComisReport(context.Background()); err != nil || found {
+		t.Fatalf("NextComisReport(candidate before evidence) = %#v, %t, %v, want held", next, found, err)
+	}
+}
+
 func TestComisReportOutbox_ValidationAndCorruptionFailClosed(t *testing.T) {
 	observed := time.Date(2026, time.August, 9, 16, 0, 0, 0, time.UTC)
 	validDelivery := application.ComisReportDelivery{
