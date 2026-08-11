@@ -86,6 +86,41 @@ func TestRegistry_PrepareWorktreeCreatesConcurrentDistinctRootsFromOnePinnedBase
 	}
 }
 
+func TestRegistry_InspectCandidateReturnsExactHeadBranchAndCleanliness(t *testing.T) {
+	fixture := newRepositoryFixture(t, "product-api")
+	registry := newLifecycleRegistry(t, fixture)
+	request := lifecycleRequest(t, fixture, "prepare-candidate", "task-candidate")
+	prepared, err := registry.PrepareWorktree(context.Background(), request)
+	if err != nil {
+		t.Fatalf("PrepareWorktree() error = %v", err)
+	}
+	snapshot, err := registry.InspectCandidate(context.Background(), devgit.CandidateSnapshotRequest{
+		TaskHandle: request.TaskHandle, RepositoryID: request.RepositoryID, WorktreePath: prepared.CanonicalPath,
+	})
+	if err != nil {
+		t.Fatalf("InspectCandidate() error = %v", err)
+	}
+	if snapshot.RepositoryID != request.RepositoryID || snapshot.WorktreePath != prepared.CanonicalPath ||
+		snapshot.Branch != prepared.Branch || snapshot.HeadRevision != prepared.HeadRevision ||
+		snapshot.Cleanliness != devgit.CandidateClean {
+		t.Fatalf("InspectCandidate() = %#v", snapshot)
+	}
+	if err := os.WriteFile(filepath.Join(prepared.CanonicalPath, "candidate.txt"), []byte("candidate\n"), 0o600); err != nil {
+		t.Fatalf("write candidate: %v", err)
+	}
+	dirty, err := registry.InspectCandidate(context.Background(), devgit.CandidateSnapshotRequest{
+		TaskHandle: request.TaskHandle, RepositoryID: request.RepositoryID, WorktreePath: prepared.CanonicalPath,
+	})
+	if err != nil || dirty.Cleanliness != devgit.CandidateDirty {
+		t.Fatalf("InspectCandidate(dirty) = %#v, %v", dirty, err)
+	}
+	if _, err := registry.InspectCandidate(context.Background(), devgit.CandidateSnapshotRequest{
+		TaskHandle: "task-other", RepositoryID: request.RepositoryID, WorktreePath: prepared.CanonicalPath,
+	}); err == nil {
+		t.Fatal("InspectCandidate(cross task) error = nil")
+	}
+}
+
 func TestRegistry_PrepareWorktreeRefusesUnsafeBaseTargetsAndAdoption(t *testing.T) {
 	t.Run("base exists but is unreachable from configured default", func(t *testing.T) {
 		fixture := newRepositoryFixture(t, "product-api")
