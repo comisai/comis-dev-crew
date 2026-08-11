@@ -130,6 +130,17 @@ func TestComisReportOutbox_HoldsCandidateReportUntilEvidenceDeliveryCompletes(t 
 	}) {
 		t.Fatalf("NextComisReport(candidate with evidence) = %#v, %t, %v", pending, found, err)
 	}
+	reportDeliveredAt := judgedAt.Add(2 * time.Minute)
+	if err := store.MarkComisReportDelivered(context.Background(), pending.OperationID, application.ComisReportAcknowledgement{
+		ManagedRunID: pending.ManagedRunID, ServiceReportID: pending.ServiceReportID,
+		AcceptedSequence: 7, RetainedUntil: reportDeliveredAt.Add(24 * time.Hour),
+	}, reportDeliveredAt); err != nil {
+		t.Fatalf("MarkComisReportDelivered(candidate) error = %v", err)
+	}
+	delivered, err := store.GetTask(context.Background(), task.Handle)
+	if err != nil || delivered.State != domain.TaskDelivered {
+		t.Fatalf("GetTask(delivered) = %#v, %v", delivered, err)
+	}
 }
 
 func TestComisReportOutbox_ValidationAndCorruptionFailClosed(t *testing.T) {
