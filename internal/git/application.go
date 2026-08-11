@@ -22,4 +22,28 @@ func (registry *Registry) PrepareWorkspace(
 	return application.PreparedWorkspace{CanonicalRoot: prepared.CanonicalPath}, nil
 }
 
+// InspectWorkspace implements the application handback observation port using
+// the same exact worktree identity checks as candidate validation.
+func (registry *Registry) InspectWorkspace(
+	ctx context.Context,
+	request application.WorkspaceSnapshotRequest,
+) (application.WorkspaceSnapshot, error) {
+	snapshot, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
+		TaskHandle: request.TaskHandle, RepositoryID: request.RepositoryID, WorktreePath: request.WorktreePath,
+	})
+	if err != nil {
+		return application.WorkspaceSnapshot{}, err
+	}
+	cleanliness := application.WorkspaceClean
+	if snapshot.Cleanliness == CandidateDirty {
+		cleanliness = application.WorkspaceDirty
+	}
+	return application.WorkspaceSnapshot{
+		TaskHandle: request.TaskHandle, RepositoryID: snapshot.RepositoryID,
+		WorktreePath: snapshot.WorktreePath, Branch: snapshot.Branch,
+		HeadRevision: snapshot.HeadRevision, Cleanliness: cleanliness,
+	}, nil
+}
+
 var _ application.WorkspacePreparer = (*Registry)(nil)
+var _ application.WorkspaceInspector = (*Registry)(nil)

@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -67,7 +68,7 @@ func TestInterventions_HandbackReplaysBeforeInspectionAndRejectsUnsafeInputs(t *
 		OperationID: replay.Operation.ID, TaskHandle: task.Handle, Action: HandbackValidateDeveloperWork,
 	}
 	got, err := interventions.HandbackTask(context.Background(), command)
-	if err != nil || got != replay || inspector.calls != 0 || store.commitCalls != 0 {
+	if err != nil || !reflect.DeepEqual(got, replay) || inspector.calls != 0 || store.commitCalls != 0 {
 		t.Fatalf("HandbackTask(replay) = %#v, %v, inspect=%d commit=%d", got, err, inspector.calls, store.commitCalls)
 	}
 	command.Action = HandbackAction("invented")
