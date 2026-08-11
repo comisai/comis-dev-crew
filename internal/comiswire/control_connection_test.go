@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/comisai/comis-dev-crew/internal/application"
 )
 
 var _ interface {
@@ -322,12 +324,14 @@ func TestControlConnectionSendsReleaseOnPersistentAuthenticatedSession(t *testin
 		})
 	}()
 
-	result, err := connection.Release(context.Background(), ReleaseRequestParams{
+	var releaser application.ManagedRunReleaser = connection
+	result, err := releaser.ReleaseManagedRun(context.Background(), application.ManagedRunReleaseRequest{
 		OperationID: "operation_release_a", ManagedRunID: "managed-run_a",
-		WorkspaceLeaseID: "workspace-lease_a", Disposition: "reap_safe", ReleasedAtMs: 1_800_000_000_000,
+		WorkspaceLeaseID: "workspace-lease_a", Disposition: application.ManagedRunReleaseReapSafe,
+		ReleasedAt: time.UnixMilli(1_800_000_000_000).UTC(),
 	})
-	if err != nil || result.State != ManagedRunState("released") {
-		t.Fatalf("Release() = %#v, %v", result, err)
+	if err != nil || result.State != application.ManagedRunReleased {
+		t.Fatalf("ReleaseManagedRun() = %#v, %v", result, err)
 	}
 	if serverErr := <-serverDone; serverErr != nil {
 		t.Fatalf("control fixture server error = %v", serverErr)
