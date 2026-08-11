@@ -139,6 +139,113 @@ func (registry *Registry) CleanupWorktree(ctx context.Context, request CleanupWo
 	return nil
 }
 
+// RemoveDeliveredWorktree removes only the exact clean task worktree and
+// operation-bound branch whose delivered head was independently authorized.
+// A replay converges after either or both Git resources have been removed.
+func (registry *Registry) RemoveDeliveredWorktree(ctx context.Context, request DeliveredWorktreeCleanupRequest) error {
+	if registry == nil {
+		return errors.New("remove delivered worktree: registry is unavailable")
+	}
+	if ctx == nil {
+		return errors.New("remove delivered worktree: context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !repositoryIDPattern.MatchString(request.PreparationOperationID) ||
+		!repositoryIDPattern.MatchString(request.TaskHandle) ||
+		!repositoryIDPattern.MatchString(request.RepositoryID) ||
+		!gitRevisionPattern.MatchString(request.HeadRevision) {
+		return errors.New("remove delivered worktree: request identity is invalid")
+	}
+
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	repository, err := registry.Resolve(request.RepositoryID)
+	if err != nil {
+		return errors.New("remove delivered worktree: repository is unavailable")
+	}
+	target := filepath.Join(repository.WorktreeRoot, request.TaskHandle)
+	if request.WorktreePath != target || validatePreparedTarget(repository, target, nil) != nil {
+		return errors.New("remove delivered worktree: target does not match the task root")
+	}
+	branch, operationSuffix := preparedBranch(
+		request.RepositoryID,
+		request.TaskHandle,
+		request.PreparationOperationID,
+	)
+	if request.Branch != branch {
+		return errors.New("remove delivered worktree: branch does not match its preparation")
+	}
+	if err := registry.validateOperationBranch(ctx, repository, branch, operationSuffix); err != nil {
+		return errors.New("remove delivered worktree: operation branch is ambiguous")
+	}
+
+	entries, err := registry.worktreeEntries(ctx, repository)
+	if err != nil {
+		return err
+	}
+	entry, listed := findWorktreeEntry(entries, target)
+	info, statErr := os.Lstat(target)
+	switch {
+	case statErr == nil:
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return errors.New("remove delivered worktree: target is unsafe")
+		}
+		if _, err := registry.ValidateWorktree(ctx, request.RepositoryID, target); err != nil {
+			return errors.New("remove delivered worktree: worktree identity is invalid")
+		}
+		if !listed || entry.locked || entry.prunable || entry.branch != branch || entry.head != request.HeadRevision {
+			return errors.New("remove delivered worktree: worktree inventory differs")
+		}
+		currentBranch, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", target,
+			"symbolic-ref", "--quiet", "--short", "HEAD")
+		if err != nil || currentBranch != branch {
+			return errors.New("remove delivered worktree: branch identity differs")
+		}
+		head, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", target,
+			"rev-parse", "--verify", "HEAD^{commit}")
+		if err != nil || head != request.HeadRevision {
+			return errors.New("remove delivered worktree: head identity differs")
+		}
+		status, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", target,
+			"status", "--porcelain=v2", "-z", "--untracked-files=all")
+		if err != nil || len(status) != 0 {
+			return errors.New("remove delivered worktree: dirty or untracked work is preserved")
+		}
+		if _, err := runGitBytes(ctx, registry.gitExecutable,
+			"-c", "core.hooksPath=/dev/null", "--no-optional-locks", "-C", repository.PrimaryCheckout,
+			"worktree", "remove", "--", target); err != nil {
+			return errors.New("remove delivered worktree: Git removal refused")
+		}
+	case os.IsNotExist(statErr):
+		if listed {
+			return errors.New("remove delivered worktree: absent target remains in worktree inventory")
+		}
+	default:
+		return errors.New("remove delivered worktree: target cannot be inspected")
+	}
+
+	branchExists, err := registry.branchExists(ctx, repository, branch)
+	if err != nil {
+		return err
+	}
+	if !branchExists {
+		return nil
+	}
+	branchHead, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", repository.PrimaryCheckout,
+		"rev-parse", "--verify", "refs/heads/"+branch+"^{commit}")
+	if err != nil || branchHead != request.HeadRevision {
+		return errors.New("remove delivered worktree: branch head differs")
+	}
+	if _, err := runGitBytes(ctx, registry.gitExecutable,
+		"-c", "core.hooksPath=/dev/null", "--no-optional-locks", "-C", repository.PrimaryCheckout,
+		"update-ref", "-d", "refs/heads/"+branch, request.HeadRevision); err != nil {
+		return errors.New("remove delivered worktree: exact branch removal refused")
+	}
+	return nil
+}
+
 func (registry *Registry) validatePinnedBase(ctx context.Context, repository Repository, baseRevision string) error {
 	resolved, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", repository.PrimaryCheckout,
 		"rev-parse", "--verify", baseRevision+"^{commit}")

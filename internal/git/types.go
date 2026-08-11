@@ -75,6 +75,17 @@ type CleanupWorktreeRequest struct {
 	LiveLeasePaths []string
 }
 
+// DeliveredWorktreeCleanupRequest identifies one already-delivered candidate
+// by the preparation that created it and its final immutable Git identity.
+type DeliveredWorktreeCleanupRequest struct {
+	PreparationOperationID string
+	TaskHandle             string
+	RepositoryID           string
+	WorktreePath           string
+	Branch                 string
+	HeadRevision           string
+}
+
 // CandidateCleanliness is the closed candidate worktree posture.
 type CandidateCleanliness string
 
