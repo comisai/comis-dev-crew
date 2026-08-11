@@ -230,7 +230,7 @@ func (coordinator *CleanupCoordinator) CleanupTask(ctx context.Context, command 
 		case CleanupPrepared:
 			snapshot, truth, verifyErr := coordinator.verifyCurrentSafety(ctx, record)
 			if verifyErr != nil {
-				return MutationResult{}, verifyErr
+				return MutationResult{}, mutationCommitFailure(verifyErr)
 			}
 			receipt, releaseErr := coordinator.config.Releaser.ReleaseManagedRun(ctx, ManagedRunReleaseRequest{
 				OperationID: record.ReleaseOperationID, ManagedRunID: record.ManagedRunID,
@@ -252,7 +252,7 @@ func (coordinator *CleanupCoordinator) CleanupTask(ctx context.Context, command 
 		case CleanupHostReleased:
 			snapshot, truth, verifyErr := coordinator.verifyCurrentSafety(ctx, record)
 			if verifyErr != nil {
-				return MutationResult{}, verifyErr
+				return MutationResult{}, mutationCommitFailure(verifyErr)
 			}
 			record, err = coordinator.config.Store.AuthorizeTaskCleanupRemoval(ctx, TaskCleanupRemovalAuthorization{
 				OperationID: command.OperationID, SubjectDigest: digest, Snapshot: snapshot,
