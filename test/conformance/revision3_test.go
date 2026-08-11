@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	revision3SourceCommit = "59ef46c3cfbff25dffedea05fdb181b179ceb144"
-	revision3BundleDigest = "418f92fd129f8df03b3fbf49b7cc79a1d924533e7739e8496d7552ae2af393c7"
+	revision3SourceCommit = "119d18edbed71c36cb35773fe752462c66385f57"
+	revision3BundleDigest = "82297e6ae5ae8e2defb7f10b9962e98a3e86140c3941061584ed713a12a999ad"
 )
 
 func TestContractRevision3PinsPreparedAttachmentAuthority(t *testing.T) {
@@ -22,7 +22,7 @@ func TestContractRevision3PinsPreparedAttachmentAuthority(t *testing.T) {
 	if pinned.Manifest.ProtocolID != "comis.capability-service/1" ||
 		pinned.Manifest.BundleDigest != revision3BundleDigest ||
 		pinned.Provenance.SourceCommit != revision3SourceCommit ||
-		len(pinned.Manifest.Artifacts) != 26 {
+		len(pinned.Manifest.Artifacts) != 28 {
 		t.Fatalf("revision-3 identity = protocol:%q digest:%q source:%q artifacts:%d",
 			pinned.Manifest.ProtocolID, pinned.Manifest.BundleDigest,
 			pinned.Provenance.SourceCommit, len(pinned.Manifest.Artifacts))

@@ -14,6 +14,7 @@ func renderClient(manifest bundle.Manifest) (string, error) {
 		"managedRuns.abandon":          false,
 		"managedRuns.activate":         false,
 		"managedRuns.putEvidence":      false,
+		"managedRuns.release":          false,
 		"managedRuns.report":           false,
 		"managedRuns.terminalEvent":    false,
 	}

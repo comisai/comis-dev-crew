@@ -22,10 +22,10 @@ func TestProtocolFoundationPinsExactComisBundleAndCorpus(t *testing.T) {
 	if pinned.Manifest.ProtocolID != "comis.capability-service/1" {
 		t.Fatalf("protocol identifier = %q", pinned.Manifest.ProtocolID)
 	}
-	if pinned.Manifest.BundleDigest != "418f92fd129f8df03b3fbf49b7cc79a1d924533e7739e8496d7552ae2af393c7" {
+	if pinned.Manifest.BundleDigest != "82297e6ae5ae8e2defb7f10b9962e98a3e86140c3941061584ed713a12a999ad" {
 		t.Fatalf("bundle digest = %q", pinned.Manifest.BundleDigest)
 	}
-	if pinned.Provenance.SourceCommit != "59ef46c3cfbff25dffedea05fdb181b179ceb144" {
+	if pinned.Provenance.SourceCommit != "119d18edbed71c36cb35773fe752462c66385f57" {
 		t.Fatalf("source commit = %q", pinned.Provenance.SourceCommit)
 	}
 	var fixtureClasses []string
