@@ -84,4 +84,40 @@ func TestReportArtifactInspector_RefusesSymlinkDirectoryOversizeAndChangedFile(t
 	if _, err := inspectReportArtifact(context.Background(), regular, 16, "text/markdown", dependencies); err == nil {
 		t.Fatal("inspectReportArtifact(changed identity) error = nil")
 	}
+	openFailure := reportArtifactDependencies{
+		lstat: os.Lstat,
+		open:  func(string) (*os.File, error) { return nil, errors.New("open failed") },
+	}
+	if _, err := inspectReportArtifact(context.Background(), regular, 16, "text/markdown", openFailure); err == nil {
+		t.Fatal("inspectReportArtifact(open failure) error = nil")
+	}
+	statCalls := 0
+	restatFailure := reportArtifactDependencies{
+		lstat: func(path string) (os.FileInfo, error) {
+			statCalls++
+			if statCalls == 2 {
+				return nil, errors.New("restat failed")
+			}
+			return os.Lstat(path)
+		},
+		open: os.Open,
+	}
+	if _, err := inspectReportArtifact(context.Background(), regular, 16, "text/markdown", restatFailure); err == nil {
+		t.Fatal("inspectReportArtifact(restat failure) error = nil")
+	}
+	postHashContext, cancelPostHash := context.WithCancel(context.Background())
+	statCalls = 0
+	postHashCancellation := reportArtifactDependencies{
+		lstat: func(path string) (os.FileInfo, error) {
+			statCalls++
+			if statCalls == 2 {
+				cancelPostHash()
+			}
+			return os.Lstat(path)
+		},
+		open: os.Open,
+	}
+	if _, err := inspectReportArtifact(postHashContext, regular, 16, "text/markdown", postHashCancellation); !errors.Is(err, context.Canceled) {
+		t.Fatalf("inspectReportArtifact(post-hash cancellation) error = %v", err)
+	}
 }
