@@ -20,7 +20,7 @@ func TestProfileCatalog_ResolvesOnlyReviewedArgumentTemplates(t *testing.T) {
 				},
 			}},
 			ForgeChecks:   []ForgeCheck{{Name: "ci/unit", Required: true}},
-			ArtifactRules: []ArtifactRule{{Kind: ArtifactRegularFile, MaxBytes: 1024}},
+			ArtifactRules: []ArtifactRule{{Kind: ArtifactRegularFile, RelativePath: "report.md", MediaType: "text/markdown", MaxBytes: 1024}},
 			EvidenceTTL:   15 * time.Minute,
 		}},
 	})
@@ -40,7 +40,9 @@ func TestProfileCatalog_ResolvesOnlyReviewedArgumentTemplates(t *testing.T) {
 		t.Fatalf("resolved command = %#v", command)
 	}
 	profile, err := catalog.ResolveProfile("fixture-default")
-	if err != nil || len(profile.ForgeChecks) != 1 || len(profile.ArtifactRules) != 1 || profile.EvidenceTTL != 15*time.Minute {
+	if err != nil || len(profile.ForgeChecks) != 1 || len(profile.ArtifactRules) != 1 ||
+		profile.ArtifactRules[0].RelativePath != "report.md" || profile.ArtifactRules[0].MediaType != "text/markdown" ||
+		profile.EvidenceTTL != 15*time.Minute {
 		t.Fatalf("ResolveProfile() = %#v, %v", profile, err)
 	}
 	profile.LocalChecks[0].Arguments[0].Value = "mutated"
@@ -81,6 +83,11 @@ func TestProfileCatalog_RejectsUnreviewedProgramsAndAmbiguousProfiles(t *testing
 		{name: "zero evidence ttl", mutate: func(config *CatalogConfig) { config.Profiles[0].EvidenceTTL = 0 }},
 		{name: "unbounded artifact", mutate: func(config *CatalogConfig) {
 			config.Profiles[0].ArtifactRules = []ArtifactRule{{Kind: ArtifactRegularFile}}
+		}},
+		{name: "escaping artifact", mutate: func(config *CatalogConfig) {
+			config.Profiles[0].ArtifactRules = []ArtifactRule{{
+				Kind: ArtifactRegularFile, RelativePath: "../report.md", MediaType: "text/markdown", MaxBytes: 1024,
+			}}
 		}},
 	}
 	for _, test := range tests {
