@@ -36,7 +36,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	}
 	if config.Repositories != nil || config.Workspaces != nil || config.TaskIDs != nil ||
 		config.RuntimeAttachments != nil || config.WorkerHarnesses != nil || config.RegistrationNonces != nil || config.ComisControl != nil ||
-		config.candidateGit != nil || config.validationCatalog != nil || config.pullRequests != nil ||
+		config.candidateGit != nil || config.workspaceInspector != nil || config.validationCatalog != nil || config.pullRequests != nil ||
 		config.validationMaxOutputBytes != 0 || config.validationPollInterval != 0 {
 		return Config{}, errors.New("run service: installed and injected composition cannot be combined")
 	}
@@ -139,6 +139,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	config.RegistrationNonces = func() (string, error) { return randomIdentity("registration-nonce", 16) }
 	config.WorkerHarnesses = exactWorkerHarnesses{profileID: codexConfig.ProfileID, adapter: adapter}
 	config.candidateGit = registry
+	config.workspaceInspector = registry
 	config.validationCatalog = catalog
 	config.validationMaxOutputBytes = validationConfig.MaxOutputBytes
 	config.validationPollInterval = validationConfig.PollInterval

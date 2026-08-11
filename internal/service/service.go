@@ -58,6 +58,7 @@ type Config struct {
 	FixtureComposition       *FixtureComposition
 	Ready                    func()
 	candidateGit             candidateGitInspector
+	workspaceInspector       application.WorkspaceInspector
 	validationCatalog        *validation.Catalog
 	validationMaxOutputBytes int64
 	validationPollInterval   time.Duration
@@ -205,6 +206,15 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 			return fmt.Errorf("run service runtime attachment recovery: %w", err)
 		}
 	}
+	var interventions *application.Interventions
+	if config.workspaceInspector != nil {
+		interventions, err = application.NewInterventions(application.InterventionConfig{
+			Store: store, Workspaces: config.workspaceInspector, Clock: clock,
+		})
+		if err != nil {
+			return fmt.Errorf("run service intervention coordinator: %w", err)
+		}
+	}
 	var controlMutations comiswire.DurableControlMutations
 	if mutations != nil {
 		controlMutations = mutations
@@ -237,6 +247,9 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if mutations != nil {
 		handlerConfig.Mutations = mutations
 		handlerConfig.ServiceInstanceID = config.ServiceInstanceID
+	}
+	if interventions != nil {
+		handlerConfig.Interventions = interventions
 	}
 	handler, err := localapi.NewHandler(handlerConfig)
 	if err != nil {
