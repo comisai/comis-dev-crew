@@ -313,6 +313,16 @@ func (control *serviceComisControl) PutEvidence(
 	}, nil
 }
 
+func (control *serviceComisControl) ReleaseManagedRun(
+	_ context.Context,
+	request application.ManagedRunReleaseRequest,
+) (application.ManagedRunReleaseReceipt, error) {
+	return application.ManagedRunReleaseReceipt{
+		ManagedRunID: request.ManagedRunID, WorkspaceLeaseID: request.WorkspaceLeaseID,
+		Disposition: request.Disposition, ReleasedAt: request.ReleasedAt, State: application.ManagedRunReleased,
+	}, nil
+}
+
 func TestRun_SupervisesDurableCandidateEvidenceForwarding(t *testing.T) {
 	root := shortTempDir(t)
 	databasePath := filepath.Join(root, "state", "devcrew.db")

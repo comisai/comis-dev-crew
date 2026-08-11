@@ -31,6 +31,7 @@ const (
 type ComisControl interface {
 	comiswire.ReportSender
 	comiswire.EvidenceSender
+	application.ManagedRunReleaser
 	Run(context.Context) error
 }
 
@@ -63,6 +64,8 @@ type Config struct {
 	validationMaxOutputBytes int64
 	validationPollInterval   time.Duration
 	pullRequests             candidatePullRequestDeliverer
+	cleanupRemover           application.DeliveredWorkspaceRemover
+	cleanupForge             application.PullRequestDeliveryVerifier
 }
 
 // RepositoryComposition is the installed single-repository fixture lane.
@@ -232,6 +235,19 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if err != nil {
 		return err
 	}
+	var cleanup *application.CleanupCoordinator
+	if config.cleanupRemover != nil || config.cleanupForge != nil {
+		if control == nil || config.workspaceInspector == nil || config.cleanupRemover == nil || config.cleanupForge == nil {
+			return errors.New("run service: cleanup composition is incomplete")
+		}
+		cleanup, err = application.NewCleanupCoordinator(application.CleanupCoordinatorConfig{
+			Store: store, Workspaces: config.workspaceInspector, Forge: config.cleanupForge,
+			Releaser: control, Remover: config.cleanupRemover, Clock: clock,
+		})
+		if err != nil {
+			return fmt.Errorf("run service cleanup coordinator: %w", err)
+		}
+	}
 	var fixture *fixtureSupervisor
 	if config.FixtureComposition != nil {
 		fixture, err = newFixtureSupervisor(fixtureSupervisorConfig{
@@ -250,6 +266,9 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	}
 	if interventions != nil {
 		handlerConfig.Interventions = interventions
+	}
+	if cleanup != nil {
+		handlerConfig.Cleanup = cleanup
 	}
 	handler, err := localapi.NewHandler(handlerConfig)
 	if err != nil {
