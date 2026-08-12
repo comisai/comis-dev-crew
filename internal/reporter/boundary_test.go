@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
@@ -371,6 +372,53 @@ func TestRuntimeClientRejectsMalformedAndMismatchedOutcomes(t *testing.T) {
 	}
 }
 
+func TestRuntimeAttentionServerRejectsUnavailableAndDriftedResponses(t *testing.T) {
+	request := runtimeRequest{Version: runtimeProtocolVersion, Kind: "attention_response", ExternalKey: "database-choice"}
+	launch := &RuntimeLaunchConfig{Expected: application.LaunchAcknowledgement{ManagedRunID: "managed-run.attention"}}
+	valid := AttentionResponse{
+		ManagedRunID: "managed-run.attention", ExternalKey: "database-choice", State: AttentionResponsePending,
+	}
+	cases := []struct {
+		name       string
+		request    runtimeRequest
+		launch     *RuntimeLaunchConfig
+		newID      func() (string, error)
+		response   AttentionResponse
+		receiveErr error
+		code       string
+	}{
+		{name: "malformed key", request: runtimeRequest{Version: runtimeProtocolVersion, Kind: "attention_response", ExternalKey: "bad key"}, launch: launch, code: "malformed_request"},
+		{name: "unbound launch", request: request, code: "attention_binding_unavailable"},
+		{name: "missing dependencies", request: request, launch: launch, code: "attention_response_unavailable"},
+		{name: "operation source failure", request: request, launch: launch, newID: func() (string, error) { return "", errors.New("unavailable") }, response: valid, code: "attention_response_unavailable"},
+		{name: "invalid operation identity", request: request, launch: launch, newID: func() (string, error) { return "bad operation", nil }, response: valid, code: "attention_response_unavailable"},
+		{name: "receiver failure", request: request, launch: launch, newID: func() (string, error) { return "attention-response-boundary", nil }, receiveErr: errors.New("unavailable"), code: "attention_response_unavailable"},
+		{name: "managed run drift", request: request, launch: launch, newID: func() (string, error) { return "attention-response-boundary", nil }, response: AttentionResponse{ManagedRunID: "managed-run.other", ExternalKey: "database-choice", State: AttentionResponsePending}, code: "attention_response_unavailable"},
+		{name: "pending content", request: request, launch: launch, newID: func() (string, error) { return "attention-response-boundary", nil }, response: AttentionResponse{ManagedRunID: "managed-run.attention", ExternalKey: "database-choice", State: AttentionResponsePending, Response: "unexpected"}, code: "attention_response_unavailable"},
+		{name: "delivered without content", request: request, launch: launch, newID: func() (string, error) { return "attention-response-boundary", nil }, response: AttentionResponse{ManagedRunID: "managed-run.attention", ExternalKey: "database-choice", State: AttentionResponseDelivered}, code: "attention_response_unavailable"},
+		{name: "unknown state", request: request, launch: launch, newID: func() (string, error) { return "attention-response-boundary", nil }, response: AttentionResponse{ManagedRunID: "managed-run.attention", ExternalKey: "database-choice", State: AttentionResponseState("unknown")}, code: "attention_response_unavailable"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			server := &RuntimeServer{newAttentionOperationID: test.newID}
+			if test.response != (AttentionResponse{}) || test.receiveErr != nil {
+				server.attentionResponses = boundaryAttentionReceiver{response: test.response, err: test.receiveErr}
+			}
+			outcome := server.receiveAttentionResponse(context.Background(), test.request, test.launch)
+			if outcome.Error == nil || outcome.Error.Code != test.code || outcome.AttentionResponse != nil {
+				t.Fatalf("receiveAttentionResponse() = %#v", outcome)
+			}
+		})
+	}
+	var client *RuntimeClient
+	if _, err := client.AwaitDecision(nil, "database-choice"); err == nil {
+		t.Fatal("AwaitDecision(nil context) error = nil")
+	}
+	if _, err := client.AwaitDecision(context.Background(), "bad key"); err == nil {
+		t.Fatal("AwaitDecision(invalid key) error = nil")
+	}
+}
+
 func TestRuntimeClientAndCloseDetectIdentityChanges(t *testing.T) {
 	var nilClient *RuntimeClient
 	if _, err := nilClient.call(context.Background(), runtimeRequest{}); err == nil {
@@ -432,6 +480,18 @@ func TestRuntimeClientAndCloseDetectIdentityChanges(t *testing.T) {
 type boundaryCapability struct {
 	brief   domain.WorkerBrief
 	receipt domain.ReportReceipt
+}
+
+type boundaryAttentionReceiver struct {
+	response AttentionResponse
+	err      error
+}
+
+func (receiver boundaryAttentionReceiver) ReceiveRuntimeAttentionResponse(
+	context.Context,
+	AttentionResponseRequest,
+) (AttentionResponse, error) {
+	return receiver.response, receiver.err
 }
 
 func (capability *boundaryCapability) Acknowledge(context.Context, string) error { return nil }

@@ -117,36 +117,60 @@ func TestRuntimeAttachmentCoordinator_MapsOnlyExactPrivateComisResponse(t *testi
 	if err := coordinator.SetAttentionResponseReceiver(nil); err == nil {
 		t.Fatal("SetAttentionResponseReceiver(nil) error = nil")
 	}
+	request := reporter.AttentionResponseRequest{
+		OperationID: "attention-response-runtime-test", ManagedRunID: "managed-run.attention", ExternalKey: "database-choice",
+	}
+	if _, err := coordinator.ReceiveRuntimeAttentionResponse(context.Background(), request); err == nil {
+		t.Fatal("ReceiveRuntimeAttentionResponse(unconfigured) error = nil")
+	}
+	if _, err := coordinator.ReceiveRuntimeAttentionResponse(nil, request); err == nil {
+		t.Fatal("ReceiveRuntimeAttentionResponse(nil context) error = nil")
+	}
 	private := "Use the existing PostgreSQL adapter."
-	receiver := &runtimeAttentionReceiver{result: comiswire.ReceiveAttentionResponseResponseResult{
-		ManagedRunID: "managed-run.attention", ExternalKey: "database-choice",
-		State: comiswire.ManagedRunStateDelivered, Response: &private,
-	}}
+	receiver := &runtimeAttentionReceiver{}
 	if err := coordinator.SetAttentionResponseReceiver(receiver); err != nil {
 		t.Fatal(err)
 	}
 	if err := coordinator.SetAttentionResponseReceiver(receiver); err == nil {
 		t.Fatal("SetAttentionResponseReceiver(duplicate) error = nil")
 	}
-	response, err := coordinator.ReceiveRuntimeAttentionResponse(context.Background(), reporter.AttentionResponseRequest{
-		OperationID: "attention-response-runtime-test", ManagedRunID: "managed-run.attention", ExternalKey: "database-choice",
-	})
+	receiver.result = comiswire.ReceiveAttentionResponseResponseResult{
+		ManagedRunID: "managed-run.attention", ExternalKey: "database-choice", State: comiswire.ManagedRunStatePending,
+	}
+	response, err := coordinator.ReceiveRuntimeAttentionResponse(context.Background(), request)
+	if err != nil || response.State != reporter.AttentionResponsePending || response.Response != "" {
+		t.Fatalf("ReceiveRuntimeAttentionResponse(pending) = %#v, %v", response, err)
+	}
+	receiver.result.Response = &private
+	if _, err := coordinator.ReceiveRuntimeAttentionResponse(context.Background(), request); err == nil {
+		t.Fatal("ReceiveRuntimeAttentionResponse(pending content) error = nil")
+	}
+	receiver.result.State = comiswire.ManagedRunStateDelivered
+	receiver.result.Response = nil
+	if _, err := coordinator.ReceiveRuntimeAttentionResponse(context.Background(), request); err == nil {
+		t.Fatal("ReceiveRuntimeAttentionResponse(delivered without content) error = nil")
+	}
+	receiver.result.State = comiswire.ManagedRunStateActive
+	if _, err := coordinator.ReceiveRuntimeAttentionResponse(context.Background(), request); err == nil {
+		t.Fatal("ReceiveRuntimeAttentionResponse(unknown state) error = nil")
+	}
+	receiver.result.State = comiswire.ManagedRunStateDelivered
+	receiver.result.Response = &private
+	response, err = coordinator.ReceiveRuntimeAttentionResponse(context.Background(), request)
 	if err != nil || response.State != reporter.AttentionResponseDelivered || response.Response != private ||
 		receiver.request.OperationID != "attention-response-runtime-test" || receiver.request.ManagedRunID != "managed-run.attention" ||
 		receiver.request.ExternalKey != "database-choice" {
 		t.Fatalf("ReceiveRuntimeAttentionResponse() = %#v, %v, request %#v", response, err, receiver.request)
 	}
 	receiver.result.ExternalKey = "other-choice"
-	if _, err := coordinator.ReceiveRuntimeAttentionResponse(context.Background(), reporter.AttentionResponseRequest{
-		OperationID: "attention-response-runtime-test-2", ManagedRunID: "managed-run.attention", ExternalKey: "database-choice",
-	}); err == nil {
+	request.OperationID = "attention-response-runtime-test-2"
+	if _, err := coordinator.ReceiveRuntimeAttentionResponse(context.Background(), request); err == nil {
 		t.Fatal("ReceiveRuntimeAttentionResponse(identity drift) error = nil")
 	}
 	receiver.result.ExternalKey = "database-choice"
 	receiver.err = errors.New("private downstream detail: " + private)
-	if _, err := coordinator.ReceiveRuntimeAttentionResponse(context.Background(), reporter.AttentionResponseRequest{
-		OperationID: "attention-response-runtime-test-3", ManagedRunID: "managed-run.attention", ExternalKey: "database-choice",
-	}); err == nil || strings.Contains(err.Error(), private) {
+	request.OperationID = "attention-response-runtime-test-3"
+	if _, err := coordinator.ReceiveRuntimeAttentionResponse(context.Background(), request); err == nil || strings.Contains(err.Error(), private) {
 		t.Fatalf("private downstream error = %v", err)
 	}
 }
