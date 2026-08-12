@@ -137,6 +137,9 @@ and [DEPENDENCIES.md](DEPENDENCIES.md) for accepted dependency provenance.
 Report vulnerabilities privately. See [SECURITY.md](SECURITY.md). Do not open a
 public issue for a suspected vulnerability.
 
+Maintainers: [docs/repository-hardening.md](docs/repository-hardening.md) records
+the server-side protection baseline and the script that applies it.
+
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
