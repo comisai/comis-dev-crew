@@ -10,6 +10,7 @@ import (
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
+	devgit "github.com/comisai/comis-dev-crew/internal/git"
 	"github.com/comisai/comis-dev-crew/internal/store/sqlite"
 )
 
@@ -51,9 +52,11 @@ func TestFixtureSupervisor_ConsumesPinnedReadyTaskExactlyOnce(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	preparer := &fixtureCandidatePreparerStub{}
 	supervisor, err := newFixtureSupervisor(fixtureSupervisorConfig{
 		Store: store, Mutations: mutations, Clock: func() time.Time { return now },
 		Decision: "use the bounded fixture choice", PollInterval: time.Millisecond,
+		CandidatePreparer: preparer, ArtifactRelativePath: "report.md",
 		NewCredential: func() (string, error) { return "fixture-reporter-credential-0123456789abcdef", nil },
 	})
 	if err != nil {
@@ -88,6 +91,13 @@ func TestFixtureSupervisor_ConsumesPinnedReadyTaskExactlyOnce(t *testing.T) {
 	if err != nil || len(reports) != 4 {
 		t.Fatalf("accepted reports = %d, %v, want exactly four", len(reports), err)
 	}
+	if len(preparer.requests) != 1 || preparer.requests[0].TaskHandle != prepared.Task.Handle ||
+		preparer.requests[0].RepositoryID != prepared.Task.RepositoryID ||
+		preparer.requests[0].WorktreePath != "/private/worktrees/managed-run-fixture" ||
+		preparer.requests[0].BaseRevision != prepared.Task.BaseRevision ||
+		preparer.requests[0].ArtifactRelativePath != "report.md" {
+		t.Fatalf("fixture candidate preparation = %#v", preparer.requests)
+	}
 	startID := fixtureStartOperationID(prepared.Task.Handle)
 	operation, err := store.GetOperation(ctx, startID)
 	if err != nil || operation.Status != domain.OperationCompleted {
@@ -110,6 +120,7 @@ func TestFixtureSupervisor_RejectsInvalidLifecycleAndStoreFailure(t *testing.T) 
 	supervisor, err := newFixtureSupervisor(fixtureSupervisorConfig{
 		Store: failingFixtureStore{err: storeFailure}, Mutations: fixtureStarterStub{},
 		Clock: time.Now, Decision: "bounded", PollInterval: time.Millisecond,
+		CandidatePreparer: &fixtureCandidatePreparerStub{}, ArtifactRelativePath: "report.md",
 		NewCredential: func() (string, error) { return "fixture-reporter-credential-0123456789abcdef", nil },
 	})
 	if err != nil {
@@ -186,6 +197,7 @@ func TestFixtureSupervisor_FailsClosedAtWorkerCompositionBoundaries(t *testing.T
 	store := failingFixtureStore{}
 
 	startFailure := &fixtureSupervisor{
+		store: failingFixtureStore{}, candidatePreparer: &fixtureCandidatePreparerStub{}, artifactRelativePath: "report.md",
 		mutations: fixtureStarterFunc(func(context.Context, application.StartTaskCommand) (application.MutationResult, error) {
 			return application.MutationResult{}, privateFailure
 		}),
@@ -195,6 +207,7 @@ func TestFixtureSupervisor_FailsClosedAtWorkerCompositionBoundaries(t *testing.T
 	}
 
 	renderFailure := &fixtureSupervisor{
+		store: failingFixtureStore{}, candidatePreparer: &fixtureCandidatePreparerStub{}, artifactRelativePath: "report.md",
 		mutations: fixtureStarterFunc(func(context.Context, application.StartTaskCommand) (application.MutationResult, error) {
 			return application.MutationResult{Task: domain.Task{}}, nil
 		}),
@@ -204,7 +217,7 @@ func TestFixtureSupervisor_FailsClosedAtWorkerCompositionBoundaries(t *testing.T
 	}
 
 	credentialFailure := &fixtureSupervisor{
-		store: store, clock: clock,
+		store: store, clock: clock, candidatePreparer: &fixtureCandidatePreparerStub{}, artifactRelativePath: "report.md",
 		mutations: fixtureStarterFunc(func(context.Context, application.StartTaskCommand) (application.MutationResult, error) {
 			return application.MutationResult{Task: started}, nil
 		}),
@@ -236,6 +249,10 @@ func (store failingFixtureStore) ListTasks(context.Context) ([]domain.Task, erro
 	return nil, store.err
 }
 
+func (store failingFixtureStore) GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error) {
+	return application.ManagedRunPreparation{RequestedWorkspaceRoot: "/private/worktrees/task-fixture"}, store.err
+}
+
 func (failingFixtureStore) CommitReport(context.Context, application.ReportMutation) (domain.ReportReceipt, error) {
 	return domain.ReportReceipt{}, nil
 }
@@ -250,6 +267,26 @@ func (store fixtureStoreFunc) ListTasks(ctx context.Context) ([]domain.Task, err
 
 func (fixtureStoreFunc) CommitReport(context.Context, application.ReportMutation) (domain.ReportReceipt, error) {
 	return domain.ReportReceipt{}, nil
+}
+
+func (fixtureStoreFunc) GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error) {
+	return application.ManagedRunPreparation{}, nil
+}
+
+type fixtureCandidatePreparerStub struct {
+	requests []devgit.FixtureCandidateRequest
+	err      error
+}
+
+func (preparer *fixtureCandidatePreparerStub) PrepareFixtureCandidate(
+	ctx context.Context,
+	request devgit.FixtureCandidateRequest,
+) (devgit.CandidateSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return devgit.CandidateSnapshot{}, err
+	}
+	preparer.requests = append(preparer.requests, request)
+	return devgit.CandidateSnapshot{}, preparer.err
 }
 
 type fixtureStarterStub struct{}
