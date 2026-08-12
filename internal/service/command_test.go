@@ -136,6 +136,27 @@ func TestRunCommand_ReportsInstalledCompositionFailureWithoutPrivateDetails(t *t
 	}
 }
 
+func TestRunCommand_ReportsRuntimeAttachmentRecoveryFailureActionably(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	privateDetail := "/private/removed-worktree"
+	exitCode := RunCommand(context.Background(), nil, &stdout, &stderr, CommandConfig{
+		DefaultDatabasePath: "/private/tmp/default.db",
+		DefaultSocketPath:   "/private/tmp/default.sock",
+		RunService: func(context.Context, Config) error {
+			return errors.New("run service runtime attachment recovery: recover runtime attachments: prepare runtime attachment: workspace is not canonical: " + privateDetail)
+		},
+	})
+	if exitCode != 1 || !strings.Contains(stderr.String(), "Failure class: runtime_attachment_recovery") ||
+		!strings.Contains(stderr.String(), "Failure cause: runtime_attachment_workspace_unavailable") ||
+		!strings.Contains(stderr.String(), "Hint: inspect cleaned-task attachment recovery and durable workspace state") {
+		t.Fatalf("RunCommand(runtime attachment recovery failure) = %d, stderr=%q", exitCode, stderr.String())
+	}
+	if strings.Contains(stdout.String()+stderr.String(), privateDetail) {
+		t.Fatalf("runtime attachment diagnostic leaked private detail: %q", stderr.String())
+	}
+}
+
 func TestRunCommand_RejectsMissingCompositionDependencies(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
