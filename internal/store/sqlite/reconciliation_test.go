@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,6 +123,54 @@ func TestStartupReconciliationPreservesValidatingTaskForEvidenceRecovery(t *test
 	}
 	if got.State != domain.TaskValidating || got.StateVersion != task.StateVersion {
 		t.Fatalf("task after startup reconciliation = %#v, want validating version %d", got, task.StateVersion)
+	}
+}
+
+func TestStartupReconciliationRepairsHistoricalLossAfterSettledExit(t *testing.T) {
+	store, task, workspace, now := openTerminalLifecycleFixture(t, "task-reconcile-settled-terminal", true)
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+	if _, err := store.CommitTerminalEvent(ctx, terminalEventMutation(
+		task, "operation-reconcile-terminal-running", application.TerminalRunning, now.Add(3*time.Minute),
+	)); err != nil {
+		t.Fatalf("CommitTerminalEvent(running) error = %v", err)
+	}
+	if _, err := store.CommitWorkerLaunchAcknowledgement(ctx, application.WorkerLaunchAcknowledgementMutation{
+		OperationID: "operation-reconcile-terminal-ack", SubjectDigest: strings.Repeat("7", 64),
+		Acknowledgement: terminalLaunchAcknowledgement(task, workspace), At: now.Add(3 * time.Minute),
+	}); err != nil {
+		t.Fatalf("CommitWorkerLaunchAcknowledgement() error = %v", err)
+	}
+	exitedAt := now.Add(4 * time.Minute)
+	if _, err := store.CommitTerminalEvent(ctx, terminalEventMutation(
+		task, "operation-reconcile-terminal-exited", application.TerminalExited, exitedAt,
+	)); err != nil {
+		t.Fatalf("CommitTerminalEvent(exited) error = %v", err)
+	}
+	if _, err := store.CommitTerminalEvent(ctx, terminalEventMutation(
+		task, "operation-reconcile-terminal-lost", application.TerminalLost, now.Add(5*time.Minute),
+	)); err != nil {
+		t.Fatalf("CommitTerminalEvent(lost) error = %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE task_terminal_bindings
+        SET latest_transition = 'lost', updated_at = ? WHERE task_handle = ?`,
+		formatTime(now.Add(5*time.Minute)), task.Handle); err != nil {
+		t.Fatalf("seed historical weakened binding: %v", err)
+	}
+
+	if _, err := store.ReconcileStartup(ctx, now.Add(6*time.Minute)); err != nil {
+		t.Fatalf("ReconcileStartup() error = %v", err)
+	}
+	binding, found, err := findTerminalBinding(ctx, store.db, task.Handle)
+	if err != nil || !found {
+		t.Fatalf("findTerminalBinding() = %#v, %t, %v", binding, found, err)
+	}
+	if binding.latestTransition != application.TerminalExited || !binding.updatedAt.Equal(exitedAt) {
+		t.Fatalf("reconciled binding = transition %q at %s, want exited at %s",
+			binding.latestTransition, binding.updatedAt, exitedAt)
+	}
+	if _, err := store.ReconcileStartup(ctx, now.Add(7*time.Minute)); err != nil {
+		t.Fatalf("ReconcileStartup(replay) error = %v", err)
 	}
 }
 
