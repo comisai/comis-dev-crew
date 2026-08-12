@@ -96,6 +96,7 @@ while [ $# -gt 0 ]; do
 done
 case "$url" in
   *releases/latest) src="$FAKE_RELEASE_JSON" ;;
+  *releases?per_page=1|*releases\?per_page=1) src="$FAKE_RELEASE_LIST" ;;
   *checksums.txt) src="$FAKE_CHECKSUMS" ;;
   *.tar.gz) src="$FAKE_ARCHIVE" ;;
   *) exit 22 ;;
@@ -116,6 +117,7 @@ type release struct {
 	archive   string
 	checksums string
 	json      string
+	list      string
 	curlDir   string
 }
 
@@ -133,12 +135,17 @@ func newRelease(t *testing.T) *release {
 		archive:   filepath.Join(serve, name),
 		checksums: filepath.Join(serve, "checksums.txt"),
 		json:      filepath.Join(serve, "latest.json"),
+		list:      filepath.Join(serve, "list.json"),
 		curlDir:   fakeCurl(t),
 	}
 	buildArchive(t, staged.archive)
 	staged.writeChecksums(t, digestOf(t, staged.archive))
 	body := fmt.Sprintf(`{"tag_name": %q, "name": %q}`, testVersion, testVersion)
 	if err := os.WriteFile(staged.json, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	list := fmt.Sprintf(`[{"tag_name": %q, "prerelease": true}]`, testVersion)
+	if err := os.WriteFile(staged.list, []byte(list), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(staged.linkDir, 0o755); err != nil {
@@ -163,6 +170,7 @@ func (staged *release) run(t *testing.T) (string, error) {
 		"PATH="+staged.curlDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"DEVCREW_LINK_DIR="+staged.linkDir,
 		"FAKE_RELEASE_JSON="+staged.json,
+		"FAKE_RELEASE_LIST="+staged.list,
 		"FAKE_CHECKSUMS="+staged.checksums,
 		"FAKE_ARCHIVE="+staged.archive,
 	)
@@ -255,6 +263,9 @@ func TestInstallScript_ExplainsWhenNoReleaseIsPublished(t *testing.T) {
 	if err := os.WriteFile(staged.json, []byte(`{"message": "Not Found"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(staged.list, []byte(`[]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	output, err := staged.run(t)
 	if err == nil {
@@ -277,6 +288,26 @@ func assertNothingInstalled(t *testing.T, staged *release) {
 		}
 		if _, err := os.Lstat(filepath.Join(staged.linkDir, name)); !os.IsNotExist(err) {
 			t.Errorf("%s was linked despite a refused download", name)
+		}
+	}
+}
+
+// GitHub answers releases/latest with 404 while every published release is a
+// prerelease, which is this project's normal state. The installer must fall
+// back to the release list rather than report that nothing is published.
+func TestInstallScript_ResolvesAPrereleaseWhenLatestIsAbsent(t *testing.T) {
+	staged := newRelease(t)
+	if err := os.WriteFile(staged.json, []byte(`{"message": "Not Found"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := staged.run(t)
+	if err != nil {
+		t.Fatalf("install.sh did not fall back to the release list: %v\n%s", err, output)
+	}
+	for _, name := range commands {
+		if _, statErr := os.Stat(filepath.Join(staged.installDir(), name)); statErr != nil {
+			t.Errorf("%s was not installed from the prerelease: %v", name, statErr)
 		}
 	}
 }
