@@ -50,8 +50,9 @@ CI, which catches a vulnerable dependency only when CI happens to run. Alerts
 cover the window where a new advisory lands against pins that have not changed.
 
 **Merge settings.** Squash and rebase only, with merge commits disabled to match
-the required linear history, and branches deleted on merge. Forking is enabled so
-outside contributors can open pull requests.
+the required linear history, and branches deleted on merge. Forking is not set
+here: GitHub accepts `allow_forking` only on an org-owned private repository and
+answers HTTP 422 otherwise, and a public repository already permits forks.
 
 **A ruleset named `main-protection` on the default branch**, active with no bypass
 actors:

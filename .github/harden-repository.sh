@@ -126,14 +126,17 @@ if [ "$APPLY" -eq 1 ]; then
   "allow_merge_commit": false,
   "allow_squash_merge": true,
   "allow_rebase_merge": true,
-  "delete_branch_on_merge": true,
-  "allow_forking": true
+  "delete_branch_on_merge": true
 }
 JSON
-	changed "squash and rebase only, branches deleted on merge, forking allowed"
+	changed "squash and rebase only, branches deleted on merge"
 else
-	planned "disable merge commits, delete branches on merge, allow forking"
+	planned "disable merge commits and delete branches on merge"
 fi
+
+# allow_forking is not set here. GitHub accepts that field only on an org-owned
+# private repository and answers HTTP 422 otherwise; a public repository already
+# permits forks.
 
 # --- Branch ruleset --------------------------------------------------------
 #
