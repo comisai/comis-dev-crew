@@ -107,6 +107,9 @@ func TestTaskCleanupStore_RefusesOpenHoldUnsettledRuntimeAndUndeliveredEvidence(
 		{name: "running terminal", mutate: func(store *Store, task domain.Task) {
 			_, _ = store.db.Exec("UPDATE task_terminal_bindings SET latest_transition = 'running' WHERE task_handle = ?", task.Handle)
 		}},
+		{name: "missing production terminal", mutate: func(store *Store, task domain.Task) {
+			_, _ = store.db.Exec("DELETE FROM task_terminal_bindings WHERE task_handle = ?", task.Handle)
+		}},
 		{name: "active validation", mutate: func(store *Store, task domain.Task) {
 			_, _ = store.db.Exec(`INSERT INTO validation_processes(
                     operation_id, task_handle, program_id, executable_label, pid,
@@ -141,6 +144,33 @@ func TestTaskCleanupStore_RefusesOpenHoldUnsettledRuntimeAndUndeliveredEvidence(
 				t.Fatalf("BeginTaskCleanup() error = %v, want ErrPrecondition", err)
 			}
 		})
+	}
+}
+
+func TestTaskCleanupStore_AcceptsSettledFixtureWithoutTerminalBinding(t *testing.T) {
+	store, task, _ := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	t.Cleanup(func() { _ = store.Close() })
+	task.WorkerProfileID = "fixture-worker"
+	var err error
+	task, err = task.PinBriefRevision()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE tasks SET worker_profile_id = ?, brief_revision = ?, brief_revision_hash = ?
+        WHERE handle = ?`, task.WorkerProfileID, task.BriefRevision, task.BriefRevisionHash, task.Handle); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec("DELETE FROM task_terminal_bindings WHERE task_handle = ?", task.Handle); err != nil {
+		t.Fatal(err)
+	}
+	beginAt := task.UpdatedAt.Add(time.Minute)
+	record, err := store.BeginTaskCleanup(context.Background(), application.TaskCleanupMutation{
+		OperationID: "cleanup-fixture-settled", SubjectDigest: strings.Repeat("e", 64),
+		TaskHandle: task.Handle, ReleaseOperationID: "release-fixture-settled",
+		ReleasedAt: beginAt, At: beginAt,
+	})
+	if err != nil || record.Stage != application.CleanupPrepared {
+		t.Fatalf("BeginTaskCleanup(settled fixture) = %#v, %v", record, err)
 	}
 }
 
