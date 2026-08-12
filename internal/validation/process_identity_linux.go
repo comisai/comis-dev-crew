@@ -46,6 +46,39 @@ func observeOSProcess(ctx context.Context, pid int) (ProcessObservation, error) 
 	}, nil
 }
 
+func observeOSExecutableLabel(ctx context.Context, label string) (bool, error) {
+	if ctx == nil || !processIdentityPattern.MatchString(label) {
+		return false, errors.New("scan validation processes: context and executable label are required")
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return false, errors.New("scan validation processes: proc is unavailable")
+	}
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		pid, parseErr := strconv.Atoi(entry.Name())
+		if parseErr != nil || pid < 1 {
+			continue
+		}
+		identity, identityErr := readLinuxProcessIdentity(filepath.Join("/proc", entry.Name()))
+		if errors.Is(identityErr, ErrProcessAbsent) {
+			continue
+		}
+		if identityErr != nil {
+			return false, errors.New("scan validation processes: process identity is unavailable")
+		}
+		if identity.label == label && identity.state != "Z" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 type linuxProcessIdentity struct {
 	label string
 	state string

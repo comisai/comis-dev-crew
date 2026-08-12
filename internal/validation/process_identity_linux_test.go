@@ -69,4 +69,12 @@ func TestObserveOSProcessPreservesRunningReviewedScriptIdentity(t *testing.T) {
 		observation.ProcessGroupIdentity == "" || observation.ExecutableLabel != "reviewed-check" || observation.Exited {
 		t.Fatalf("observeOSProcess(running reviewed script) = %#v", observation)
 	}
+	present, err := observeOSExecutableLabel(context.Background(), "reviewed-check")
+	if err != nil || !present {
+		t.Fatalf("observeOSExecutableLabel(running reviewed script) = %t, %v", present, err)
+	}
+	present, err = observeOSExecutableLabel(context.Background(), "no-such-reviewed-check")
+	if err != nil || present {
+		t.Fatalf("observeOSExecutableLabel(absent reviewed program) = %t, %v", present, err)
+	}
 }

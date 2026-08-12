@@ -72,7 +72,7 @@ func (store *Store) CommitTaskHandback(
 	}
 	var activeProcesses int
 	if err := transaction.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM validation_processes WHERE task_handle = ? AND state <> 'exited'", task.Handle,
+		"SELECT COUNT(*) FROM validation_processes WHERE task_handle = ? AND state NOT IN ('exited', 'absent')", task.Handle,
 	).Scan(&activeProcesses); err != nil {
 		return application.MutationResult{}, fmt.Errorf("inspect task handback validation processes: %w", err)
 	}

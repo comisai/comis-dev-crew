@@ -32,7 +32,7 @@ func proveCleanupDatabaseSafety(ctx context.Context, transaction *sql.Tx, task d
 		{name: "open hold", query: `SELECT COUNT(*) FROM task_cleanup_holds
             WHERE task_handle = ? AND closed_at IS NULL`, args: []any{task.Handle}},
 		{name: "active validation", query: `SELECT COUNT(*) FROM validation_processes
-            WHERE task_handle = ? AND state <> 'exited'`, args: []any{task.Handle}},
+		    WHERE task_handle = ? AND state NOT IN ('exited', 'absent')`, args: []any{task.Handle}},
 		{name: "unresolved decision", query: `SELECT COUNT(*) FROM reports d
             WHERE d.task_handle = ? AND d.kind = 'decision' AND NOT EXISTS (
                 SELECT 1 FROM reports r WHERE r.task_handle = d.task_handle

@@ -20,6 +20,7 @@ const (
 	ProcessRunning  ProcessState = "running"
 	ProcessExited   ProcessState = "exited"
 	ProcessUnknown  ProcessState = "unknown"
+	ProcessAbsent   ProcessState = "absent"
 )
 
 // ProcessRecord is content-free durable validation-process evidence.
@@ -92,6 +93,9 @@ type RunnerConfig struct {
 	MaxOutputBytes int64
 	Clock          func() time.Time
 	ObserveProcess func(context.Context, int) (ProcessObservation, error)
+	// ObserveExecutableLabel reports whether any process with the exact reviewed
+	// executable label exists. Recovery uses it only for PID-zero records.
+	ObserveExecutableLabel func(context.Context, string) (bool, error)
 }
 
 type activeProcess struct {
@@ -101,13 +105,14 @@ type activeProcess struct {
 
 // Runner owns all E0 validation subprocesses and their process groups.
 type Runner struct {
-	catalog        *Catalog
-	processes      ProcessStore
-	maxOutputBytes int64
-	clock          func() time.Time
-	observeProcess func(context.Context, int) (ProcessObservation, error)
-	mu             sync.Mutex
-	active         map[string]activeProcess
+	catalog                *Catalog
+	processes              ProcessStore
+	maxOutputBytes         int64
+	clock                  func() time.Time
+	observeProcess         func(context.Context, int) (ProcessObservation, error)
+	observeExecutableLabel func(context.Context, string) (bool, error)
+	mu                     sync.Mutex
+	active                 map[string]activeProcess
 }
 
 // NewRunner constructs the sole service-owned validation process registry.
@@ -122,7 +127,8 @@ func NewRunner(config RunnerConfig) (*Runner, error) {
 	return &Runner{
 		catalog: config.Catalog, processes: config.Processes, maxOutputBytes: config.MaxOutputBytes,
 		clock: clock, observeProcess: resolvedProcessObserver(config.ObserveProcess),
-		active: make(map[string]activeProcess),
+		observeExecutableLabel: resolvedExecutableLabelObserver(config.ObserveExecutableLabel),
+		active:                 make(map[string]activeProcess),
 	}, nil
 }
 
@@ -164,6 +170,9 @@ func (runner *Runner) Run(ctx context.Context, request RunRequest) (Receipt, err
 	}
 	defer runner.unregister(request.OperationID)
 	if err := command.Start(); err != nil {
+		if recordErr := runner.recordAbsent(context.WithoutCancel(ctx), starting); recordErr != nil {
+			return Receipt{}, recordErr
+		}
 		return Receipt{}, errors.New("run validation: fixed program did not start")
 	}
 	observation, err := runner.observeProcess(context.WithoutCancel(ctx), command.Process.Pid)
@@ -171,6 +180,9 @@ func (runner *Runner) Run(ctx context.Context, request RunRequest) (Receipt, err
 		observation.ExecutableLabel != expectedExecutableLabel(resolved.Executable) {
 		_ = terminateProcessGroup(command.Process.Pid)
 		_ = command.Wait()
+		if recordErr := runner.recordAbsent(context.WithoutCancel(ctx), starting); recordErr != nil {
+			return Receipt{}, recordErr
+		}
 		return Receipt{}, errors.New("run validation: process identity could not be established")
 	}
 	observed := starting
@@ -221,6 +233,7 @@ type RecoveryResult struct {
 	Running  int
 	Exited   int
 	Unknown  int
+	Absent   int
 }
 
 // Recover rechecks every non-exited record against OS start, group, and executable identity.
@@ -245,8 +258,11 @@ func (runner *Runner) Recover(ctx context.Context) (RecoveryResult, error) {
 		next.ObservedAt = runner.clock()
 		switch record.State {
 		case ProcessStarting:
-			next.State = ProcessUnknown
-			result.Unknown++
+			if runner.recoverPIDZeroRecord(ctx, &next) {
+				result.Absent++
+			} else {
+				result.Unknown++
+			}
 		case ProcessRunning:
 			observation, observeErr := runner.observeProcess(ctx, record.PID)
 			switch {
@@ -261,7 +277,11 @@ func (runner *Runner) Recover(ctx context.Context) (RecoveryResult, error) {
 				result.Running++
 			}
 		case ProcessUnknown:
-			result.Unknown++
+			if record.PID == 0 && runner.recoverPIDZeroRecord(ctx, &next) {
+				result.Absent++
+			} else {
+				result.Unknown++
+			}
 		default:
 			return RecoveryResult{}, errors.New("recover validation processes: active state is invalid")
 		}
@@ -272,11 +292,38 @@ func (runner *Runner) Recover(ctx context.Context) (RecoveryResult, error) {
 	return result, nil
 }
 
+func (runner *Runner) recordAbsent(ctx context.Context, starting ProcessRecord) error {
+	absent := starting
+	absent.State = ProcessAbsent
+	absent.ObservedAt = runner.clock()
+	if err := runner.processes.Record(ctx, absent); err != nil {
+		return fmt.Errorf("run validation: record absent process: %w", err)
+	}
+	return nil
+}
+
+func (runner *Runner) recoverPIDZeroRecord(ctx context.Context, next *ProcessRecord) bool {
+	present, err := runner.observeExecutableLabel(ctx, next.ExecutableLabel)
+	if err != nil || present {
+		next.State = ProcessUnknown
+		return false
+	}
+	next.State = ProcessAbsent
+	return true
+}
+
 func resolvedProcessObserver(observer func(context.Context, int) (ProcessObservation, error)) func(context.Context, int) (ProcessObservation, error) {
 	if observer != nil {
 		return observer
 	}
 	return observeOSProcess
+}
+
+func resolvedExecutableLabelObserver(observer func(context.Context, string) (bool, error)) func(context.Context, string) (bool, error) {
+	if observer != nil {
+		return observer
+	}
+	return observeOSExecutableLabel
 }
 
 func matchesProcessObservation(record ProcessRecord, observation ProcessObservation) bool {

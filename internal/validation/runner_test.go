@@ -124,7 +124,11 @@ func TestRunner_RecoveryRechecksOSIdentityAndFailsClosed(t *testing.T) {
 }
 
 func TestRunner_RecordsAbsentWhenFixedProgramCannotStart(t *testing.T) {
-	catalog := runnerCatalog(t, filepath.Join(t.TempDir(), "missing-validation-program"), nil)
+	executable := filepath.Join(t.TempDir(), "missing-validation-program")
+	if err := os.WriteFile(executable, []byte("not an executable image\n"), 0o700); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	catalog := runnerCatalog(t, executable, []string{"ignored"})
 	store := &recordingProcessStore{}
 	runner, err := NewRunner(RunnerConfig{Catalog: catalog, Processes: store, MaxOutputBytes: 128})
 	if err != nil {
