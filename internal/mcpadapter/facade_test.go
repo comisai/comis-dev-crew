@@ -70,7 +70,7 @@ func TestFacade_OfficialSDKCatalogAndPrivatePreparation(t *testing.T) {
 	}
 }
 
-func TestFacade_PrepareTaskSchemaExplainsListArguments(t *testing.T) {
+func TestFacade_PrepareTaskSchemaExplainsEveryClosedArgument(t *testing.T) {
 	client := &fakeClient{}
 	facade, err := New(Config{
 		Client: client, ServiceInstanceID: "service-instance-0001", Version: "test",
@@ -96,6 +96,9 @@ func TestFacade_PrepareTaskSchemaExplainsListArguments(t *testing.T) {
 			"acceptanceCriteria and constraints must be JSON arrays",
 			"ordered acceptance criteria",
 			"ordered task constraints",
+			"ship or scout",
+			"pull_request for ship or report for scout",
+			"exact 40-character lowercase hexadecimal Git revision",
 		} {
 			if !strings.Contains(visible, required) {
 				t.Fatalf("prepare_task model contract omitted %q: %s", required, visible)
