@@ -105,6 +105,30 @@ func TestReadCandidateComposition_RejectsUntrustedFileAndUnknownPolicy(t *testin
 	}
 }
 
+func TestReadCandidateCompositionPreservesPinnedSSHTransport(t *testing.T) {
+	path := filepath.Join(shortTempDir(t), "candidate.json")
+	writeCandidateConfig(t, path, `{
+  "programs":[],"profiles":[],"maxOutputBytes":1,"pollInterval":"1ms",
+  "forge":{
+    "apiBaseUrl":"https://api.github.com","owner":"fixture-owner","repository":"fixture-repository",
+    "remoteUrl":"ssh://git@github.com/fixture-owner/fixture-repository.git",
+    "readCredentialFile":"/private/read","pushCredentialFile":"/private/push",
+    "credentialDirectory":"/private/credentials",
+    "sshTransportExecutable":"/opt/devcrew/bin/devcrew-service",
+    "sshExecutable":"/usr/bin/ssh","sshKnownHostsFile":"/private/known-hosts"
+  }
+}`, 0o600)
+	_, forgeConfig, err := readCandidateComposition(path)
+	if err != nil {
+		t.Fatalf("readCandidateComposition(SSH) error = %v", err)
+	}
+	if forgeConfig.RemoteURL != "ssh://git@github.com/fixture-owner/fixture-repository.git" ||
+		forgeConfig.SSHTransportExecutable != "/opt/devcrew/bin/devcrew-service" ||
+		forgeConfig.SSHExecutable != "/usr/bin/ssh" || forgeConfig.SSHKnownHostsFile != "/private/known-hosts" {
+		t.Fatalf("SSH forge configuration = %#v", forgeConfig)
+	}
+}
+
 func TestOwnerCredentialSource_ResolvesOneScopedPrivateIdentity(t *testing.T) {
 	path := filepath.Join(shortTempDir(t), "forge.credential")
 	writeCandidateConfig(t, path, "forge_identity_secret", 0o600)

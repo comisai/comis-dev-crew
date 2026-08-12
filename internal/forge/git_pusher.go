@@ -3,6 +3,7 @@ package forge
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/url"
@@ -21,11 +22,16 @@ type GitBranchPusherConfig struct {
 	RemoteURL              string
 	CredentialDirectory    string
 	LocalFixtureRemoteRoot string
+	SSHTransportExecutable string
+	SSHExecutable          string
+	SSHKnownHostsFile      string
 }
 
 // GitBranchPusher performs an exact non-force branch push without a shell.
 type GitBranchPusher struct {
-	config GitBranchPusherConfig
+	config        GitBranchPusherConfig
+	sshHost       string
+	sshRemotePath string
 }
 
 // NewGitBranchPusher validates all host-owned paths and the fixed remote.
@@ -41,10 +47,23 @@ func NewGitBranchPusher(config GitBranchPusherConfig) (*GitBranchPusher, error) 
 	if err != nil || !directory.IsDir() || directory.Mode()&os.ModeSymlink != 0 || directory.Mode().Perm()&0o077 != 0 {
 		return nil, errors.New("create Git branch pusher: credential directory is not owner-private")
 	}
-	if err := validatePushRemote(config.RemoteURL, config.LocalFixtureRemoteRoot); err != nil {
+	remote, err := validatePushRemoteURL(config.RemoteURL, config.LocalFixtureRemoteRoot)
+	if err != nil {
 		return nil, err
 	}
-	return &GitBranchPusher{config: config}, nil
+	sshHost := ""
+	sshRemotePath := ""
+	if remote.Scheme == "ssh" {
+		if !canonicalExecutable(config.SSHTransportExecutable, "") || !canonicalExecutable(config.SSHExecutable, "ssh") ||
+			!canonicalKnownHosts(config.SSHKnownHostsFile) {
+			return nil, errors.New("create Git branch pusher: SSH transport is unavailable or unsafe")
+		}
+		sshHost = remote.Hostname()
+		sshRemotePath = remote.Path
+	} else if config.SSHTransportExecutable != "" || config.SSHExecutable != "" || config.SSHKnownHostsFile != "" {
+		return nil, errors.New("create Git branch pusher: SSH transport differs from the remote")
+	}
+	return &GitBranchPusher{config: config, sshHost: sshHost, sshRemotePath: sshRemotePath}, nil
 }
 
 // Push re-verifies the branch, clean worktree, exact head, and remote ref.
@@ -75,11 +94,10 @@ func (pusher *GitBranchPusher) Push(ctx context.Context, credential Credential, 
 	if err != nil || len(status) != 0 {
 		return errors.New("push Git branch: dirty or untracked work is preserved")
 	}
-	credentialPath, err := pusher.writeCredential(credential.Secret)
+	credentialPath, environment, err := pusher.prepareCredential(credential.Secret)
 	if err != nil {
 		return err
 	}
-	environment := []string{"GIT_CONFIG_GLOBAL=" + credentialPath}
 	_, pushErr := pusher.execute(ctx, environment, append(baseArguments,
 		"-c", "core.hooksPath=/dev/null", "push", "--porcelain", "--atomic",
 		pusher.config.RemoteURL, "HEAD:refs/heads/"+request.Branch,
@@ -102,6 +120,28 @@ func (pusher *GitBranchPusher) Push(ctx context.Context, credential Credential, 
 		return errors.New("push Git branch: remote head could not be verified")
 	}
 	return nil
+}
+
+func (pusher *GitBranchPusher) prepareCredential(secret string) (string, []string, error) {
+	if pusher.sshHost == "" {
+		path, err := pusher.writeCredential(secret)
+		return path, []string{"GIT_CONFIG_GLOBAL=" + path}, err
+	}
+	path, err := pusher.writeSSHCredential(secret)
+	if err != nil {
+		return "", nil, err
+	}
+	return path, []string{
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_SSH=" + pusher.config.SSHTransportExecutable,
+		"GIT_SSH_VARIANT=ssh",
+		"DEV_CREW_SSH_TRANSPORT=1",
+		"DEV_CREW_SSH_EXECUTABLE=" + pusher.config.SSHExecutable,
+		"DEV_CREW_SSH_KEY_FILE=" + path,
+		"DEV_CREW_SSH_KNOWN_HOSTS_FILE=" + pusher.config.SSHKnownHostsFile,
+		"DEV_CREW_SSH_HOST=" + pusher.sshHost,
+		"DEV_CREW_SSH_REMOTE_PATH=" + pusher.sshRemotePath,
+	}, nil
 }
 
 func (pusher *GitBranchPusher) writeCredential(secret string) (string, error) {
@@ -133,6 +173,35 @@ func (pusher *GitBranchPusher) writeCredential(secret string) (string, error) {
 	return path, nil
 }
 
+func (pusher *GitBranchPusher) writeSSHCredential(secret string) (string, error) {
+	contents, err := base64.StdEncoding.DecodeString(secret)
+	if err != nil || len(contents) == 0 || len(contents) > 4096 ||
+		!bytes.HasPrefix(contents, []byte("-----BEGIN OPENSSH PRIVATE KEY-----\n")) ||
+		!bytes.HasSuffix(contents, []byte("-----END OPENSSH PRIVATE KEY-----\n")) || bytes.ContainsRune(contents, '\x00') {
+		return "", errors.New("push Git branch: SSH deploy key is invalid")
+	}
+	file, err := os.CreateTemp(pusher.config.CredentialDirectory, "git-deploy-key-*.key")
+	if err != nil {
+		return "", errors.New("push Git branch: transient SSH key could not be created")
+	}
+	path := file.Name()
+	remove := true
+	defer func() {
+		_ = file.Close()
+		if remove {
+			_ = os.Remove(path)
+		}
+	}()
+	if err := file.Chmod(0o600); err != nil {
+		return "", errors.New("push Git branch: transient SSH key mode could not be set")
+	}
+	if _, err := file.Write(contents); err != nil || file.Sync() != nil || file.Close() != nil {
+		return "", errors.New("push Git branch: transient SSH key could not be persisted")
+	}
+	remove = false
+	return path, nil
+}
+
 func (pusher *GitBranchPusher) singleLine(ctx context.Context, extraEnvironment []string, arguments ...string) (string, error) {
 	output, err := pusher.execute(ctx, extraEnvironment, arguments...)
 	if err != nil {
@@ -156,6 +225,15 @@ func (pusher *GitBranchPusher) execute(ctx context.Context, extraEnvironment []s
 	command.Env = []string{
 		globalConfig, "GIT_CONFIG_NOSYSTEM=1", "GIT_OPTIONAL_LOCKS=0",
 		"GIT_TERMINAL_PROMPT=0", "LC_ALL=C",
+	}
+	for _, value := range extraEnvironment {
+		if strings.HasPrefix(value, "GIT_CONFIG_GLOBAL=") {
+			continue
+		}
+		if !allowedGitEnvironment(value) {
+			return nil, errors.New("git command environment is invalid")
+		}
+		command.Env = append(command.Env, value)
 	}
 	command.WaitDelay = time.Second
 	stdout := &boundedGitBuffer{limit: maximumGitPushOutputBytes}
@@ -194,21 +272,79 @@ func validateBranchPushRequest(request BranchPushRequest) error {
 }
 
 func validatePushRemote(remoteValue, fixtureRoot string) error {
+	_, err := validatePushRemoteURL(remoteValue, fixtureRoot)
+	return err
+}
+
+func validatePushRemoteURL(remoteValue, fixtureRoot string) (*url.URL, error) {
 	remote, err := url.Parse(remoteValue)
-	if err != nil || remote.User != nil || remote.RawQuery != "" || remote.Fragment != "" {
-		return errors.New("create Git branch pusher: remote URL is invalid")
+	if err != nil || remote.RawQuery != "" || remote.Fragment != "" {
+		return nil, errors.New("create Git branch pusher: remote URL is invalid")
 	}
-	if remote.Scheme == "https" && remote.Host != "" {
-		return nil
+	if remote.Scheme == "https" && remote.Host != "" && remote.User == nil {
+		return remote, nil
 	}
-	if remote.Scheme != "file" || remote.Host != "" || !absoluteCanonical(remote.Path) || !absoluteCanonical(fixtureRoot) {
-		return errors.New("create Git branch pusher: remote URL is invalid")
+	if remote.Scheme == "ssh" && validSSHRemote(remote) {
+		return remote, nil
+	}
+	if remote.Scheme != "file" || remote.Host != "" || remote.User != nil || !absoluteCanonical(remote.Path) || !absoluteCanonical(fixtureRoot) {
+		return nil, errors.New("create Git branch pusher: remote URL is invalid")
 	}
 	relative, err := filepath.Rel(fixtureRoot, remote.Path)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
-		return errors.New("create Git branch pusher: fixture remote escapes its approved root")
+		return nil, errors.New("create Git branch pusher: fixture remote escapes its approved root")
 	}
-	return nil
+	return remote, nil
+}
+
+func validSSHRemote(remote *url.URL) bool {
+	if remote == nil || remote.User == nil || remote.User.Username() != "git" {
+		return false
+	}
+	if password, present := remote.User.Password(); present || password != "" || remote.Hostname() == "" || remote.Port() != "" {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(remote.Path, "/"), "/")
+	return len(parts) == 2 && githubNamePattern.MatchString(parts[0]) &&
+		strings.HasSuffix(parts[1], ".git") && githubNamePattern.MatchString(strings.TrimSuffix(parts[1], ".git"))
+}
+
+func canonicalExecutable(path, requiredBase string) bool {
+	if !absoluteCanonical(path) || requiredBase != "" && filepath.Base(path) != requiredBase {
+		return false
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 || info.Mode()&os.ModeSymlink != 0 {
+		return false
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	return err == nil && resolved == path
+}
+
+func canonicalKnownHosts(path string) bool {
+	if !absoluteCanonical(path) {
+		return false
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 ||
+		info.Mode().Perm()&0o022 != 0 || info.Size() < 1 || info.Size() > 1<<20 {
+		return false
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	return err == nil && resolved == path
+}
+
+func allowedGitEnvironment(value string) bool {
+	for _, prefix := range []string{
+		"GIT_SSH=", "GIT_SSH_VARIANT=", "DEV_CREW_SSH_TRANSPORT=", "DEV_CREW_SSH_EXECUTABLE=",
+		"DEV_CREW_SSH_KEY_FILE=", "DEV_CREW_SSH_KNOWN_HOSTS_FILE=", "DEV_CREW_SSH_HOST=",
+		"DEV_CREW_SSH_REMOTE_PATH=",
+	} {
+		if strings.HasPrefix(value, prefix) && len(value) > len(prefix) && !strings.ContainsAny(value, "\x00\r\n") {
+			return true
+		}
+	}
+	return false
 }
 
 func absoluteCanonical(path string) bool {

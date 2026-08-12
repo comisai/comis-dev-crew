@@ -97,6 +97,14 @@ shared identities. `localFixtureRemoteRoot` permits a `file://` remote only for
 an explicitly bounded local test fixture and must be absent for the production
 HTTPS route.
 
+An SSH deploy-key push route uses
+`ssh://git@HOST/OWNER/REPOSITORY.git` and additionally requires the canonical
+service executable as `sshTransportExecutable`, the canonical OpenSSH binary as
+`sshExecutable`, and a regular non-writable pinned host-key file as
+`sshKnownHostsFile`. The push credential file contains a base64-encoded OpenSSH
+private deploy key. The service materializes it as `0600` only for the bounded Git
+operation, invokes fixed SSH argv without a shell, and removes it before return.
+
 ## MCP facade
 
 Expose the replaceable official-SDK stdio MCP facade to the MCP client as a

@@ -136,6 +136,17 @@ func TestGitBranchPusherAcceptsPinnedSSHDeployKeyRoute(t *testing.T) {
 	if err := validatePushRemote("ssh://git@github.com/fixture-owner/fixture-repository.git", ""); err != nil {
 		t.Fatalf("validatePushRemote(SSH deploy key) error = %v", err)
 	}
+	for _, remote := range []string{
+		"ssh://user@github.com/fixture-owner/fixture-repository.git",
+		"ssh://git:password@github.com/fixture-owner/fixture-repository.git",
+		"ssh://git@github.com:22/fixture-owner/fixture-repository.git",
+		"ssh://git@github.com/fixture-owner/repository/extra.git",
+		"ssh://git@github.com/fixture-owner/repository",
+	} {
+		if err := validatePushRemote(remote, ""); err == nil {
+			t.Fatalf("validatePushRemote(%q) error = nil", remote)
+		}
+	}
 }
 
 func runFixtureGit(t *testing.T, executable, directory string, arguments ...string) {

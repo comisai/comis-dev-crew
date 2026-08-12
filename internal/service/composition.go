@@ -162,6 +162,8 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	pusher, err := forge.NewGitBranchPusher(forge.GitBranchPusherConfig{
 		GitExecutable: repositoryConfig.GitExecutable, RemoteURL: forgeConfig.RemoteURL,
 		CredentialDirectory: forgeConfig.CredentialDirectory, LocalFixtureRemoteRoot: forgeConfig.LocalFixtureRemoteRoot,
+		SSHTransportExecutable: forgeConfig.SSHTransportExecutable,
+		SSHExecutable:          forgeConfig.SSHExecutable, SSHKnownHostsFile: forgeConfig.SSHKnownHostsFile,
 	})
 	if err != nil {
 		return Config{}, fmt.Errorf("run service forge push composition: %w", err)

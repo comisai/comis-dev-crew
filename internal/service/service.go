@@ -135,6 +135,9 @@ type ForgeComposition struct {
 	PushCredentialFile     string
 	CredentialDirectory    string
 	LocalFixtureRemoteRoot string
+	SSHTransportExecutable string
+	SSHExecutable          string
+	SSHKnownHostsFile      string
 }
 
 // FixtureComposition enables the reviewed deterministic worker with one fixed

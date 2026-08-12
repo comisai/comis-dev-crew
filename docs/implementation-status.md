@@ -185,6 +185,23 @@ socket under the configured private runtime root and declares it as
 target name that bind the same listener. The listener and any durable activation
 binding are reconstructed after a service restart.
 
+## Candidate validation and forge delivery
+
+Candidate supervision re-reads the exact clean head around fixed no-shell local
+checks, seals bounded validation and forge evidence, and holds delivery until the
+configured required checks are green in fresh forge truth. Ship delivery performs
+one non-force exact-branch push, resolves or creates one pull request, and re-reads
+its head, base, state, URL, and check conclusions. Scout delivery reads only the
+reviewed bounded artifact. Both use durable outbox identities for exactly-once
+host delivery across restart.
+
+Forge API and pull-request truth and branch push use distinct credentials. HTTPS
+token push is supported, and an SSH route allows a repository-scoped deploy key
+to be the push identity. The latter decodes the owner-private key only into a
+transient `0600` file, invokes the canonical OpenSSH executable through fixed
+service-owned argv, pins host keys, accepts only the configured Git receive or
+upload command, and removes the key before returning. There is no merge operation.
+
 ## Worker harnesses
 
 The Codex harness adapter builds a fixed no-shell `codex exec --json`
