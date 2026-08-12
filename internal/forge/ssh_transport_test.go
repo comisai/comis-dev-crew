@@ -39,7 +39,7 @@ func TestSSHTransportExecutesOnlyPinnedGitRemoteCommand(t *testing.T) {
 	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	if exit := RunSSHTransport(context.Background(), arguments, &stdout, &stderr, config); exit != 0 {
+	if exit := RunSSHTransport(context.Background(), arguments, strings.NewReader(""), &stdout, &stderr, config); exit != 0 {
 		t.Fatalf("RunSSHTransport() exit = %d, stderr=%q", exit, stderr.String())
 	}
 	for _, fixed := range []string{
@@ -57,7 +57,7 @@ func TestSSHTransportExecutesOnlyPinnedGitRemoteCommand(t *testing.T) {
 		{"-F", "/tmp/unreviewed", "git@github.com", "git-receive-pack '/fixture-owner/fixture-repository.git'"},
 		{"git@github.com", "rm -rf /"},
 	} {
-		if exit := RunSSHTransport(context.Background(), invalid, &stdout, &stderr, config); exit != 2 {
+		if exit := RunSSHTransport(context.Background(), invalid, strings.NewReader(""), &stdout, &stderr, config); exit != 2 {
 			t.Fatalf("RunSSHTransport(%q) exit = %d, want 2", invalid, exit)
 		}
 	}
@@ -82,26 +82,10 @@ func TestSSHTransportRelaysGitProtocolInputToPinnedProcess(t *testing.T) {
 		ExpectedHost: "github.com", RemotePath: "/fixture-owner/fixture-repository.git",
 	}
 	arguments := []string{"git@github.com", "git-receive-pack '/fixture-owner/fixture-repository.git'"}
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	originalStdin := os.Stdin
-	os.Stdin = reader
-	t.Cleanup(func() {
-		os.Stdin = originalStdin
-		_ = reader.Close()
-	})
 	payload := []byte("git-pack-protocol-fixture")
-	if _, err := writer.Write(payload); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	if exit := RunSSHTransport(context.Background(), arguments, &stdout, &stderr, config); exit != 0 {
+	if exit := RunSSHTransport(context.Background(), arguments, bytes.NewReader(payload), &stdout, &stderr, config); exit != 0 {
 		t.Fatalf("RunSSHTransport() exit = %d, stderr=%q", exit, stderr.String())
 	}
 	if !bytes.Equal(stdout.Bytes(), payload) {
@@ -195,26 +179,26 @@ func TestSSHTransportRejectsUnsafeFilesEnvironmentAndProcessFailure(t *testing.T
 	arguments := []string{"git@github.com", "git-upload-pack '/fixture-owner/fixture-repository.git'"}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	if exit := RunSSHTransport(context.Background(), arguments, &stdout, &stderr, config); exit != 1 {
+	if exit := RunSSHTransport(context.Background(), arguments, strings.NewReader(""), &stdout, &stderr, config); exit != 1 {
 		t.Fatalf("RunSSHTransport(failed process) exit = %d, want 1", exit)
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if exit := RunSSHTransport(cancelled, arguments, &stdout, &stderr, config); exit != 1 {
+	if exit := RunSSHTransport(cancelled, arguments, strings.NewReader(""), &stdout, &stderr, config); exit != 1 {
 		t.Fatalf("RunSSHTransport(cancelled) exit = %d, want 1", exit)
 	}
 	unsafe := config
 	unsafe.GitProtocol = "version=3"
-	if exit := RunSSHTransport(context.Background(), arguments, &stdout, &stderr, unsafe); exit != 2 {
+	if exit := RunSSHTransport(context.Background(), arguments, strings.NewReader(""), &stdout, &stderr, unsafe); exit != 2 {
 		t.Fatalf("RunSSHTransport(unreviewed protocol) exit = %d, want 2", exit)
 	}
-	if exit := RunSSHTransport(context.Background(), arguments, nil, &stderr, config); exit != 2 {
+	if exit := RunSSHTransport(context.Background(), arguments, strings.NewReader(""), nil, &stderr, config); exit != 2 {
 		t.Fatalf("RunSSHTransport(nil output) exit = %d, want 2", exit)
 	}
 	if err := os.Chmod(keyFile, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if exit := RunSSHTransport(context.Background(), arguments, &stdout, &stderr, config); exit != 2 {
+	if exit := RunSSHTransport(context.Background(), arguments, strings.NewReader(""), &stdout, &stderr, config); exit != 2 {
 		t.Fatalf("RunSSHTransport(public key mode) exit = %d, want 2", exit)
 	}
 	for _, value := range []string{

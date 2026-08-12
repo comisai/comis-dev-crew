@@ -27,11 +27,12 @@ type SSHTransportConfig struct {
 func RunSSHTransport(
 	ctx context.Context,
 	arguments []string,
+	stdin io.Reader,
 	stdout io.Writer,
 	stderr io.Writer,
 	config SSHTransportConfig,
 ) int {
-	if ctx == nil || stdout == nil || stderr == nil || !validSSHTransportConfig(config) ||
+	if ctx == nil || stdin == nil || stdout == nil || stderr == nil || !validSSHTransportConfig(config) ||
 		!validGitSSHArguments(arguments, config.ExpectedHost, config.RemotePath) {
 		return 2
 	}
@@ -54,6 +55,7 @@ func RunSSHTransport(
 	if config.GitProtocol != "" {
 		command.Env = append(command.Env, "GIT_PROTOCOL="+config.GitProtocol)
 	}
+	command.Stdin = stdin
 	command.Stdout = stdout
 	command.Stderr = stderr
 	command.WaitDelay = time.Second
