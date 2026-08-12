@@ -55,23 +55,28 @@ All four support `--help` and `--version`.
 ```text
 git clone https://github.com/comisai/comis-dev-crew.git
 cd comis-dev-crew
-make build
+go build -trimpath -o bin/ ./cmd/...
 ```
+
+That writes all four executables into the ignored `bin/` directory. `make build`
+compiles the same packages as a check without emitting them, and `go install
+./cmd/...` places them on your `GOBIN` path instead. There is no tagged version,
+so every build reports `dev`.
 
 ## Quickstart
 
 The read-only service needs two explicit canonical paths:
 
 ```text
-devcrew-service --database /absolute/private/state/devcrew.db \
+bin/devcrew-service --database /absolute/private/state/devcrew.db \
   --socket /absolute/private/run/devcrew.sock
 ```
 
 Then query it:
 
 ```text
-devcrew --socket /absolute/private/run/devcrew.sock status
-devcrew --socket /absolute/private/run/devcrew.sock tasks list --format json
+bin/devcrew --socket /absolute/private/run/devcrew.sock status
+bin/devcrew --socket /absolute/private/run/devcrew.sock tasks list --format json
 ```
 
 The service creates its state and runtime directories as owner-only and refuses
