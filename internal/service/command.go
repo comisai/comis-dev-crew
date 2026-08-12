@@ -19,8 +19,8 @@ const serviceUsage = `Usage: devcrew-service [--database PATH] [--socket PATH]
          --comis-socket PATH --comis-credential-file PATH
          --comis-handshake-operation ID --codex-profile ID --codex-executable PATH
          --codex-version VERSION --codex-model MODEL --codex-effort EFFORT
-         --codex-terminal-allow-entry ID --codex-network POSTURE --codex-concurrency N
-         --candidate-config PATH
+		 --codex-terminal-allow-entry ID --codex-network POSTURE --codex-concurrency N
+		 --candidate-config PATH [--fixture-worker --fixture-decision TEXT --fixture-artifact FILE]
 
 Run the sole durable comis-dev-crew service authority.
 
@@ -49,6 +49,9 @@ Options:
   --codex-network POSTURE         disabled, restricted, or host
   --codex-concurrency N           Reviewed profile concurrency limit
   --candidate-config PATH         Owner-private validation and forge policy
+  --fixture-worker                Enable the deterministic in-process worker
+  --fixture-decision TEXT         Fixed deterministic worker decision response
+  --fixture-artifact FILE         Single deterministic candidate artifact filename
   --help, -h                      Show this help
   --version                       Show version
 `
@@ -91,7 +94,10 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	var codexNetwork string
 	var codexConcurrency int
 	var candidateConfigPath string
+	var fixtureDecision string
 	preparationTTL := 10 * time.Minute
+	var fixtureWorker bool
+	var fixtureArtifact string
 	var help bool
 	var version bool
 	flags.StringVar(&databasePath, "database", databasePath, "owner-private SQLite database path")
@@ -118,6 +124,9 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	flags.StringVar(&codexNetwork, "codex-network", "", "reviewed network posture")
 	flags.IntVar(&codexConcurrency, "codex-concurrency", 0, "reviewed profile concurrency limit")
 	flags.StringVar(&candidateConfigPath, "candidate-config", "", "owner-private validation and forge policy")
+	flags.BoolVar(&fixtureWorker, "fixture-worker", false, "enable deterministic in-process worker")
+	flags.StringVar(&fixtureDecision, "fixture-decision", "", "fixed deterministic worker decision response")
+	flags.StringVar(&fixtureArtifact, "fixture-artifact", "", "single deterministic candidate artifact filename")
 	flags.BoolVar(&help, "help", false, "show help")
 	flags.BoolVar(&help, "h", false, "show help")
 	flags.BoolVar(&version, "version", false, "show version")
@@ -164,6 +173,10 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 			}
 		}
 	}
+	fixtureConfigured := fixtureWorker || fixtureDecision != "" || fixtureArtifact != ""
+	if fixtureConfigured && (!installed || !fixtureWorker || strings.TrimSpace(fixtureDecision) == "" || fixtureArtifact == "") {
+		return writeServiceDiagnostic(stderr, "devcrew-service: deterministic fixture composition is incomplete\nHint: configure the fixture worker, decision, and artifact together\n", 2)
+	}
 	runService := config.RunService
 	if runService == nil {
 		runService = Run
@@ -193,6 +206,11 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 		}
 		serviceConfig.ValidationComposition = validationComposition
 		serviceConfig.ForgeComposition = forgeComposition
+		if fixtureConfigured {
+			serviceConfig.FixtureComposition = &FixtureComposition{
+				Decision: fixtureDecision, ArtifactRelativePath: fixtureArtifact,
+			}
+		}
 	}
 	if err := runService(ctx, serviceConfig); err != nil {
 		return writeServiceDiagnostic(stderr, fmt.Sprintf(

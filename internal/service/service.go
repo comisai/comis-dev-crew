@@ -124,7 +124,8 @@ type ForgeComposition struct {
 // FixtureComposition enables the reviewed deterministic worker with one fixed
 // local decision response.
 type FixtureComposition struct {
-	Decision string
+	Decision             string
+	ArtifactRelativePath string
 }
 
 // Run opens the sole writable store and serves canonical operator queries until

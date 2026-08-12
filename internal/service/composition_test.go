@@ -119,7 +119,9 @@ func TestRun_StartsAndJoinsInstalledCompositionWithoutPreparedWork(t *testing.T)
 
 func TestInstalledRuntime_ComposesFixtureBesideRealCandidatePipeline(t *testing.T) {
 	configuration := installedServiceConfig(t, shortTempDir(t))
-	configuration.FixtureComposition = &FixtureComposition{Decision: "use the bounded fixture choice"}
+	configuration.FixtureComposition = &FixtureComposition{
+		Decision: "use the bounded fixture choice", ArtifactRelativePath: "report.md",
+	}
 	configured, err := composeInstalledRuntime(context.Background(), configuration)
 	if err != nil {
 		t.Fatalf("composeInstalledRuntime(fixture) error = %v", err)

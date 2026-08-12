@@ -30,7 +30,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 		return config, nil
 	}
 	if config.RepositoryComposition == nil || config.ComisComposition == nil || config.CodexComposition == nil ||
-		config.ValidationComposition == nil || config.ForgeComposition == nil || config.FixtureComposition != nil ||
+		config.ValidationComposition == nil || config.ForgeComposition == nil ||
 		config.MCPSocketPath == "" || config.RuntimeRoot == "" || config.ServiceInstanceID == "" {
 		return Config{}, errors.New("run service: installed composition is incomplete")
 	}
@@ -40,6 +40,15 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 		config.cleanupRemover != nil || config.cleanupForge != nil ||
 		config.validationMaxOutputBytes != 0 || config.validationPollInterval != 0 {
 		return Config{}, errors.New("run service: installed and injected composition cannot be combined")
+	}
+	if config.FixtureComposition != nil {
+		decision := config.FixtureComposition.Decision
+		artifact := config.FixtureComposition.ArtifactRelativePath
+		if strings.TrimSpace(decision) == "" || strings.TrimSpace(decision) != decision || len([]byte(decision)) > 1024 ||
+			strings.TrimSpace(artifact) == "" || strings.TrimSpace(artifact) != artifact || len([]byte(artifact)) > 128 ||
+			artifact == "." || artifact == ".." || filepath.Base(artifact) != artifact || strings.ContainsAny(artifact, `/\`) {
+			return Config{}, errors.New("run service: fixture composition is invalid")
+		}
 	}
 	repositoryConfig := config.RepositoryComposition
 	registry, err := devgit.NewRegistry(ctx, devgit.RegistryConfig{
