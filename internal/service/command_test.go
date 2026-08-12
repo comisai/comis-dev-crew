@@ -97,6 +97,25 @@ func TestRunCommand_UsesExplicitPathsAndSafeFailure(t *testing.T) {
 	}
 }
 
+func TestRunCommand_ReportsSafeCandidateFailureCauseWithoutPrivateDetails(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	privateDetail := "private worktree path detail"
+	exitCode := RunCommand(context.Background(), nil, &stdout, &stderr, CommandConfig{
+		DefaultDatabasePath: "/private/tmp/default.db",
+		DefaultSocketPath:   "/private/tmp/default.sock",
+		RunService: func(context.Context, Config) error {
+			return errors.New("run candidate supervisor: validate task candidate: Git evidence is unavailable: " + privateDetail)
+		},
+	})
+	if exitCode != 1 || !strings.Contains(stderr.String(), "Failure cause: candidate_git_evidence_unavailable") {
+		t.Fatalf("RunCommand(candidate failure) = %d, stderr=%q", exitCode, stderr.String())
+	}
+	if strings.Contains(stdout.String()+stderr.String(), privateDetail) {
+		t.Fatalf("candidate diagnostic leaked private detail: %q", stderr.String())
+	}
+}
+
 func TestRunCommand_RejectsMissingCompositionDependencies(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
