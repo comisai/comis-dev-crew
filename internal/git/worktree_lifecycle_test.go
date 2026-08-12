@@ -261,7 +261,7 @@ func TestRegistry_PrepareFixtureCandidateRejectsUnavailableOrAlteredAuthority(t 
 	if _, err := (*devgit.Registry)(nil).PrepareFixtureCandidate(context.Background(), candidateRequest); err == nil {
 		t.Fatal("PrepareFixtureCandidate(nil registry) error = nil")
 	}
-	//nolint:staticcheck // nil context is an explicit public-boundary rejection case.
+	//lint:ignore SA1012 nil context is an explicit public-boundary rejection case.
 	if _, err := registry.PrepareFixtureCandidate(nil, candidateRequest); err == nil {
 		t.Fatal("PrepareFixtureCandidate(nil context) error = nil")
 	}
