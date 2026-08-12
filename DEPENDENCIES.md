@@ -13,12 +13,17 @@ contention, transactional migration rollback, owner-only storage, race detection
 four release target builds. Module content is authenticated by the Go checksum database
 and scanned by `govulncheck`.
 
-The reachable dependency closure includes `github.com/hashicorp/golang-lru/v2` version
-`v2.0.7`, licensed under MPL-2.0. That exact version is a reviewed exception rather than a
-global license-class allowance. MPL-2.0's file-level source and notice obligations apply to
-redistribution of its covered code; a future release process must preserve the upstream
-license and make the covered source available. Any version change fails the license gate
-until it receives a new explicit review.
+The resolved module graph includes `github.com/hashicorp/golang-lru/v2` version `v2.0.7`,
+licensed under MPL-2.0, reached through a test dependency of `modernc.org/libc`. That exact
+version is a reviewed exception rather than a global license-class allowance, because
+`tools/checklicenses` classifies every downloaded module in `go list -m -json all` and does
+not narrow itself to the built package closure. No package of that module is in the closure
+of any executable here: `go list -deps ./...` resolves none, so its covered code is neither
+compiled into nor redistributed with the release binaries, and MPL-2.0's file-level source
+and notice obligations do not attach to those binaries today. If a future change puts the
+module in a build closure, that release must preserve the upstream license and make the
+covered source available. Any version change fails the license gate until it receives a new
+explicit review.
 
 ## Official Go MCP SDK
 
