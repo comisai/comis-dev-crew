@@ -276,8 +276,8 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 			causeLine = fmt.Sprintf("Failure cause: %s\n", cause)
 		}
 		return writeServiceDiagnostic(stderr, fmt.Sprintf(
-			"devcrew-service: service stopped with an error\nFailure class: %s\n%sHint: inspect local configuration and service health\n",
-			serviceFailureClass(err), causeLine,
+			"devcrew-service: service stopped with an error\nFailure class: %s\n%sHint: %s\n",
+			serviceFailureClass(err), causeLine, serviceFailureHint(err),
 		), 1)
 	}
 	return 0
@@ -300,6 +300,7 @@ func serviceFailureCause(err error) string {
 		{"run service GitHub composition", "forge_api_composition"},
 		{"run service: exact Codex version is unavailable", "codex_composition"},
 		{"run service: exact Claude version is unavailable", "claude_composition"},
+		{"recover runtime attachments: prepare runtime attachment: workspace is not canonical", "runtime_attachment_workspace_unavailable"},
 		{"validate task candidate: read task", "candidate_task_unavailable"},
 		{"validate task candidate: durable worktree is unavailable", "candidate_worktree_unavailable"},
 		{"validate task candidate: reviewed profile is unavailable", "candidate_profile_unavailable"},
@@ -342,6 +343,8 @@ func serviceFailureClass(err error) string {
 		return "candidate_supervision"
 	case strings.Contains(message, "run service validation recovery"):
 		return "validation_process_recovery"
+	case strings.Contains(message, "run service runtime attachment recovery"):
+		return "runtime_attachment_recovery"
 	case strings.Contains(message, "run service startup reconciliation"):
 		return "startup_reconciliation"
 	case strings.Contains(message, "run service local endpoint"):
@@ -353,6 +356,13 @@ func serviceFailureClass(err error) string {
 	default:
 		return "service_runtime"
 	}
+}
+
+func serviceFailureHint(err error) string {
+	if strings.Contains(err.Error(), "recover runtime attachments: prepare runtime attachment: workspace is not canonical") {
+		return "inspect cleaned-task attachment recovery and durable workspace state"
+	}
+	return "inspect local configuration and service health"
 }
 
 func writeServiceDiagnostic(destination io.Writer, message string, successCode int) int {
