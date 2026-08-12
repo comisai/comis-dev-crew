@@ -177,17 +177,49 @@ func TestClaudeAdapterRejectsUnsafeConfigurationAndLaunchAuthority(t *testing.T)
 	if adapter.ID() != "claude" {
 		t.Fatalf("ID() = %q", adapter.ID())
 	}
+	//lint:ignore SA1012 The probe boundary must reject nil before process access.
+	if _, err := adapter.ProbeVersion(nil); err == nil {
+		t.Fatal("ProbeVersion(nil) error = nil")
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := adapter.ProbeVersion(cancelled); err != context.Canceled {
+		t.Fatalf("ProbeVersion(cancelled) error = %v", err)
+	}
+	var unavailable *workers.ClaudeAdapter
+	if _, err := unavailable.ProbeVersion(context.Background()); err == nil {
+		t.Fatal("ProbeVersion(unavailable) error = nil")
+	}
+	probe, err := adapter.ProbeVersion(context.Background())
+	if err != nil || probe.Availability != application.HarnessUnknown ||
+		probe.Reason != application.HarnessReasonCapabilityUnknown {
+		t.Fatalf("ProbeVersion(malformed output) = %#v, %v", probe, err)
+	}
+	failingProfile := availableClaudeProfile(systemExecutable(t, "false"), "claude-failing")
+	failingCatalog, err := workers.NewProfileCatalog([]workers.StaticProfile{failingProfile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failing, err := workers.NewClaudeAdapter(workers.ClaudeAdapterConfig{
+		Profiles: failingCatalog, ProfileID: failingProfile.ID, ExpectedVersion: "2.1.224 (Claude Code)",
+		ConfigDirectory: configDirectory,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe, err = failing.ProbeVersion(context.Background())
+	if err != nil || probe.Availability != application.HarnessUnavailable ||
+		probe.Reason != application.HarnessReasonExecutableUnavailable {
+		t.Fatalf("ProbeVersion(failure) = %#v, %v", probe, err)
+	}
 	request := validClaudeLaunchRequest(t, profile.ID)
 	//lint:ignore SA1012 The launch boundary must reject nil before profile or mount inspection.
 	if _, err := adapter.BuildLaunchDescriptor(nil, request); err == nil {
 		t.Fatal("BuildLaunchDescriptor(nil) error = nil")
 	}
-	cancelled, cancel := context.WithCancel(context.Background())
-	cancel()
 	if _, err := adapter.BuildLaunchDescriptor(cancelled, request); err != context.Canceled {
 		t.Fatalf("BuildLaunchDescriptor(cancelled) error = %v", err)
 	}
-	var unavailable *workers.ClaudeAdapter
 	if _, err := unavailable.BuildLaunchDescriptor(context.Background(), request); !errors.Is(err, workers.ErrProfileUnknown) {
 		t.Fatalf("BuildLaunchDescriptor(unavailable) error = %v", err)
 	}
@@ -210,6 +242,24 @@ func TestClaudeAdapterRejectsUnsafeConfigurationAndLaunchAuthority(t *testing.T)
 		if _, err := adapter.BuildLaunchDescriptor(context.Background(), invalid); err == nil {
 			t.Fatalf("BuildLaunchDescriptor(%#v) error = nil", invalid)
 		}
+	}
+	missingEnvironment := profile
+	missingEnvironment.ID = "claude-missing-environment"
+	missingEnvironment.EnvironmentKeys = []string{"DEV_CREW_ATTACHMENT", "CLAUDE_CONFIG_DIR", "PATH"}
+	missingEnvironmentCatalog, err := workers.NewProfileCatalog([]workers.StaticProfile{missingEnvironment})
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingEnvironmentAdapter, err := workers.NewClaudeAdapter(workers.ClaudeAdapterConfig{
+		Profiles: missingEnvironmentCatalog, ProfileID: missingEnvironment.ID,
+		ExpectedVersion: "2.1.224 (Claude Code)", ConfigDirectory: configDirectory,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.ProfileID = missingEnvironment.ID
+	if _, err := missingEnvironmentAdapter.BuildLaunchDescriptor(context.Background(), request); err == nil {
+		t.Fatal("BuildLaunchDescriptor(missing environment) error = nil")
 	}
 }
 
