@@ -247,14 +247,22 @@ func TestControlConnectionSendsVerifiedEvidenceOnAuthenticatedPersistentSession(
 			return
 		}
 		retainedUntil := int64(1_800_000_000_000)
-		serverDone <- writeControlFrame(peer, PutEvidenceResponse{
+		if writeErr := writeControlFrame(peer, PutEvidenceResponse{
 			JSONRPC: JSONRPCVersion, ID: request.ID,
 			Result: PutEvidenceResponseResult{
 				ManagedRunID: request.Params.ManagedRunID, EvidenceRef: request.Params.EvidenceRef,
 				ContentHash: request.Params.ContentHash, VerificationLevel: request.Params.VerificationLevel,
 				RetainedUntilMs: &retainedUntil,
 			},
-		})
+		}); writeErr != nil {
+			serverDone <- writeErr
+			return
+		}
+		serverDone <- nil
+		// Hold the peer open until the test cancels. Returning here would run
+		// the deferred Close and can tear the session down before the client
+		// has consumed its response, which surfaces as an uncertain EOF.
+		<-ctx.Done()
 	}()
 
 	result, err := connection.PutEvidence(context.Background(), PutEvidenceRequestParams{
@@ -315,14 +323,22 @@ func TestControlConnectionSendsReleaseOnPersistentAuthenticatedSession(t *testin
 			serverDone <- errors.New("release did not use authenticated persistent connection")
 			return
 		}
-		serverDone <- writeControlFrame(peer, ReleaseResponse{
+		if writeErr := writeControlFrame(peer, ReleaseResponse{
 			JSONRPC: JSONRPCVersion, ID: request.ID,
 			Result: ReleaseResponseResult{
 				ManagedRunID: request.Params.ManagedRunID, WorkspaceLeaseID: request.Params.WorkspaceLeaseID,
 				State: ManagedRunState("released"), Disposition: request.Params.Disposition,
 				ReleasedAtMs: request.Params.ReleasedAtMs,
 			},
-		})
+		}); writeErr != nil {
+			serverDone <- writeErr
+			return
+		}
+		serverDone <- nil
+		// Hold the peer open until the test cancels. Returning here would run
+		// the deferred Close and can tear the session down before the client
+		// has consumed its response, which surfaces as an uncertain EOF.
+		<-ctx.Done()
 	}()
 
 	var releaser application.ManagedRunReleaser = connection
