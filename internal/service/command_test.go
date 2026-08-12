@@ -116,6 +116,26 @@ func TestRunCommand_ReportsSafeCandidateFailureCauseWithoutPrivateDetails(t *tes
 	}
 }
 
+func TestRunCommand_ReportsInstalledCompositionFailureWithoutPrivateDetails(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	privateDetail := "/private/repositories/worktrees"
+	exitCode := RunCommand(context.Background(), nil, &stdout, &stderr, CommandConfig{
+		DefaultDatabasePath: "/private/tmp/default.db",
+		DefaultSocketPath:   "/private/tmp/default.sock",
+		RunService: func(context.Context, Config) error {
+			return errors.New("run service repository composition: approved root rejected " + privateDetail)
+		},
+	})
+	if exitCode != 1 || !strings.Contains(stderr.String(), "Failure class: installed_composition") ||
+		!strings.Contains(stderr.String(), "Failure cause: repository_composition") {
+		t.Fatalf("RunCommand(composition failure) = %d, stderr=%q", exitCode, stderr.String())
+	}
+	if strings.Contains(stdout.String()+stderr.String(), privateDetail) {
+		t.Fatalf("composition diagnostic leaked private detail: %q", stderr.String())
+	}
+}
+
 func TestRunCommand_RejectsMissingCompositionDependencies(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
