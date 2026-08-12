@@ -239,6 +239,24 @@ func TestTerminalLifecycle_RestartLossDoesNotReplaceSettledExitEvidence(t *testi
 	if lostEvents != 1 {
 		t.Fatalf("retained loss events = %d, want 1", lostEvents)
 	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE task_terminal_bindings
+        SET latest_transition = 'lost', updated_at = ? WHERE task_handle = ?`,
+		formatTime(now.Add(5*time.Minute)), task.Handle); err != nil {
+		t.Fatalf("seed previously weakened binding: %v", err)
+	}
+	if _, err := store.CommitTerminalEvent(ctx, terminalEventMutation(
+		task, "operation-terminal-restart-lost-replay", application.TerminalLost, now.Add(6*time.Minute),
+	)); err != nil {
+		t.Fatalf("CommitTerminalEvent(repeated loss after restart) error = %v", err)
+	}
+	binding, found, err = findTerminalBinding(ctx, store.db, task.Handle)
+	if err != nil || !found {
+		t.Fatalf("findTerminalBinding(recovered) = %#v, %t, %v", binding, found, err)
+	}
+	if binding.latestTransition != application.TerminalExited || !binding.updatedAt.Equal(exitedAt) {
+		t.Fatalf("recovered binding = transition %q at %s, want exited at %s",
+			binding.latestTransition, binding.updatedAt, exitedAt)
+	}
 }
 
 func TestTerminalLifecycle_StorageHelpersFailClosed(t *testing.T) {
