@@ -75,7 +75,8 @@ func TestClaudeAdapterBuildsConfinedProtectedLaunchWithoutAuthorityLeak(t *testi
 		"--model", "claude-opus-4-6", "--effort", "high",
 		"Before doing any task work, acknowledge the exact protected launch binding with `devcrew-report acknowledge`. " +
 			"Then read the pinned task brief with `devcrew-report brief`. If either command fails, stop without reading or " +
-			"changing the workspace; do not continue task work. Use `devcrew-report` for sparse progress, " +
+			"changing the workspace; do not continue task work. Run `devcrew-report --help` before reporting and use only " +
+			"its exact flag syntax; do not invent JSON or stdin formats. Use `devcrew-report` for sparse progress, " +
 			"decisions, blocked state, candidate completion, and failure. Treat the protected runtime attachment as " +
 			"the only task/report authority.\n",
 	}
@@ -100,7 +101,8 @@ func TestClaudeAdapterBuildsConfinedProtectedLaunchWithoutAuthorityLeak(t *testi
 		len(descriptor.EnvironmentBindings) != 3 ||
 		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "devcrew-report acknowledge") ||
 		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "devcrew-report brief") ||
-		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "If either command fails, stop without reading or changing the workspace") {
+		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "If either command fails, stop without reading or changing the workspace") ||
+		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "Run `devcrew-report --help` before reporting") {
 		t.Fatalf("Claude protected launch bindings = %#v", descriptor)
 	}
 	if descriptor.ExpectedAcknowledgement.TaskHandle != request.TaskHandle ||

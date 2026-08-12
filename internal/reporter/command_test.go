@@ -72,6 +72,19 @@ func TestRunCommand_BriefHelpAndVersionExposeNoAuthoritySelector(t *testing.T) {
 	if exit != 0 || !strings.Contains(stdout.String(), "devcrew-report") {
 		t.Fatalf("RunCommand(help) = %d stdout=%q", exit, stdout.String())
 	}
+	for _, usage := range []string{
+		"progress --summary TEXT",
+		"decision --key KEY --question TEXT",
+		"blocked --summary TEXT",
+		"paused --summary TEXT",
+		"candidate-complete --summary TEXT --artifact REF",
+		"failed --summary TEXT",
+		"resolved --key KEY --summary TEXT",
+	} {
+		if !strings.Contains(stdout.String(), usage) {
+			t.Fatalf("help omitted exact report syntax %q: %q", usage, stdout.String())
+		}
+	}
 	for _, forbidden := range []string{"--task", "--managed-run", "--workspace-lease", "--brief-hash", "--socket", "--credential"} {
 		if strings.Contains(stdout.String(), forbidden) {
 			t.Fatalf("help exposed authority selector %q: %q", forbidden, stdout.String())
