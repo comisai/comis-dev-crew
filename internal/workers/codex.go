@@ -124,8 +124,9 @@ func (adapter *CodexAdapter) ProbeVersion(ctx context.Context) (application.Harn
 	return application.HarnessVersionProbe{Version: version, Availability: application.HarnessAvailable}, nil
 }
 
-// BuildLaunchDescriptor creates a reviewed codex exec argv. The task binding
-// appears only in the expected terminal acknowledgement and protected mount.
+// BuildLaunchDescriptor creates a reviewed codex exec argv. The generic
+// bootstrap is the positional prompt so a PTY-backed terminal starts atomically;
+// task binding remains in the expected acknowledgement and protected mount.
 func (adapter *CodexAdapter) BuildLaunchDescriptor(
 	ctx context.Context,
 	request application.WorkerLaunchRequest,
@@ -160,7 +161,7 @@ func (adapter *CodexAdapter) BuildLaunchDescriptor(
 		"--strict-config", "--ignore-user-config", "--ignore-rules", "--ephemeral",
 		"--color", "never", "--model", base.Model, "--sandbox", "workspace-write",
 		"-c", fmt.Sprintf("model_reasoning_effort=%q", base.Effort),
-		"--cd", request.WorkingDirectory, "-",
+		"--cd", request.WorkingDirectory, codexBootstrapPrompt,
 	)
 	unattended := base.Unattended && adapter.settleSignalVerified
 	var degradedReason application.HarnessReason
@@ -178,7 +179,7 @@ func (adapter *CodexAdapter) BuildLaunchDescriptor(
 		Model: base.Model, Effort: base.Effort, TerminalAllowEntry: base.TerminalAllowEntry,
 		Network: string(base.Network), ConcurrencyLimit: base.ConcurrencyLimit,
 		Unattended: unattended, DegradedReason: degradedReason,
-		Attachment: request.Attachment, StandardInput: []byte(codexBootstrapPrompt),
+		Attachment: request.Attachment,
 		ExpectedAcknowledgement: application.LaunchAcknowledgement{
 			TaskHandle: request.TaskHandle, ManagedRunID: request.ManagedRunID,
 			WorkspaceLeaseID: request.WorkspaceLeaseID, WorkingDirectory: request.WorkingDirectory,
