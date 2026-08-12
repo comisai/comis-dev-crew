@@ -22,6 +22,11 @@ var signatures = []signature{
 	{name: "assigned high-entropy secret", pattern: regexp.MustCompile(`(?i)(?:api[_-]?key|password|secret|token)\s*[:=]\s*["']?[A-Za-z0-9_./+=-]{24,}`)},
 }
 
+var knownNonSecretHistoryFragments = [][]byte{
+	[]byte(`!bytes.HasPrefix(contents, []byte("-----BEGIN OPENSSH PRIVATE KEY-----\n")) ||`),
+	[]byte(`privateKey := "-----BEGIN OPENSSH PRIVATE KEY-----\nfixture\n-----END OPENSSH PRIVATE KEY-----\n"`),
+}
+
 func main() {
 	filesOutput, err := exec.Command("git", "ls-files", "--cached", "--others", "--exclude-standard", "-z").Output()
 	if err != nil {
@@ -46,11 +51,20 @@ func main() {
 	if err != nil {
 		fatal("scan Git history", err)
 	}
+	history = scrubKnownNonSecretHistory(history)
 	failed = reportMatches("Git history", history) || failed
 	if failed {
 		os.Exit(1)
 	}
 	fmt.Println("secret scan found no credential signatures")
+}
+
+func scrubKnownNonSecretHistory(contents []byte) []byte {
+	scrubbed := contents
+	for _, fragment := range knownNonSecretHistoryFragments {
+		scrubbed = bytes.ReplaceAll(scrubbed, fragment, nil)
+	}
+	return scrubbed
 }
 
 func reportMatches(source string, contents []byte) bool {

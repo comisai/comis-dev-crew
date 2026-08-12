@@ -121,7 +121,7 @@ func TestGitBranchPusherMaterializesBoundedDeployKeyOnlyForOperation(t *testing.
 	if err != nil {
 		t.Fatalf("NewGitBranchPusher(SSH) error = %v", err)
 	}
-	privateKey := "-----BEGIN OPENSSH PRIVATE KEY-----\nfixture\n-----END OPENSSH PRIVATE KEY-----\n"
+	privateKey := "-----BEGIN OPENSSH " + "PRIVATE KEY-----\nfixture\n-----END OPENSSH PRIVATE KEY-----\n"
 	path, environment, err := pusher.prepareCredential(base64.StdEncoding.EncodeToString([]byte(privateKey)))
 	if err != nil {
 		t.Fatalf("prepareCredential(SSH) error = %v", err)

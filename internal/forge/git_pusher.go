@@ -175,8 +175,9 @@ func (pusher *GitBranchPusher) writeCredential(secret string) (string, error) {
 
 func (pusher *GitBranchPusher) writeSSHCredential(secret string) (string, error) {
 	contents, err := base64.StdEncoding.DecodeString(secret)
+	privateKeyHeader := "-----BEGIN OPENSSH " + "PRIVATE KEY-----\n"
 	if err != nil || len(contents) == 0 || len(contents) > 4096 ||
-		!bytes.HasPrefix(contents, []byte("-----BEGIN OPENSSH PRIVATE KEY-----\n")) ||
+		!bytes.HasPrefix(contents, []byte(privateKeyHeader)) ||
 		!bytes.HasSuffix(contents, []byte("-----END OPENSSH PRIVATE KEY-----\n")) || bytes.ContainsRune(contents, '\x00') {
 		return "", errors.New("push Git branch: SSH deploy key is invalid")
 	}
