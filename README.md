@@ -1,11 +1,16 @@
 # comis-dev-crew
 
-A Go companion service for the [Comis](https://github.com/comisai/comis) agent
-platform. It supervises multiple coding-CLI workers in isolated Git worktrees and
-keeps durable, replay-safe custody of the resulting task state.
+[![ci](https://img.shields.io/github/actions/workflow/status/comisai/comis-dev-crew/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/comisai/comis-dev-crew/actions/workflows/ci.yml)
+[![security](https://img.shields.io/github/actions/workflow/status/comisai/comis-dev-crew/security.yml?branch=main&style=flat-square&label=security)](https://github.com/comisai/comis-dev-crew/actions/workflows/security.yml)
+[![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-blue?style=flat-square)](#install)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
 
-Comis owns human identity, conversations, immutable policy, capabilities,
-approvals, terminal confinement, continuation, delivery, and generic
+**Supervise coding-CLI workers in isolated git worktrees, with durable custody of
+every task transition.**
+
+A Go companion service for the [Comis](https://github.com/comisai/comis) agent
+platform. Comis owns human identity, conversations, immutable policy,
+capabilities, approvals, terminal confinement, continuation, delivery, and generic
 observability. This repository owns development tasks, worktrees, worker adapters,
 reports, evidence, forge truth, delivery safety, and cleanup. It is not a second
 agent platform.
@@ -31,6 +36,62 @@ platform gates rather than merely unfinished.
 subsystem-by-subsystem detail, including what each component explicitly refuses
 to claim.
 
+## How it works
+
+```text
+    a task, prepared through the local API or the MCP facade
+                        │
+                        ▼
+  ┌───────────────────────────────────────────────────────────┐
+  │  its own git worktree — your checkout is never touched    │
+  │  prepare → activate → launch → work → report → validate   │
+  └───────────────────────────────────────────────────────────┘
+                        │  every transition needs verified evidence
+                        ▼
+       durable, replay-safe task state — or `unknown`
+```
+
+Each transition either proves itself with authenticated evidence or refuses to
+advance. A worker exiting is not success, a completed terminal turn is not
+settled work, and an interrupted runtime becomes `unknown` rather than a guess.
+Identical operations replay to one logical effect across a service restart;
+altered reuse of an operation ID fails closed with a content-free audit record.
+
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/comisai/comis-dev-crew/main/docs/install.sh | sh
+```
+
+The installer resolves the latest release for your platform, **verifies the
+archive digest against the release `checksums.txt`, and refuses to install on a
+mismatch**. It places the four executables in `~/.comis-dev-crew/bin` and
+symlinks them onto your `PATH`. Override with `DEVCREW_INSTALL_DIR`,
+`DEVCREW_LINK_DIR`, or `DEVCREW_VERSION`.
+
+> **No release is published yet.** Until one is tagged, the installer exits with
+> an explanation and installs nothing. Build from source in the meantime.
+
+Build from source with the exact Go toolchain pinned in [go.mod](go.mod):
+
+```sh
+git clone https://github.com/comisai/comis-dev-crew.git
+cd comis-dev-crew
+go build -trimpath -o bin/ ./cmd/...
+```
+
+That writes all four executables into the ignored `bin/` directory. `make build`
+compiles the same packages as a check without emitting them, and `go install
+./cmd/...` places them on your `GOBIN` path instead.
+
+Every build reports `dev` for `--version`. Version provenance is a deferred
+design decision, so released binaries will report `dev` too until it is ratified.
+
+Supported targets are `darwin/amd64`, `darwin/arm64`, `linux/amd64`, and
+`linux/arm64`. The SQLite adapter is pure Go, so all four cross-compile without
+CGO or a platform C toolchain. Anything beyond the read-only service also needs a
+real Comis instance and a reviewed worker CLI profile.
+
 ## Executables
 
 | Command | Role |
@@ -42,41 +103,20 @@ to claim.
 
 All four support `--help` and `--version`.
 
-## Requirements
-
-- The exact Go toolchain pinned in [go.mod](go.mod).
-- Linux or macOS. The SQLite adapter is pure Go, so `darwin/amd64`,
-  `darwin/arm64`, `linux/amd64`, and `linux/arm64` cross-compile without CGO.
-- A real Comis instance and a reviewed worker CLI profile for anything beyond the
-  read-only service.
-
-## Build
-
-```text
-git clone https://github.com/comisai/comis-dev-crew.git
-cd comis-dev-crew
-go build -trimpath -o bin/ ./cmd/...
-```
-
-That writes all four executables into the ignored `bin/` directory. `make build`
-compiles the same packages as a check without emitting them, and `go install
-./cmd/...` places them on your `GOBIN` path instead. There is no tagged version,
-so every build reports `dev`.
-
 ## Quickstart
 
 The read-only service needs two explicit canonical paths:
 
-```text
-bin/devcrew-service --database /absolute/private/state/devcrew.db \
+```sh
+devcrew-service --database /absolute/private/state/devcrew.db \
   --socket /absolute/private/run/devcrew.sock
 ```
 
 Then query it:
 
-```text
-bin/devcrew --socket /absolute/private/run/devcrew.sock status
-bin/devcrew --socket /absolute/private/run/devcrew.sock tasks list --format json
+```sh
+devcrew --socket /absolute/private/run/devcrew.sock status
+devcrew --socket /absolute/private/run/devcrew.sock tasks list --format json
 ```
 
 The service creates its state and runtime directories as owner-only and refuses
@@ -115,11 +155,11 @@ The full protocol is [AGENTS.md](AGENTS.md), which is authoritative for this tre
 Read [AGENTS.md](AGENTS.md) before changing anything, then install the repository
 hook:
 
-```text
+```sh
 git config core.hooksPath .githooks
 ```
 
-```text
+```sh
 make verify       # handoff gate
 make verify-full  # push and readiness gate
 ```
