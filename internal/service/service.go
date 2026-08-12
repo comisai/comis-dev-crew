@@ -22,7 +22,7 @@ const (
 	comisReportMaximumBackoff = 5 * time.Second
 	comisRequestTimeout       = 5 * time.Second
 	comisMinimumBackoff       = 100 * time.Millisecond
-	comisMaximumBackoff       = 5 * time.Second
+	comisMaximumBackoff       = time.Second
 	fixturePollInterval       = 25 * time.Millisecond
 )
 
