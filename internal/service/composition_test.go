@@ -303,7 +303,7 @@ func TestReadOwnerCredential_EnforcesCanonicalPrivateBoundedFile(t *testing.T) {
 		t.Fatal("readOwnerCredential(public) error = nil")
 	}
 	oversized := filepath.Join(root, "oversized.credential")
-	writeServiceCredential(t, oversized, strings.Repeat("a", 513), 0o600)
+	writeServiceCredential(t, oversized, strings.Repeat("a", 4097), 0o600)
 	if _, err := readOwnerCredential(oversized); err == nil {
 		t.Fatal("readOwnerCredential(oversized) error = nil")
 	}
@@ -311,6 +311,18 @@ func TestReadOwnerCredential_EnforcesCanonicalPrivateBoundedFile(t *testing.T) {
 	writeServiceCredential(t, whitespace, "invalid credential value", 0o600)
 	if _, err := readOwnerCredential(whitespace); err == nil {
 		t.Fatal("readOwnerCredential(whitespace) error = nil")
+	}
+}
+
+func TestReadOwnerCredential_AcceptsBoundedSSHDeployKeyMaterial(t *testing.T) {
+	root := shortTempDir(t)
+	path := filepath.Join(root, "push-key.credential")
+	material := strings.Repeat("a", 1024)
+	writeServiceCredential(t, path, material, 0o600)
+
+	credential, err := readOwnerCredential(path)
+	if err != nil || credential != material {
+		t.Fatalf("readOwnerCredential(SSH deploy key) length = %d, %v", len(credential), err)
 	}
 }
 
