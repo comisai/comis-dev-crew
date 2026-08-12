@@ -486,6 +486,8 @@ func (store *candidateSupervisorStore) CommitCandidateEvidence(
 	updated := store.task
 	if judgment.Outcome == domain.CandidateAccepted {
 		updated.State = domain.TaskCandidateComplete
+	} else if judgment.Outcome == domain.CandidateRejected {
+		updated.State = domain.TaskFailed
 	}
 	store.task = updated
 	if store.onCommit != nil {

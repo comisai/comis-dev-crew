@@ -114,16 +114,24 @@ func (store *Store) CommitCandidateEvidence(
 		return domain.Task{}, domain.CandidateJudgment{}, errors.New("commit candidate evidence: judge returned an invalid verdict")
 	}
 	updated := task
-	if judgment.Outcome == domain.CandidateAccepted {
+	switch judgment.Outcome {
+	case domain.CandidateAccepted:
 		updated, err = task.ApplyTransition(domain.TransitionValidationAccepted, judgedAt)
 		if err != nil {
 			return domain.Task{}, domain.CandidateJudgment{}, fmt.Errorf("commit candidate evidence: %w", err)
 		}
-	} else {
+	case domain.CandidateRejected:
+		updated, err = task.ApplyTransition(domain.TransitionFailureObserved, judgedAt)
+		if err != nil {
+			return domain.Task{}, domain.CandidateJudgment{}, fmt.Errorf("commit candidate evidence: %w", err)
+		}
+	case domain.CandidateUnknown:
 		if judgedAt.Before(task.UpdatedAt) {
 			return domain.Task{}, domain.CandidateJudgment{}, errors.New("commit candidate evidence: judgment time is regressive")
 		}
 		updated.UpdatedAt = judgedAt
+	default:
+		return domain.Task{}, domain.CandidateJudgment{}, errors.New("commit candidate evidence: judge returned an invalid outcome")
 	}
 	stateVersion, err := nextMutationStateVersion(ctx, transaction)
 	if err != nil {

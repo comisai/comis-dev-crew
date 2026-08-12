@@ -97,6 +97,13 @@ shared identities. `localFixtureRemoteRoot` permits a `file://` remote only for
 an explicitly bounded local test fixture and must be absent for the production
 HTTPS route.
 
+Accepted evidence advances a task to `candidate_complete`. A conclusive failed
+local or forge check records the rejection and advances only that task to
+`failed`; the candidate supervisor remains available for unrelated tasks and a
+service restart does not rerun the rejected candidate. Incomplete, pending, or
+otherwise unknown evidence stays `validating` and is retried without being
+treated as success or failure.
+
 An SSH deploy-key push route uses
 `ssh://git@HOST/OWNER/REPOSITORY.git` and additionally requires the canonical
 service executable as `sshTransportExecutable`, the canonical OpenSSH binary as

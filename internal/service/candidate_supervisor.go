@@ -71,8 +71,8 @@ func newCandidateSupervisor(config candidateSupervisorConfig) (*candidateSupervi
 }
 
 // Run recovers the durable validating-task queue. Unknown evidence remains in
-// validating and is retried; infrastructure errors and explicit rejection stop
-// the supervisor so they cannot be mistaken for successful delivery.
+// validating and is retried; infrastructure errors stop the supervisor. An
+// explicit rejection durably fails only its task and leaves supervision alive.
 func (supervisor *candidateSupervisor) Run(ctx context.Context) error {
 	if supervisor == nil || ctx == nil {
 		return errors.New("run candidate supervisor: supervisor and context are required")
@@ -104,7 +104,6 @@ func (supervisor *candidateSupervisor) Run(ctx context.Context) error {
 			case domain.CandidateUnknown:
 				continue
 			case domain.CandidateRejected:
-				return fmt.Errorf("run candidate supervisor: candidate evidence was not accepted: %s", judgment.Reason)
 			default:
 				return errors.New("run candidate supervisor: candidate evidence outcome is invalid")
 			}
