@@ -91,6 +91,7 @@ func TestControlConnectionPersistsAcrossBidirectionalTrafficAndReplaysAfterRecon
 		},
 	}
 	firstReady := make(chan struct{})
+	reportConsumed := make(chan struct{})
 	firstComplete := make(chan struct{})
 	secondComplete := make(chan struct{})
 	serverDone := make(chan error, 1)
@@ -138,6 +139,11 @@ func TestControlConnectionPersistsAcrossBidirectionalTrafficAndReplaysAfterRecon
 			return
 		}
 		close(firstComplete)
+		// Do not drop the session until the client has consumed the response.
+		// Closing straight after the write races its read and surfaces as an
+		// uncertain EOF. The reconnect this test exercises still happens, just
+		// after the report is safely delivered.
+		<-reportConsumed
 		_ = first.Close()
 
 		second, err := listener.AcceptUnix()
@@ -188,6 +194,7 @@ func TestControlConnectionPersistsAcrossBidirectionalTrafficAndReplaysAfterRecon
 	if reportResult.AcceptedSequence != 1 || reportResult.ServiceReportID != "service-report_a" {
 		t.Fatalf("Report() = %#v", reportResult)
 	}
+	close(reportConsumed)
 	select {
 	case <-firstComplete:
 	case <-time.After(time.Second):
