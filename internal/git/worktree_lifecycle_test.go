@@ -186,6 +186,65 @@ func TestRegistry_InspectCandidateReturnsExactHeadBranchAndCleanliness(t *testin
 	}
 }
 
+func TestRegistry_PrepareFixtureCandidateCommitsOnceAndRefusesUnsafeInputs(t *testing.T) {
+	fixture := newRepositoryFixture(t, "product-api")
+	registry := newLifecycleRegistry(t, fixture)
+	request := lifecycleRequest(t, fixture, "prepare-fixture-candidate", "task-fixture-candidate")
+	prepared, err := registry.PrepareWorktree(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidateRequest := devgit.FixtureCandidateRequest{
+		TaskHandle: request.TaskHandle, RepositoryID: request.RepositoryID,
+		WorktreePath: prepared.CanonicalPath, BaseRevision: request.BaseRevision,
+		ArtifactRelativePath: "report.md",
+	}
+	created, err := registry.PrepareFixtureCandidate(context.Background(), candidateRequest)
+	if err != nil {
+		t.Fatalf("PrepareFixtureCandidate(create) error = %v", err)
+	}
+	if created.HeadRevision == request.BaseRevision || created.Cleanliness != devgit.CandidateClean {
+		t.Fatalf("PrepareFixtureCandidate(create) = %#v", created)
+	}
+	contents, err := os.ReadFile(filepath.Join(prepared.CanonicalPath, "report.md"))
+	if err != nil || string(contents) != "deterministic fixture candidate for "+request.TaskHandle+"\n" {
+		t.Fatalf("fixture artifact = %q, %v", contents, err)
+	}
+	replayed, err := registry.PrepareFixtureCandidate(context.Background(), candidateRequest)
+	if err != nil || !reflect.DeepEqual(replayed, created) {
+		t.Fatalf("PrepareFixtureCandidate(replay) = %#v, %v, want %#v", replayed, err, created)
+	}
+
+	unsafe := candidateRequest
+	unsafe.TaskHandle = "task-fixture-unsafe"
+	unsafe.WorktreePath = filepath.Join(fixture.worktreeRoot, unsafe.TaskHandle)
+	unsafePreparation := request
+	unsafePreparation.OperationID = "prepare-fixture-unsafe"
+	unsafePreparation.TaskHandle = unsafe.TaskHandle
+	if _, err := registry.PrepareWorktree(context.Background(), unsafePreparation); err != nil {
+		t.Fatal(err)
+	}
+	unsafe.ArtifactRelativePath = "../escape.md"
+	if _, err := registry.PrepareFixtureCandidate(context.Background(), unsafe); err == nil {
+		t.Fatal("PrepareFixtureCandidate(path traversal) error = nil")
+	}
+	if _, err := os.Stat(filepath.Join(fixture.worktreeRoot, "escape.md")); !os.IsNotExist(err) {
+		t.Fatalf("unsafe fixture artifact escaped task root: %v", err)
+	}
+
+	dirty := unsafe
+	dirty.ArtifactRelativePath = "report.md"
+	if err := os.WriteFile(filepath.Join(dirty.WorktreePath, "preserve.txt"), []byte("preserve\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.PrepareFixtureCandidate(context.Background(), dirty); err == nil {
+		t.Fatal("PrepareFixtureCandidate(dirty worktree) error = nil")
+	}
+	if contents, err := os.ReadFile(filepath.Join(dirty.WorktreePath, "preserve.txt")); err != nil || string(contents) != "preserve\n" {
+		t.Fatalf("dirty worktree was not preserved: %q, %v", contents, err)
+	}
+}
+
 func TestRegistry_PrepareWorktreeRefusesUnsafeBaseTargetsAndAdoption(t *testing.T) {
 	t.Run("base exists but is unreachable from configured default", func(t *testing.T) {
 		fixture := newRepositoryFixture(t, "product-api")
