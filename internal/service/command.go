@@ -289,6 +289,14 @@ func serviceFailureCause(err error) string {
 		match string
 		name  string
 	}{
+		{"run service repository composition", "repository_composition"},
+		{"run service Codex", "codex_composition"},
+		{"run service Claude", "claude_composition"},
+		{"run service validation composition", "validation_composition"},
+		{"run service forge", "forge_composition"},
+		{"run service GitHub composition", "forge_composition"},
+		{"run service: exact Codex version is unavailable", "codex_composition"},
+		{"run service: exact Claude version is unavailable", "claude_composition"},
 		{"validate task candidate: read task", "candidate_task_unavailable"},
 		{"validate task candidate: durable worktree is unavailable", "candidate_worktree_unavailable"},
 		{"validate task candidate: reviewed profile is unavailable", "candidate_profile_unavailable"},
@@ -314,6 +322,15 @@ func serviceFailureCause(err error) string {
 func serviceFailureClass(err error) string {
 	message := err.Error()
 	switch {
+	case strings.Contains(message, "run service repository composition"),
+		strings.Contains(message, "run service Codex"),
+		strings.Contains(message, "run service Claude"),
+		strings.Contains(message, "run service validation composition"),
+		strings.Contains(message, "run service forge"),
+		strings.Contains(message, "run service GitHub composition"),
+		strings.Contains(message, "run service: exact Codex version is unavailable"),
+		strings.Contains(message, "run service: exact Claude version is unavailable"):
+		return "installed_composition"
 	case strings.Contains(message, "candidate supervisor: validate task candidate: pull-request truth is unavailable"):
 		return "candidate_pull_request_truth"
 	case strings.Contains(message, "candidate supervisor: candidate evidence was not accepted"):
