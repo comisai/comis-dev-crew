@@ -261,6 +261,9 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeAttachments(ctx c
 	}
 	servers := make([]*reporter.RuntimeServer, 0, len(tasks))
 	for _, task := range tasks {
+		if task.State == domain.TaskCleaned {
+			continue
+		}
 		if err := ctx.Err(); err != nil {
 			return nil, errors.Join(err, closeRuntimeServers(servers))
 		}
