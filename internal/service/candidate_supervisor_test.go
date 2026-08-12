@@ -293,6 +293,36 @@ func TestCandidateSupervisor_RunRecoversDurableValidatingTaskAndJoinsCancellatio
 	}
 }
 
+func TestCandidateSupervisor_RunRetriesPendingForgeTruthWithoutStoppingService(t *testing.T) {
+	fixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	fixture.git.snapshots = []devgit.CandidateSnapshot{
+		fixture.snapshot, fixture.snapshot,
+		fixture.snapshot, fixture.snapshot,
+	}
+	fixture.pullRequests.truth.Evidence.CheckConclusions[0].Conclusion = domain.CheckPending
+	ctx, cancel := context.WithCancel(context.Background())
+	commits := 0
+	fixture.store.onCommit = func() {
+		commits++
+		if commits == 2 {
+			cancel()
+		}
+	}
+	supervisor, err := newCandidateSupervisor(fixture.config())
+	if err != nil {
+		t.Fatalf("newCandidateSupervisor() error = %v", err)
+	}
+	if err := supervisor.Run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context.Canceled after retry", err)
+	}
+	if commits != 2 || fixture.pullRequests.calls != 2 {
+		t.Fatalf("pending forge attempts: commits=%d pull-request calls=%d, want two each", commits, fixture.pullRequests.calls)
+	}
+	if fixture.store.task.State != domain.TaskValidating {
+		t.Fatalf("pending forge task state = %q, want %q", fixture.store.task.State, domain.TaskValidating)
+	}
+}
+
 type candidateSupervisorFixture struct {
 	task         domain.Task
 	preparation  application.ManagedRunPreparation
