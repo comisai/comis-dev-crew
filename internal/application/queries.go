@@ -18,6 +18,10 @@ type HostIntegrationStatus interface {
 	Connected() bool
 }
 
+type candidateEvidenceReader interface {
+	LatestCandidateEvidence(context.Context, string) (*domain.SealedDeliveryEvidence, domain.CandidateJudgment, error)
+}
+
 // Queries owns every canonical read-only application handler.
 type Queries struct {
 	repository Repository
@@ -160,6 +164,18 @@ func (queries *Queries) ExplainTask(ctx context.Context, handle string) (TaskExp
 	}
 	now := queries.now()
 	reason, explanation, rootCause, actions := explainState(task.State)
+	if task.State == domain.TaskFailed {
+		candidateReason, candidateExplanation, candidateRootCause, found, candidateErr := queries.explainCandidateFailure(ctx, task.Handle)
+		if candidateErr != nil {
+			return TaskExplanation{}, translateReadError(candidateErr, "candidate evidence")
+		}
+		if found {
+			reason = candidateReason
+			explanation = candidateExplanation
+			rootCause = candidateRootCause
+			actions = []NextAction{ActionInspectTask}
+		}
+	}
 	return TaskExplanation{
 		SchemaVersion:   1,
 		CapturedAtMs:    now.UnixMilli(),
@@ -170,6 +186,36 @@ func (queries *Queries) ExplainTask(ctx context.Context, handle string) (TaskExp
 		LikelyRootCause: rootCause,
 		NextSafeActions: actions,
 	}, nil
+}
+
+func (queries *Queries) explainCandidateFailure(
+	ctx context.Context,
+	taskHandle string,
+) (string, string, string, bool, error) {
+	reader, ok := queries.repository.(candidateEvidenceReader)
+	if !ok {
+		return "", "", "", false, nil
+	}
+	_, judgment, err := reader.LatestCandidateEvidence(ctx, taskHandle)
+	if errors.Is(err, ErrNotFound) {
+		return "", "", "", false, nil
+	}
+	if err != nil {
+		return "", "", "", false, err
+	}
+	if judgment.Outcome != domain.CandidateRejected {
+		return "", "", "", false, nil
+	}
+	switch judgment.Reason {
+	case domain.CandidateValidationFailed:
+		return "candidate_validation_failed", "Candidate evidence was rejected by local validation.",
+			"At least one required local validation check failed.", true, nil
+	case domain.CandidateForgeFailed:
+		return "candidate_forge_failed", "Candidate evidence was rejected by forge validation.",
+			"At least one required forge check failed.", true, nil
+	default:
+		return "", "", "", false, nil
+	}
 }
 
 // Operation returns one durable reconciliation record by stable operation ID.

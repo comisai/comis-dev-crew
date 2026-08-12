@@ -104,6 +104,10 @@ service restart does not rerun the rejected candidate. Incomplete, pending, or
 otherwise unknown evidence stays `validating` and is retried without being
 treated as success or failure.
 
+`task explain` reads the latest durable candidate judgment for a failed task and
+distinguishes a required local-validation failure from a required forge-check
+failure. Other terminal failures retain the generic failed-task explanation.
+
 An SSH deploy-key push route uses
 `ssh://git@HOST/OWNER/REPOSITORY.git` and additionally requires the canonical
 service executable as `sshTransportExecutable`, the canonical OpenSSH binary as
