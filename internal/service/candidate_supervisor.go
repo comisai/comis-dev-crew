@@ -70,8 +70,9 @@ func newCandidateSupervisor(config candidateSupervisorConfig) (*candidateSupervi
 	return &candidateSupervisor{config: config}, nil
 }
 
-// Run recovers the durable validating-task queue and stops on any ambiguous
-// evidence outcome. A service-manager restart safely re-runs current checks.
+// Run recovers the durable validating-task queue. Unknown evidence remains in
+// validating and is retried; infrastructure errors and explicit rejection stop
+// the supervisor so they cannot be mistaken for successful delivery.
 func (supervisor *candidateSupervisor) Run(ctx context.Context) error {
 	if supervisor == nil || ctx == nil {
 		return errors.New("run candidate supervisor: supervisor and context are required")
@@ -98,8 +99,14 @@ func (supervisor *candidateSupervisor) Run(ctx context.Context) error {
 				}
 				return fmt.Errorf("run candidate supervisor: %w", err)
 			}
-			if judgment.Outcome != domain.CandidateAccepted {
-				return errors.New("run candidate supervisor: candidate evidence was not accepted")
+			switch judgment.Outcome {
+			case domain.CandidateAccepted:
+			case domain.CandidateUnknown:
+				continue
+			case domain.CandidateRejected:
+				return fmt.Errorf("run candidate supervisor: candidate evidence was not accepted: %s", judgment.Reason)
+			default:
+				return errors.New("run candidate supervisor: candidate evidence outcome is invalid")
 			}
 		}
 		timer := time.NewTimer(supervisor.config.PollInterval)
