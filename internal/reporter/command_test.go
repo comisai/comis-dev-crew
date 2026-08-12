@@ -59,6 +59,33 @@ func TestRunCommand_ReadsBriefAndBuildsClosedSparseReportsFromProtectedCapabilit
 	}
 }
 
+func TestRunCommand_DecisionWaitsForExactPrivateResponseAfterReportAcceptance(t *testing.T) {
+	brief := commandBrief()
+	now := time.Date(2026, time.August, 10, 14, 0, 0, 0, time.UTC)
+	capability := &commandCapability{
+		brief: brief,
+		receipt: domain.ReportReceipt{
+			TaskHandle: "task-command-0001", LocalReportID: "report-command-0001",
+			StateVersion: 4, AcceptedAt: now,
+		},
+		decisionResponse: "Use the existing PostgreSQL adapter.",
+	}
+	var stdout, stderr bytes.Buffer
+	exit := reporter.RunCommand(context.Background(), []string{
+		"decision", "--key", "database-choice", "--question", "Which database should be used?",
+	}, &stdout, &stderr, reporter.CommandConfig{
+		Capability: capability, Clock: func() time.Time { return now },
+		NewLocalReportID: func() (string, error) { return "report-command-0001", nil }, Version: "test",
+	})
+	if exit != 0 || stderr.Len() != 0 || stdout.String() != capability.decisionResponse+"\n" {
+		t.Fatalf("RunCommand(decision) = %d stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
+	}
+	if capability.reportCalls != 1 || capability.awaitDecisionCalls != 1 ||
+		capability.awaitedDecisionKey != "database-choice" || capability.reportOrder != 1 || capability.awaitDecisionOrder != 2 {
+		t.Fatalf("decision handoff order and identity = %#v", capability)
+	}
+}
+
 func TestRunCommand_BriefHelpAndVersionExposeNoAuthoritySelector(t *testing.T) {
 	brief := commandBrief()
 	capability := &commandCapability{brief: brief}
@@ -173,16 +200,23 @@ func TestRunCommand_RejectsMalformedCommandsAndDependencyFailures(t *testing.T) 
 }
 
 type commandCapability struct {
-	brief            domain.WorkerBrief
-	receipt          domain.ReportReceipt
-	report           domain.WorkerReport
-	briefErr         error
-	reportErr        error
-	briefCalls       int
-	reportCalls      int
-	acknowledgeCalls int
-	workingDirectory string
-	acknowledgeErr   error
+	brief              domain.WorkerBrief
+	receipt            domain.ReportReceipt
+	report             domain.WorkerReport
+	briefErr           error
+	reportErr          error
+	briefCalls         int
+	reportCalls        int
+	acknowledgeCalls   int
+	workingDirectory   string
+	acknowledgeErr     error
+	decisionResponse   string
+	awaitDecisionErr   error
+	awaitDecisionCalls int
+	awaitedDecisionKey string
+	callOrder          int
+	reportOrder        int
+	awaitDecisionOrder int
 }
 
 func (capability *commandCapability) Brief(context.Context) (domain.WorkerBrief, error) {
@@ -191,9 +225,19 @@ func (capability *commandCapability) Brief(context.Context) (domain.WorkerBrief,
 }
 
 func (capability *commandCapability) Report(_ context.Context, report domain.WorkerReport) (domain.ReportReceipt, error) {
+	capability.callOrder++
 	capability.reportCalls++
+	capability.reportOrder = capability.callOrder
 	capability.report = report
 	return capability.receipt, capability.reportErr
+}
+
+func (capability *commandCapability) AwaitDecision(_ context.Context, externalKey string) (string, error) {
+	capability.callOrder++
+	capability.awaitDecisionCalls++
+	capability.awaitDecisionOrder = capability.callOrder
+	capability.awaitedDecisionKey = externalKey
+	return capability.decisionResponse, capability.awaitDecisionErr
 }
 
 func (capability *commandCapability) Acknowledge(_ context.Context, workingDirectory string) error {
