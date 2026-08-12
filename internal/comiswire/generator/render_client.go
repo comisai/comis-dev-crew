@@ -9,14 +9,15 @@ import (
 
 func renderClient(manifest bundle.Manifest) (string, error) {
 	expected := map[string]bool{
-		"capabilityServices.handshake": false,
-		"capabilityServices.health":    false,
-		"managedRuns.abandon":          false,
-		"managedRuns.activate":         false,
-		"managedRuns.putEvidence":      false,
-		"managedRuns.release":          false,
-		"managedRuns.report":           false,
-		"managedRuns.terminalEvent":    false,
+		"capabilityServices.handshake":         false,
+		"capabilityServices.health":            false,
+		"managedRuns.abandon":                  false,
+		"managedRuns.activate":                 false,
+		"managedRuns.putEvidence":              false,
+		"managedRuns.receiveAttentionResponse": false,
+		"managedRuns.release":                  false,
+		"managedRuns.report":                   false,
+		"managedRuns.terminalEvent":            false,
 	}
 	for _, method := range manifest.MethodCatalog {
 		if _, exists := expected[method.Name]; !exists {
@@ -173,6 +174,27 @@ func (client *Client) PutEvidence(ctx context.Context, params PutEvidenceRequest
 		response.Result.EvidenceRef != params.EvidenceRef || response.Result.ContentHash != params.ContentHash ||
 		response.Result.VerificationLevel != params.VerificationLevel {
 		return PutEvidenceResponseResult{}, fmt.Errorf("put evidence response identity does not match request")
+	}
+	return response.Result, nil
+}
+
+func (client *Client) ReceiveAttentionResponse(ctx context.Context, params ReceiveAttentionResponseRequestParams) (ReceiveAttentionResponseResponseResult, error) {
+	if ctx == nil {
+		return ReceiveAttentionResponseResponseResult{}, fmt.Errorf("receive attention response context is required")
+	}
+	request := ReceiveAttentionResponseRequest{JSONRPC: JSONRPCVersion, ID: params.OperationID, Method: MethodManagedRunsReceiveAttentionResponse, Params: params}
+	if err := validateGeneratedDocument(schemaReceiveAttentionResponseRequest, request); err != nil {
+		return ReceiveAttentionResponseResponseResult{}, fmt.Errorf("validate receive attention response request: %w", err)
+	}
+	var response ReceiveAttentionResponseResponse
+	if err := client.transport.roundTrip(ctx, request, &response); err != nil {
+		return ReceiveAttentionResponseResponseResult{}, err
+	}
+	if err := validateGeneratedDocument(schemaReceiveAttentionResponseResponse, response); err != nil {
+		return ReceiveAttentionResponseResponseResult{}, fmt.Errorf("validate receive attention response response: %w", err)
+	}
+	if response.ID != request.ID || response.Result.ManagedRunID != params.ManagedRunID || response.Result.ExternalKey != params.ExternalKey {
+		return ReceiveAttentionResponseResponseResult{}, fmt.Errorf("receive attention response identity does not match request")
 	}
 	return response.Result, nil
 }

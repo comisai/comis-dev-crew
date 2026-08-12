@@ -104,7 +104,7 @@ func TestGenerateRejectsChangedPinnedIdentityAndDigest(t *testing.T) {
 		new  string
 	}{
 		{name: "protocol identifier", old: "comis.capability-service/1", new: "comis.capability-service/2"},
-		{name: "bundle digest", old: "82297e6ae5ae8e2defb7f10b9962e98a3e86140c3941061584ed713a12a999ad", new: strings.Repeat("0", 64)},
+		{name: "bundle digest", old: "fff96cf5105d9cda9da5dfd2fbc7e9f15242754f63d7f8155cde4ef874d5c52b", new: strings.Repeat("0", 64)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			copyRoot := filepath.Join(t.TempDir(), "comis")

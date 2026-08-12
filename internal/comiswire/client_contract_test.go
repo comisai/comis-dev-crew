@@ -66,6 +66,22 @@ func TestGeneratedClientBuildsClosedOperationEnvelopes(t *testing.T) {
 			},
 		},
 		{
+			name: "attention response",
+			invoke: func(client *Client) error {
+				_, err := client.ReceiveAttentionResponse(context.Background(), ReceiveAttentionResponseRequestParams{
+					OperationID: "operation_attention", ManagedRunID: "managed-run_a", ExternalKey: "decision_a",
+				})
+				return err
+			},
+			assert: func(t *testing.T, request any) {
+				t.Helper()
+				envelope, ok := request.(ReceiveAttentionResponseRequest)
+				if !ok || envelope.ID != envelope.Params.OperationID || envelope.Method != MethodManagedRunsReceiveAttentionResponse {
+					t.Fatalf("unexpected attention response envelope: %#v", request)
+				}
+			},
+		},
+		{
 			name: "release",
 			invoke: func(client *Client) error {
 				_, err := client.Release(context.Background(), ReleaseRequestParams{
@@ -108,6 +124,69 @@ func TestGeneratedClientBuildsClosedOperationEnvelopes(t *testing.T) {
 			}
 			test.assert(t, transport.request)
 		})
+	}
+}
+
+func TestGeneratedClientValidatesAttentionResponseStateAndAuthority(t *testing.T) {
+	params := ReceiveAttentionResponseRequestParams{
+		OperationID: "operation_attention", ManagedRunID: "managed-run_a", ExternalKey: "decision_a",
+	}
+	if _, err := newClient(&recordingTransport{}).ReceiveAttentionResponse(missingContext(), params); err == nil {
+		t.Fatal("ReceiveAttentionResponse(nil context) error = nil")
+	}
+	invalid := params
+	invalid.OperationID = "bad operation"
+	if _, err := newClient(&recordingTransport{}).ReceiveAttentionResponse(context.Background(), invalid); err == nil {
+		t.Fatal("ReceiveAttentionResponse(invalid request) error = nil")
+	}
+	pending := &recordingTransport{response: func(target any) {
+		*(target.(*ReceiveAttentionResponseResponse)) = ReceiveAttentionResponseResponse{
+			JSONRPC: JSONRPCVersion, ID: params.OperationID,
+			Result: ReceiveAttentionResponseResponseResult{
+				ManagedRunID: params.ManagedRunID, ExternalKey: params.ExternalKey, State: ManagedRunStatePending,
+			},
+		}
+	}}
+	result, err := newClient(pending).ReceiveAttentionResponse(context.Background(), params)
+	if err != nil || result.State != ManagedRunStatePending || result.Response != nil {
+		t.Fatalf("ReceiveAttentionResponse(pending) = %#v, %v", result, err)
+	}
+	answer := "Use monotonic issue-N values."
+	delivered := &recordingTransport{response: func(target any) {
+		*(target.(*ReceiveAttentionResponseResponse)) = ReceiveAttentionResponseResponse{
+			JSONRPC: JSONRPCVersion, ID: params.OperationID,
+			Result: ReceiveAttentionResponseResponseResult{
+				ManagedRunID: params.ManagedRunID, ExternalKey: params.ExternalKey,
+				State: ManagedRunStateDelivered, Response: &answer,
+			},
+		}
+	}}
+	result, err = newClient(delivered).ReceiveAttentionResponse(context.Background(), params)
+	if err != nil || result.Response == nil || *result.Response != answer {
+		t.Fatalf("ReceiveAttentionResponse(delivered) = %#v, %v", result, err)
+	}
+	drifted := &recordingTransport{response: func(target any) {
+		*(target.(*ReceiveAttentionResponseResponse)) = ReceiveAttentionResponseResponse{
+			JSONRPC: JSONRPCVersion, ID: params.OperationID,
+			Result: ReceiveAttentionResponseResponseResult{
+				ManagedRunID: "managed-run_other", ExternalKey: params.ExternalKey, State: ManagedRunStatePending,
+			},
+		}
+	}}
+	if _, err := newClient(drifted).ReceiveAttentionResponse(context.Background(), params); err == nil {
+		t.Fatal("ReceiveAttentionResponse(authority drift) error = nil")
+	}
+	invalidState := &recordingTransport{response: func(target any) {
+		*(target.(*ReceiveAttentionResponseResponse)) = ReceiveAttentionResponseResponse{
+			JSONRPC: JSONRPCVersion, ID: params.OperationID,
+			Result: ReceiveAttentionResponseResponseResult{
+				ManagedRunID: params.ManagedRunID, ExternalKey: params.ExternalKey,
+				State: ManagedRunStateDelivered,
+			},
+		}
+	}}
+	if _, err := newClient(invalidState).ReceiveAttentionResponse(context.Background(), params); err == nil {
+		t.Fatal("ReceiveAttentionResponse(delivered without body) error = nil")
 	}
 }
 

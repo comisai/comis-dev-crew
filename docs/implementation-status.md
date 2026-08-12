@@ -9,9 +9,9 @@ It is maintained alongside the behavior it describes.
 The service owns durable SQLite state and a strict owner-only local API. The
 operator CLI provides service, fleet, task, operation, handback, and cleanup
 views and commands. The
-protocol foundation pins the 24-artifact Comis capability-service revision at
-source commit `b84577fe790829bf1f043af6c2626f6b27ef7b89` and bundle digest
-`94ec7bd173cd20f0de2cb4e9ab719d392f240236ac80d56e3a7ea1abe4e20cb8`, and generates
+protocol foundation pins the 30-artifact Comis capability-service contract at
+source commit `b0b8065c0b43a29840dcd21fcc15ef37e4b905d4` and bundle digest
+`fff96cf5105d9cda9da5dfd2fbc7e9f15242754f63d7f8155cde4ef874d5c52b`, and generates
 a closed Go adapter.
 
 Installed composition supervises the Comis control lane, Codex and Claude Code
@@ -29,16 +29,16 @@ socket, the first read-only operator CLI, and an authenticated Comis protocol pi
 with generated DTO, validation, and Unix control client support.
 
 The protocol join gate is implemented for protocol
-`comis.capability-service/1`, including workspace-lease, terminal-event, and
-execution-attachment control scopes. Public operator mutation transport is not
+`comis.capability-service/1`, including attention-response, workspace-lease,
+terminal-event, and execution-attachment control scopes. Public operator mutation transport is not
 claimed.
 
 ## Comis adapter
 
 The adapter contains the supervised persistent bidirectional connection used by
 the next service composition step. It authenticates the exact pinned handshake,
-dispatches only `managedRuns.activate` and `managedRuns.abandon`, carries
-`managedRuns.report` on the same socket, and reconnects with bounded backoff.
+dispatches only `managedRuns.activate`, `managedRuns.abandon`, and terminal events; carries
+reports, evidence, attention-response receives, and workspace release on the same socket; and reconnects with bounded backoff.
 Wrong credentials, altered operation envelopes, unknown fields, excess
 concurrency, and forged run references fail before handler authority. The adapter
 does not retry an uncertain report itself.

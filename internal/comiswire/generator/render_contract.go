@@ -32,7 +32,7 @@ func renderContract(manifest bundle.Manifest, schemas []schemaSpec) (string, err
 	if err := renderEnum(&output, "ErrorKind", manifest.ErrorKinds); err != nil {
 		return "", err
 	}
-	if err := renderEnum(&output, "ManagedRunState", []string{"abandoned", "active", "prepared"}); err != nil {
+	if err := renderEnum(&output, "ManagedRunState", []string{"abandoned", "active", "delivered", "pending", "prepared", "released"}); err != nil {
 		return "", err
 	}
 	for _, enum := range []struct {

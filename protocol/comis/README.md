@@ -24,9 +24,9 @@ and are never edited by hand.
 
 The pinned manifest and provenance are authenticated inputs to generation. Generation fails
 closed if the accepted protocol identifier, bundle digest, schema inventory, or closed method
-catalog changes. The service-side client exposes only handshake, health, and report; generated
-activate and abandon DTOs are inbound handler contracts and cannot be used as outbound client
-methods. Strict runtime validation rejects unknown or duplicate fields, trailing JSON, invalid
+catalog changes. The service-side client exposes handshake, health, report, evidence, attention-
+response receive, and workspace release. Generated activate, abandon, and terminal-event DTOs
+are inbound handler contracts and cannot be used as outbound client methods. Strict runtime validation rejects unknown or duplicate fields, trailing JSON, invalid
 closed discriminators, operation-envelope disagreement, response identity drift, and size-limit
 violations before they can cross the adapter boundary.
 Negotiated scope arrays are treated as duplicate-insensitive sets: ordering grants no authority,
@@ -42,9 +42,7 @@ not stand in for a runnable Comis host.
 
 ## Live handshake status
 
-At the pinned source commit, the SDK has no `bin` entry and exposes scripts only for building,
-testing, and protocol generation/checking. The only capability-service fixture host is under the
-daemon's Vitest-only `src/__tests__/` surface, with no standalone socket listener or runnable host
-entry. Consequently, a real cross-repository socket handshake cannot be executed from this lane.
-No local server is used as substitute evidence; this is the sole remaining cross-repository
-validation gap.
+The pinned Comis source includes a test-only standalone Unix-socket fixture host. Cross-repository
+conformance launches that host explicitly from the pinned source and verifies the generated Go
+client's authenticated handshake, exact digest, credential rejection, and closed wire schemas.
+The fixture host is validation infrastructure, not a production capability service.
