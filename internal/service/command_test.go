@@ -124,11 +124,11 @@ func TestRunCommand_ReportsInstalledCompositionFailureWithoutPrivateDetails(t *t
 		DefaultDatabasePath: "/private/tmp/default.db",
 		DefaultSocketPath:   "/private/tmp/default.sock",
 		RunService: func(context.Context, Config) error {
-			return errors.New("run service repository composition: approved root rejected " + privateDetail)
+			return errors.New("run service forge push composition: transport rejected " + privateDetail)
 		},
 	})
 	if exitCode != 1 || !strings.Contains(stderr.String(), "Failure class: installed_composition") ||
-		!strings.Contains(stderr.String(), "Failure cause: repository_composition") {
+		!strings.Contains(stderr.String(), "Failure cause: forge_push_composition") {
 		t.Fatalf("RunCommand(composition failure) = %d, stderr=%q", exitCode, stderr.String())
 	}
 	if strings.Contains(stdout.String()+stderr.String(), privateDetail) {
