@@ -196,6 +196,51 @@ func TestTerminalLifecycle_ExpectedExitPreservesSafePausedCustody(t *testing.T) 
 	}
 }
 
+func TestTerminalLifecycle_RestartLossDoesNotReplaceSettledExitEvidence(t *testing.T) {
+	store, task, workspace, now := openTerminalLifecycleFixture(t, "task-terminal-settled-restart", true)
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+	if _, err := store.CommitTerminalEvent(ctx, terminalEventMutation(
+		task, "operation-terminal-settled-running", application.TerminalRunning, now.Add(3*time.Minute),
+	)); err != nil {
+		t.Fatalf("CommitTerminalEvent(running) error = %v", err)
+	}
+	if _, err := store.CommitWorkerLaunchAcknowledgement(ctx, application.WorkerLaunchAcknowledgementMutation{
+		OperationID: "operation-terminal-settled-ack", SubjectDigest: strings.Repeat("9", 64),
+		Acknowledgement: terminalLaunchAcknowledgement(task, workspace), At: now.Add(3 * time.Minute),
+	}); err != nil {
+		t.Fatalf("CommitWorkerLaunchAcknowledgement() error = %v", err)
+	}
+	exitedAt := now.Add(4 * time.Minute)
+	if _, err := store.CommitTerminalEvent(ctx, terminalEventMutation(
+		task, "operation-terminal-settled-exited", application.TerminalExited, exitedAt,
+	)); err != nil {
+		t.Fatalf("CommitTerminalEvent(exited) error = %v", err)
+	}
+	if _, err := store.CommitTerminalEvent(ctx, terminalEventMutation(
+		task, "operation-terminal-restart-lost", application.TerminalLost, now.Add(5*time.Minute),
+	)); err != nil {
+		t.Fatalf("CommitTerminalEvent(lost after exit) error = %v", err)
+	}
+
+	binding, found, err := findTerminalBinding(ctx, store.db, task.Handle)
+	if err != nil || !found {
+		t.Fatalf("findTerminalBinding() = %#v, %t, %v", binding, found, err)
+	}
+	if binding.latestTransition != application.TerminalExited || !binding.updatedAt.Equal(exitedAt) {
+		t.Fatalf("settled binding = transition %q at %s, want exited at %s",
+			binding.latestTransition, binding.updatedAt, exitedAt)
+	}
+	var lostEvents int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_terminal_events
+        WHERE task_handle = ? AND transition = 'lost'`, task.Handle).Scan(&lostEvents); err != nil {
+		t.Fatalf("count retained loss events: %v", err)
+	}
+	if lostEvents != 1 {
+		t.Fatalf("retained loss events = %d, want 1", lostEvents)
+	}
+}
+
 func TestTerminalLifecycle_StorageHelpersFailClosed(t *testing.T) {
 	t.Run("missing preparation", func(t *testing.T) {
 		store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
