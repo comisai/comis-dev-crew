@@ -146,6 +146,14 @@ func TestQueries_GetLaunchPlanBuildsAndSafelyProjectsReviewedDescriptor(t *testi
 	if err != nil {
 		t.Fatalf("Marshal(plan) error = %v", err)
 	}
+	for _, required := range []string{
+		`"managedRunId":"` + task.ManagedRunID + `"`,
+		`"workspaceLeaseId":"` + task.WorkspaceLeaseID + `"`,
+	} {
+		if !strings.Contains(string(encoded), required) {
+			t.Fatalf("launch plan omitted required managed terminal authority %q: %s", required, encoded)
+		}
+	}
 	for _, forbidden := range []string{workspace, "/usr/local/bin/codex", "--model", "DEV_CREW_ATTACHMENT", task.ExecutionAttachmentID} {
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("launch plan leaked protected process material %q: %s", forbidden, encoded)
