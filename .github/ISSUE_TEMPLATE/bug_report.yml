@@ -1,0 +1,70 @@
+name: Bug report
+description: Report incorrect behavior in a comis-dev-crew command or adapter
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not use this form for security vulnerabilities. Report those privately
+        through [SECURITY.md](https://github.com/comisai/comis-dev-crew/blob/main/SECURITY.md).
+
+        Never paste credentials, bearer tokens, absolute socket paths, worker
+        output, or task briefs into a public issue.
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: The exact commit SHA you observed this on.
+      placeholder: 8d2f520
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - devcrew-service
+        - devcrew
+        - devcrew-mcp
+        - devcrew-report
+        - build or verification gates
+        - documentation
+        - not sure
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform and Go toolchain
+      description: Operating system, architecture, and `go version` output.
+      placeholder: macOS 15 arm64, go1.26.5
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What the documentation or AGENTS.md says should happen.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead, including the closed error code and hint if one was returned.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Minimal steps, or a failing test. Redact any private paths and identifiers.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: gates
+    attributes:
+      label: Verification output
+      description: Relevant output from `make verify` or a focused `go test` run, if you ran one.
+      render: text
