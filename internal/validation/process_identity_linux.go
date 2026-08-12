@@ -42,7 +42,7 @@ func observeOSProcess(ctx context.Context, pid int) (ProcessObservation, error) 
 	}
 	return ProcessObservation{
 		PID: pid, StartIdentity: "linux-" + identity.start,
-		ProcessGroupIdentity: identity.group, ExecutableLabel: filepath.Base(executable),
+		ProcessGroupIdentity: identity.group, ExecutableLabel: identity.label,
 	}, nil
 }
 
