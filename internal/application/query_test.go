@@ -128,6 +128,42 @@ func TestQueries_ListShowExplainAndOperationShareCanonicalProjections(t *testing
 	}
 }
 
+func TestQueries_ExplainFailedCandidateFromDurableJudgment(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		reason    domain.CandidateReason
+		wantCode  string
+		wantCause string
+	}{
+		{name: "local validation failure", reason: domain.CandidateValidationFailed, wantCode: "candidate_validation_failed", wantCause: "required local validation check failed"},
+		{name: "forge validation failure", reason: domain.CandidateForgeFailed, wantCode: "candidate_forge_failed", wantCause: "required forge check failed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			task := queryTask("task-candidate-failed", domain.TaskFailed, 8)
+			repository := &queryRepository{
+				tasks: []domain.Task{task},
+				candidateJudgment: domain.CandidateJudgment{
+					Outcome: domain.CandidateRejected,
+					Reason:  test.reason,
+				},
+			}
+			queries, err := NewQueries(QueryConfig{Repository: repository, Clock: time.Now})
+			if err != nil {
+				t.Fatalf("NewQueries() error = %v", err)
+			}
+			explanation, err := queries.ExplainTask(context.Background(), task.Handle)
+			if err != nil {
+				t.Fatalf("ExplainTask() error = %v", err)
+			}
+			if !repository.candidateCalled || explanation.ReasonCode != test.wantCode ||
+				!strings.Contains(explanation.LikelyRootCause, test.wantCause) ||
+				len(explanation.NextSafeActions) != 1 || explanation.NextSafeActions[0] != ActionInspectTask {
+				t.Fatalf("ExplainTask(rejected candidate) = %#v, judgment read = %v", explanation, repository.candidateCalled)
+			}
+		})
+	}
+}
+
 func TestQueries_GetLaunchPlanBuildsAndSafelyProjectsReviewedDescriptor(t *testing.T) {
 	now := time.Date(2026, time.August, 10, 9, 30, 0, 0, time.UTC)
 	workspace := t.TempDir()
@@ -507,15 +543,26 @@ func failureCode(err error) domain.ErrorCode {
 }
 
 type queryRepository struct {
-	tasks           []domain.Task
-	operation       domain.OperationRecord
-	preparation     ManagedRunPreparation
-	preparationErr  error
-	stateVersion    int64
-	stateVersionErr error
-	readErr         error
-	readCalled      bool
-	snapshotCalled  bool
+	tasks             []domain.Task
+	operation         domain.OperationRecord
+	preparation       ManagedRunPreparation
+	preparationErr    error
+	stateVersion      int64
+	stateVersionErr   error
+	readErr           error
+	readCalled        bool
+	snapshotCalled    bool
+	candidateJudgment domain.CandidateJudgment
+	candidateErr      error
+	candidateCalled   bool
+}
+
+func (repository *queryRepository) LatestCandidateEvidence(
+	context.Context,
+	string,
+) (*domain.SealedDeliveryEvidence, domain.CandidateJudgment, error) {
+	repository.candidateCalled = true
+	return nil, repository.candidateJudgment, repository.candidateErr
 }
 
 func (repository *queryRepository) GetManagedRunPreparation(context.Context, string) (ManagedRunPreparation, error) {
