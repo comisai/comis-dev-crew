@@ -54,11 +54,19 @@ else
 	fail "no SHA-256 tool found. Install sha256sum or shasum and re-run."
 fi
 
+tag_from() {
+	curl -fsSL "$1" 2>/dev/null |
+		sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
+}
+
 if [ -z "$VERSION" ]; then
-	VERSION="$(
-		curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null |
-			sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
-	)" || true
+	VERSION="$(tag_from "https://api.github.com/repos/${REPO}/releases/latest")" || true
+fi
+if [ -z "$VERSION" ]; then
+	# The releases/latest endpoint answers 404 while every published release is
+	# a prerelease, which is the normal state for this project. Fall back to the
+	# newest release of any kind so a pre-release build stays installable.
+	VERSION="$(tag_from "https://api.github.com/repos/${REPO}/releases?per_page=1")" || true
 fi
 if [ -z "$VERSION" ]; then
 	fail "could not determine the latest release.
