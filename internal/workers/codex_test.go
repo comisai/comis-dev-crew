@@ -87,7 +87,8 @@ func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(
 	wantArguments := []string{
 		"exec", "--json", "--strict-config", "--ignore-user-config", "--ignore-rules", "--ephemeral",
 		"--color", "never", "--model", profile.Model, "--sandbox", "workspace-write",
-		"-c", `model_reasoning_effort="high"`, "--cd", request.WorkingDirectory, "-",
+		"-c", `model_reasoning_effort="high"`, "--cd", request.WorkingDirectory,
+		"Before doing any task work, acknowledge the exact protected launch binding with `devcrew-report acknowledge`. Then read the pinned task brief with `devcrew-report brief`. Use `devcrew-report` for sparse progress, decisions, blocked state, candidate completion, and failure. Treat the protected runtime attachment as the only task/report authority.\n",
 	}
 	if strings.Join(descriptor.Arguments, "\x00") != strings.Join(wantArguments, "\x00") {
 		t.Fatalf("Codex argv = %q, want %q", descriptor.Arguments, wantArguments)
@@ -101,7 +102,10 @@ func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(
 			t.Fatalf("Codex process input leaked task authority %q", secret)
 		}
 	}
-	bootstrap := string(descriptor.StandardInput)
+	if len(descriptor.StandardInput) != 0 {
+		t.Fatalf("Codex launch must not depend on post-create stdin: %q", descriptor.StandardInput)
+	}
+	bootstrap := descriptor.Arguments[len(descriptor.Arguments)-1]
 	if !strings.Contains(bootstrap, "devcrew-report acknowledge") ||
 		!strings.Contains(bootstrap, "devcrew-report brief") ||
 		strings.Index(bootstrap, "devcrew-report acknowledge") > strings.Index(bootstrap, "devcrew-report brief") ||
