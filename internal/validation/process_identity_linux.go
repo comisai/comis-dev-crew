@@ -19,31 +19,60 @@ func observeOSProcess(ctx context.Context, pid int) (ProcessObservation, error) 
 		return ProcessObservation{}, err
 	}
 	procRoot := filepath.Join("/proc", strconv.Itoa(pid))
-	stat, err := os.ReadFile(filepath.Join(procRoot, "stat"))
-	if os.IsNotExist(err) {
-		return ProcessObservation{}, ErrProcessAbsent
-	}
+	identity, err := readLinuxProcessIdentity(procRoot)
 	if err != nil {
-		return ProcessObservation{}, errors.New("observe validation process: proc stat is unavailable")
-	}
-	closing := strings.LastIndexByte(string(stat), ')')
-	if closing < 0 {
-		return ProcessObservation{}, errors.New("observe validation process: proc stat is malformed")
-	}
-	fields := strings.Fields(string(stat[closing+1:]))
-	if len(fields) < 20 || fields[2] == "" || fields[19] == "" {
-		return ProcessObservation{}, errors.New("observe validation process: proc identity is incomplete")
+		return ProcessObservation{}, err
 	}
 	executable, err := os.Readlink(filepath.Join(procRoot, "exe"))
 	if os.IsNotExist(err) {
-		return ProcessObservation{}, ErrProcessAbsent
+		identity, err = readLinuxProcessIdentity(procRoot)
+		if err != nil {
+			return ProcessObservation{}, err
+		}
+		if identity.state != "Z" {
+			return ProcessObservation{}, ErrProcessAbsent
+		}
+		return ProcessObservation{
+			PID: pid, StartIdentity: "linux-" + identity.start,
+			ProcessGroupIdentity: identity.group, ExecutableLabel: identity.label, Exited: true,
+		}, nil
 	}
 	if err != nil || executable == "" {
 		return ProcessObservation{}, errors.New("observe validation process: executable identity is unavailable")
 	}
 	return ProcessObservation{
-		PID: pid, StartIdentity: "linux-" + fields[19],
-		ProcessGroupIdentity: fields[2], ExecutableLabel: filepath.Base(executable),
+		PID: pid, StartIdentity: "linux-" + identity.start,
+		ProcessGroupIdentity: identity.group, ExecutableLabel: filepath.Base(executable),
+	}, nil
+}
+
+type linuxProcessIdentity struct {
+	label string
+	state string
+	group string
+	start string
+}
+
+func readLinuxProcessIdentity(procRoot string) (linuxProcessIdentity, error) {
+	stat, err := os.ReadFile(filepath.Join(procRoot, "stat"))
+	if os.IsNotExist(err) {
+		return linuxProcessIdentity{}, ErrProcessAbsent
+	}
+	if err != nil {
+		return linuxProcessIdentity{}, errors.New("observe validation process: proc stat is unavailable")
+	}
+	contents := string(stat)
+	opening := strings.IndexByte(contents, '(')
+	closing := strings.LastIndexByte(contents, ')')
+	if opening < 0 || closing <= opening+1 {
+		return linuxProcessIdentity{}, errors.New("observe validation process: proc stat is malformed")
+	}
+	fields := strings.Fields(contents[closing+1:])
+	if len(fields) < 20 || fields[0] == "" || fields[2] == "" || fields[19] == "" {
+		return linuxProcessIdentity{}, errors.New("observe validation process: proc identity is incomplete")
+	}
+	return linuxProcessIdentity{
+		label: contents[opening+1 : closing], state: fields[0], group: fields[2], start: fields[19],
 	}, nil
 }
 

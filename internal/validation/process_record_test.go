@@ -42,6 +42,9 @@ func TestProcessRecord_ValidatesClosedLifecycleAndMonotonicIdentity(t *testing.T
 	if err := exited.CanFollow(running); err != nil {
 		t.Fatalf("exited.CanFollow(running) error = %v", err)
 	}
+	if err := exited.CanFollow(starting); err != nil {
+		t.Fatalf("exited.CanFollow(starting) error = %v", err)
+	}
 	if err := unknown.CanFollow(running); err != nil {
 		t.Fatalf("unknown.CanFollow(running) error = %v", err)
 	}

@@ -54,6 +54,7 @@ type ProcessObservation struct {
 	StartIdentity        string
 	ProcessGroupIdentity string
 	ExecutableLabel      string
+	Exited               bool
 }
 
 // ErrProcessAbsent means the recorded PID is no longer present.
@@ -172,21 +173,23 @@ func (runner *Runner) Run(ctx context.Context, request RunRequest) (Receipt, err
 		_ = command.Wait()
 		return Receipt{}, errors.New("run validation: process identity could not be established")
 	}
-	running := starting
-	running.PID = observation.PID
-	running.StartIdentity = observation.StartIdentity
-	running.ProcessGroupIdentity = observation.ProcessGroupIdentity
-	running.State = ProcessRunning
-	running.ObservedAt = runner.clock()
-	if err := runner.processes.Record(context.WithoutCancel(ctx), running); err != nil {
-		_ = terminateProcessGroup(command.Process.Pid)
-		_ = command.Wait()
-		return Receipt{}, fmt.Errorf("run validation: record running process: %w", err)
+	observed := starting
+	observed.PID = observation.PID
+	observed.StartIdentity = observation.StartIdentity
+	observed.ProcessGroupIdentity = observation.ProcessGroupIdentity
+	if !observation.Exited {
+		observed.State = ProcessRunning
+		observed.ObservedAt = runner.clock()
+		if err := runner.processes.Record(context.WithoutCancel(ctx), observed); err != nil {
+			_ = terminateProcessGroup(command.Process.Pid)
+			_ = command.Wait()
+			return Receipt{}, fmt.Errorf("run validation: record running process: %w", err)
+		}
 	}
 	waitErr := command.Wait()
 	completedAt := runner.clock()
 	exitCode := command.ProcessState.ExitCode()
-	exited := running
+	exited := observed
 	exited.State = ProcessExited
 	exited.ObservedAt = completedAt
 	exited.ExitCode = &exitCode

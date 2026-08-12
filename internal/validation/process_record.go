@@ -67,6 +67,10 @@ func (record ProcessRecord) CanFollow(previous ProcessRecord) error {
 	if previous.State == ProcessStarting && record.State == ProcessRunning {
 		return nil
 	}
+	if previous.State == ProcessStarting && record.State == ProcessExited &&
+		record.PID > 0 && record.StartIdentity != "" && record.ProcessGroupIdentity != "" && record.ExitCode != nil {
+		return nil
+	}
 	if previous.State == ProcessStarting && record.State == ProcessUnknown && record.PID == 0 {
 		return nil
 	}

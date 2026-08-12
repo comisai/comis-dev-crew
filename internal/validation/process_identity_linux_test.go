@@ -42,7 +42,7 @@ func TestObserveOSProcessPreservesExitedReviewedProgramIdentity(t *testing.T) {
 		t.Fatalf("observeOSProcess(exited reviewed program) error = %v", err)
 	}
 	if observation.PID != command.Process.Pid || observation.StartIdentity == "" ||
-		observation.ProcessGroupIdentity == "" || observation.ExecutableLabel != "true" {
+		observation.ProcessGroupIdentity == "" || observation.ExecutableLabel != "true" || !observation.Exited {
 		t.Fatalf("observeOSProcess(exited reviewed program) = %#v", observation)
 	}
 }
