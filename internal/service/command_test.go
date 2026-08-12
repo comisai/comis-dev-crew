@@ -185,6 +185,15 @@ func TestRunCommand_ComposesInstalledLaneWithExplicitDeterministicFixture(t *tes
 		"--codex-terminal-allow-entry", "codex-confined",
 		"--codex-network", "restricted",
 		"--codex-concurrency", "2",
+		"--claude-profile", "claude-reviewed",
+		"--claude-executable", "/opt/claude/bin/claude",
+		"--claude-version", "2.1.224 (Claude Code)",
+		"--claude-model", "claude-opus-4-6",
+		"--claude-effort", "high",
+		"--claude-terminal-allow-entry", "claude-confined",
+		"--claude-network", "restricted",
+		"--claude-concurrency", "2",
+		"--claude-config-directory", "/private/config/claude",
 		"--candidate-config", candidateConfigPath,
 		"--fixture-worker",
 		"--fixture-decision", "use the bounded fixture choice",
@@ -218,6 +227,17 @@ func TestRunCommand_ComposesInstalledLaneWithExplicitDeterministicFixture(t *tes
 		!reflect.DeepEqual(got.ComisComposition, wantComis) || !reflect.DeepEqual(got.CodexComposition, wantCodex) ||
 		got.FixtureComposition == nil || got.FixtureComposition.Decision != "use the bounded fixture choice" {
 		t.Fatalf("installed service config = %#v", got)
+	}
+	claude := reflect.ValueOf(got).FieldByName("ClaudeComposition")
+	if !claude.IsValid() || claude.IsNil() {
+		t.Fatalf("Claude composition is unavailable: %#v", got)
+	}
+	claude = claude.Elem()
+	if claude.FieldByName("ProfileID").String() != "claude-reviewed" ||
+		claude.FieldByName("Executable").String() != "/opt/claude/bin/claude" ||
+		claude.FieldByName("ExpectedVersion").String() != "2.1.224 (Claude Code)" ||
+		claude.FieldByName("ConfigDirectory").String() != "/private/config/claude" {
+		t.Fatalf("Claude composition = %#v", claude.Interface())
 	}
 	artifact := reflect.ValueOf(*got.FixtureComposition).FieldByName("ArtifactRelativePath")
 	if !artifact.IsValid() || artifact.String() != "report.md" {
