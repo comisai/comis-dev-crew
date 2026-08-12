@@ -132,6 +132,12 @@ func TestGitBranchPusher_RefusesDirtyWrongHeadAndEscapedRemote(t *testing.T) {
 	}
 }
 
+func TestGitBranchPusherAcceptsPinnedSSHDeployKeyRoute(t *testing.T) {
+	if err := validatePushRemote("ssh://git@github.com/fixture-owner/fixture-repository.git", ""); err != nil {
+		t.Fatalf("validatePushRemote(SSH deploy key) error = %v", err)
+	}
+}
+
 func runFixtureGit(t *testing.T, executable, directory string, arguments ...string) {
 	t.Helper()
 	command := exec.Command(executable, arguments...)
