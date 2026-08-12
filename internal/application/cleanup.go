@@ -236,7 +236,11 @@ func (coordinator *CleanupCoordinator) CleanupTask(ctx context.Context, command 
 				ReleasedAt: record.ReleasedAt,
 			})
 			if releaseErr != nil {
-				return MutationResult{}, &dependencyFailure{message: "managed run release failed", cause: releaseErr}
+				return MutationResult{}, cleanupDependencyFailure(
+					"managed run release failed",
+					"inspect the exact managed run and workspace lease in Comis before retrying",
+					releaseErr,
+				)
 			}
 			if receipt.ManagedRunID != record.ManagedRunID || receipt.WorkspaceLeaseID != record.WorkspaceLeaseID ||
 				receipt.Disposition != ManagedRunReleaseReapSafe || !receipt.ReleasedAt.Equal(record.ReleasedAt) ||
@@ -262,7 +266,11 @@ func (coordinator *CleanupCoordinator) CleanupTask(ctx context.Context, command 
 				RepositoryID: record.RepositoryID, WorktreePath: record.Snapshot.WorktreePath,
 				Branch: record.Snapshot.Branch, HeadRevision: record.Snapshot.HeadRevision,
 			}); err != nil {
-				return MutationResult{}, &dependencyFailure{message: "delivered workspace removal failed", cause: err}
+				return MutationResult{}, cleanupDependencyFailure(
+					"delivered workspace removal failed",
+					"inspect the operation-bound worktree and Git repository before retrying",
+					err,
+				)
 			}
 			return coordinator.config.Store.CompleteTaskCleanup(ctx, TaskCleanupCompletion{
 				OperationID: command.OperationID, SubjectDigest: digest, At: coordinator.config.Clock(),
@@ -288,7 +296,11 @@ func (coordinator *CleanupCoordinator) verifyCurrentSafety(
 		TaskHandle: record.TaskHandle, RepositoryID: record.RepositoryID, WorktreePath: record.WorktreePath,
 	})
 	if err != nil {
-		return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, &dependencyFailure{message: "cleanup workspace inspection failed", cause: err}
+		return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, cleanupDependencyFailure(
+			"cleanup workspace inspection failed",
+			"inspect the exact task worktree and configured repository before retrying",
+			err,
+		)
 	}
 	if snapshot.Validate() != nil || snapshot.TaskHandle != record.TaskHandle || snapshot.RepositoryID != record.RepositoryID ||
 		snapshot.WorktreePath != record.WorktreePath || snapshot.HeadRevision != record.HeadRevision ||
@@ -306,7 +318,11 @@ func (coordinator *CleanupCoordinator) verifyCurrentSafety(
 		HeadRevision: record.HeadRevision, RequiredChecks: append([]string(nil), record.RequiredForgeChecks...),
 	})
 	if err != nil {
-		return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, &dependencyFailure{message: "cleanup pull request verification failed", cause: err}
+		return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, cleanupDependencyFailure(
+			"cleanup pull request verification failed",
+			"inspect the recorded pull request, head, and required checks before retrying",
+			err,
+		)
 	}
 	wantChecks := make([]ForgeCheckTruth, len(record.RequiredForgeChecks))
 	for index, name := range record.RequiredForgeChecks {
@@ -317,6 +333,14 @@ func (coordinator *CleanupCoordinator) verifyCurrentSafety(
 		return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, fmt.Errorf("cleanup pull request truth differs: %w", ErrPrecondition)
 	}
 	return snapshot, truth, nil
+}
+
+func cleanupDependencyFailure(message, hint string, cause error) error {
+	failure, err := domain.NewFailure(domain.ErrorUnavailable, true, message, hint, cause)
+	if err != nil {
+		return errors.New("cleanup dependency failure classification failed")
+	}
+	return failure
 }
 
 func cleanupReleaseOperationID(operationID, taskHandle string) string {
