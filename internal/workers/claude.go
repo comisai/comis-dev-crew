@@ -288,11 +288,11 @@ type claudeBoundedBuffer struct {
 func (destination *claudeBoundedBuffer) Write(contents []byte) (int, error) {
 	remaining := destination.limit - destination.buffer.Len()
 	if remaining <= 0 {
-		return 0, errors.New("Claude probe output exceeded its bound")
+		return 0, errors.New("claude probe output exceeded its bound")
 	}
 	if len(contents) > remaining {
 		_, _ = destination.buffer.Write(contents[:remaining])
-		return remaining, errors.New("Claude probe output exceeded its bound")
+		return remaining, errors.New("claude probe output exceeded its bound")
 	}
 	return destination.buffer.Write(contents)
 }
