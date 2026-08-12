@@ -198,7 +198,16 @@ func readCommandBrief(ctx context.Context, capability RuntimeCapability) (domain
 
 func writeCommandUsage(output io.Writer) {
 	fmt.Fprintln(output, "Usage: devcrew-report <command> [options]")
-	fmt.Fprintln(output, "Commands: acknowledge, brief, progress, decision, blocked, paused, candidate-complete, failed, resolved")
+	fmt.Fprintln(output, "Commands:")
+	fmt.Fprintln(output, "  acknowledge")
+	fmt.Fprintln(output, "  brief")
+	fmt.Fprintln(output, "  progress --summary TEXT")
+	fmt.Fprintln(output, "  decision --key KEY --question TEXT")
+	fmt.Fprintln(output, "  blocked --summary TEXT")
+	fmt.Fprintln(output, "  paused --summary TEXT")
+	fmt.Fprintln(output, "  candidate-complete --summary TEXT --artifact REF")
+	fmt.Fprintln(output, "  failed --summary TEXT")
+	fmt.Fprintln(output, "  resolved --key KEY --summary TEXT")
 	fmt.Fprintln(output, "Reports accept only bounded content fields; task authority comes from the protected runtime attachment.")
 }
 
