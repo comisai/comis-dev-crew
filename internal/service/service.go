@@ -32,6 +32,7 @@ type ComisControl interface {
 	comiswire.ReportSender
 	comiswire.EvidenceSender
 	application.ManagedRunReleaser
+	application.HostIntegrationStatus
 	Run(context.Context) error
 }
 
@@ -204,12 +205,6 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 			return fmt.Errorf("run service candidate supervisor: %w", runnerErr)
 		}
 	}
-	queries, err := application.NewQueries(application.QueryConfig{
-		Repository: store, Harnesses: config.WorkerHarnesses, Clock: clock,
-	})
-	if err != nil {
-		return fmt.Errorf("run service queries: %w", err)
-	}
 	var attachmentSupervisor *runtimeAttachmentCoordinator
 	if config.RuntimeAttachments == nil && config.RuntimeRoot != "" {
 		attachmentSupervisor, err = newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
@@ -255,6 +250,12 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	control, err := composeComisControl(config, controlMutations)
 	if err != nil {
 		return err
+	}
+	queries, err := application.NewQueries(application.QueryConfig{
+		Repository: store, Harnesses: config.WorkerHarnesses, Host: control, Clock: clock,
+	})
+	if err != nil {
+		return fmt.Errorf("run service queries: %w", err)
 	}
 	var cleanup *application.CleanupCoordinator
 	if config.cleanupRemover != nil || config.cleanupForge != nil {

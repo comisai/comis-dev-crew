@@ -207,6 +207,30 @@ func TestControlConnectionPersistsAcrossBidirectionalTrafficAndReplaysAfterRecon
 	}
 }
 
+func TestControlConnectionHealthTracksPublishedAuthenticatedSession(t *testing.T) {
+	connection, err := NewControlConnection(ControlConnectionConfig{
+		SocketPath: filepath.Join(newCanonicalTempDirectory(t), "control.sock"), Credential: controlTestBearer,
+		ServiceInstanceID: "service-instance_health", HandshakeOperationID: "operation_handshake_health",
+		Handler: controlHandlerStub{}, RequestTimeout: time.Second,
+		MinimumBackoff: time.Millisecond, MaximumBackoff: 2 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewControlConnection() error = %v", err)
+	}
+	if connection.Connected() {
+		t.Fatal("Connected() = true before authenticated session publication")
+	}
+	session := &controlSession{}
+	connection.publish(session)
+	if !connection.Connected() {
+		t.Fatal("Connected() = false after authenticated session publication")
+	}
+	connection.unpublish(session)
+	if connection.Connected() {
+		t.Fatal("Connected() = true after session removal")
+	}
+}
+
 func TestControlConnectionSendsVerifiedEvidenceOnAuthenticatedPersistentSession(t *testing.T) {
 	socketPath, listener := controlTestListener(t)
 	handler := &durableControlHandler{activations: make(map[OperationID]ActivateRequestParams)}

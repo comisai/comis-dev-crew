@@ -58,6 +58,35 @@ func TestQueries_ProduceStablePartialFleetAndDiagnosticSnapshots(t *testing.T) {
 	}
 }
 
+func TestQueries_ProjectConfiguredDisconnectedHostAsDegraded(t *testing.T) {
+	queries, err := NewQueries(QueryConfig{
+		Repository: &queryRepository{}, Host: queryHostStatus(false), Clock: time.Now,
+	})
+	if err != nil {
+		t.Fatalf("NewQueries() error = %v", err)
+	}
+	report, err := queries.Diagnose(context.Background())
+	if err != nil {
+		t.Fatalf("Diagnose() error = %v", err)
+	}
+	if report.Completeness != CompletenessComplete || report.ServiceHealth != HealthDegraded ||
+		report.ComisHealth != HealthUnavailable || len(report.Checks) != 3 || report.Checks[2].Status != CheckFail {
+		t.Fatalf("Diagnose() = %#v, want complete disconnected-host failure", report)
+	}
+	fleet, err := queries.Fleet(context.Background())
+	if err != nil {
+		t.Fatalf("Fleet() error = %v", err)
+	}
+	if fleet.Completeness != CompletenessComplete || fleet.ServiceHealth != HealthDegraded ||
+		fleet.ComisHealth != HealthUnavailable {
+		t.Fatalf("Fleet() = %#v, want degraded disconnected-host posture", fleet)
+	}
+}
+
+type queryHostStatus bool
+
+func (status queryHostStatus) Connected() bool { return bool(status) }
+
 func TestQueries_ListShowExplainAndOperationShareCanonicalProjections(t *testing.T) {
 	now := time.Date(2026, time.August, 8, 21, 0, 0, 0, time.UTC)
 	task := queryTask("task-0001", domain.TaskBlocked, 4)

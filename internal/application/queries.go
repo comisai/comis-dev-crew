@@ -12,10 +12,17 @@ import (
 // Clock supplies deterministic observation time to read projections.
 type Clock func() time.Time
 
+// HostIntegrationStatus reports whether the configured authenticated host
+// control session is currently established.
+type HostIntegrationStatus interface {
+	Connected() bool
+}
+
 // Queries owns every canonical read-only application handler.
 type Queries struct {
 	repository Repository
 	harnesses  WorkerHarnessResolver
+	host       HostIntegrationStatus
 	clock      Clock
 }
 
@@ -24,6 +31,7 @@ type Queries struct {
 type QueryConfig struct {
 	Repository Repository
 	Harnesses  WorkerHarnessResolver
+	Host       HostIntegrationStatus
 	Clock      Clock
 }
 
@@ -35,7 +43,7 @@ func NewQueries(config QueryConfig) (*Queries, error) {
 	if config.Clock == nil {
 		return nil, errors.New("create queries: clock is required")
 	}
-	return &Queries{repository: config.Repository, harnesses: config.Harnesses, clock: config.Clock}, nil
+	return &Queries{repository: config.Repository, harnesses: config.Harnesses, host: config.Host, clock: config.Clock}, nil
 }
 
 // Diagnose returns bounded readiness without treating absent host integration as healthy.
@@ -45,17 +53,18 @@ func (queries *Queries) Diagnose(ctx context.Context) (DiagnosticReport, error) 
 		return DiagnosticReport{}, translateReadError(err, "diagnostic state")
 	}
 	now := queries.now()
+	completeness, serviceHealth, comisHealth, hostCheck := queries.hostHealth()
 	return DiagnosticReport{
 		SchemaVersion: 1,
 		CapturedAtMs:  now.UnixMilli(),
 		StateVersion:  stateVersion,
-		Completeness:  CompletenessPartial,
-		ServiceHealth: HealthHealthy,
-		ComisHealth:   HealthUnavailable,
+		Completeness:  completeness,
+		ServiceHealth: serviceHealth,
+		ComisHealth:   comisHealth,
 		Checks: []DiagnosticCheck{
 			{Name: "service", Status: CheckPass, Message: "service query handler is available", Hint: "none"},
 			{Name: "store", Status: CheckPass, Message: "durable state is readable", Hint: "none"},
-			{Name: "host_integration", Status: CheckUnknown, Message: "host integration is unavailable", Hint: "install and configure a compatible host integration"},
+			hostCheck,
 		},
 	}, nil
 }
@@ -67,15 +76,34 @@ func (queries *Queries) Fleet(ctx context.Context) (FleetSnapshot, error) {
 		return FleetSnapshot{}, err
 	}
 	now := queries.now()
+	completeness, serviceHealth, comisHealth, _ := queries.hostHealth()
 	return FleetSnapshot{
 		SchemaVersion: 1,
 		CapturedAtMs:  now.UnixMilli(),
 		StateVersion:  stateVersion,
-		Completeness:  CompletenessPartial,
-		ServiceHealth: HealthHealthy,
-		ComisHealth:   HealthUnavailable,
+		Completeness:  completeness,
+		ServiceHealth: serviceHealth,
+		ComisHealth:   comisHealth,
 		Tasks:         projectTasks(tasks, now),
 	}, nil
+}
+
+func (queries *Queries) hostHealth() (Completeness, HealthStatus, HealthStatus, DiagnosticCheck) {
+	if queries.host == nil {
+		return CompletenessPartial, HealthHealthy, HealthUnavailable, DiagnosticCheck{
+			Name: "host_integration", Status: CheckUnknown, Message: "host integration is unavailable",
+			Hint: "install and configure a compatible host integration",
+		}
+	}
+	if !queries.host.Connected() {
+		return CompletenessComplete, HealthDegraded, HealthUnavailable, DiagnosticCheck{
+			Name: "host_integration", Status: CheckFail, Message: "authenticated host control is disconnected",
+			Hint: "verify the host control socket and credential, then retry",
+		}
+	}
+	return CompletenessComplete, HealthHealthy, HealthHealthy, DiagnosticCheck{
+		Name: "host_integration", Status: CheckPass, Message: "authenticated host control is connected", Hint: "none",
+	}
 }
 
 // ListTasks returns the same task rows used by the fleet projection.

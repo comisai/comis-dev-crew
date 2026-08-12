@@ -42,6 +42,14 @@ type ControlConnection struct {
 	changed chan struct{}
 }
 
+// Connected reports whether the current session completed the pinned
+// authenticated handshake and remains published for control traffic.
+func (connection *ControlConnection) Connected() bool {
+	connection.mu.Lock()
+	defer connection.mu.Unlock()
+	return connection.session != nil
+}
+
 // NewControlConnection validates the exact pinned handshake before any socket
 // is opened. Run owns reconnect supervision and must be joined by its caller.
 func NewControlConnection(config ControlConnectionConfig) (*ControlConnection, error) {
