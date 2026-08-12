@@ -164,6 +164,48 @@ func TestQueries_ExplainFailedCandidateFromDurableJudgment(t *testing.T) {
 	}
 }
 
+func TestQueries_ExplainFailedCandidateFallbacksRemainFailClosed(t *testing.T) {
+	task := queryTask("task-candidate-fallback", domain.TaskFailed, 9)
+
+	t.Run("missing candidate evidence keeps generic task failure", func(t *testing.T) {
+		repository := &queryRepository{tasks: []domain.Task{task}, candidateErr: ErrNotFound}
+		queries, err := NewQueries(QueryConfig{Repository: repository, Clock: time.Now})
+		if err != nil {
+			t.Fatalf("NewQueries() error = %v", err)
+		}
+		explanation, err := queries.ExplainTask(context.Background(), task.Handle)
+		if err != nil || !repository.candidateCalled || explanation.ReasonCode != "task_failed" {
+			t.Fatalf("ExplainTask(missing judgment) = %#v, %v, judgment read = %v", explanation, err, repository.candidateCalled)
+		}
+	})
+
+	t.Run("unreadable candidate evidence returns safe internal failure", func(t *testing.T) {
+		repository := &queryRepository{tasks: []domain.Task{task}, candidateErr: errors.New("private candidate store failure")}
+		queries, err := NewQueries(QueryConfig{Repository: repository, Clock: time.Now})
+		if err != nil {
+			t.Fatalf("NewQueries() error = %v", err)
+		}
+		if _, err := queries.ExplainTask(context.Background(), task.Handle); failureCode(err) != domain.ErrorInternal {
+			t.Fatalf("ExplainTask(unreadable judgment) error = %v, want safe internal failure", err)
+		}
+	})
+
+	t.Run("non-rejected candidate judgment keeps generic task failure", func(t *testing.T) {
+		repository := &queryRepository{
+			tasks:             []domain.Task{task},
+			candidateJudgment: domain.CandidateJudgment{Outcome: domain.CandidateAccepted, Reason: domain.CandidateEvidenceAccepted},
+		}
+		queries, err := NewQueries(QueryConfig{Repository: repository, Clock: time.Now})
+		if err != nil {
+			t.Fatalf("NewQueries() error = %v", err)
+		}
+		explanation, err := queries.ExplainTask(context.Background(), task.Handle)
+		if err != nil || explanation.ReasonCode != "task_failed" {
+			t.Fatalf("ExplainTask(non-rejected judgment) = %#v, %v", explanation, err)
+		}
+	})
+}
+
 func TestQueries_GetLaunchPlanBuildsAndSafelyProjectsReviewedDescriptor(t *testing.T) {
 	now := time.Date(2026, time.August, 10, 9, 30, 0, 0, time.UTC)
 	workspace := t.TempDir()
