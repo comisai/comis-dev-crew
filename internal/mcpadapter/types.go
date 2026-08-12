@@ -58,8 +58,8 @@ type PrepareTaskInput struct {
 	Shape              domain.TaskShape    `json:"shape"`
 	RepositoryID       string              `json:"repositoryId"`
 	BaseRevision       string              `json:"baseRevision"`
-	AcceptanceCriteria []string            `json:"acceptanceCriteria"`
-	Constraints        []string            `json:"constraints"`
+	AcceptanceCriteria []string            `json:"acceptanceCriteria" jsonschema:"ordered acceptance criteria; provide a JSON array of strings"`
+	Constraints        []string            `json:"constraints" jsonschema:"ordered task constraints; provide a JSON array of strings, using an empty array when there are none"`
 	ValidationProfile  string              `json:"validationProfile"`
 	DeliveryMode       domain.DeliveryMode `json:"deliveryMode"`
 	WorkerProfileID    string              `json:"workerProfileId"`
