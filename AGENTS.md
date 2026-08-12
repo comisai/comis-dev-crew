@@ -200,9 +200,11 @@ ignored planning/execution-ledger files.
 
 Local commits are required as work is completed. Pushing, opening or merging a pull request,
 publishing a release/package, changing repository visibility/settings, and mutating external
-systems require explicit authorization. The current program authorizes creation of the new
-`comisai/comis-dev-crew` repository as private and pushing its clean verified scaffold/branches;
-it does not authorize pull requests, merges, releases, public visibility, or writes to Comis.
+systems require explicit authorization. The current program authorizes the `comisai/comis-dev-crew`
+repository, pushing its clean verified scaffold/branches, and preparing the tree for public
+release: public-facing documentation, contribution and security policy, and license notices.
+Flipping repository visibility, opening or merging pull requests, publishing a release or tag,
+and writing to Comis remain maintainer actions this program does not authorize.
 Never force-push, overwrite unexpected remote history, or edit the neighboring Comis repository
 or its worktrees from this lane.
 
