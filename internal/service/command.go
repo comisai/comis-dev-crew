@@ -213,12 +213,45 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 		}
 	}
 	if err := runService(ctx, serviceConfig); err != nil {
+		cause := serviceFailureCause(err)
+		causeLine := ""
+		if cause != "" {
+			causeLine = fmt.Sprintf("Failure cause: %s\n", cause)
+		}
 		return writeServiceDiagnostic(stderr, fmt.Sprintf(
-			"devcrew-service: service stopped with an error\nFailure class: %s\nHint: inspect local configuration and service health\n",
-			serviceFailureClass(err),
+			"devcrew-service: service stopped with an error\nFailure class: %s\n%sHint: inspect local configuration and service health\n",
+			serviceFailureClass(err), causeLine,
 		), 1)
 	}
 	return 0
+}
+
+func serviceFailureCause(err error) string {
+	message := err.Error()
+	causes := []struct {
+		match string
+		name  string
+	}{
+		{"validate task candidate: read task", "candidate_task_unavailable"},
+		{"validate task candidate: durable worktree is unavailable", "candidate_worktree_unavailable"},
+		{"validate task candidate: reviewed profile is unavailable", "candidate_profile_unavailable"},
+		{"validate task candidate: decision inventory is unavailable", "candidate_decision_inventory_unavailable"},
+		{"validate task candidate: unresolved decisions remain", "candidate_decisions_unresolved"},
+		{"validate task candidate: Git evidence is unavailable", "candidate_git_evidence_unavailable"},
+		{"validate task candidate: validation process identity is unavailable", "candidate_validation_identity_unavailable"},
+		{"validate task candidate: validation receipt is incomplete", "candidate_validation_receipt_incomplete"},
+		{"validate task candidate: Git evidence changed during validation", "candidate_git_evidence_changed"},
+		{"validate task candidate: pull-request truth is unavailable", "candidate_pull_request_truth_unavailable"},
+		{"validate task candidate: report artifact is unavailable", "candidate_report_artifact_unavailable"},
+		{"candidate evidence was not accepted", "candidate_evidence_rejected"},
+		{"durable task queue is unavailable", "candidate_queue_unavailable"},
+	}
+	for _, cause := range causes {
+		if strings.Contains(message, cause.match) {
+			return cause.name
+		}
+	}
+	return ""
 }
 
 func serviceFailureClass(err error) string {
