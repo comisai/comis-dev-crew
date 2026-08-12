@@ -73,6 +73,37 @@ func TestCandidateEvidenceStore_PersistsExactJudgmentAndAdvancesAcceptedTaskOnce
 	}
 }
 
+func TestCandidateEvidenceStore_AdvancesRejectedTaskToDurableFailure(t *testing.T) {
+	databasePath := filepath.Join(canonicalTempDir(t), "devcrew.db")
+	store, err := Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	task := candidateEvidenceTask(t, "task-evidence-rejected")
+	if err := store.CreateTask(context.Background(), task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	bundle := candidateEvidence(t, task, strings.Repeat("b", 40)).Bundle()
+	bundle.ValidationReceipts[0].Conclusion = domain.CheckFailed
+	sealed, err := domain.SealDeliveryEvidence(bundle)
+	if err != nil {
+		t.Fatalf("SealDeliveryEvidence() error = %v", err)
+	}
+	updated, judgment, err := store.CommitCandidateEvidence(
+		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"},
+		task.UpdatedAt.Add(5*time.Minute), nil,
+	)
+	if err != nil || judgment.Outcome != domain.CandidateRejected ||
+		judgment.Reason != domain.CandidateValidationFailed || updated.State != domain.TaskFailed {
+		t.Fatalf("CommitCandidateEvidence(rejected) = %#v, %#v, %v", updated, judgment, err)
+	}
+	stored, err := store.GetTask(context.Background(), task.Handle)
+	if err != nil || stored.State != domain.TaskFailed || stored.StateVersion != updated.StateVersion {
+		t.Fatalf("GetTask(rejected) = %#v, %v", stored, err)
+	}
+}
+
 func TestCandidateEvidenceStore_RefusesCrossTaskStaleAndCorruptEvidence(t *testing.T) {
 	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
 	if err != nil {

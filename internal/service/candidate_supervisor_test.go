@@ -288,8 +288,14 @@ func TestCandidateSupervisor_RunRecoversDurableValidatingTaskAndJoinsCancellatio
 	if err != nil {
 		t.Fatalf("newCandidateSupervisor(rejected evidence) error = %v", err)
 	}
-	if err := rejectedSupervisor.Run(context.Background()); err == nil {
-		t.Fatal("Run(rejected evidence) error = nil")
+	rejectedContext, cancelRejected := context.WithCancel(context.Background())
+	rejectedFixture.store.onCommit = cancelRejected
+	if err := rejectedSupervisor.Run(rejectedContext); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run(rejected evidence) error = %v, want joined cancellation", err)
+	}
+	if rejectedFixture.store.task.State != domain.TaskFailed || rejectedFixture.runner.calls != 1 {
+		t.Fatalf("rejected evidence task = %q with %d validation calls, want failed after one call",
+			rejectedFixture.store.task.State, rejectedFixture.runner.calls)
 	}
 }
 
