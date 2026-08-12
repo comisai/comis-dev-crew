@@ -439,11 +439,7 @@ func TestControlConnectionConnectFailsClosedAtSocketAndHandshakeBoundaries(t *te
 		t.Fatal("connect(missing socket) error = nil")
 	}
 
-	directory, err := os.MkdirTemp("/private/tmp", "dc-stale-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	directory := socketTempDir(t, "dc-stale-")
 	stalePath := filepath.Join(directory, "stale.sock")
 	address, err := net.ResolveUnixAddr("unix", stalePath)
 	if err != nil {
