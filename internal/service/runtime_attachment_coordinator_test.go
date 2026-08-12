@@ -123,6 +123,7 @@ func TestRuntimeAttachmentCoordinator_MapsOnlyExactPrivateComisResponse(t *testi
 	if _, err := coordinator.ReceiveRuntimeAttentionResponse(context.Background(), request); err == nil {
 		t.Fatal("ReceiveRuntimeAttentionResponse(unconfigured) error = nil")
 	}
+	//lint:ignore SA1012 This boundary test exercises explicit nil-context rejection.
 	if _, err := coordinator.ReceiveRuntimeAttentionResponse(nil, request); err == nil {
 		t.Fatal("ReceiveRuntimeAttentionResponse(nil context) error = nil")
 	}

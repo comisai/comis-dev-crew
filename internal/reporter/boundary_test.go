@@ -411,6 +411,7 @@ func TestRuntimeAttentionServerRejectsUnavailableAndDriftedResponses(t *testing.
 		})
 	}
 	var client *RuntimeClient
+	//lint:ignore SA1012 This boundary test exercises explicit nil-context rejection.
 	if _, err := client.AwaitDecision(nil, "database-choice"); err == nil {
 		t.Fatal("AwaitDecision(nil context) error = nil")
 	}
