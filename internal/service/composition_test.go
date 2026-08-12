@@ -97,6 +97,16 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 	}
 }
 
+func TestInstalledControlReconnectBackoffPreservesMultipleHandshakeAttempts(t *testing.T) {
+	if comisMaximumBackoff >= comisRequestTimeout/2 {
+		t.Fatalf(
+			"control reconnect maximum backoff = %s, want less than half the %s handshake window",
+			comisMaximumBackoff,
+			comisRequestTimeout,
+		)
+	}
+}
+
 func TestRun_StartsAndJoinsInstalledCompositionWithoutPreparedWork(t *testing.T) {
 	configuration := installedServiceConfig(t, shortTempDir(t))
 	ready := make(chan struct{})
