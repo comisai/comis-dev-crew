@@ -58,9 +58,13 @@ func (store *Store) CommitTerminalEvent(ctx context.Context, mutation applicatio
 			workspaceLeaseID: mutation.WorkspaceLeaseID, terminalSessionID: mutation.TerminalSessionID,
 		}
 	}
-	binding.latestTransition = mutation.Transition
+	settledBeforeLoss := found && mutation.Transition == application.TerminalLost &&
+		(binding.latestTransition == application.TerminalExited || binding.latestTransition == application.TerminalReleased)
+	if !settledBeforeLoss {
+		binding.latestTransition = mutation.Transition
+		binding.updatedAt = mutation.At
+	}
 	binding.runningObserved = binding.runningObserved || mutation.Transition == application.TerminalRunning
-	binding.updatedAt = mutation.At
 
 	updated := task
 	if terminalUnavailable(mutation.Transition) && terminalLossChangesTask(task.State) {
