@@ -161,6 +161,16 @@ func TestComisReportOutbox_ValidationAndCorruptionFailClosed(t *testing.T) {
 		{name: "managed run", mutate: func(value *application.ComisReportDelivery) { value.ManagedRunID = "bad run" }},
 		{name: "state version", mutate: func(value *application.ComisReportDelivery) { value.StateVersion = 0 }},
 		{name: "sparse report", mutate: func(value *application.ComisReportDelivery) { value.Kind = "invented" }},
+		{name: "candidate evidence count", mutate: func(value *application.ComisReportDelivery) {
+			value.Kind = domain.ReportCandidateComplete
+		}},
+		{name: "candidate evidence identity", mutate: func(value *application.ComisReportDelivery) {
+			value.Kind = domain.ReportCandidateComplete
+			value.ArtifactRefs = []string{"evidence-one", "bad reference"}
+		}},
+		{name: "non-candidate evidence", mutate: func(value *application.ComisReportDelivery) {
+			value.ArtifactRefs = []string{"evidence-one"}
+		}},
 	}
 	for _, test := range deliveryTests {
 		value := validDelivery
