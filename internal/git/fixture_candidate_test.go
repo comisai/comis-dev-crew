@@ -11,6 +11,16 @@ import (
 	devgit "github.com/comisai/comis-dev-crew/internal/git"
 )
 
+// runGit deliberately isolates fixtures from global and system Git
+// configuration, which leaves Git with no committer identity. A developer
+// machine hides this because Git can guess one from the host account; a clean
+// runner cannot, and the commit fails with "Author identity unknown". Every
+// fixture commit therefore supplies its own.
+const (
+	fixtureAuthorName  = "user.name=DevCrew Fixture"
+	fixtureAuthorEmail = "user.email=fixture@example.invalid"
+)
+
 func TestRegistry_PrepareFixtureCandidateRejectsUnavailableOrAlteredAuthority(t *testing.T) {
 	fixture := newRepositoryFixture(t, "product-api")
 	registry := newLifecycleRegistry(t, fixture)
@@ -76,21 +86,21 @@ func TestRegistry_PrepareFixtureCandidateRejectsUnavailableOrAlteredAuthority(t 
 				t.Fatal(err)
 			}
 			runGit(t, fixture.gitExecutable, "-C", worktree, "add", "other.md")
-			runGit(t, fixture.gitExecutable, "-C", worktree, "commit", "-m", "different tree")
+			runGit(t, fixture.gitExecutable, "-C", worktree, "-c", fixtureAuthorName, "-c", fixtureAuthorEmail, "commit", "-m", "different tree")
 		}},
 		{name: "unsafe artifact", artifact: func(worktree string) {
 			if err := os.Symlink("README.md", filepath.Join(worktree, "report.md")); err != nil {
 				t.Fatal(err)
 			}
 			runGit(t, fixture.gitExecutable, "-C", worktree, "add", "report.md")
-			runGit(t, fixture.gitExecutable, "-C", worktree, "commit", "-m", "unsafe artifact")
+			runGit(t, fixture.gitExecutable, "-C", worktree, "-c", fixtureAuthorName, "-c", fixtureAuthorEmail, "commit", "-m", "unsafe artifact")
 		}},
 		{name: "different artifact", artifact: func(worktree string) {
 			if err := os.WriteFile(filepath.Join(worktree, "report.md"), []byte("different\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			runGit(t, fixture.gitExecutable, "-C", worktree, "add", "report.md")
-			runGit(t, fixture.gitExecutable, "-C", worktree, "commit", "-m", "different artifact")
+			runGit(t, fixture.gitExecutable, "-C", worktree, "-c", fixtureAuthorName, "-c", fixtureAuthorEmail, "commit", "-m", "different artifact")
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -127,7 +137,7 @@ func TestRegistry_PrepareFixtureCandidateRejectsUnavailableOrAlteredAuthority(t 
 		t.Fatal(err)
 	}
 	runGit(t, fixture.gitExecutable, "-C", ancestry.CanonicalPath, "add", "second.md")
-	runGit(t, fixture.gitExecutable, "-C", ancestry.CanonicalPath, "commit", "-m", "second candidate")
+	runGit(t, fixture.gitExecutable, "-C", ancestry.CanonicalPath, "-c", fixtureAuthorName, "-c", fixtureAuthorEmail, "commit", "-m", "second candidate")
 	if _, err := registry.PrepareFixtureCandidate(context.Background(), ancestryCandidate); err == nil {
 		t.Fatal("PrepareFixtureCandidate(altered ancestry) error = nil")
 	}
