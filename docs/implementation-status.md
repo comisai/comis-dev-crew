@@ -230,11 +230,11 @@ Fresh `system`, `assistant`, and tool-result `user` events prove activity, while
 
 The canonical `GetLaunchPlan` read accepts `ready` and recovery-reread `launching`
 tasks, then invokes that configured adapter with the durable task, workspace,
-brief, and activation binding, but projects only the profile ID, terminal
-allow-entry ID, brief revision hash, and attachment target with durable source,
-confidence, and freshness metadata. Executable paths, argv, shell text,
-environment bindings, workspace paths, and attachment IDs are not part of the
-local, CLI, or MCP result.
+brief, and activation binding. It projects the profile ID, terminal allow-entry
+ID, opaque managed-run and workspace-lease handles required by the Comis terminal
+API, brief revision hash, and attachment target with durable source, confidence,
+and freshness metadata. Executable paths, argv, shell text, environment bindings,
+workspace paths, and attachment IDs are not part of the local, CLI, or MCP result.
 
 Production composition accepts these profiles only from operator startup
 configuration, requires canonical regular non-symlink executables that are not

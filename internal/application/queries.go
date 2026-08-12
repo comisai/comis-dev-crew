@@ -207,6 +207,7 @@ func (queries *Queries) GetLaunchPlan(ctx context.Context, handle string) (Launc
 		Completeness: CompletenessComplete, TaskHandle: task.Handle, State: task.State,
 		StateSource: StateSourceStore, StateConfidence: ConfidenceVerified, Freshness: FreshnessCurrent,
 		WorkerProfileID: task.WorkerProfileID, TerminalAllowEntryID: descriptor.TerminalAllowEntry,
+		ManagedRunID: task.ManagedRunID, WorkspaceLeaseID: task.WorkspaceLeaseID,
 		BriefRevisionHash: task.BriefRevisionHash, AttachmentTargetName: task.AttachmentTargetName,
 	}, nil
 }
