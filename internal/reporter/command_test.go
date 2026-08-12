@@ -38,13 +38,17 @@ func TestRunCommand_ReadsBriefAndBuildsClosedSparseReportsFromProtectedCapabilit
 			capability := &commandCapability{brief: brief, receipt: domain.ReportReceipt{
 				TaskHandle: "task-command-0001", LocalReportID: "report-command-0001",
 				StateVersion: 4, AcceptedAt: now,
-			}}
+			}, decisionResponse: "Use the existing adapter."}
 			var stdout, stderr bytes.Buffer
 			exit := reporter.RunCommand(context.Background(), test.args, &stdout, &stderr, reporter.CommandConfig{
 				Capability: capability, Clock: func() time.Time { return now },
 				NewLocalReportID: func() (string, error) { return "report-command-0001", nil }, Version: "test",
 			})
-			if exit != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "report-command-0001") {
+			expectedOutput := "accepted report-command-0001 at state 4\n"
+			if test.kind == domain.ReportDecision {
+				expectedOutput = capability.decisionResponse + "\n"
+			}
+			if exit != 0 || stderr.Len() != 0 || stdout.String() != expectedOutput {
 				t.Fatalf("RunCommand() = %d, stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
 			}
 			report := capability.report
@@ -196,6 +200,26 @@ func TestRunCommand_RejectsMalformedCommandsAndDependencyFailures(t *testing.T) 
 		if exit != 1 || !strings.Contains(stderr.String(), "runtime attachment") || strings.Contains(stderr.String(), privateFailure.Error()) {
 			t.Fatalf("dependency failure = %d stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
 		}
+	}
+	decisionCapability := &commandCapability{
+		brief: brief,
+		receipt: domain.ReportReceipt{
+			TaskHandle: "task-command-0001", LocalReportID: "report-command-0001", StateVersion: 4,
+			AcceptedAt: time.Date(2026, time.August, 10, 14, 0, 0, 0, time.UTC),
+		},
+		awaitDecisionErr: privateFailure,
+	}
+	var stdout, stderr bytes.Buffer
+	exit := reporter.RunCommand(context.Background(), []string{
+		"decision", "--key", "database-choice", "--question", "Which database should be used?",
+	}, &stdout, &stderr, reporter.CommandConfig{
+		Capability: decisionCapability, Clock: time.Now,
+		NewLocalReportID: func() (string, error) { return "report-command-0001", nil },
+	})
+	if exit != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "runtime attachment") ||
+		strings.Contains(stderr.String(), privateFailure.Error()) || decisionCapability.reportCalls != 1 ||
+		decisionCapability.awaitDecisionCalls != 1 {
+		t.Fatalf("decision response failure = %d stdout=%q stderr=%q capability=%#v", exit, stdout.String(), stderr.String(), decisionCapability)
 	}
 }
 

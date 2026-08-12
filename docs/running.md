@@ -175,8 +175,12 @@ Subcommands:
 - `acknowledge` verifies and echoes the socket-bound task, run, and lease, the
   actual canonical working directory, and the brief revision, before task state
   may become `working`.
-- `progress`, `decision`, `blocked`, `paused`, `candidate-complete`, `failed`,
-  and `resolved` append bounded sparse reports.
+- `progress`, `blocked`, `paused`, `candidate-complete`, `failed`, and
+  `resolved` append bounded sparse reports.
+- `decision` first durably appends the keyed attention report, then waits for
+  the exact owner response and writes only that private response to stdout.
+  Pending delivery stays silent and cancellation exits without inventing an
+  answer.
 
 A candidate report remains non-terminal until service validation.
 
@@ -196,3 +200,10 @@ runtime-root component before creating anything, owns each task directory and
 socket, and never places the host source path in worker argv, stdin, or
 environment. Comis alone carries the source into the protected mount identified by
 activation; an altered attachment ID, target name, or mount path fails closed.
+For attention responses, the worker supplies only the bounded decision key. The
+socket-bound server derives the managed run, mints a fresh operation identity
+for every poll, and reaches Comis only through the service-owned authenticated
+control connection. Unbound sockets, altered response identity, invalid state,
+and content on a pending response fail closed. The private response crosses only
+the owner-only attachment and worker stdout; errors and service diagnostics do
+not include it.

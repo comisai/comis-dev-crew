@@ -20,6 +20,13 @@ type ControlHandler interface {
 	TerminalEvent(context.Context, TerminalEventRequestParams) (TerminalEventResponseResult, error)
 }
 
+// AttentionResponseReceiver retrieves one exact private owner response. Each
+// pending poll uses a new operation identity; delivered responses remain
+// replayable through the host protocol.
+type AttentionResponseReceiver interface {
+	ReceiveAttentionResponse(context.Context, ReceiveAttentionResponseRequestParams) (ReceiveAttentionResponseResponseResult, error)
+}
+
 // ControlConnectionConfig identifies one installed capability-service instance.
 type ControlConnectionConfig struct {
 	SocketPath           string
@@ -170,6 +177,42 @@ func (connection *ControlConnection) PutEvidence(
 	if response.Result.ManagedRunID != params.ManagedRunID || response.Result.EvidenceRef != params.EvidenceRef ||
 		response.Result.ContentHash != params.ContentHash || response.Result.VerificationLevel != params.VerificationLevel {
 		return PutEvidenceResponseResult{}, errors.New("put evidence to Comis: acknowledgement identity differs")
+	}
+	return response.Result, nil
+}
+
+// ReceiveAttentionResponse retrieves one keyed owner response over the current
+// authenticated persistent connection. It never logs or otherwise projects the
+// private response body.
+func (connection *ControlConnection) ReceiveAttentionResponse(
+	ctx context.Context,
+	params ReceiveAttentionResponseRequestParams,
+) (ReceiveAttentionResponseResponseResult, error) {
+	if ctx == nil {
+		return ReceiveAttentionResponseResponseResult{}, errors.New("receive attention response from Comis: context is required")
+	}
+	request := ReceiveAttentionResponseRequest{
+		JSONRPC: JSONRPCVersion, ID: params.OperationID, Method: MethodManagedRunsReceiveAttentionResponse, Params: params,
+	}
+	if err := validateGeneratedDocument(schemaReceiveAttentionResponseRequest, request); err != nil {
+		return ReceiveAttentionResponseResponseResult{}, fmt.Errorf("receive attention response from Comis: invalid request: %w", err)
+	}
+	session, err := connection.awaitSession(ctx)
+	if err != nil {
+		return ReceiveAttentionResponseResponseResult{}, err
+	}
+	var response ReceiveAttentionResponseResponse
+	authenticated := authenticatedReceiveAttentionResponseRequest{
+		ReceiveAttentionResponseRequest: request, Bearer: connection.config.Credential,
+	}
+	if err := session.call(ctx, authenticated, params.OperationID, &response); err != nil {
+		return ReceiveAttentionResponseResponseResult{}, fmt.Errorf("receive attention response from Comis: outcome uncertain: %w", err)
+	}
+	if err := validateGeneratedDocument(schemaReceiveAttentionResponseResponse, response); err != nil {
+		return ReceiveAttentionResponseResponseResult{}, fmt.Errorf("receive attention response from Comis: invalid response: %w", err)
+	}
+	if response.Result.ManagedRunID != params.ManagedRunID || response.Result.ExternalKey != params.ExternalKey {
+		return ReceiveAttentionResponseResponseResult{}, errors.New("receive attention response from Comis: response identity differs")
 	}
 	return response.Result, nil
 }

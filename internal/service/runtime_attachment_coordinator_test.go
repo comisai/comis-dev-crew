@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/comiswire"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 	"github.com/comisai/comis-dev-crew/internal/reporter"
 	"github.com/comisai/comis-dev-crew/internal/store/sqlite"
@@ -30,7 +31,8 @@ func TestRuntimeAttachmentCoordinator_PreparesServingTaskSocketUnderOwnedRoot(t 
 	now := time.Date(2026, time.August, 10, 16, 0, 0, 0, time.UTC)
 	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
 		RuntimeRoot: runtimeRoot, Store: store, Clock: func() time.Time { return now },
-		NewCredential: func() (string, error) { return "runtime-credential-0123456789abcdef", nil },
+		NewCredential:           func() (string, error) { return "runtime-credential-0123456789abcdef", nil },
+		NewAttentionOperationID: runtimeAttentionOperationID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -97,6 +99,58 @@ func TestRuntimeAttachmentCoordinator_PreparesServingTaskSocketUnderOwnedRoot(t 
 	}
 }
 
+func TestRuntimeAttachmentCoordinator_MapsOnlyExactPrivateComisResponse(t *testing.T) {
+	root := shortTempDir(t)
+	store, err := sqlite.Open(context.Background(), filepath.Join(root, "state", "devcrew.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+		RuntimeRoot: filepath.Join(root, "runtime"), Store: store, Clock: time.Now,
+		NewCredential:           func() (string, error) { return "attention-credential-0123456789abcdef", nil },
+		NewAttentionOperationID: runtimeAttentionOperationID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinator.SetAttentionResponseReceiver(nil); err == nil {
+		t.Fatal("SetAttentionResponseReceiver(nil) error = nil")
+	}
+	private := "Use the existing PostgreSQL adapter."
+	receiver := &runtimeAttentionReceiver{result: comiswire.ReceiveAttentionResponseResponseResult{
+		ManagedRunID: "managed-run.attention", ExternalKey: "database-choice",
+		State: comiswire.ManagedRunStateDelivered, Response: &private,
+	}}
+	if err := coordinator.SetAttentionResponseReceiver(receiver); err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinator.SetAttentionResponseReceiver(receiver); err == nil {
+		t.Fatal("SetAttentionResponseReceiver(duplicate) error = nil")
+	}
+	response, err := coordinator.ReceiveRuntimeAttentionResponse(context.Background(), reporter.AttentionResponseRequest{
+		OperationID: "attention-response-runtime-test", ManagedRunID: "managed-run.attention", ExternalKey: "database-choice",
+	})
+	if err != nil || response.State != reporter.AttentionResponseDelivered || response.Response != private ||
+		receiver.request.OperationID != "attention-response-runtime-test" || receiver.request.ManagedRunID != "managed-run.attention" ||
+		receiver.request.ExternalKey != "database-choice" {
+		t.Fatalf("ReceiveRuntimeAttentionResponse() = %#v, %v, request %#v", response, err, receiver.request)
+	}
+	receiver.result.ExternalKey = "other-choice"
+	if _, err := coordinator.ReceiveRuntimeAttentionResponse(context.Background(), reporter.AttentionResponseRequest{
+		OperationID: "attention-response-runtime-test-2", ManagedRunID: "managed-run.attention", ExternalKey: "database-choice",
+	}); err == nil {
+		t.Fatal("ReceiveRuntimeAttentionResponse(identity drift) error = nil")
+	}
+	receiver.result.ExternalKey = "database-choice"
+	receiver.err = errors.New("private downstream detail: " + private)
+	if _, err := coordinator.ReceiveRuntimeAttentionResponse(context.Background(), reporter.AttentionResponseRequest{
+		OperationID: "attention-response-runtime-test-3", ManagedRunID: "managed-run.attention", ExternalKey: "database-choice",
+	}); err == nil || strings.Contains(err.Error(), private) {
+		t.Fatalf("private downstream error = %v", err)
+	}
+}
+
 func TestRuntimeAttachmentCoordinator_RecoversPreparedTaskSocketAfterRestart(t *testing.T) {
 	root := shortTempDir(t)
 	runtimeRoot := filepath.Join(root, "runtime")
@@ -113,7 +167,8 @@ func TestRuntimeAttachmentCoordinator_RecoversPreparedTaskSocketAfterRestart(t *
 	newCoordinator := func() *runtimeAttachmentCoordinator {
 		coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
 			RuntimeRoot: runtimeRoot, Store: store, Clock: func() time.Time { return now },
-			NewCredential: func() (string, error) { return "restart-credential-0123456789abcdef", nil },
+			NewCredential:           func() (string, error) { return "restart-credential-0123456789abcdef", nil },
+			NewAttentionOperationID: runtimeAttentionOperationID,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -246,7 +301,8 @@ func TestRuntimeAttachmentCoordinator_SkipsCleanedTaskAfterWorkspaceRemoval(t *t
 	store := &runtimeAttachmentRecoveryStore{tasks: []domain.Task{task}}
 	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
 		RuntimeRoot: filepath.Join(root, "runtime"), Store: store, Clock: func() time.Time { return now },
-		NewCredential: func() (string, error) { return "unused-cleaned-credential-0123456789", nil },
+		NewCredential:           func() (string, error) { return "unused-cleaned-credential-0123456789", nil },
+		NewAttentionOperationID: runtimeAttentionOperationID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -278,6 +334,7 @@ func TestRuntimeAttachmentCoordinator_RejectsIntermediateSymlinkWithoutCreatingO
 	if _, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
 		RuntimeRoot: filepath.Join(linked, "tasks"), Store: store,
 		Clock: time.Now, NewCredential: func() (string, error) { return "unused-credential-0123456789abcdef", nil },
+		NewAttentionOperationID: runtimeAttentionOperationID,
 	}); err == nil {
 		t.Fatal("newRuntimeAttachmentCoordinator(symlinked root) error = nil")
 	}
@@ -302,7 +359,8 @@ func TestRuntimeAttachmentCoordinator_RejectsInvalidLifecycleAndFilesystemBounda
 	}
 	if _, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
 		RuntimeRoot: "relative", Store: store, Clock: time.Now,
-		NewCredential: func() (string, error) { return "unused-credential-0123456789abcdef", nil },
+		NewCredential:           func() (string, error) { return "unused-credential-0123456789abcdef", nil },
+		NewAttentionOperationID: runtimeAttentionOperationID,
 	}); err == nil {
 		t.Fatal("newRuntimeAttachmentCoordinator(relative root) error = nil")
 	}
@@ -329,7 +387,8 @@ func TestRuntimeAttachmentCoordinator_RejectsInvalidLifecycleAndFilesystemBounda
 
 	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
 		RuntimeRoot: filepath.Join(root, "runtime"), Store: store, Clock: time.Now,
-		NewCredential: func() (string, error) { return "boundary-credential-0123456789abcdef", nil },
+		NewCredential:           func() (string, error) { return "boundary-credential-0123456789abcdef", nil },
+		NewAttentionOperationID: runtimeAttentionOperationID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -408,7 +467,8 @@ func TestRuntimeAttachmentCoordinator_ClosesSocketsOnRegistrationFailures(t *tes
 	newPending := func(name string) *runtimeAttachmentCoordinator {
 		coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
 			RuntimeRoot: filepath.Join(root, name), Store: store, Clock: time.Now,
-			NewCredential: func() (string, error) { return "registration-credential-0123456789abcdef", nil },
+			NewCredential:           func() (string, error) { return "registration-credential-0123456789abcdef", nil },
+			NewAttentionOperationID: runtimeAttentionOperationID,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -522,6 +582,24 @@ func (*runtimeAttachmentRecoveryStore) CommitReport(
 }
 
 type runtimeAttachmentAcknowledger struct{}
+
+type runtimeAttentionReceiver struct {
+	request comiswire.ReceiveAttentionResponseRequestParams
+	result  comiswire.ReceiveAttentionResponseResponseResult
+	err     error
+}
+
+func (receiver *runtimeAttentionReceiver) ReceiveAttentionResponse(
+	_ context.Context,
+	request comiswire.ReceiveAttentionResponseRequestParams,
+) (comiswire.ReceiveAttentionResponseResponseResult, error) {
+	receiver.request = request
+	return receiver.result, receiver.err
+}
+
+func runtimeAttentionOperationID() (string, error) {
+	return "attention-response-runtime-test", nil
+}
 
 func (runtimeAttachmentAcknowledger) AcknowledgeWorkerLaunch(
 	context.Context,

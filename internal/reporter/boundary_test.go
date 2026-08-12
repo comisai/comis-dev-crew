@@ -315,6 +315,7 @@ func TestRuntimeClientRejectsMalformedAndMismatchedOutcomes(t *testing.T) {
 		TaskHandle: "task-boundary-0001", LocalReportID: report.LocalReportID, StateVersion: 2,
 		AcceptedAt: time.Date(2026, time.August, 10, 15, 0, 0, 0, time.UTC),
 	}
+	private := "private decision response"
 	cases := []struct {
 		name    string
 		outcome RuntimeOutcome
@@ -326,6 +327,22 @@ func TestRuntimeClientRejectsMalformedAndMismatchedOutcomes(t *testing.T) {
 		{name: "report error", outcome: runtimeRejected("rejected"), call: func(client *RuntimeClient) error { _, err := client.Report(context.Background(), report); return err }},
 		{name: "report mixed with brief", outcome: RuntimeOutcome{Version: runtimeProtocolVersion, Brief: &brief, Receipt: &validReceipt}, call: func(client *RuntimeClient) error { _, err := client.Report(context.Background(), report); return err }},
 		{name: "mismatched receipt", outcome: RuntimeOutcome{Version: runtimeProtocolVersion, Receipt: &domain.ReportReceipt{TaskHandle: validReceipt.TaskHandle, LocalReportID: "report-other-0001", StateVersion: 2, AcceptedAt: validReceipt.AcceptedAt}}, call: func(client *RuntimeClient) error { _, err := client.Report(context.Background(), report); return err }},
+		{name: "pending attention with content", outcome: RuntimeOutcome{Version: runtimeProtocolVersion, AttentionResponse: &runtimeAttentionOutcome{ExternalKey: "database-choice", State: AttentionResponsePending, Response: &private}}, call: func(client *RuntimeClient) error {
+			_, err := client.AwaitDecision(context.Background(), "database-choice")
+			return err
+		}},
+		{name: "delivered attention without content", outcome: RuntimeOutcome{Version: runtimeProtocolVersion, AttentionResponse: &runtimeAttentionOutcome{ExternalKey: "database-choice", State: AttentionResponseDelivered}}, call: func(client *RuntimeClient) error {
+			_, err := client.AwaitDecision(context.Background(), "database-choice")
+			return err
+		}},
+		{name: "attention identity drift", outcome: RuntimeOutcome{Version: runtimeProtocolVersion, AttentionResponse: &runtimeAttentionOutcome{ExternalKey: "other-choice", State: AttentionResponseDelivered, Response: &private}}, call: func(client *RuntimeClient) error {
+			_, err := client.AwaitDecision(context.Background(), "database-choice")
+			return err
+		}},
+		{name: "attention mixed with brief", outcome: RuntimeOutcome{Version: runtimeProtocolVersion, Brief: &brief, AttentionResponse: &runtimeAttentionOutcome{ExternalKey: "database-choice", State: AttentionResponseDelivered, Response: &private}}, call: func(client *RuntimeClient) error {
+			_, err := client.AwaitDecision(context.Background(), "database-choice")
+			return err
+		}},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -344,7 +361,7 @@ func TestRuntimeClientRejectsMalformedAndMismatchedOutcomes(t *testing.T) {
 		[]byte(`{"version":"wrong"}` + "\n"),
 		[]byte(`{"version":"devcrew.runtime.v1","unknown":true}` + "\n"),
 		[]byte(`{"version":"devcrew.runtime.v1"}`),
-		append([]byte(`{"version":"devcrew.runtime.v1","error":{"code":"x"},"padding":"`), append([]byte(strings.Repeat("x", maximumRuntimeBytes)), []byte(`"}`+"\n")...)...),
+		append([]byte(`{"version":"devcrew.runtime.v1","error":{"code":"x"},"padding":"`), append([]byte(strings.Repeat("x", maximumRuntimeResponseBytes)), []byte(`"}`+"\n")...)...),
 	} {
 		client, done := startBoundaryResponder(t, response)
 		if _, err := client.Brief(context.Background()); err == nil {
@@ -418,6 +435,10 @@ type boundaryCapability struct {
 }
 
 func (capability *boundaryCapability) Acknowledge(context.Context, string) error { return nil }
+
+func (capability *boundaryCapability) AwaitDecision(context.Context, string) (string, error) {
+	return "bounded response", nil
+}
 
 func (capability *boundaryCapability) Brief(context.Context) (domain.WorkerBrief, error) {
 	return capability.brief, nil

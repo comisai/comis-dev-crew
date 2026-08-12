@@ -5,11 +5,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -64,6 +66,21 @@ func TestRuntimeAttachment_RejectsCrossTaskAndOversizedWireRequests(t *testing.T
 	_ = connection.Close()
 	if outcome.Error == nil || harness.sink.calls != 0 {
 		t.Fatalf("cross-task wire request = %#v, sink calls=%d", outcome, harness.sink.calls)
+	}
+	connection, err = net.DialUnix("unix", nil, &net.UnixAddr{Name: harness.socketPath, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = `{"version":"devcrew.runtime.v1","kind":"attention_response","externalKey":"database-choice","managedRunId":"managed-run-forged"}` + "\n"
+	if _, err := connection.Write([]byte(request)); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewDecoder(bufio.NewReader(connection)).Decode(&outcome); err != nil {
+		t.Fatal(err)
+	}
+	_ = connection.Close()
+	if outcome.Error == nil || len(harness.attention.recordedRequests()) != 0 {
+		t.Fatalf("forged attention authority = %#v, receiver requests=%#v", outcome, harness.attention.recordedRequests())
 	}
 
 	forged := harness.expectedLaunch
@@ -164,6 +181,51 @@ func TestRuntimeAttachment_BindsActivationLaunchWithoutReplacingPreparedSocket(t
 	}
 }
 
+func TestRuntimeAttachment_WaitsForExactBoundAttentionResponseWithFreshOperations(t *testing.T) {
+	harness := newRuntimeHarness(t, "task-runtime-attention-0001", "report-runtime-attention-0001")
+	harness.attention.setResponses([]reporter.AttentionResponse{
+		{
+			ManagedRunID: harness.expectedLaunch.ManagedRunID, ExternalKey: "database-choice",
+			State: reporter.AttentionResponsePending,
+		},
+		{
+			ManagedRunID: harness.expectedLaunch.ManagedRunID, ExternalKey: "database-choice",
+			State: reporter.AttentionResponseDelivered, Response: "Use the existing PostgreSQL adapter.",
+		},
+	})
+	response, err := harness.client.AwaitDecision(context.Background(), "database-choice")
+	if err != nil || response != "Use the existing PostgreSQL adapter." {
+		t.Fatalf("AwaitDecision() = %q, %v", response, err)
+	}
+	requests := harness.attention.recordedRequests()
+	if len(requests) != 2 || requests[0].ManagedRunID != harness.expectedLaunch.ManagedRunID ||
+		requests[0].ExternalKey != "database-choice" || requests[1].ExternalKey != "database-choice" ||
+		requests[0].OperationID == requests[1].OperationID {
+		t.Fatalf("attention requests = %#v", requests)
+	}
+}
+
+func TestRuntimeAttachment_RejectsUnboundAttentionAndCancelsPendingWait(t *testing.T) {
+	unbound := newRuntimeHarnessWithLaunch(t, "task-runtime-attention-unbound", "report-runtime-attention-unbound", false)
+	if _, err := unbound.client.AwaitDecision(context.Background(), "database-choice"); err == nil {
+		t.Fatal("AwaitDecision(unbound) error = nil")
+	}
+	if len(unbound.attention.recordedRequests()) != 0 {
+		t.Fatal("unbound attention request reached service authority")
+	}
+
+	pending := newRuntimeHarness(t, "task-runtime-attention-pending", "report-runtime-attention-pending")
+	pending.attention.setResponses([]reporter.AttentionResponse{{
+		ManagedRunID: pending.expectedLaunch.ManagedRunID, ExternalKey: "database-choice",
+		State: reporter.AttentionResponsePending,
+	}})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := pending.client.AwaitDecision(ctx, "database-choice"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("AwaitDecision(pending cancellation) error = %v", err)
+	}
+}
+
 type runtimeHarness struct {
 	server            *reporter.RuntimeServer
 	client            *reporter.RuntimeClient
@@ -174,6 +236,7 @@ type runtimeHarness struct {
 	expectedLaunch    application.LaunchAcknowledgement
 	launchOperationID string
 	acknowledger      *recordingLaunchAcknowledger
+	attention         *recordingAttentionReceiver
 }
 
 func newRuntimeHarness(t *testing.T, taskHandle, localReportID string) runtimeHarness {
@@ -221,8 +284,16 @@ func newRuntimeHarnessWithLaunch(t *testing.T, taskHandle, localReportID string,
 	}
 	launchOperationID := "operation-launch-ack-" + taskHandle
 	acknowledger := &recordingLaunchAcknowledger{}
+	attention := &recordingAttentionReceiver{}
+	operationSequence := 0
 	socketPath := filepath.Join(root, "attachment.sock")
-	config := reporter.RuntimeServerConfig{SocketPath: socketPath, Brief: brief, Reporter: reportClient}
+	config := reporter.RuntimeServerConfig{
+		SocketPath: socketPath, Brief: brief, Reporter: reportClient, AttentionResponses: attention,
+		NewAttentionOperationID: func() (string, error) {
+			operationSequence++
+			return fmt.Sprintf("attention-response-runtime-%d", operationSequence), nil
+		},
+	}
 	if bindLaunch {
 		config.LaunchOperationID = launchOperationID
 		config.ExpectedLaunch = expectedLaunch
@@ -249,8 +320,43 @@ func newRuntimeHarnessWithLaunch(t *testing.T, taskHandle, localReportID string,
 	return runtimeHarness{
 		server: server, client: client, sink: sink, brief: brief, socketPath: socketPath,
 		workspace: workspace, expectedLaunch: expectedLaunch,
-		launchOperationID: launchOperationID, acknowledger: acknowledger,
+		launchOperationID: launchOperationID, acknowledger: acknowledger, attention: attention,
 	}
+}
+
+type recordingAttentionReceiver struct {
+	mu        sync.Mutex
+	requests  []reporter.AttentionResponseRequest
+	responses []reporter.AttentionResponse
+}
+
+func (receiver *recordingAttentionReceiver) ReceiveRuntimeAttentionResponse(
+	_ context.Context,
+	request reporter.AttentionResponseRequest,
+) (reporter.AttentionResponse, error) {
+	receiver.mu.Lock()
+	defer receiver.mu.Unlock()
+	receiver.requests = append(receiver.requests, request)
+	if len(receiver.responses) == 0 {
+		return reporter.AttentionResponse{}, errors.New("attention response unavailable")
+	}
+	response := receiver.responses[0]
+	if len(receiver.responses) > 1 {
+		receiver.responses = receiver.responses[1:]
+	}
+	return response, nil
+}
+
+func (receiver *recordingAttentionReceiver) setResponses(responses []reporter.AttentionResponse) {
+	receiver.mu.Lock()
+	defer receiver.mu.Unlock()
+	receiver.responses = append([]reporter.AttentionResponse(nil), responses...)
+}
+
+func (receiver *recordingAttentionReceiver) recordedRequests() []reporter.AttentionResponseRequest {
+	receiver.mu.Lock()
+	defer receiver.mu.Unlock()
+	return append([]reporter.AttentionResponseRequest(nil), receiver.requests...)
 }
 
 type recordingLaunchAcknowledger struct {

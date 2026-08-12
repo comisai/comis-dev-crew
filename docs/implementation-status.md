@@ -185,6 +185,14 @@ socket under the configured private runtime root and declares it as
 target name that bind the same listener. The listener and any durable activation
 binding are reconstructed after a service restart.
 
+After a decision report is locally accepted, the reporter blocks on that same
+protected socket until Comis returns the exact keyed owner response. The service
+derives managed-run authority from the activation binding, uses a fresh operation
+identity for every pending poll over its authenticated persistent connection,
+and returns the private body only to the waiting reporter. Pending or temporarily
+unavailable delivery remains content-free, while unbound sockets, response
+identity drift, invalid states, and malformed bodies fail closed.
+
 ## Candidate validation and forge delivery
 
 Candidate supervision re-reads the exact clean head around fixed no-shell local

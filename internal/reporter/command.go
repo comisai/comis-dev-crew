@@ -18,6 +18,7 @@ type RuntimeCapability interface {
 	Brief(context.Context) (domain.WorkerBrief, error)
 	Report(context.Context, domain.WorkerReport) (domain.ReportReceipt, error)
 	Acknowledge(context.Context, string) error
+	AwaitDecision(context.Context, string) (string, error)
 }
 
 // CommandConfig supplies composition-root dependencies without exposing them
@@ -121,6 +122,15 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	if err != nil {
 		writeRuntimeFailure(stderr)
 		return 1
+	}
+	if parsed.kind == domain.ReportDecision {
+		response, err := config.Capability.AwaitDecision(ctx, parsed.key)
+		if err != nil {
+			writeRuntimeFailure(stderr)
+			return 1
+		}
+		fmt.Fprintln(stdout, response)
+		return 0
 	}
 	fmt.Fprintf(stdout, "accepted %s at state %d\n", receipt.LocalReportID, receipt.StateVersion)
 	return 0

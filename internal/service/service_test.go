@@ -362,6 +362,16 @@ func (control *serviceComisControl) PutEvidence(
 	}, nil
 }
 
+func (control *serviceComisControl) ReceiveAttentionResponse(
+	_ context.Context,
+	request comiswire.ReceiveAttentionResponseRequestParams,
+) (comiswire.ReceiveAttentionResponseResponseResult, error) {
+	return comiswire.ReceiveAttentionResponseResponseResult{
+		ManagedRunID: request.ManagedRunID, ExternalKey: request.ExternalKey,
+		State: comiswire.ManagedRunStatePending,
+	}, nil
+}
+
 func (control *serviceComisControl) ReleaseManagedRun(
 	_ context.Context,
 	request application.ManagedRunReleaseRequest,

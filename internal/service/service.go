@@ -31,6 +31,7 @@ const (
 type ComisControl interface {
 	comiswire.ReportSender
 	comiswire.EvidenceSender
+	comiswire.AttentionResponseReceiver
 	application.ManagedRunReleaser
 	application.HostIntegrationStatus
 	Run(context.Context) error
@@ -209,7 +210,8 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if config.RuntimeAttachments == nil && config.RuntimeRoot != "" {
 		attachmentSupervisor, err = newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
 			RuntimeRoot: config.RuntimeRoot, Store: store, Clock: clock,
-			NewCredential: func() (string, error) { return randomIdentity("runtime-credential", 16) },
+			NewCredential:           func() (string, error) { return randomIdentity("runtime-credential", 16) },
+			NewAttentionOperationID: func() (string, error) { return randomIdentity("attention-response", 16) },
 		})
 		if err != nil {
 			return fmt.Errorf("run service runtime attachments: %w", err)
@@ -250,6 +252,11 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	control, err := composeComisControl(config, controlMutations)
 	if err != nil {
 		return err
+	}
+	if attachmentSupervisor != nil && control != nil {
+		if err := attachmentSupervisor.SetAttentionResponseReceiver(control); err != nil {
+			return fmt.Errorf("run service runtime attention responses: %w", err)
+		}
 	}
 	queries, err := application.NewQueries(application.QueryConfig{
 		Repository: store, Harnesses: config.WorkerHarnesses, Host: control, Clock: clock,

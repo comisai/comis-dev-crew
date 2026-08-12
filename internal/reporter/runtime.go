@@ -19,10 +19,11 @@ import (
 )
 
 const (
-	runtimeProtocolVersion = "devcrew.runtime.v1"
-	maximumRuntimeBytes    = 18 * 1024
-	maximumRuntimePath     = 100
-	runtimeDeadline        = 5 * time.Second
+	runtimeProtocolVersion      = "devcrew.runtime.v1"
+	maximumRuntimeRequestBytes  = 18 * 1024
+	maximumRuntimeResponseBytes = 128 * 1024
+	maximumRuntimePath          = 100
+	runtimeDeadline             = 5 * time.Second
 )
 
 // RuntimeError is a content-free worker-facing attachment failure.
@@ -32,11 +33,12 @@ type RuntimeError struct {
 
 // RuntimeOutcome is the closed protected-attachment response envelope.
 type RuntimeOutcome struct {
-	Version         string                             `json:"version"`
-	Brief           *domain.WorkerBrief                `json:"brief,omitempty"`
-	Receipt         *domain.ReportReceipt              `json:"receipt,omitempty"`
-	Acknowledgement *application.LaunchAcknowledgement `json:"acknowledgement,omitempty"`
-	Error           *RuntimeError                      `json:"error,omitempty"`
+	Version           string                             `json:"version"`
+	Brief             *domain.WorkerBrief                `json:"brief,omitempty"`
+	Receipt           *domain.ReportReceipt              `json:"receipt,omitempty"`
+	Acknowledgement   *application.LaunchAcknowledgement `json:"acknowledgement,omitempty"`
+	AttentionResponse *runtimeAttentionOutcome           `json:"attentionResponse,omitempty"`
+	Error             *RuntimeError                      `json:"error,omitempty"`
 }
 
 type runtimeRequest struct {
@@ -44,17 +46,20 @@ type runtimeRequest struct {
 	Kind            string                             `json:"kind"`
 	Report          *domain.WorkerReport               `json:"report,omitempty"`
 	Acknowledgement *application.LaunchAcknowledgement `json:"acknowledgement,omitempty"`
+	ExternalKey     string                             `json:"externalKey,omitempty"`
 }
 
 // RuntimeServerConfig binds one socket capability to one exact brief and
 // already-authenticated in-process reporter client.
 type RuntimeServerConfig struct {
-	SocketPath         string
-	Brief              domain.WorkerBrief
-	Reporter           *Client
-	LaunchOperationID  string
-	ExpectedLaunch     application.LaunchAcknowledgement
-	LaunchAcknowledger application.WorkerLaunchAcknowledger
+	SocketPath              string
+	Brief                   domain.WorkerBrief
+	Reporter                *Client
+	LaunchOperationID       string
+	ExpectedLaunch          application.LaunchAcknowledgement
+	LaunchAcknowledger      application.WorkerLaunchAcknowledger
+	AttentionResponses      AttentionResponseReceiver
+	NewAttentionOperationID func() (string, error)
 }
 
 // RuntimeLaunchConfig binds activation-returned authority to an already-open
@@ -67,16 +72,18 @@ type RuntimeLaunchConfig struct {
 
 // RuntimeServer serves a single task capability on one owner-only Unix socket.
 type RuntimeServer struct {
-	listener   *net.UnixListener
-	socketPath string
-	socketInfo os.FileInfo
-	brief      domain.WorkerBrief
-	reporter   *Client
-	launchMu   sync.RWMutex
-	launch     *RuntimeLaunchConfig
-	closeOnce  sync.Once
-	closeErr   error
-	waitGroup  sync.WaitGroup
+	listener                *net.UnixListener
+	socketPath              string
+	socketInfo              os.FileInfo
+	brief                   domain.WorkerBrief
+	reporter                *Client
+	attentionResponses      AttentionResponseReceiver
+	newAttentionOperationID func() (string, error)
+	launchMu                sync.RWMutex
+	launch                  *RuntimeLaunchConfig
+	closeOnce               sync.Once
+	closeErr                error
+	waitGroup               sync.WaitGroup
 }
 
 // ListenRuntime creates a new attachment without replacing an existing path.
@@ -109,6 +116,7 @@ func ListenRuntime(config RuntimeServerConfig) (*RuntimeServer, error) {
 	server := &RuntimeServer{
 		listener: listener, socketPath: config.SocketPath, socketInfo: info,
 		brief: config.Brief, reporter: config.Reporter,
+		attentionResponses: config.AttentionResponses, newAttentionOperationID: config.NewAttentionOperationID,
 	}
 	if config.LaunchOperationID != "" {
 		if err := server.BindLaunch(RuntimeLaunchConfig{
@@ -202,9 +210,9 @@ func (server *RuntimeServer) serveConnection(ctx context.Context, connection *ne
 	if err := connection.SetDeadline(time.Now().Add(runtimeDeadline)); err != nil {
 		return errors.New("serve runtime attachment: connection deadline failed")
 	}
-	reader := bufio.NewReaderSize(connection, maximumRuntimeBytes+1)
+	reader := bufio.NewReaderSize(connection, maximumRuntimeRequestBytes+1)
 	line, err := reader.ReadSlice('\n')
-	if errors.Is(err, bufio.ErrBufferFull) || len(line) > maximumRuntimeBytes {
+	if errors.Is(err, bufio.ErrBufferFull) || len(line) > maximumRuntimeRequestBytes {
 		return writeRuntimeOutcome(connection, runtimeRejected("request_too_large"))
 	}
 	if err != nil || len(line) < 2 {
@@ -220,14 +228,14 @@ func (server *RuntimeServer) serveConnection(ctx context.Context, connection *ne
 	var outcome RuntimeOutcome
 	switch request.Kind {
 	case "brief":
-		if request.Report != nil || request.Acknowledgement != nil {
+		if request.Report != nil || request.Acknowledgement != nil || request.ExternalKey != "" {
 			outcome = runtimeRejected("malformed_request")
 		} else {
 			brief := server.brief
 			outcome = RuntimeOutcome{Version: runtimeProtocolVersion, Brief: &brief}
 		}
 	case "report":
-		if request.Report == nil || request.Acknowledgement != nil {
+		if request.Report == nil || request.Acknowledgement != nil || request.ExternalKey != "" {
 			outcome = runtimeRejected("malformed_request")
 		} else if receipt, err := server.reporter.Report(ctx, *request.Report); err != nil {
 			outcome = runtimeRejected("report_rejected")
@@ -236,7 +244,7 @@ func (server *RuntimeServer) serveConnection(ctx context.Context, connection *ne
 		}
 	case "launch":
 		launch := server.launchBinding()
-		if request.Report != nil || request.Acknowledgement != nil {
+		if request.Report != nil || request.Acknowledgement != nil || request.ExternalKey != "" {
 			outcome = runtimeRejected("malformed_request")
 		} else if launch == nil {
 			outcome = runtimeRejected("launch_unavailable")
@@ -246,6 +254,8 @@ func (server *RuntimeServer) serveConnection(ctx context.Context, connection *ne
 		}
 	case "acknowledge":
 		outcome = server.acknowledgeLaunch(ctx, request, server.launchBinding())
+	case "attention_response":
+		outcome = server.receiveAttentionResponse(ctx, request, server.launchBinding())
 	default:
 		outcome = runtimeRejected("unknown_request")
 	}
@@ -253,7 +263,7 @@ func (server *RuntimeServer) serveConnection(ctx context.Context, connection *ne
 }
 
 func (server *RuntimeServer) acknowledgeLaunch(ctx context.Context, request runtimeRequest, launch *RuntimeLaunchConfig) RuntimeOutcome {
-	if request.Report != nil || request.Acknowledgement == nil || launch == nil ||
+	if request.Report != nil || request.Acknowledgement == nil || request.ExternalKey != "" || launch == nil ||
 		*request.Acknowledgement != launch.Expected {
 		return runtimeRejected("acknowledgement_rejected")
 	}
@@ -282,7 +292,8 @@ func (client *RuntimeClient) Brief(ctx context.Context) (domain.WorkerBrief, err
 	if err != nil {
 		return domain.WorkerBrief{}, err
 	}
-	if outcome.Error != nil || outcome.Brief == nil || outcome.Receipt != nil || outcome.Acknowledgement != nil {
+	if outcome.Error != nil || outcome.Brief == nil || outcome.Receipt != nil || outcome.Acknowledgement != nil ||
+		outcome.AttentionResponse != nil {
 		return domain.WorkerBrief{}, errors.New("read runtime brief: attachment rejected the request")
 	}
 	if err := outcome.Brief.Validate(); err != nil {
@@ -297,7 +308,8 @@ func (client *RuntimeClient) Report(ctx context.Context, report domain.WorkerRep
 	if err != nil {
 		return domain.ReportReceipt{}, err
 	}
-	if outcome.Error != nil || outcome.Receipt == nil || outcome.Brief != nil || outcome.Acknowledgement != nil {
+	if outcome.Error != nil || outcome.Receipt == nil || outcome.Brief != nil || outcome.Acknowledgement != nil ||
+		outcome.AttentionResponse != nil {
 		return domain.ReportReceipt{}, errors.New("submit runtime report: attachment rejected the request")
 	}
 	if err := domain.ValidateTaskHandle(outcome.Receipt.TaskHandle); err != nil ||
@@ -331,6 +343,7 @@ func (client *RuntimeClient) Acknowledge(ctx context.Context, workingDirectory s
 		return err
 	}
 	if outcome.Error != nil || outcome.Acknowledgement == nil || outcome.Brief != nil || outcome.Receipt != nil ||
+		outcome.AttentionResponse != nil ||
 		*outcome.Acknowledgement != launch {
 		return errors.New("acknowledge runtime launch: attachment rejected the operation")
 	}
@@ -343,6 +356,7 @@ func (client *RuntimeClient) launchAcknowledgement(ctx context.Context) (applica
 		return application.LaunchAcknowledgement{}, err
 	}
 	if outcome.Error != nil || outcome.Acknowledgement == nil || outcome.Brief != nil || outcome.Receipt != nil ||
+		outcome.AttentionResponse != nil ||
 		outcome.Acknowledgement.Validate() != nil {
 		return application.LaunchAcknowledgement{}, errors.New("read runtime launch: attachment returned an invalid binding")
 	}
@@ -385,9 +399,9 @@ func (client *RuntimeClient) call(ctx context.Context, request runtimeRequest) (
 	if err := json.NewEncoder(connection).Encode(request); err != nil {
 		return RuntimeOutcome{}, errors.New("call runtime attachment: request write failed")
 	}
-	reader := bufio.NewReaderSize(connection, maximumRuntimeBytes+1)
+	reader := bufio.NewReaderSize(connection, maximumRuntimeResponseBytes+1)
 	line, err := reader.ReadSlice('\n')
-	if errors.Is(err, bufio.ErrBufferFull) || len(line) > maximumRuntimeBytes || err != nil || len(line) < 2 {
+	if errors.Is(err, bufio.ErrBufferFull) || len(line) > maximumRuntimeResponseBytes || err != nil || len(line) < 2 {
 		return RuntimeOutcome{}, errors.New("call runtime attachment: response is invalid")
 	}
 	line = line[:len(line)-1]
@@ -409,32 +423,6 @@ func writeRuntimeOutcome(connection net.Conn, outcome RuntimeOutcome) error {
 
 func runtimeRejected(code string) RuntimeOutcome {
 	return RuntimeOutcome{Version: runtimeProtocolVersion, Error: &RuntimeError{Code: code}}
-}
-
-func validateRuntimeLaunchConfig(config RuntimeServerConfig) error {
-	empty := application.LaunchAcknowledgement{}
-	configured := config.LaunchOperationID != "" || config.ExpectedLaunch != empty || config.LaunchAcknowledger != nil
-	if !configured {
-		return nil
-	}
-	return validateRuntimeLaunchBinding(config.Brief, config.Reporter, RuntimeLaunchConfig{
-		OperationID: config.LaunchOperationID, Expected: config.ExpectedLaunch, Acknowledger: config.LaunchAcknowledger,
-	})
-}
-
-func validateRuntimeLaunchBinding(brief domain.WorkerBrief, reporter *Client, config RuntimeLaunchConfig) error {
-	canonicalWorkspace, workspaceErr := filepath.EvalSymlinks(config.Expected.WorkingDirectory)
-	if domain.ValidateOperationID(config.OperationID) != nil || config.Expected.Validate() != nil || config.Acknowledger == nil ||
-		workspaceErr != nil || canonicalWorkspace != config.Expected.WorkingDirectory ||
-		config.Expected.BriefRevision != brief.Revision || config.Expected.BriefRevisionHash != brief.RevisionHash {
-		return errors.New("listen runtime attachment: launch acknowledgement binding is invalid")
-	}
-	if reporter == nil || reporter.endpoint == nil || reporter.endpoint.taskHandle != config.Expected.TaskHandle ||
-		reporter.endpoint.briefRevision != config.Expected.BriefRevision ||
-		reporter.endpoint.briefRevisionHash != config.Expected.BriefRevisionHash {
-		return errors.New("listen runtime attachment: launch and report scopes differ")
-	}
-	return nil
 }
 
 func validLaunchAcknowledgementResult(

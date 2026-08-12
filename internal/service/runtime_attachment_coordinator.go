@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/comiswire"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 	"github.com/comisai/comis-dev-crew/internal/reporter"
 )
@@ -22,10 +23,11 @@ type runtimeAttachmentStore interface {
 }
 
 type runtimeAttachmentCoordinatorConfig struct {
-	RuntimeRoot   string
-	Store         runtimeAttachmentStore
-	Clock         application.Clock
-	NewCredential func() (string, error)
+	RuntimeRoot             string
+	Store                   runtimeAttachmentStore
+	Clock                   application.Clock
+	NewCredential           func() (string, error)
+	NewAttentionOperationID func() (string, error)
 }
 
 type runtimeAttachmentRegistration struct {
@@ -46,21 +48,23 @@ type runtimeAttachmentEntry struct {
 }
 
 type runtimeAttachmentCoordinator struct {
-	runtimeRoot   string
-	store         runtimeAttachmentStore
-	reportSink    *application.ReportSink
-	newCredential func() (string, error)
-	registrations chan runtimeAttachmentRegistration
-	recoveryReady chan struct{}
-	mu            sync.Mutex
-	entries       map[string]*runtimeAttachmentEntry
-	acknowledger  application.WorkerLaunchAcknowledger
-	recoveryErr   error
+	runtimeRoot             string
+	store                   runtimeAttachmentStore
+	reportSink              *application.ReportSink
+	newCredential           func() (string, error)
+	newAttentionOperationID func() (string, error)
+	registrations           chan runtimeAttachmentRegistration
+	recoveryReady           chan struct{}
+	mu                      sync.Mutex
+	entries                 map[string]*runtimeAttachmentEntry
+	acknowledger            application.WorkerLaunchAcknowledger
+	attentionResponses      comiswire.AttentionResponseReceiver
+	recoveryErr             error
 }
 
 func newRuntimeAttachmentCoordinator(config runtimeAttachmentCoordinatorConfig) (*runtimeAttachmentCoordinator, error) {
-	if config.Store == nil || config.Clock == nil || config.NewCredential == nil {
-		return nil, errors.New("create runtime attachment coordinator: store, clock, and credential source are required")
+	if config.Store == nil || config.Clock == nil || config.NewCredential == nil || config.NewAttentionOperationID == nil {
+		return nil, errors.New("create runtime attachment coordinator: store, clock, and identity sources are required")
 	}
 	runtimeRoot, err := ensureOwnedRuntimeRoot(config.RuntimeRoot)
 	if err != nil {
@@ -72,7 +76,8 @@ func newRuntimeAttachmentCoordinator(config runtimeAttachmentCoordinatorConfig) 
 	}
 	return &runtimeAttachmentCoordinator{
 		runtimeRoot: runtimeRoot, store: config.Store, reportSink: sink, newCredential: config.NewCredential,
-		registrations: make(chan runtimeAttachmentRegistration), recoveryReady: make(chan struct{}),
+		newAttentionOperationID: config.NewAttentionOperationID,
+		registrations:           make(chan runtimeAttachmentRegistration), recoveryReady: make(chan struct{}),
 		entries: make(map[string]*runtimeAttachmentEntry),
 	}, nil
 }
@@ -177,6 +182,7 @@ func (coordinator *runtimeAttachmentCoordinator) listenRuntimeAttachment(
 	}
 	server, err := reporter.ListenRuntime(reporter.RuntimeServerConfig{
 		SocketPath: attachment.SourcePath, Brief: request.Brief, Reporter: client,
+		AttentionResponses: coordinator, NewAttentionOperationID: coordinator.newAttentionOperationID,
 	})
 	if err != nil {
 		return nil, err
