@@ -73,8 +73,13 @@ func TestClaudeAdapterBuildsConfinedProtectedLaunchWithoutAuthorityLeak(t *testi
 		"--no-session-persistence", "--safe-mode", "--no-chrome", "--disable-slash-commands",
 		"--strict-mcp-config", "--dangerously-skip-permissions", "--permission-mode", "bypassPermissions",
 		"--model", "claude-opus-4-6", "--effort", "high",
+		"Before doing any task work, acknowledge the exact protected launch binding with `devcrew-report acknowledge`. " +
+			"Then read the pinned task brief with `devcrew-report brief`. Use `devcrew-report` for sparse progress, " +
+			"decisions, blocked state, candidate completion, and failure. Treat the protected runtime attachment as " +
+			"the only task/report authority.\n",
 	}
 	if strings.Join(descriptor.Arguments, "\x00") != strings.Join(wantArguments, "\x00") ||
+		len(descriptor.StandardInput) != 0 ||
 		descriptor.Harness != "claude" || descriptor.Unattended ||
 		descriptor.DegradedReason != application.HarnessReasonLifecycleSignalUnknown {
 		t.Fatalf("Claude launch descriptor = %#v", descriptor)
@@ -92,8 +97,8 @@ func TestClaudeAdapterBuildsConfinedProtectedLaunchWithoutAuthorityLeak(t *testi
 		descriptor.EnvironmentBindings["DEV_CREW_ATTACHMENT"] != request.Attachment.MountSocketPath ||
 		descriptor.EnvironmentBindings["DEV_CREW_ATTACHMENT_TARGET_NAME"] != request.Attachment.AttachmentTargetName ||
 		len(descriptor.EnvironmentBindings) != 3 ||
-		!strings.Contains(string(descriptor.StandardInput), "devcrew-report acknowledge") ||
-		!strings.Contains(string(descriptor.StandardInput), "devcrew-report brief") {
+		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "devcrew-report acknowledge") ||
+		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "devcrew-report brief") {
 		t.Fatalf("Claude protected launch bindings = %#v", descriptor)
 	}
 	if descriptor.ExpectedAcknowledgement.TaskHandle != request.TaskHandle ||
