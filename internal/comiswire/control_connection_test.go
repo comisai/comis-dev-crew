@@ -464,13 +464,29 @@ func activateResult(params ActivateRequestParams) ActivateResponseResult {
 	}
 }
 
-func controlTestListener(t *testing.T) (string, *net.UnixListener) {
+// socketTempDir creates a temporary directory short enough to hold a Unix
+// socket path, which the kernel bounds near 104 bytes. The platform temporary
+// directory is far longer than that on macOS, so this resolves /tmp instead and
+// keeps the result canonical: macOS reports /tmp as a symlink to /private/tmp,
+// and the connection paths compare canonical identities. Resolving rather than
+// hard-coding either spelling keeps the helper correct on Linux and macOS.
+func socketTempDir(t *testing.T, prefix string) string {
 	t.Helper()
-	directory, err := os.MkdirTemp("/private/tmp", "dc-ctl-")
+	root, err := filepath.EvalSymlinks("/tmp")
+	if err != nil {
+		t.Fatalf("resolve /tmp: %v", err)
+	}
+	directory, err := os.MkdirTemp(root, prefix)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	return directory
+}
+
+func controlTestListener(t *testing.T) (string, *net.UnixListener) {
+	t.Helper()
+	directory := socketTempDir(t, "dc-ctl-")
 	path := filepath.Join(directory, "control.sock")
 	address, err := net.ResolveUnixAddr("unix", path)
 	if err != nil {

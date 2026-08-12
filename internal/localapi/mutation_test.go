@@ -239,13 +239,29 @@ func TestPrepareTaskDefensiveConfigurationAndIncompleteOutcome(t *testing.T) {
 	}
 }
 
-func startHandlerServer(t *testing.T, handler *Handler, caller CallerClass) string {
+// socketTempDir creates a temporary directory short enough to hold a Unix
+// socket path, which the kernel bounds near 104 bytes. The platform temporary
+// directory is far longer than that on macOS, so this resolves /tmp instead and
+// keeps the result canonical: macOS reports /tmp as a symlink to /private/tmp,
+// and the listener paths compare canonical identities. Resolving rather than
+// hard-coding either spelling keeps the helper correct on Linux and macOS.
+func socketTempDir(t *testing.T, prefix string) string {
 	t.Helper()
-	directory, err := os.MkdirTemp("/private/tmp", "dc-api-")
+	root, err := filepath.EvalSymlinks("/tmp")
+	if err != nil {
+		t.Fatalf("resolve /tmp: %v", err)
+	}
+	directory, err := os.MkdirTemp(root, prefix)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	return directory
+}
+
+func startHandlerServer(t *testing.T, handler *Handler, caller CallerClass) string {
+	t.Helper()
+	directory := socketTempDir(t, "dc-api-")
 	socketPath := filepath.Join(directory, "mutation.sock")
 	server, err := Listen(socketPath, caller, handler)
 	if err != nil {
