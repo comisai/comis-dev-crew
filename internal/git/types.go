@@ -109,3 +109,13 @@ type CandidateSnapshot struct {
 	HeadRevision string
 	Cleanliness  CandidateCleanliness
 }
+
+// FixtureCandidateRequest binds one deterministic test artifact to an exact
+// prepared task worktree and pinned base revision.
+type FixtureCandidateRequest struct {
+	TaskHandle           string
+	RepositoryID         string
+	WorktreePath         string
+	BaseRevision         string
+	ArtifactRelativePath string
+}
