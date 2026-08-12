@@ -137,7 +137,9 @@ func (adapter *ClaudeAdapter) ProbeVersion(ctx context.Context) (application.Har
 }
 
 // BuildLaunchDescriptor creates a fixed Claude Code argv inside the selected
-// Comis jail. Task authority remains in the protected runtime attachment.
+// Comis jail. The generic bootstrap is the positional print-mode prompt so a
+// PTY-backed terminal starts atomically; task authority remains in the protected
+// runtime attachment.
 func (adapter *ClaudeAdapter) BuildLaunchDescriptor(
 	ctx context.Context,
 	request application.WorkerLaunchRequest,
@@ -177,7 +179,7 @@ func (adapter *ClaudeAdapter) BuildLaunchDescriptor(
 		"--input-format", "text", "--output-format", "stream-json", "--verbose",
 		"--no-session-persistence", "--safe-mode", "--no-chrome", "--disable-slash-commands",
 		"--strict-mcp-config", "--dangerously-skip-permissions", "--permission-mode", "bypassPermissions",
-		"--model", base.Model, "--effort", base.Effort,
+		"--model", base.Model, "--effort", base.Effort, claudeBootstrapPrompt,
 	)
 	unattended := base.Unattended && adapter.settleSignalVerified
 	var degradedReason application.HarnessReason
@@ -196,7 +198,7 @@ func (adapter *ClaudeAdapter) BuildLaunchDescriptor(
 		Model: base.Model, Effort: base.Effort, TerminalAllowEntry: base.TerminalAllowEntry,
 		Network: string(base.Network), ConcurrencyLimit: base.ConcurrencyLimit,
 		Unattended: unattended, DegradedReason: degradedReason,
-		Attachment: request.Attachment, StandardInput: []byte(claudeBootstrapPrompt),
+		Attachment: request.Attachment,
 		ExpectedAcknowledgement: application.LaunchAcknowledgement{
 			TaskHandle: request.TaskHandle, ManagedRunID: request.ManagedRunID,
 			WorkspaceLeaseID: request.WorkspaceLeaseID, WorkingDirectory: request.WorkingDirectory,
