@@ -54,6 +54,7 @@ type Config struct {
 	RepositoryComposition    *RepositoryComposition
 	ComisComposition         *ComisComposition
 	CodexComposition         *CodexComposition
+	ClaudeComposition        *ClaudeComposition
 	ValidationComposition    *ValidationComposition
 	ForgeComposition         *ForgeComposition
 	FixtureComposition       *FixtureComposition
@@ -99,6 +100,20 @@ type CodexComposition struct {
 	TerminalAllowEntryID string
 	Network              workers.NetworkPosture
 	ConcurrencyLimit     int
+}
+
+// ClaudeComposition is one exact operator-reviewed production worker profile.
+// Its owner-private config directory is exposed read-only by the terminal jail.
+type ClaudeComposition struct {
+	ProfileID            string
+	Executable           string
+	ExpectedVersion      string
+	Model                string
+	Effort               string
+	TerminalAllowEntryID string
+	Network              workers.NetworkPosture
+	ConcurrencyLimit     int
+	ConfigDirectory      string
 }
 
 // ValidationComposition is the immutable operator-reviewed candidate policy.

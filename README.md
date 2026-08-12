@@ -19,13 +19,15 @@ repositories, credentials, or hosts you are not prepared to lose access to.
 What works today: durable SQLite state with a single writer, a strict owner-only
 local JSON-RPC API, a read-only operator CLI, an authenticated and digest-pinned
 Comis protocol adapter, the first canonical mutation boundary with replay-safe
-task preparation and activation, an append-only worker reporter seam, and a
-five-tool MCP facade on the official Go SDK.
+task preparation and activation, an append-only worker reporter seam, fixed
+exact-version Codex and Claude Code worker adapters, installed supervision,
+candidate validation and delivery, and a seven-tool MCP facade on the official
+Go SDK.
 
-What is not implemented: real unattended worker execution, public mutation
-transport, end-to-end production Comis runtime wiring, and the protected live
-campaign. Several further capabilities are deliberately deferred behind ratified
-platform gates rather than merely unfinished.
+What is not claimed: a supported production deployment, public operator mutation
+transport, merge authority, external-event ingress, or trustworthy unattended
+settling from either worker CLI. Further capabilities remain behind explicit
+platform gates.
 
 [docs/implementation-status.md](docs/implementation-status.md) records the
 subsystem-by-subsystem detail, including what each component explicitly refuses
@@ -37,7 +39,7 @@ to claim.
 | --- | --- |
 | `devcrew-service` | Long-lived service; the only production composition root for durable domain mutation |
 | `devcrew` | Operator CLI over the typed local client |
-| `devcrew-mcp` | Stateless five-tool MCP facade on the official SDK stdio transport |
+| `devcrew-mcp` | Stateless seven-tool MCP facade on the official SDK stdio transport |
 | `devcrew-report` | Restricted task-scoped worker brief reader and sparse reporter |
 
 All four support `--help` and `--version`.
@@ -47,8 +49,8 @@ All four support `--help` and `--version`.
 - The exact Go toolchain pinned in [go.mod](go.mod).
 - Linux or macOS. The SQLite adapter is pure Go, so `darwin/amd64`,
   `darwin/arm64`, `linux/amd64`, and `linux/arm64` cross-compile without CGO.
-- A real Comis instance and a reviewed worker CLI profile for anything beyond the
-  read-only service.
+- A real Comis instance and exact reviewed Codex or Claude Code CLI profiles for
+  anything beyond the read-only service.
 
 ## Build
 
@@ -84,7 +86,7 @@ relative, non-canonical, symlinked, broad-root, non-regular, live, or
 identity-ambiguous targets. Without explicit flags, both binaries derive the same
 paths under the operating system's user configuration directory.
 
-[docs/running.md](docs/running.md) covers the full Comis and Codex lane, the
+[docs/running.md](docs/running.md) covers the full Comis and coding-worker lane, the
 complete flag set, the MCP facade, the operator CLI surface, and the worker
 reporter contract.
 

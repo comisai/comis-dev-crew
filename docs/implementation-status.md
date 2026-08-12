@@ -7,14 +7,17 @@ It is maintained alongside the behavior it describes.
 ## Summary
 
 The service owns durable SQLite state and a strict owner-only local API. The
-operator CLI provides read-only service, fleet, task, and operation views. The
+operator CLI provides service, fleet, task, operation, handback, and cleanup
+views and commands. The
 protocol foundation pins the 24-artifact Comis capability-service revision at
 source commit `b84577fe790829bf1f043af6c2626f6b27ef7b89` and bundle digest
 `94ec7bd173cd20f0de2cb4e9ab719d392f240236ac80d56e3a7ea1abe4e20cb8`, and generates
 a closed Go adapter.
 
-Real worker execution, public mutation transport, and end-to-end production Comis
-runtime wiring are not implemented yet.
+Installed composition supervises the Comis control lane, Codex and Claude Code
+launch descriptors, candidate validation, forge truth, delivery, handback, and
+safe cleanup. Public operator mutation transport, merge authority, and unattended
+worker settling are not claimed.
 
 ## Foundation
 
@@ -25,10 +28,10 @@ handlers, a bounded newline-delimited local protocol over an owner-only Unix
 socket, the first read-only operator CLI, and an authenticated Comis protocol pin
 with generated DTO, validation, and Unix control client support.
 
-The protocol-foundation join gate is implemented for protocol
+The protocol join gate is implemented for protocol
 `comis.capability-service/1`, including workspace-lease, terminal-event, and
-execution-attachment control scopes. End-to-end production worker execution and
-public mutation transport are not claimed.
+execution-attachment control scopes. Public operator mutation transport is not
+claimed.
 
 ## Comis adapter
 
@@ -182,9 +185,9 @@ socket under the configured private runtime root and declares it as
 target name that bind the same listener. The listener and any durable activation
 binding are reconstructed after a service restart.
 
-## Worker harness
+## Worker harnesses
 
-The first real harness adapter builds a fixed no-shell `codex exec --json`
+The Codex harness adapter builds a fixed no-shell `codex exec --json`
 descriptor from an exact-version static profile. The descriptor validates the
 activation-returned attachment ID and target name, references no host socket
 source, and binds only the exact protected mounted path and its matching target
@@ -199,6 +202,15 @@ run unattended. The repository does not infer settled or successful work from a
 completed Codex turn, and does not invent a private attachment protocol or a
 second terminal backend.
 
+The Claude Code harness is independently exact-version pinned. It uses fixed
+print-mode stream-json argv, disables session persistence, project settings,
+hooks, plugins, slash commands, browser integration, and unreviewed MCP servers,
+and permits non-interactive tool execution only inside its operator-selected
+Comis jail. Its owner-private config directory is a fixed environment binding;
+task, run, lease, brief, and attachment authority never enter argv or stdin.
+Fresh `system`, `assistant`, and tool-result `user` events prove activity, while a
+`result` without a task report remains `unknown`.
+
 The canonical `GetLaunchPlan` read accepts `ready` and recovery-reread `launching`
 tasks, then invokes that configured adapter with the durable task, workspace,
 brief, and activation binding, but projects only the profile ID, terminal
@@ -207,11 +219,11 @@ confidence, and freshness metadata. Executable paths, argv, shell text,
 environment bindings, workspace paths, and attachment IDs are not part of the
 local, CLI, or MCP result.
 
-Production composition accepts this profile only from operator startup
-configuration, requires a canonical regular non-symlink executable that is not a
-shell launcher, and proves the exact pinned version before opening service
-endpoints. The fixed adapter owns argv and the protected mount binding; task or
-model content cannot redirect either, and lifecycle settling remains degraded.
+Production composition accepts these profiles only from operator startup
+configuration, requires canonical regular non-symlink executables that are not
+shell launchers, and proves each exact pinned version before opening service
+endpoints. The fixed adapters own argv and protected mount bindings; task or model
+content cannot redirect either, and lifecycle settling remains degraded.
 
 ## Deterministic fixture worker
 
@@ -226,8 +238,8 @@ identities replay one logical effect; an interrupted runtime becomes `unknown`
 without relaunch or false success.
 
 The fixture launches no subprocess and exists to prove these properties around the
-report lifecycle. Fixture composition is available only as a programmatic test
-seam; the production service command exposes no fixture-worker flags. Candidate
+report lifecycle. Fixture composition requires explicit command flags and is used
+only with deterministic reviewed inputs. Candidate
 completion advances only to `validating`; it never claims validation, delivery, or
 terminal success.
 

@@ -20,7 +20,7 @@ broad-root, non-regular, live, or identity-ambiguous targets. Without explicit
 flags, `devcrew-service` and `devcrew` derive the same paths under the operating
 system's user configuration directory.
 
-## Full Comis and Codex lane
+## Full Comis and coding-worker lane
 
 Prerequisites, all of which fail closed if unmet:
 
@@ -59,6 +59,15 @@ devcrew-service \
   --codex-terminal-allow-entry codex-confined \
   --codex-network restricted \
   --codex-concurrency 2 \
+  --claude-profile claude-reviewed \
+  --claude-executable /absolute/path/to/claude \
+  --claude-version "2.1.224 (Claude Code)" \
+  --claude-model claude-opus-4-6 \
+  --claude-effort high \
+  --claude-terminal-allow-entry claude-confined \
+  --claude-network restricted \
+  --claude-concurrency 2 \
+  --claude-config-directory /absolute/private/claude-config \
   --candidate-config /absolute/private/candidate.json
 ```
 
@@ -68,6 +77,15 @@ cryptographically random task and registration identities, advertises that
 verified worktree in the managed-run preparation, and binds the same mutation
 authority to the dedicated MCP endpoint. It never accepts the protected bearer on
 its command line.
+
+The Codex profile is required by the installed E0 composition. The Claude Code
+profile is optional but all of its flags are an atomic group. Its executable must
+be the canonical regular reviewed artifact and its config directory must be a
+canonical owner-private (`0700`) directory. The terminal allow entry exposes only
+the required authentication material read-only. Both adapters use fixed argv,
+ignore project-level worker configuration, keep task authority in the protected
+reporter attachment, and remain explicitly degraded because neither reviewed CLI
+provides a trustworthy task-settle signal.
 
 ### Candidate configuration
 
@@ -90,8 +108,8 @@ devcrew-mcp \
   --service-instance service-instance-devcrew
 ```
 
-The facade defines five tools: `prepare_task`, `list_tasks`, `get_task`,
-`explain_task`, and `get_launch_plan`. Every call must carry a
+The facade defines seven tools: `prepare_task`, `handback_task`, `cleanup_task`,
+`list_tasks`, `get_task`, `explain_task`, and `get_launch_plan`. Every call must carry a
 generated-schema-valid `comis.callContext`; the configured service identity must
 match, while optional managed-run references grant no task authority. Preparation
 returns its visible task outcome separately from the private schema-validated
@@ -156,6 +174,6 @@ capability is never used.
 
 The boundary is deliberately narrow. The service rejects symlinks in every
 runtime-root component before creating anything, owns each task directory and
-socket, and never places the host source path in Codex argv, stdin, or
+socket, and never places the host source path in worker argv, stdin, or
 environment. Comis alone carries the source into the protected mount identified by
 activation; an altered attachment ID, target name, or mount path fails closed.

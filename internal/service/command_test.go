@@ -268,6 +268,15 @@ func TestRunCommand_RejectsPartialInstalledCompositionWithoutLeakingValues(t *te
 	stderr.Reset()
 	exitCode = RunCommand(context.Background(), []string{
 		"--database", "/private/state/devcrew.db", "--socket", "/private/run/operator.sock",
+		"--claude-profile", "claude-reviewed",
+	}, &stdout, &stderr, CommandConfig{})
+	if exitCode != 2 || !strings.Contains(stderr.String(), "Claude composition is incomplete") {
+		t.Fatalf("RunCommand(partial Claude) = %d, stderr=%q", exitCode, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	exitCode = RunCommand(context.Background(), []string{
+		"--database", "/private/state/devcrew.db", "--socket", "/private/run/operator.sock",
 		"--mcp-socket", "/private/run/mcp.sock", "--runtime-root", "/private/run/tasks",
 		"--service-instance", "service-instance-reviewed", "--git-executable", "/usr/bin/git",
 		"--approved-root", "/private/repositories", "--repository-id", "product-api",

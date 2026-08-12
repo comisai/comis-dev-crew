@@ -20,6 +20,9 @@ const serviceUsage = `Usage: devcrew-service [--database PATH] [--socket PATH]
          --comis-handshake-operation ID --codex-profile ID --codex-executable PATH
          --codex-version VERSION --codex-model MODEL --codex-effort EFFORT
 		 --codex-terminal-allow-entry ID --codex-network POSTURE --codex-concurrency N
+		 [--claude-profile ID --claude-executable PATH --claude-version VERSION
+		  --claude-model MODEL --claude-effort EFFORT --claude-terminal-allow-entry ID
+		  --claude-network POSTURE --claude-concurrency N --claude-config-directory PATH]
 		 --candidate-config PATH [--fixture-worker --fixture-decision TEXT --fixture-artifact FILE]
 
 Run the sole durable comis-dev-crew service authority.
@@ -48,6 +51,15 @@ Options:
   --codex-terminal-allow-entry ID Reviewed Comis terminal allow-entry identity
   --codex-network POSTURE         disabled, restricted, or host
   --codex-concurrency N           Reviewed profile concurrency limit
+  --claude-profile ID             Exact reviewed Claude Code profile identity
+  --claude-executable PATH        Canonical Claude Code executable path
+  --claude-version VERSION        Exact reviewed Claude Code version output
+  --claude-model MODEL            Pinned Claude model
+  --claude-effort EFFORT          Pinned Claude reasoning effort
+  --claude-terminal-allow-entry ID  Reviewed Comis terminal allow-entry identity
+  --claude-network POSTURE        disabled, restricted, or host
+  --claude-concurrency N          Reviewed profile concurrency limit
+  --claude-config-directory PATH  Owner-private Claude Code config directory
   --candidate-config PATH         Owner-private validation and forge policy
   --fixture-worker                Enable the deterministic in-process worker
   --fixture-decision TEXT         Fixed deterministic worker decision response
@@ -93,6 +105,15 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	var codexTerminalAllowEntry string
 	var codexNetwork string
 	var codexConcurrency int
+	var claudeProfileID string
+	var claudeExecutable string
+	var claudeVersion string
+	var claudeModel string
+	var claudeEffort string
+	var claudeTerminalAllowEntry string
+	var claudeNetwork string
+	var claudeConcurrency int
+	var claudeConfigDirectory string
 	var candidateConfigPath string
 	var fixtureDecision string
 	preparationTTL := 10 * time.Minute
@@ -123,6 +144,15 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	flags.StringVar(&codexTerminalAllowEntry, "codex-terminal-allow-entry", "", "reviewed Comis terminal allow-entry identity")
 	flags.StringVar(&codexNetwork, "codex-network", "", "reviewed network posture")
 	flags.IntVar(&codexConcurrency, "codex-concurrency", 0, "reviewed profile concurrency limit")
+	flags.StringVar(&claudeProfileID, "claude-profile", "", "exact reviewed Claude Code profile identity")
+	flags.StringVar(&claudeExecutable, "claude-executable", "", "canonical Claude Code executable path")
+	flags.StringVar(&claudeVersion, "claude-version", "", "exact reviewed Claude Code version output")
+	flags.StringVar(&claudeModel, "claude-model", "", "pinned Claude model")
+	flags.StringVar(&claudeEffort, "claude-effort", "", "pinned Claude reasoning effort")
+	flags.StringVar(&claudeTerminalAllowEntry, "claude-terminal-allow-entry", "", "reviewed Comis terminal allow-entry identity")
+	flags.StringVar(&claudeNetwork, "claude-network", "", "reviewed Claude network posture")
+	flags.IntVar(&claudeConcurrency, "claude-concurrency", 0, "reviewed Claude profile concurrency limit")
+	flags.StringVar(&claudeConfigDirectory, "claude-config-directory", "", "owner-private Claude Code config directory")
 	flags.StringVar(&candidateConfigPath, "candidate-config", "", "owner-private validation and forge policy")
 	flags.BoolVar(&fixtureWorker, "fixture-worker", false, "enable deterministic in-process worker")
 	flags.StringVar(&fixtureDecision, "fixture-decision", "", "fixed deterministic worker decision response")
@@ -173,6 +203,25 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 			}
 		}
 	}
+	claudeValues := []string{
+		claudeProfileID, claudeExecutable, claudeVersion, claudeModel, claudeEffort,
+		claudeTerminalAllowEntry, claudeNetwork, claudeConfigDirectory,
+	}
+	claudeConfigured := claudeConcurrency != 0
+	for _, value := range claudeValues {
+		claudeConfigured = claudeConfigured || value != ""
+	}
+	validClaudeNetwork := claudeNetwork == string(workers.NetworkDisabled) || claudeNetwork == string(workers.NetworkRestricted) || claudeNetwork == string(workers.NetworkHost)
+	if claudeConfigured && (!installed || claudeConcurrency < 1 || claudeConcurrency > 64 || !validClaudeNetwork) {
+		return writeServiceDiagnostic(stderr, "devcrew-service: Claude composition is incomplete\nHint: configure every Claude worker option together with the installed service\n", 2)
+	}
+	if claudeConfigured {
+		for _, value := range claudeValues {
+			if value == "" {
+				return writeServiceDiagnostic(stderr, "devcrew-service: Claude composition is incomplete\nHint: configure every Claude worker option together with the installed service\n", 2)
+			}
+		}
+	}
 	fixtureConfigured := fixtureWorker || fixtureDecision != "" || fixtureArtifact != ""
 	if fixtureConfigured && (!installed || !fixtureWorker || strings.TrimSpace(fixtureDecision) == "" || fixtureArtifact == "") {
 		return writeServiceDiagnostic(stderr, "devcrew-service: deterministic fixture composition is incomplete\nHint: configure the fixture worker, decision, and artifact together\n", 2)
@@ -199,6 +248,14 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 			ProfileID: codexProfileID, Executable: codexExecutable, ExpectedVersion: codexVersion,
 			Model: codexModel, Effort: codexEffort, TerminalAllowEntryID: codexTerminalAllowEntry,
 			Network: workers.NetworkPosture(codexNetwork), ConcurrencyLimit: codexConcurrency,
+		}
+		if claudeConfigured {
+			serviceConfig.ClaudeComposition = &ClaudeComposition{
+				ProfileID: claudeProfileID, Executable: claudeExecutable, ExpectedVersion: claudeVersion,
+				Model: claudeModel, Effort: claudeEffort, TerminalAllowEntryID: claudeTerminalAllowEntry,
+				Network: workers.NetworkPosture(claudeNetwork), ConcurrencyLimit: claudeConcurrency,
+				ConfigDirectory: claudeConfigDirectory,
+			}
 		}
 		validationComposition, forgeComposition, readErr := readCandidateComposition(candidateConfigPath)
 		if readErr != nil {

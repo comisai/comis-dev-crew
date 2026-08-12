@@ -24,7 +24,7 @@ import (
 )
 
 func composeInstalledRuntime(ctx context.Context, config Config) (Config, error) {
-	configured := config.RepositoryComposition != nil || config.ComisComposition != nil || config.CodexComposition != nil ||
+	configured := config.RepositoryComposition != nil || config.ComisComposition != nil || config.CodexComposition != nil || config.ClaudeComposition != nil ||
 		config.ValidationComposition != nil || config.ForgeComposition != nil
 	if !configured {
 		return config, nil
@@ -64,7 +64,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 		return Config{}, fmt.Errorf("run service repository composition: %w", err)
 	}
 	codexConfig := config.CodexComposition
-	profiles, err := workers.NewProfileCatalog([]workers.StaticProfile{{
+	profileConfig := []workers.StaticProfile{{
 		ID: codexConfig.ProfileID, Harness: workers.HarnessCodex,
 		AllowedShapes: []domain.TaskShape{domain.ShapeShip, domain.ShapeScout},
 		Model:         codexConfig.Model, Effort: codexConfig.Effort,
@@ -78,23 +78,63 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 			"PATH",
 		},
 		Availability: workers.AvailabilityAvailable,
-	}})
+	}}
+	if config.ClaudeComposition != nil {
+		claudeConfig := config.ClaudeComposition
+		profileConfig = append(profileConfig, workers.StaticProfile{
+			ID: claudeConfig.ProfileID, Harness: workers.HarnessClaude,
+			AllowedShapes: []domain.TaskShape{domain.ShapeShip, domain.ShapeScout},
+			Model:         claudeConfig.Model, Effort: claudeConfig.Effort,
+			TerminalAllowEntry: claudeConfig.TerminalAllowEntryID,
+			Network:            claudeConfig.Network, ConcurrencyLimit: claudeConfig.ConcurrencyLimit,
+			Unattended: true, Executable: claudeConfig.Executable,
+			Arguments: []string{"-p"},
+			EnvironmentKeys: []string{
+				application.RuntimeAttachmentPathEnvironment,
+				application.RuntimeAttachmentTargetEnvironment,
+				"CLAUDE_CONFIG_DIR",
+				"PATH",
+			},
+			Availability: workers.AvailabilityAvailable,
+		})
+	}
+	profiles, err := workers.NewProfileCatalog(profileConfig)
 	if err != nil {
 		return Config{}, fmt.Errorf("run service Codex profile composition: %w", err)
 	}
-	adapter, err := workers.NewCodexAdapter(workers.CodexAdapterConfig{
+	codexAdapter, err := workers.NewCodexAdapter(workers.CodexAdapterConfig{
 		Profiles: profiles, ProfileID: codexConfig.ProfileID,
 		ExpectedVersion: codexConfig.ExpectedVersion, SettleSignalVerified: false,
 	})
 	if err != nil {
 		return Config{}, fmt.Errorf("run service Codex adapter composition: %w", err)
 	}
-	probe, err := adapter.ProbeVersion(ctx)
+	probe, err := codexAdapter.ProbeVersion(ctx)
 	if err != nil {
 		return Config{}, fmt.Errorf("run service Codex version probe: %w", err)
 	}
 	if probe.Availability != application.HarnessAvailable || probe.Version != codexConfig.ExpectedVersion {
 		return Config{}, errors.New("run service: exact Codex version is unavailable")
+	}
+	harnessAdapters := map[string]application.WorkerHarnessAdapter{codexConfig.ProfileID: codexAdapter}
+	if config.ClaudeComposition != nil {
+		claudeConfig := config.ClaudeComposition
+		claudeAdapter, claudeErr := workers.NewClaudeAdapter(workers.ClaudeAdapterConfig{
+			Profiles: profiles, ProfileID: claudeConfig.ProfileID,
+			ExpectedVersion: claudeConfig.ExpectedVersion, ConfigDirectory: claudeConfig.ConfigDirectory,
+			SettleSignalVerified: false,
+		})
+		if claudeErr != nil {
+			return Config{}, fmt.Errorf("run service Claude adapter composition: %w", claudeErr)
+		}
+		claudeProbe, claudeErr := claudeAdapter.ProbeVersion(ctx)
+		if claudeErr != nil {
+			return Config{}, fmt.Errorf("run service Claude version probe: %w", claudeErr)
+		}
+		if claudeProbe.Availability != application.HarnessAvailable || claudeProbe.Version != claudeConfig.ExpectedVersion {
+			return Config{}, errors.New("run service: exact Claude version is unavailable")
+		}
+		harnessAdapters[claudeConfig.ProfileID] = claudeAdapter
 	}
 	validationConfig := config.ValidationComposition
 	catalog, err := validation.NewCatalog(validation.CatalogConfig{
@@ -148,7 +188,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 		return stableTaskIdentity(config.ServiceInstanceID, operationID), nil
 	}
 	config.RegistrationNonces = func() (string, error) { return randomIdentity("registration-nonce", 16) }
-	config.WorkerHarnesses = exactWorkerHarnesses{profileID: codexConfig.ProfileID, adapter: adapter}
+	config.WorkerHarnesses = exactWorkerHarnesses{adapters: harnessAdapters}
 	config.candidateGit = registry
 	config.workspaceInspector = registry
 	config.validationCatalog = catalog
@@ -184,15 +224,15 @@ func (source ownerCredentialSource) Resolve(ctx context.Context) (forge.Credenti
 }
 
 type exactWorkerHarnesses struct {
-	profileID string
-	adapter   application.WorkerHarnessAdapter
+	adapters map[string]application.WorkerHarnessAdapter
 }
 
 func (harnesses exactWorkerHarnesses) ResolveWorkerHarness(profileID string) (application.WorkerHarnessAdapter, error) {
-	if profileID != harnesses.profileID || harnesses.adapter == nil {
+	adapter := harnesses.adapters[profileID]
+	if adapter == nil {
 		return nil, errors.New("worker profile is unavailable")
 	}
-	return harnesses.adapter, nil
+	return adapter, nil
 }
 
 func stableTaskIdentity(serviceInstanceID, operationID string) string {
