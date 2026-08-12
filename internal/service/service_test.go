@@ -253,12 +253,61 @@ func TestRun_ReconcilesAmbiguousStateBeforeAdvertisingReady(t *testing.T) {
 
 type serviceComisControl struct {
 	mu            sync.Mutex
+	connected     bool
 	runCalls      int
 	reportCalls   int
 	evidenceCalls int
 	reports       chan comiswire.ReportRequestParams
 	evidence      chan comiswire.PutEvidenceRequestParams
 	failRun       chan error
+}
+
+func (control *serviceComisControl) Connected() bool {
+	control.mu.Lock()
+	defer control.mu.Unlock()
+	return control.connected
+}
+
+func TestRun_ProjectsAuthenticatedComisControlHealth(t *testing.T) {
+	root := shortTempDir(t)
+	socketPath := filepath.Join(root, "run", "devcrew.sock")
+	control := &serviceComisControl{connected: true}
+	ready := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Config{
+			DatabasePath: filepath.Join(root, "state", "devcrew.db"), SocketPath: socketPath,
+			ComisControl: control, Clock: serviceForwarderClock, Ready: func() { close(ready) },
+		})
+	}()
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("Run() before ready error = %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() did not advertise ready")
+	}
+	client, err := localapi.NewClient(socketPath, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := client.Diagnose(context.Background(), "read-control-health")
+	if err != nil {
+		t.Fatalf("Diagnose() error = %v", err)
+	}
+	if report.Completeness != application.CompletenessComplete ||
+		report.ServiceHealth != application.HealthHealthy || report.ComisHealth != application.HealthHealthy {
+		t.Fatalf("Diagnose() health = %#v, want complete authenticated host integration", report)
+	}
+	if len(report.Checks) != 3 || report.Checks[2].Name != "host_integration" ||
+		report.Checks[2].Status != application.CheckPass {
+		t.Fatalf("Diagnose() checks = %#v, want authenticated host pass", report.Checks)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() cancellation error = %v", err)
+	}
 }
 
 func (control *serviceComisControl) Run(ctx context.Context) error {
