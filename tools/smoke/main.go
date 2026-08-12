@@ -30,7 +30,7 @@ func main() {
 			fatal("build "+name, fmt.Errorf("%w: %s", err, output))
 		}
 	}
-	for _, name := range []string{"LICENSE", "README.md"} {
+	for _, name := range []string{"LICENSE", "NOTICE", "README.md"} {
 		if err := copyFile(name, filepath.Join(staging, name)); err != nil {
 			fatal("stage "+name, err)
 		}

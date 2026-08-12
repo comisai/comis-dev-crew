@@ -1,0 +1,39 @@
+comis-dev-crew
+Copyright 2024-2026 Moshe Anconina
+
+This product is licensed under the Apache License, Version 2.0. A copy of the
+license accompanies this distribution as the LICENSE file, and is also available
+at http://www.apache.org/licenses/LICENSE-2.0.
+
+Third-party components
+----------------------
+
+The distributed executables statically link the following third-party modules.
+Each retains its own copyright and license; exact versions are pinned in go.mod
+and authenticated by the Go checksum database.
+
+  github.com/modelcontextprotocol/go-sdk        Apache-2.0
+  github.com/dustin/go-humanize                 MIT
+  github.com/google/jsonschema-go               MIT
+  github.com/mattn/go-isatty                    MIT
+  github.com/ncruces/go-strftime                MIT
+  github.com/segmentio/asm                      MIT
+  github.com/segmentio/encoding                 MIT
+  github.com/google/uuid                        BSD-3-Clause
+  github.com/remyoudompheng/bigfft              BSD-3-Clause
+  github.com/yosida95/uritemplate/v3            BSD-3-Clause
+  golang.org/x/oauth2                           BSD-3-Clause
+  golang.org/x/sys                              BSD-3-Clause
+  modernc.org/libc                              BSD-3-Clause
+  modernc.org/mathutil                          BSD-3-Clause
+  modernc.org/memory                            BSD-3-Clause
+  modernc.org/sqlite                            BSD-3-Clause
+
+None of the above upstream distributions ships a NOTICE file of its own, so no
+additional upstream notice text is reproduced here.
+
+github.com/hashicorp/golang-lru/v2 (MPL-2.0) appears in the resolved module
+graph through a test dependency of modernc.org/libc. It is not part of the
+package closure of any executable in this repository, so its covered code is
+neither compiled into nor redistributed with these executables. See
+DEPENDENCIES.md for the recorded review.
