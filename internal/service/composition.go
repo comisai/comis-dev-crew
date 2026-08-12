@@ -38,6 +38,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 		config.RuntimeAttachments != nil || config.WorkerHarnesses != nil || config.RegistrationNonces != nil || config.ComisControl != nil ||
 		config.candidateGit != nil || config.workspaceInspector != nil || config.validationCatalog != nil || config.pullRequests != nil ||
 		config.cleanupRemover != nil || config.cleanupForge != nil ||
+		config.fixtureCandidatePreparer != nil ||
 		config.validationMaxOutputBytes != 0 || config.validationPollInterval != 0 {
 		return Config{}, errors.New("run service: installed and injected composition cannot be combined")
 	}
@@ -156,6 +157,9 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	config.pullRequests = pullRequests
 	config.cleanupRemover = registry
 	config.cleanupForge = pullRequests
+	if config.FixtureComposition != nil {
+		config.fixtureCandidatePreparer = registry
+	}
 	return config, nil
 }
 

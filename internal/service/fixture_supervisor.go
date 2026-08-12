@@ -9,12 +9,14 @@ import (
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
+	devgit "github.com/comisai/comis-dev-crew/internal/git"
 	"github.com/comisai/comis-dev-crew/internal/reporter"
 	"github.com/comisai/comis-dev-crew/internal/workers"
 )
 
 type fixtureSupervisorStore interface {
 	ListTasks(context.Context) ([]domain.Task, error)
+	GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error)
 	application.ReportMutationStore
 }
 
@@ -22,35 +24,44 @@ type fixtureTaskStarter interface {
 	StartTask(context.Context, application.StartTaskCommand) (application.MutationResult, error)
 }
 
+type fixtureCandidatePreparer interface {
+	PrepareFixtureCandidate(context.Context, devgit.FixtureCandidateRequest) (devgit.CandidateSnapshot, error)
+}
+
 type fixtureSupervisorConfig struct {
-	Store         fixtureSupervisorStore
-	Mutations     fixtureTaskStarter
-	Clock         application.Clock
-	Decision      string
-	PollInterval  time.Duration
-	NewCredential func() (string, error)
+	Store                fixtureSupervisorStore
+	Mutations            fixtureTaskStarter
+	Clock                application.Clock
+	Decision             string
+	PollInterval         time.Duration
+	NewCredential        func() (string, error)
+	CandidatePreparer    fixtureCandidatePreparer
+	ArtifactRelativePath string
 }
 
 type fixtureSupervisor struct {
-	store         fixtureSupervisorStore
-	mutations     fixtureTaskStarter
-	clock         application.Clock
-	decision      string
-	pollInterval  time.Duration
-	newCredential func() (string, error)
+	store                fixtureSupervisorStore
+	mutations            fixtureTaskStarter
+	clock                application.Clock
+	decision             string
+	pollInterval         time.Duration
+	newCredential        func() (string, error)
+	candidatePreparer    fixtureCandidatePreparer
+	artifactRelativePath string
 }
 
 func newFixtureSupervisor(config fixtureSupervisorConfig) (*fixtureSupervisor, error) {
-	if config.Store == nil || config.Mutations == nil || config.Clock == nil || config.NewCredential == nil {
-		return nil, errors.New("create fixture supervisor: store, mutations, clock, and credential source are required")
+	if config.Store == nil || config.Mutations == nil || config.Clock == nil || config.NewCredential == nil || config.CandidatePreparer == nil {
+		return nil, errors.New("create fixture supervisor: store, mutations, clock, credential source, and candidate preparer are required")
 	}
-	if config.Decision == "" || config.PollInterval <= 0 {
-		return nil, errors.New("create fixture supervisor: decision and positive poll interval are required")
+	if config.Decision == "" || config.ArtifactRelativePath == "" || config.PollInterval <= 0 {
+		return nil, errors.New("create fixture supervisor: decision, artifact, and positive poll interval are required")
 	}
 	return &fixtureSupervisor{
 		store: config.Store, mutations: config.Mutations, clock: config.Clock,
 		decision: config.Decision, pollInterval: config.PollInterval,
-		newCredential: config.NewCredential,
+		newCredential:     config.NewCredential,
+		candidatePreparer: config.CandidatePreparer, artifactRelativePath: config.ArtifactRelativePath,
 	}, nil
 }
 
@@ -99,6 +110,22 @@ func (supervisor *fixtureSupervisor) runNext(ctx context.Context) (bool, error) 
 }
 
 func (supervisor *fixtureSupervisor) runFixture(ctx context.Context, ready domain.Task) error {
+	preparation, err := supervisor.store.GetManagedRunPreparation(ctx, ready.Handle)
+	if err != nil {
+		return fmt.Errorf("fixture supervisor read preparation: %w", err)
+	}
+	candidate, err := supervisor.candidatePreparer.PrepareFixtureCandidate(ctx, devgit.FixtureCandidateRequest{
+		TaskHandle: ready.Handle, RepositoryID: ready.RepositoryID,
+		WorktreePath: preparation.RequestedWorkspaceRoot, BaseRevision: ready.BaseRevision,
+		ArtifactRelativePath: supervisor.artifactRelativePath,
+	})
+	if err != nil {
+		return fmt.Errorf("fixture supervisor prepare candidate: %w", err)
+	}
+	if candidate.RepositoryID != ready.RepositoryID || candidate.WorktreePath != preparation.RequestedWorkspaceRoot ||
+		candidate.HeadRevision == ready.BaseRevision || candidate.Cleanliness != devgit.CandidateClean {
+		return errors.New("fixture supervisor: prepared candidate identity is incomplete")
+	}
 	started, err := supervisor.mutations.StartTask(ctx, application.StartTaskCommand{
 		OperationID: fixtureStartOperationID(ready.Handle), TaskHandle: ready.Handle,
 	})

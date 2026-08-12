@@ -66,6 +66,7 @@ type Config struct {
 	pullRequests             candidatePullRequestDeliverer
 	cleanupRemover           application.DeliveredWorkspaceRemover
 	cleanupForge             application.PullRequestDeliveryVerifier
+	fixtureCandidatePreparer fixtureCandidatePreparer
 }
 
 // RepositoryComposition is the installed single-repository fixture lane.
@@ -255,7 +256,9 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		fixture, err = newFixtureSupervisor(fixtureSupervisorConfig{
 			Store: store, Mutations: mutations, Clock: clock,
 			Decision: config.FixtureComposition.Decision, PollInterval: fixturePollInterval,
-			NewCredential: func() (string, error) { return randomIdentity("fixture-reporter", 16) },
+			CandidatePreparer:    config.fixtureCandidatePreparer,
+			ArtifactRelativePath: config.FixtureComposition.ArtifactRelativePath,
+			NewCredential:        func() (string, error) { return randomIdentity("fixture-reporter", 16) },
 		})
 		if err != nil {
 			return fmt.Errorf("run service fixture composition: %w", err)

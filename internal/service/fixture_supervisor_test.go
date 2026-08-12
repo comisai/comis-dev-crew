@@ -171,6 +171,7 @@ func TestFixtureSupervisor_IdleCancellationAndTaskSelectionAreDeterministic(t *t
 		store: fixtureStoreFunc{list: func(context.Context) ([]domain.Task, error) {
 			return []domain.Task{ready}, nil
 		}},
+		candidatePreparer: &fixtureCandidatePreparerStub{}, artifactRelativePath: "report.md",
 		mutations: fixtureStarterFunc(func(context.Context, application.StartTaskCommand) (application.MutationResult, error) {
 			return application.MutationResult{}, privateFailure
 		}),
@@ -286,7 +287,10 @@ func (preparer *fixtureCandidatePreparerStub) PrepareFixtureCandidate(
 		return devgit.CandidateSnapshot{}, err
 	}
 	preparer.requests = append(preparer.requests, request)
-	return devgit.CandidateSnapshot{}, preparer.err
+	return devgit.CandidateSnapshot{
+		RepositoryID: request.RepositoryID, WorktreePath: request.WorktreePath,
+		HeadRevision: strings.Repeat("b", 40), Cleanliness: devgit.CandidateClean,
+	}, preparer.err
 }
 
 type fixtureStarterStub struct{}
