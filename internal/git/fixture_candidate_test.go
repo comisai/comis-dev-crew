@@ -56,6 +56,16 @@ func TestRegistry_PrepareFixtureCandidateRejectsUnavailableOrAlteredAuthority(t 
 	if _, err := registry.PrepareFixtureCandidate(context.Background(), missingBase); err == nil {
 		t.Fatal("PrepareFixtureCandidate(missing base) error = nil")
 	}
+	if err := os.Chmod(prepared.CanonicalPath, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	_, creationErr := registry.PrepareFixtureCandidate(context.Background(), candidateRequest)
+	if err := os.Chmod(prepared.CanonicalPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if creationErr == nil {
+		t.Fatal("PrepareFixtureCandidate(read-only worktree) error = nil")
+	}
 
 	for _, test := range []struct {
 		name     string

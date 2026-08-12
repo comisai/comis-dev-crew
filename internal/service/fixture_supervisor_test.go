@@ -196,6 +196,27 @@ func TestFixtureSupervisor_FailsClosedAtWorkerCompositionBoundaries(t *testing.T
 	started.State = domain.TaskLaunching
 	clock := func() time.Time { return time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC) }
 	store := failingFixtureStore{}
+	preparationFailure := &fixtureSupervisor{
+		store: failingFixtureStore{err: privateFailure},
+	}
+	if err := preparationFailure.runFixture(context.Background(), ready); !errors.Is(err, privateFailure) {
+		t.Fatalf("runFixture(preparation failure) error = %v", err)
+	}
+	preparerFailure := &fixtureSupervisor{
+		store: failingFixtureStore{}, artifactRelativePath: "report.md",
+		candidatePreparer: fixtureCandidatePreparerFunc(func(context.Context, devgit.FixtureCandidateRequest) (devgit.CandidateSnapshot, error) {
+			return devgit.CandidateSnapshot{}, privateFailure
+		}),
+	}
+	if err := preparerFailure.runFixture(context.Background(), ready); !errors.Is(err, privateFailure) {
+		t.Fatalf("runFixture(candidate preparation failure) error = %v", err)
+	}
+	preparerFailure.candidatePreparer = fixtureCandidatePreparerFunc(func(context.Context, devgit.FixtureCandidateRequest) (devgit.CandidateSnapshot, error) {
+		return devgit.CandidateSnapshot{}, nil
+	})
+	if err := preparerFailure.runFixture(context.Background(), ready); err == nil {
+		t.Fatal("runFixture(incomplete candidate) error = nil")
+	}
 
 	startFailure := &fixtureSupervisor{
 		store: failingFixtureStore{}, candidatePreparer: &fixtureCandidatePreparerStub{}, artifactRelativePath: "report.md",
@@ -277,6 +298,15 @@ func (fixtureStoreFunc) GetManagedRunPreparation(context.Context, string) (appli
 type fixtureCandidatePreparerStub struct {
 	requests []devgit.FixtureCandidateRequest
 	err      error
+}
+
+type fixtureCandidatePreparerFunc func(context.Context, devgit.FixtureCandidateRequest) (devgit.CandidateSnapshot, error)
+
+func (prepare fixtureCandidatePreparerFunc) PrepareFixtureCandidate(
+	ctx context.Context,
+	request devgit.FixtureCandidateRequest,
+) (devgit.CandidateSnapshot, error) {
+	return prepare(ctx, request)
 }
 
 func (preparer *fixtureCandidatePreparerStub) PrepareFixtureCandidate(

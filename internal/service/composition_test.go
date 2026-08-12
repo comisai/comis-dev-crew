@@ -201,6 +201,11 @@ func TestInstalledRuntime_RejectsPartialMixedAndUnverifiedConfiguration(t *testi
 	if _, err := composeInstalledRuntime(context.Background(), configuration); err == nil {
 		t.Fatal("composeInstalledRuntime(invalid forge route) error = nil")
 	}
+	configuration = installedServiceConfig(t, shortTempDir(t))
+	configuration.FixtureComposition = &FixtureComposition{Decision: " ", ArtifactRelativePath: "report.md"}
+	if _, err := composeInstalledRuntime(context.Background(), configuration); err == nil {
+		t.Fatal("composeInstalledRuntime(invalid fixture) error = nil")
+	}
 }
 
 func TestComisComposition_RequiresMutationsCredentialAndValidAuthority(t *testing.T) {
