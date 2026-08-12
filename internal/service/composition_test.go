@@ -117,6 +117,19 @@ func TestRun_StartsAndJoinsInstalledCompositionWithoutPreparedWork(t *testing.T)
 	}
 }
 
+func TestInstalledRuntime_ComposesFixtureBesideRealCandidatePipeline(t *testing.T) {
+	configuration := installedServiceConfig(t, shortTempDir(t))
+	configuration.FixtureComposition = &FixtureComposition{Decision: "use the bounded fixture choice"}
+	configured, err := composeInstalledRuntime(context.Background(), configuration)
+	if err != nil {
+		t.Fatalf("composeInstalledRuntime(fixture) error = %v", err)
+	}
+	if configured.FixtureComposition == nil || configured.candidateGit == nil || configured.validationCatalog == nil ||
+		configured.pullRequests == nil || configured.cleanupRemover == nil || configured.cleanupForge == nil {
+		t.Fatalf("installed fixture candidate composition = %#v", configured)
+	}
+}
+
 func TestInstalledRuntime_RejectsPartialMixedAndUnverifiedConfiguration(t *testing.T) {
 	partial := Config{RepositoryComposition: &RepositoryComposition{}}
 	if _, err := composeInstalledRuntime(context.Background(), partial); err == nil {

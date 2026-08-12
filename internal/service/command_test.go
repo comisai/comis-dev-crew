@@ -130,7 +130,7 @@ func TestServiceFailureClassUsesSafeStableCategories(t *testing.T) {
 	}
 }
 
-func TestRunCommand_ComposesInstalledComisCodexLaneFromExplicitConfiguration(t *testing.T) {
+func TestRunCommand_ComposesInstalledLaneWithExplicitDeterministicFixture(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	var got Config
@@ -167,6 +167,9 @@ func TestRunCommand_ComposesInstalledComisCodexLaneFromExplicitConfiguration(t *
 		"--codex-network", "restricted",
 		"--codex-concurrency", "2",
 		"--candidate-config", candidateConfigPath,
+		"--fixture-worker",
+		"--fixture-decision", "use the bounded fixture choice",
+		"--fixture-artifact", "report.md",
 	}, &stdout, &stderr, CommandConfig{
 		RunService: func(_ context.Context, config Config) error {
 			got = config
@@ -193,8 +196,13 @@ func TestRunCommand_ComposesInstalledComisCodexLaneFromExplicitConfiguration(t *
 	if got.DatabasePath != "/private/state/devcrew.db" || got.SocketPath != "/private/run/operator.sock" ||
 		got.MCPSocketPath != "/private/run/mcp.sock" || got.RuntimeRoot != "/private/run/tasks" || got.ServiceInstanceID != "service-instance-fixture" ||
 		got.PreparationTTL != 15*time.Minute || !reflect.DeepEqual(got.RepositoryComposition, wantRepository) ||
-		!reflect.DeepEqual(got.ComisComposition, wantComis) || !reflect.DeepEqual(got.CodexComposition, wantCodex) || got.FixtureComposition != nil {
+		!reflect.DeepEqual(got.ComisComposition, wantComis) || !reflect.DeepEqual(got.CodexComposition, wantCodex) ||
+		got.FixtureComposition == nil || got.FixtureComposition.Decision != "use the bounded fixture choice" {
 		t.Fatalf("installed service config = %#v", got)
+	}
+	artifact := reflect.ValueOf(*got.FixtureComposition).FieldByName("ArtifactRelativePath")
+	if !artifact.IsValid() || artifact.String() != "report.md" {
+		t.Fatalf("fixture artifact configuration = %#v", got.FixtureComposition)
 	}
 	if got.ValidationComposition == nil || got.ForgeComposition == nil ||
 		got.ValidationComposition.MaxOutputBytes != 64<<10 || got.ValidationComposition.PollInterval != 250*time.Millisecond ||
