@@ -147,6 +147,26 @@ func TestTaskCleanupStore_RefusesOpenHoldUnsettledRuntimeAndUndeliveredEvidence(
 	}
 }
 
+func TestTaskCleanupStore_AcceptsDurablyAbsentValidationProcess(t *testing.T) {
+	store, task, _ := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.db.Exec(`INSERT INTO validation_processes(
+            operation_id, task_handle, program_id, executable_label, pid,
+            start_identity, process_group_identity, state, started_at, observed_at)
+        VALUES ('validate-cleanup-absent', ?, 'go-test', 'go', 0, '', '', 'absent', ?, ?)`,
+		task.Handle, formatTime(task.UpdatedAt), formatTime(task.UpdatedAt)); err != nil {
+		t.Fatalf("seed absent validation process: %v", err)
+	}
+	_, err := store.BeginTaskCleanup(context.Background(), application.TaskCleanupMutation{
+		OperationID: "cleanup-absent-0001", SubjectDigest: strings.Repeat("e", 64),
+		TaskHandle: task.Handle, ReleaseOperationID: "release-absent-0001",
+		ReleasedAt: task.UpdatedAt.Add(time.Minute), At: task.UpdatedAt.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("BeginTaskCleanup(absent validation) error = %v", err)
+	}
+}
+
 func TestTaskCleanupStore_AcceptsSettledFixtureWithoutTerminalBinding(t *testing.T) {
 	store, task, _ := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
 	t.Cleanup(func() { _ = store.Close() })

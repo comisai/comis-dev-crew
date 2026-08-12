@@ -72,6 +72,22 @@ func TestValidationProcessStore_PersistsLifecycleAcrossRestart(t *testing.T) {
 	if err != nil || len(active) != 0 {
 		t.Fatalf("active processes after exit = %#v, %v", active, err)
 	}
+	absentStarting := starting
+	absentStarting.OperationID = "validate-task-absent"
+	absentStarting.ObservedAt = startedAt.Add(3 * time.Second)
+	if err := store.Record(context.Background(), absentStarting); err != nil {
+		t.Fatalf("Record(absent starting) error = %v", err)
+	}
+	absent := absentStarting
+	absent.State = validation.ProcessAbsent
+	absent.ObservedAt = startedAt.Add(4 * time.Second)
+	if err := store.Record(context.Background(), absent); err != nil {
+		t.Fatalf("Record(absent) error = %v", err)
+	}
+	active, err = store.ListActiveValidationProcesses(context.Background())
+	if err != nil || len(active) != 0 {
+		t.Fatalf("active processes after absent = %#v, %v", active, err)
+	}
 }
 
 func TestValidationProcessStore_RejectsForgedAndRegressiveLifecycle(t *testing.T) {
