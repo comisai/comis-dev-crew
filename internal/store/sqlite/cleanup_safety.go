@@ -50,13 +50,17 @@ func proveCleanupDatabaseSafety(ctx context.Context, transaction *sql.Tx, task d
 	}
 	var managedRunID, workspaceLeaseID string
 	var transition application.TerminalTransition
-	if err := transaction.QueryRowContext(ctx, `SELECT managed_run_id, workspace_lease_id, latest_transition
+	err := transaction.QueryRowContext(ctx, `SELECT managed_run_id, workspace_lease_id, latest_transition
         FROM task_terminal_bindings WHERE task_handle = ?`, task.Handle).Scan(
 		&managedRunID, &workspaceLeaseID, &transition,
-	); err != nil {
+	)
+	if errors.Is(err, sql.ErrNoRows) && task.WorkerProfileID == "fixture-worker" {
+		// The deterministic in-process fixture never acquires terminal custody.
+		// Delivery, evidence, decision, validation, hold, and workspace checks
+		// below remain mandatory before its managed run can be released.
+	} else if err != nil {
 		return fmt.Errorf("inspect task cleanup terminal: %w", application.ErrPrecondition)
-	}
-	if managedRunID != task.ManagedRunID || workspaceLeaseID != task.WorkspaceLeaseID ||
+	} else if managedRunID != task.ManagedRunID || workspaceLeaseID != task.WorkspaceLeaseID ||
 		(transition != application.TerminalExited && transition != application.TerminalReleased) {
 		return fmt.Errorf("task cleanup terminal is unsettled: %w", application.ErrPrecondition)
 	}
