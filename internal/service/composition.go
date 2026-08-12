@@ -280,6 +280,8 @@ func randomIdentity(prefix string, entropyBytes int) (string, error) {
 	return prefix + "-" + hex.EncodeToString(entropy), nil
 }
 
+const maximumOwnerCredentialBytes = 4096
+
 func readOwnerCredential(path string) (string, error) {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return "", errors.New("run service Comis credential: path must be absolute and canonical")
@@ -288,7 +290,7 @@ func readOwnerCredential(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("run service Comis credential: inspect file: %w", err)
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() > 512 {
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() > maximumOwnerCredentialBytes {
 		return "", errors.New("run service Comis credential: file must be owner-private, regular, and bounded")
 	}
 	file, err := os.Open(path)
@@ -300,11 +302,11 @@ func readOwnerCredential(path string) (string, error) {
 	if err != nil || !os.SameFile(info, opened) {
 		return "", errors.New("run service Comis credential: file identity changed during open")
 	}
-	contents, err := io.ReadAll(io.LimitReader(file, 513))
+	contents, err := io.ReadAll(io.LimitReader(file, maximumOwnerCredentialBytes+1))
 	if err != nil {
 		return "", fmt.Errorf("run service Comis credential: read file: %w", err)
 	}
-	if len(contents) > 512 {
+	if len(contents) > maximumOwnerCredentialBytes {
 		return "", errors.New("run service Comis credential: content exceeds the byte limit")
 	}
 	credential := strings.TrimSuffix(string(contents), "\n")
