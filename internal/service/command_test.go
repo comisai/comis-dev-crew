@@ -242,6 +242,15 @@ func TestRunCommand_RejectsPartialInstalledCompositionWithoutLeakingValues(t *te
 	if exitCode != 2 || !strings.Contains(stderr.String(), "installed composition is incomplete") {
 		t.Fatalf("RunCommand(missing effort) = %d, stderr=%q", exitCode, stderr.String())
 	}
+	stdout.Reset()
+	stderr.Reset()
+	exitCode = RunCommand(context.Background(), []string{
+		"--database", "/private/state/devcrew.db", "--socket", "/private/run/operator.sock",
+		"--fixture-worker",
+	}, &stdout, &stderr, CommandConfig{})
+	if exitCode != 2 || !strings.Contains(stderr.String(), "deterministic fixture composition is incomplete") {
+		t.Fatalf("RunCommand(partial fixture) = %d, stderr=%q", exitCode, stderr.String())
+	}
 }
 
 func TestRunCommand_SuccessAndDiagnosticWriterFailures(t *testing.T) {
