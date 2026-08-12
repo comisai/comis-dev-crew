@@ -34,7 +34,7 @@ func TestProfileCatalog_BuildsOneExactNoShellLaunchDescriptor(t *testing.T) {
 		t.Fatalf("launch descriptor = %#v", descriptor)
 	}
 	if !reflect.DeepEqual(descriptor.Arguments, []string{"exec", "--json"}) ||
-		!reflect.DeepEqual(descriptor.EnvironmentKeys, []string{"DEV_CREW_ATTACHMENT", "PATH"}) {
+		!reflect.DeepEqual(descriptor.EnvironmentKeys, []string{"COMIS_EXECUTION_ATTACHMENT", "PATH"}) {
 		t.Fatalf("descriptor vectors = args:%q env:%q", descriptor.Arguments, descriptor.EnvironmentKeys)
 	}
 	descriptor.Arguments[0] = "altered"
@@ -42,7 +42,7 @@ func TestProfileCatalog_BuildsOneExactNoShellLaunchDescriptor(t *testing.T) {
 	replayed, err := catalog.BuildLaunchDescriptor(workers.LaunchRequest{
 		ProfileID: profile.ID, Shape: domain.ShapeShip, WorkingDirectory: workingDirectory,
 	})
-	if err != nil || replayed.Arguments[0] != "exec" || replayed.EnvironmentKeys[0] != "DEV_CREW_ATTACHMENT" {
+	if err != nil || replayed.Arguments[0] != "exec" || replayed.EnvironmentKeys[0] != "COMIS_EXECUTION_ATTACHMENT" {
 		t.Fatalf("catalog vectors were mutable: %#v, %v", replayed, err)
 	}
 }
@@ -176,7 +176,7 @@ func availableCodexProfile(executable, id string) workers.StaticProfile {
 		Model: "gpt-5.5-codex", Effort: "high", TerminalAllowEntry: "codex-confined",
 		Network: workers.NetworkRestricted, ConcurrencyLimit: 2,
 		Executable: executable, Arguments: []string{"exec", "--json"},
-		EnvironmentKeys: []string{"DEV_CREW_ATTACHMENT", "PATH"},
+		EnvironmentKeys: []string{"COMIS_EXECUTION_ATTACHMENT", "PATH"},
 		Availability:    workers.AvailabilityAvailable,
 	}
 }

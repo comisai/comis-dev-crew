@@ -94,8 +94,8 @@ func TestClaudeAdapterBuildsConfinedProtectedLaunchWithoutAuthorityLeak(t *testi
 		}
 	}
 	if descriptor.EnvironmentBindings["CLAUDE_CONFIG_DIR"] != configDirectory ||
-		descriptor.EnvironmentBindings["DEV_CREW_ATTACHMENT"] != request.Attachment.MountSocketPath ||
-		descriptor.EnvironmentBindings["DEV_CREW_ATTACHMENT_TARGET_NAME"] != request.Attachment.AttachmentTargetName ||
+		descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT"] != request.Attachment.MountSocketPath ||
+		descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT_TARGET_NAME"] != request.Attachment.AttachmentTargetName ||
 		len(descriptor.EnvironmentBindings) != 3 ||
 		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "devcrew-report acknowledge") ||
 		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "devcrew-report brief") {
@@ -250,7 +250,7 @@ func TestClaudeAdapterRejectsUnsafeConfigurationAndLaunchAuthority(t *testing.T)
 	}
 	missingEnvironment := profile
 	missingEnvironment.ID = "claude-missing-environment"
-	missingEnvironment.EnvironmentKeys = []string{"DEV_CREW_ATTACHMENT", "CLAUDE_CONFIG_DIR", "PATH"}
+	missingEnvironment.EnvironmentKeys = []string{"COMIS_EXECUTION_ATTACHMENT", "CLAUDE_CONFIG_DIR", "PATH"}
 	missingEnvironmentCatalog, err := workers.NewProfileCatalog([]workers.StaticProfile{missingEnvironment})
 	if err != nil {
 		t.Fatal(err)
@@ -274,7 +274,7 @@ func availableClaudeProfile(executable, id string) workers.StaticProfile {
 		Model: "claude-opus-4-6", Effort: "high", TerminalAllowEntry: "claude-confined",
 		Network: workers.NetworkRestricted, ConcurrencyLimit: 2, Executable: executable,
 		Arguments:       []string{"-p"},
-		EnvironmentKeys: []string{"DEV_CREW_ATTACHMENT", "DEV_CREW_ATTACHMENT_TARGET_NAME", "CLAUDE_CONFIG_DIR", "PATH"},
+		EnvironmentKeys: []string{"COMIS_EXECUTION_ATTACHMENT", "COMIS_EXECUTION_ATTACHMENT_TARGET_NAME", "CLAUDE_CONFIG_DIR", "PATH"},
 		Availability:    workers.AvailabilityAvailable,
 	}
 }
@@ -286,7 +286,7 @@ func probedClaudeProfile(t *testing.T, id string) workers.StaticProfile {
 	profile.Model = "claude-opus-4-6"
 	profile.TerminalAllowEntry = "claude-confined"
 	profile.Arguments = []string{"-p"}
-	profile.EnvironmentKeys = []string{"DEV_CREW_ATTACHMENT", "DEV_CREW_ATTACHMENT_TARGET_NAME", "CLAUDE_CONFIG_DIR", "PATH"}
+	profile.EnvironmentKeys = []string{"COMIS_EXECUTION_ATTACHMENT", "COMIS_EXECUTION_ATTACHMENT_TARGET_NAME", "CLAUDE_CONFIG_DIR", "PATH"}
 	return profile
 }
 

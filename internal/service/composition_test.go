@@ -62,8 +62,8 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 		t.Fatalf("installed Codex launch posture = %#v", descriptor)
 	}
 	if len(descriptor.EnvironmentBindings) != 2 ||
-		descriptor.EnvironmentBindings["DEV_CREW_ATTACHMENT"] != descriptor.Attachment.MountSocketPath ||
-		descriptor.EnvironmentBindings["DEV_CREW_ATTACHMENT_TARGET_NAME"] != descriptor.Attachment.AttachmentTargetName {
+		descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT"] != descriptor.Attachment.MountSocketPath ||
+		descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT_TARGET_NAME"] != descriptor.Attachment.AttachmentTargetName {
 		t.Fatalf("installed Codex attachment bindings = %#v", descriptor.EnvironmentBindings)
 	}
 	taskID, err := configured.TaskIDs("operation-installed-stable")

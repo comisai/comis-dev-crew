@@ -154,7 +154,7 @@ func TestQueries_GetLaunchPlanBuildsAndSafelyProjectsReviewedDescriptor(t *testi
 			t.Fatalf("launch plan omitted required managed terminal authority %q: %s", required, encoded)
 		}
 	}
-	for _, forbidden := range []string{workspace, "/usr/local/bin/codex", "--model", "DEV_CREW_ATTACHMENT", task.ExecutionAttachmentID} {
+	for _, forbidden := range []string{workspace, "/usr/local/bin/codex", "--model", "COMIS_EXECUTION_ATTACHMENT", task.ExecutionAttachmentID} {
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("launch plan leaked protected process material %q: %s", forbidden, encoded)
 		}
@@ -534,8 +534,8 @@ func (adapter *queryHarnessAdapter) BuildLaunchDescriptor(_ context.Context, req
 	return WorkerLaunchDescriptor{
 		ProfileID: request.ProfileID, Harness: "codex", Executable: "/usr/local/bin/codex",
 		Arguments: []string{"--model", "reviewed-model"}, WorkingDirectory: request.WorkingDirectory,
-		EnvironmentKeys:     []string{"DEV_CREW_ATTACHMENT"},
-		EnvironmentBindings: map[string]string{"DEV_CREW_ATTACHMENT": request.Attachment.MountSocketPath},
+		EnvironmentKeys:     []string{"COMIS_EXECUTION_ATTACHMENT"},
+		EnvironmentBindings: map[string]string{"COMIS_EXECUTION_ATTACHMENT": request.Attachment.MountSocketPath},
 		TerminalAllowEntry:  "terminal-codex-reviewed", Attachment: request.Attachment,
 		ExpectedAcknowledgement: LaunchAcknowledgement{
 			TaskHandle: request.TaskHandle, ManagedRunID: request.ManagedRunID,

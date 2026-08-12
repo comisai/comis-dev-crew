@@ -150,8 +150,8 @@ All four commands support `--help` and `--version`.
 
 ## Worker reporter contract
 
-Workers receive `devcrew-report` with `DEV_CREW_ATTACHMENT` and
-`DEV_CREW_ATTACHMENT_TARGET_NAME` set by the launch descriptor from the same
+Workers receive `devcrew-report` with `COMIS_EXECUTION_ATTACHMENT` and
+`COMIS_EXECUTION_ATTACHMENT_TARGET_NAME` set by the host-managed terminal from the same
 activation-returned binding. The former is the Comis-protected task socket at
 `/run/comis/attachments/<attachmentTargetName>`; the latter must exactly match
 that path's host-assigned `attachment-<32 lowercase hex>.sock` basename. The
