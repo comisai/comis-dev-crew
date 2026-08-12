@@ -88,7 +88,7 @@ func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(
 		"exec", "--json", "--strict-config", "--ignore-user-config", "--ignore-rules", "--ephemeral",
 		"--color", "never", "--model", profile.Model, "--sandbox", "workspace-write",
 		"-c", `model_reasoning_effort="high"`, "--cd", request.WorkingDirectory,
-		"Before doing any task work, acknowledge the exact protected launch binding with `devcrew-report acknowledge`. Then read the pinned task brief with `devcrew-report brief`. Use `devcrew-report` for sparse progress, decisions, blocked state, candidate completion, and failure. Treat the protected runtime attachment as the only task/report authority.\n",
+		"Before doing any task work, acknowledge the exact protected launch binding with `devcrew-report acknowledge`. Then read the pinned task brief with `devcrew-report brief`. If either command fails, stop without reading or changing the workspace; do not continue task work. Use `devcrew-report` for sparse progress, decisions, blocked state, candidate completion, and failure. Treat the protected runtime attachment as the only task/report authority.\n",
 	}
 	if strings.Join(descriptor.Arguments, "\x00") != strings.Join(wantArguments, "\x00") {
 		t.Fatalf("Codex argv = %q, want %q", descriptor.Arguments, wantArguments)
@@ -108,6 +108,7 @@ func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(
 	bootstrap := descriptor.Arguments[len(descriptor.Arguments)-1]
 	if !strings.Contains(bootstrap, "devcrew-report acknowledge") ||
 		!strings.Contains(bootstrap, "devcrew-report brief") ||
+		!strings.Contains(bootstrap, "If either command fails, stop without reading or changing the workspace") ||
 		strings.Index(bootstrap, "devcrew-report acknowledge") > strings.Index(bootstrap, "devcrew-report brief") ||
 		!containsString(descriptor.EnvironmentKeys, "COMIS_EXECUTION_ATTACHMENT") ||
 		!containsString(descriptor.EnvironmentKeys, "COMIS_EXECUTION_ATTACHMENT_TARGET_NAME") ||
