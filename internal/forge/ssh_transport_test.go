@@ -63,6 +63,52 @@ func TestSSHTransportExecutesOnlyPinnedGitRemoteCommand(t *testing.T) {
 	}
 }
 
+func TestSSHTransportRelaysGitProtocolInputToPinnedProcess(t *testing.T) {
+	root := canonicalForgeTempDir(t)
+	sshExecutable := filepath.Join(root, "ssh-fixture")
+	if err := os.WriteFile(sshExecutable, []byte("#!/bin/sh\nexec /bin/cat\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	keyFile := filepath.Join(root, "deploy-key")
+	knownHosts := filepath.Join(root, "known-hosts")
+	if err := os.WriteFile(keyFile, []byte("fixture-key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(knownHosts, []byte("github.com fixture-host-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config := SSHTransportConfig{
+		Executable: sshExecutable, KeyFile: keyFile, KnownHostsFile: knownHosts,
+		ExpectedHost: "github.com", RemotePath: "/fixture-owner/fixture-repository.git",
+	}
+	arguments := []string{"git@github.com", "git-receive-pack '/fixture-owner/fixture-repository.git'"}
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalStdin := os.Stdin
+	os.Stdin = reader
+	t.Cleanup(func() {
+		os.Stdin = originalStdin
+		_ = reader.Close()
+	})
+	payload := []byte("git-pack-protocol-fixture")
+	if _, err := writer.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if exit := RunSSHTransport(context.Background(), arguments, &stdout, &stderr, config); exit != 0 {
+		t.Fatalf("RunSSHTransport() exit = %d, stderr=%q", exit, stderr.String())
+	}
+	if !bytes.Equal(stdout.Bytes(), payload) {
+		t.Fatalf("RunSSHTransport() stdout = %q, want relayed protocol input", stdout.Bytes())
+	}
+}
+
 func TestGitBranchPusherMaterializesBoundedDeployKeyOnlyForOperation(t *testing.T) {
 	root := canonicalForgeTempDir(t)
 	credentials := filepath.Join(root, "credentials")
