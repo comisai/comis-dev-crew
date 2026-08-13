@@ -161,6 +161,53 @@ func TestQueries_ProjectDurableCandidateAndReportEvidence(t *testing.T) {
 	}
 }
 
+func TestQueries_ExposeContentFreeEvidenceAcrossTaskViews(t *testing.T) {
+	task := queryTask("task-evidence-view", domain.TaskCleanupHeld, 12)
+	evidence := TaskEvidenceView{
+		Candidate: CandidateEvidenceView{
+			Status: CandidateEvidenceJudged, HeadRevision: strings.Repeat("b", 40),
+			EvidenceDigest: strings.Repeat("c", 64), ReconciliationOperationID: "reconcile-view-0001",
+		},
+		Activity: ActivityEvidenceView{
+			Status: ActivityEvidenceAuthenticatedReport, ReportID: "report-view-0001",
+			ReportKind: domain.ReportCandidateComplete, AcceptedAtMs: task.UpdatedAt.UnixMilli(),
+		},
+		Decision:   DecisionEvidenceView{Status: DecisionEvidenceResolved, DecisionReportID: "decision-view-0001", ResolutionReportID: "resolution-view-0001"},
+		Validation: ValidationEvidenceView{Status: ValidationEvidenceAccepted, EvidenceDigest: strings.Repeat("c", 64)},
+		Delivery: DeliveryEvidenceView{
+			Status: DeliveryEvidenceDelivered, EvidenceOperationID: "delivery-view-0001",
+			EvidenceRef: "evidence-view-0001", PullRequestID: "github-pr-17",
+		},
+		Cleanup: CleanupEvidenceView{Status: CleanupEvidenceHeld, OperationID: "cleanup-view-0001", OpenHoldCount: 1},
+		Authority: TaskAuthorityView{
+			ManagedRunID: task.ManagedRunID, WorkspaceLeaseID: task.WorkspaceLeaseID,
+			ExecutionAttachmentID: task.ExecutionAttachmentID, PreparationOperationID: "prepare-view-0001",
+		},
+	}
+	repository := &queryRepository{tasks: []domain.Task{task}, taskEvidence: evidence}
+	queries, err := NewQueries(QueryConfig{Repository: repository, Clock: time.Now})
+	if err != nil {
+		t.Fatalf("NewQueries() error = %v", err)
+	}
+
+	show, err := queries.ShowTask(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("ShowTask() error = %v", err)
+	}
+	explanation, err := queries.ExplainTask(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("ExplainTask() error = %v", err)
+	}
+	if !reflect.DeepEqual(show.Evidence, evidence) || !reflect.DeepEqual(explanation.Evidence, evidence) {
+		t.Fatalf("task evidence diverged: show=%#v explain=%#v", show.Evidence, explanation.Evidence)
+	}
+	if show.Summary.Head != evidence.Candidate.HeadRevision || show.Summary.Activity != "authenticated_report" ||
+		show.Summary.Validation != "accepted" || show.Summary.BlockedBy != "none" ||
+		show.Summary.Attention != "cleanup_hold" || !repository.taskEvidenceCalled {
+		t.Fatalf("task summary = %#v, evidence read = %v", show.Summary, repository.taskEvidenceCalled)
+	}
+}
+
 func TestQueries_ExplainFailedCandidateFromDurableJudgment(t *testing.T) {
 	for _, test := range []struct {
 		name      string
@@ -618,19 +665,30 @@ func failureCode(err error) domain.ErrorCode {
 }
 
 type queryRepository struct {
-	tasks             []domain.Task
-	operation         domain.OperationRecord
-	preparation       ManagedRunPreparation
-	preparationErr    error
-	stateVersion      int64
-	stateVersionErr   error
-	readErr           error
-	readCalled        bool
-	snapshotCalled    bool
-	candidateJudgment domain.CandidateJudgment
-	candidateEvidence *domain.SealedDeliveryEvidence
-	candidateErr      error
-	candidateCalled   bool
+	tasks              []domain.Task
+	operation          domain.OperationRecord
+	preparation        ManagedRunPreparation
+	preparationErr     error
+	stateVersion       int64
+	stateVersionErr    error
+	readErr            error
+	readCalled         bool
+	snapshotCalled     bool
+	candidateJudgment  domain.CandidateJudgment
+	candidateEvidence  *domain.SealedDeliveryEvidence
+	candidateErr       error
+	candidateCalled    bool
+	taskEvidence       TaskEvidenceView
+	taskEvidenceErr    error
+	taskEvidenceCalled bool
+}
+
+func (repository *queryRepository) ReadTaskEvidence(context.Context, string) (TaskEvidenceView, error) {
+	repository.taskEvidenceCalled = true
+	if repository.taskEvidenceErr != nil {
+		return TaskEvidenceView{}, repository.taskEvidenceErr
+	}
+	return repository.taskEvidence, nil
 }
 
 func (repository *queryRepository) LatestCandidateEvidence(
