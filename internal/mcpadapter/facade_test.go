@@ -329,6 +329,13 @@ func TestFacade_UncertainTerminalMutationsReconcileBeforeExactRetry(t *testing.T
 		want    string
 	}{
 		{
+			name: "reconciliation", command: "ReconcileTask", want: "reconcile:reconciliation-0001:task-0001:validate-clean-candidate,operation:reconcile-0001:reconciliation-0001,reconcile:reconciliation-0001:task-0001:validate-clean-candidate",
+			call: func(facade *Facade, ctx context.Context, request *mcp.CallToolRequest) (localapi.TaskMutationResult, error) {
+				_, result, callErr := facade.reconcileTask(ctx, request, ReconcileTaskInput{TaskHandle: "task-0001", Action: application.ReconcileValidateCleanCandidate})
+				return result, callErr
+			},
+		},
+		{
 			name: "handback", command: "HandbackTask", want: "handback:handback-0001:task-0001:validate-developer-work,operation:reconcile-0001:handback-0001,handback:handback-0001:task-0001:validate-developer-work",
 			call: func(facade *Facade, ctx context.Context, request *mcp.CallToolRequest) (localapi.TaskMutationResult, error) {
 				_, result, callErr := facade.handbackTask(ctx, request, HandbackTaskInput{TaskHandle: "task-0001", Action: application.HandbackValidateDeveloperWork})
@@ -347,10 +354,11 @@ func TestFacade_UncertainTerminalMutationsReconcileBeforeExactRetry(t *testing.T
 		t.Run(test.name, func(t *testing.T) {
 			operationID := test.name + "-0001"
 			client := &fakeClient{
-				operation:      application.OperationView{SchemaVersion: 1, OperationID: operationID, Command: test.command, Status: domain.OperationCompleted, StateVersion: 7},
-				handbackResult: localapi.TaskMutationResult{TaskHandle: "task-0001", State: domain.TaskValidating},
-				cleanupResult:  localapi.TaskMutationResult{TaskHandle: "task-0001", State: domain.TaskCleaned},
-				handbackErrors: []error{unavailable, nil}, cleanupErrors: []error{unavailable, nil},
+				operation:       application.OperationView{SchemaVersion: 1, OperationID: operationID, Command: test.command, Status: domain.OperationCompleted, StateVersion: 7},
+				reconcileResult: localapi.TaskMutationResult{TaskHandle: "task-0001", State: domain.TaskValidating},
+				handbackResult:  localapi.TaskMutationResult{TaskHandle: "task-0001", State: domain.TaskValidating},
+				cleanupResult:   localapi.TaskMutationResult{TaskHandle: "task-0001", State: domain.TaskCleaned},
+				reconcileErrors: []error{unavailable, nil}, handbackErrors: []error{unavailable, nil}, cleanupErrors: []error{unavailable, nil},
 			}
 			facade, createErr := New(Config{Client: client, ServiceInstanceID: "service-instance-0001", Version: "test", NewOperationID: func() (string, error) { return "reconcile-0001", nil }, ReconcileTimeout: time.Second})
 			if createErr != nil {
@@ -444,6 +452,7 @@ type fakeClient struct {
 	reconcileResult localapi.TaskMutationResult
 	cleanupResult   localapi.TaskMutationResult
 	handbackErrors  []error
+	reconcileErrors []error
 	cleanupErrors   []error
 }
 
@@ -453,7 +462,12 @@ func (client *fakeClient) ReconcileTask(
 	input localapi.ReconcileTaskInput,
 ) (localapi.TaskMutationResult, error) {
 	client.calls = append(client.calls, "reconcile:"+operationID+":"+input.TaskHandle+":"+string(input.Action))
-	return client.reconcileResult, nil
+	if len(client.reconcileErrors) == 0 {
+		return client.reconcileResult, nil
+	}
+	err := client.reconcileErrors[0]
+	client.reconcileErrors = client.reconcileErrors[1:]
+	return client.reconcileResult, err
 }
 
 func (client *fakeClient) CleanupTask(
