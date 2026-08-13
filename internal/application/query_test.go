@@ -718,6 +718,7 @@ type queryRepository struct {
 
 func (repository *queryRepository) ReadTaskObservation(ctx context.Context, handle string) (TaskObservation, error) {
 	repository.observationCalled = true
+	repository.taskEvidenceCalled = true
 	task, err := repository.GetTask(ctx, handle)
 	if err != nil {
 		return TaskObservation{}, err
@@ -727,11 +728,19 @@ func (repository *queryRepository) ReadTaskObservation(ctx context.Context, hand
 
 func (repository *queryRepository) TaskEvidenceSnapshot(context.Context) ([]TaskObservation, int64, error) {
 	repository.evidenceSnapshotCalled = true
+	repository.readCalled = true
+	repository.snapshotCalled = true
+	if repository.readErr != nil {
+		return nil, 0, repository.readErr
+	}
+	if repository.stateVersionErr != nil {
+		return nil, 0, repository.stateVersionErr
+	}
 	observations := make([]TaskObservation, 0, len(repository.tasks))
 	for _, task := range repository.tasks {
 		observations = append(observations, TaskObservation{Task: task, Evidence: repository.taskEvidence})
 	}
-	return observations, repository.stateVersion, repository.readErr
+	return observations, repository.stateVersion, nil
 }
 
 func (repository *queryRepository) ReadTaskEvidence(context.Context, string) (TaskEvidenceView, error) {

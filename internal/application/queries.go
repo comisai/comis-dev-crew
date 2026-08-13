@@ -26,6 +26,11 @@ type taskEvidenceReader interface {
 	ReadTaskEvidence(context.Context, string) (TaskEvidenceView, error)
 }
 
+type atomicTaskEvidenceReader interface {
+	ReadTaskObservation(context.Context, string) (TaskObservation, error)
+	TaskEvidenceSnapshot(context.Context) ([]TaskObservation, int64, error)
+}
+
 type taskRecoveryEvidenceReader interface {
 	ReadTaskRecoveryEvidence(context.Context, string) (TaskRecoveryEvidence, error)
 }
@@ -152,12 +157,13 @@ func (queries *Queries) ShowTask(ctx context.Context, handle string) (TaskDetail
 	if err := domain.ValidateTaskHandle(handle); err != nil {
 		return TaskDetail{}, invalidReferenceFailure("task handle", err)
 	}
-	task, err := queries.repository.GetTask(ctx, handle)
+	observation, err := queries.taskObservation(ctx, handle)
 	if err != nil {
 		return TaskDetail{}, translateReadError(err, "task")
 	}
+	task := observation.Task
 	now := queries.now()
-	summary, evidence, err := queries.projectTask(ctx, task, now)
+	summary, evidence, err := queries.projectTask(ctx, observation, now)
 	if err != nil {
 		return TaskDetail{}, err
 	}
@@ -184,12 +190,13 @@ func (queries *Queries) ExplainTask(ctx context.Context, handle string) (TaskExp
 	if err := domain.ValidateTaskHandle(handle); err != nil {
 		return TaskExplanation{}, invalidReferenceFailure("task handle", err)
 	}
-	task, err := queries.repository.GetTask(ctx, handle)
+	observation, err := queries.taskObservation(ctx, handle)
 	if err != nil {
 		return TaskExplanation{}, translateReadError(err, "task")
 	}
+	task := observation.Task
 	now := queries.now()
-	summary, evidence, err := queries.projectTask(ctx, task, now)
+	summary, evidence, err := queries.projectTask(ctx, observation, now)
 	if err != nil {
 		return TaskExplanation{}, err
 	}
@@ -395,19 +402,41 @@ func launchAdapterFailure(cause error) error {
 	)
 }
 
-func (queries *Queries) taskSnapshot(ctx context.Context) ([]domain.Task, int64, error) {
+func (queries *Queries) taskSnapshot(ctx context.Context) ([]TaskObservation, int64, error) {
+	if reader, ok := queries.repository.(atomicTaskEvidenceReader); ok {
+		observations, stateVersion, err := reader.TaskEvidenceSnapshot(ctx)
+		if err != nil {
+			return nil, 0, translateReadError(err, "task evidence snapshot")
+		}
+		return observations, stateVersion, nil
+	}
 	tasks, stateVersion, err := queries.repository.TaskSnapshot(ctx)
 	if err != nil {
 		return nil, 0, translateReadError(err, "task snapshot")
 	}
-	return tasks, stateVersion, nil
+	observations := make([]TaskObservation, 0, len(tasks))
+	for _, task := range tasks {
+		observations = append(observations, TaskObservation{Task: task})
+	}
+	return observations, stateVersion, nil
+}
+
+func (queries *Queries) taskObservation(ctx context.Context, handle string) (TaskObservation, error) {
+	if reader, ok := queries.repository.(atomicTaskEvidenceReader); ok {
+		return reader.ReadTaskObservation(ctx, handle)
+	}
+	task, err := queries.repository.GetTask(ctx, handle)
+	if err != nil {
+		return TaskObservation{}, err
+	}
+	return TaskObservation{Task: task}, nil
 }
 
 func (queries *Queries) now() time.Time {
 	return queries.clock().UTC()
 }
 
-func (queries *Queries) projectTasks(ctx context.Context, tasks []domain.Task, now time.Time) ([]TaskSummary, error) {
+func (queries *Queries) projectTasks(ctx context.Context, tasks []TaskObservation, now time.Time) ([]TaskSummary, error) {
 	projected := make([]TaskSummary, 0, len(tasks))
 	for _, task := range tasks {
 		summary, _, err := queries.projectTask(ctx, task, now)
@@ -421,9 +450,10 @@ func (queries *Queries) projectTasks(ctx context.Context, tasks []domain.Task, n
 
 func (queries *Queries) projectTask(
 	ctx context.Context,
-	task domain.Task,
+	observation TaskObservation,
 	now time.Time,
 ) (TaskSummary, TaskEvidenceView, error) {
+	task := observation.Task
 	reason, _, _, actions := explainState(task.State)
 	elapsed := now.Sub(task.CreatedAt).Milliseconds()
 	if elapsed < 0 {
@@ -451,9 +481,14 @@ func (queries *Queries) projectTask(
 		NextSafeActions:  actions,
 	}
 	reader, ok := queries.repository.(candidateEvidenceReader)
-	evidence, found, err := queries.readTaskEvidence(ctx, task.Handle)
-	if err != nil {
-		return TaskSummary{}, TaskEvidenceView{}, err
+	evidence := observation.Evidence
+	found := evidence.Candidate.Status != ""
+	var err error
+	if !found {
+		evidence, found, err = queries.readTaskEvidence(ctx, task.Handle)
+		if err != nil {
+			return TaskSummary{}, TaskEvidenceView{}, err
+		}
 	}
 	if found {
 		applyTaskEvidence(&summary, evidence)
