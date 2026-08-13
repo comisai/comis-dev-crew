@@ -105,7 +105,9 @@ These are enforced by the test suite, not just documented:
   identity, or satisfy approval.
 - **Fail closed on ambiguity.** Dirty, divergent, symlink-escaped, or
   cleanup-ambiguous postures refuse the operation rather than overwrite or remove
-  work.
+  work. A refused cleanup remains durably held; after the operator restores a
+  clean worktree, a fresh cleanup call for that exact task resumes the held
+  release-before-removal sequence.
 - **Content-free diagnostics.** Normal logs and events carry no briefs,
   objectives, reports, diffs, terminal output, paths, full arguments, environment
   values, or credentials.

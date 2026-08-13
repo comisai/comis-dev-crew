@@ -215,9 +215,9 @@ func TestCleanupCoordinator_FailsClosedAcrossCleanupBoundaries(t *testing.T) {
 		store.beginErr = errors.New("store unavailable")
 		runFailure(t, coordinator)
 	})
-	t.Run("durable identity mismatch", func(t *testing.T) {
+	t.Run("durable task identity mismatch", func(t *testing.T) {
 		record := cleanupFixtureRecord(head)
-		record.OperationID = "cleanup-task-other"
+		record.TaskHandle = "task-cleanup-other"
 		coordinator, _, _, _, _, _ := newCoordinator(record)
 		runFailure(t, coordinator)
 	})

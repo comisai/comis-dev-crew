@@ -147,17 +147,38 @@ func findTaskCleanupRecord(
 	source queryer,
 	operationID string,
 ) (application.TaskCleanupRecord, bool, error) {
-	const query = `SELECT operation_id, subject_digest, task_handle, preparation_operation_id,
+	return scanTaskCleanupRecord(source.QueryRowContext(
+		ctx,
+		taskCleanupRecordQuery+" WHERE operation_id = ?",
+		operationID,
+	))
+}
+
+func findTaskCleanupRecordByTask(
+	ctx context.Context,
+	source queryer,
+	taskHandle string,
+) (application.TaskCleanupRecord, bool, error) {
+	return scanTaskCleanupRecord(source.QueryRowContext(
+		ctx,
+		taskCleanupRecordQuery+" WHERE task_handle = ?",
+		taskHandle,
+	))
+}
+
+const taskCleanupRecordQuery = `SELECT operation_id, subject_digest, task_handle, preparation_operation_id,
         managed_run_id, workspace_lease_id, repository_id, worktree_path,
         head_revision, evidence_digest, pull_request_id, required_forge_checks_json,
         report_artifact_hash, stage, release_operation_id, released_at,
         snapshot_branch, snapshot_head_revision, snapshot_cleanliness
-        FROM task_cleanup_operations WHERE operation_id = ?`
+		FROM task_cleanup_operations`
+
+func scanTaskCleanupRecord(row rowScanner) (application.TaskCleanupRecord, bool, error) {
 	var record application.TaskCleanupRecord
 	var checks, releasedAt string
 	var snapshotBranch, snapshotHead string
 	var snapshotCleanliness application.WorkspaceCleanliness
-	err := source.QueryRowContext(ctx, query, operationID).Scan(
+	err := row.Scan(
 		&record.OperationID, &record.SubjectDigest, &record.TaskHandle, &record.PreparationOperationID,
 		&record.ManagedRunID, &record.WorkspaceLeaseID, &record.RepositoryID, &record.WorktreePath,
 		&record.HeadRevision, &record.EvidenceDigest, &record.PullRequestID, &checks,

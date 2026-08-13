@@ -96,13 +96,14 @@ func TestTaskCleanupStore_PersistsReleaseBeforeExactRemovalAuthorizationAndCompl
 }
 
 func TestTaskCleanupStore_ReturnsHeldCleanupForFreshSameTaskOperation(t *testing.T) {
-	store, task, _ := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	store, task, sealed := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
 	first := cleanupTestMutation(task, "cleanup-held-original")
 	record, err := store.BeginTaskCleanup(context.Background(), first)
 	if err != nil {
 		t.Fatalf("BeginTaskCleanup(original) error = %v", err)
 	}
 	retry := cleanupTestMutation(task, "cleanup-held-retry")
+	retry.SubjectDigest = strings.Repeat("f", 64)
 	resumed, err := store.BeginTaskCleanup(context.Background(), retry)
 	if err != nil {
 		t.Fatalf("BeginTaskCleanup(fresh same-task operation) error = %v", err)
@@ -110,6 +111,74 @@ func TestTaskCleanupStore_ReturnsHeldCleanupForFreshSameTaskOperation(t *testing
 	if resumed.OperationID != record.OperationID || resumed.SubjectDigest != record.SubjectDigest ||
 		resumed.TaskHandle != task.Handle || resumed.Stage != application.CleanupPrepared {
 		t.Fatalf("BeginTaskCleanup(fresh same-task operation) = %#v, want %#v", resumed, record)
+	}
+	snapshot, truth, receipt := cleanupTestProof(task, sealed, record, first.ReleasedAt)
+	if _, err := store.RecordTaskCleanupHostRelease(context.Background(), application.TaskCleanupHostReleaseMutation{
+		OperationID: record.OperationID, SubjectDigest: record.SubjectDigest,
+		Snapshot: snapshot, DeliveryTruth: truth, Receipt: receipt, At: first.At.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("RecordTaskCleanupHostRelease(resumed) error = %v", err)
+	}
+	if _, err := store.AuthorizeTaskCleanupRemoval(context.Background(), application.TaskCleanupRemovalAuthorization{
+		OperationID: record.OperationID, SubjectDigest: record.SubjectDigest,
+		Snapshot: snapshot, DeliveryTruth: truth, At: first.At.Add(2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("AuthorizeTaskCleanupRemoval(resumed) error = %v", err)
+	}
+	result, err := store.CompleteTaskCleanup(context.Background(), application.TaskCleanupCompletion{
+		OperationID: record.OperationID, SubjectDigest: record.SubjectDigest,
+		RequestOperationID: retry.OperationID, RequestSubjectDigest: retry.SubjectDigest,
+		At: first.At.Add(3 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CompleteTaskCleanup(resumed) error = %v", err)
+	}
+	if result.Task.State != domain.TaskCleaned || result.Operation.ID != retry.OperationID {
+		t.Fatalf("CompleteTaskCleanup(resumed) = %#v", result)
+	}
+	for _, operationID := range []string{first.OperationID, retry.OperationID} {
+		operation, err := store.GetOperation(context.Background(), operationID)
+		if err != nil || operation.Status != domain.OperationCompleted || operation.ResultRef != task.Handle {
+			t.Fatalf("GetOperation(%s) = %#v, %v", operationID, operation, err)
+		}
+	}
+	replayed, err := store.CompleteTaskCleanup(context.Background(), application.TaskCleanupCompletion{
+		OperationID: record.OperationID, SubjectDigest: record.SubjectDigest,
+		RequestOperationID: retry.OperationID, RequestSubjectDigest: retry.SubjectDigest,
+		At: first.At.Add(4 * time.Minute),
+	})
+	if err != nil || replayed.Operation.ID != retry.OperationID || replayed.Task.State != domain.TaskCleaned {
+		t.Fatalf("CompleteTaskCleanup(resumed replay) = %#v, %v", replayed, err)
+	}
+	late := cleanupTestMutation(task, "cleanup-held-late-retry")
+	late.SubjectDigest = strings.Repeat("d", 64)
+	completed, err := store.BeginTaskCleanup(context.Background(), late)
+	if err != nil || completed.Stage != application.CleanupCompleted {
+		t.Fatalf("BeginTaskCleanup(late retry) = %#v, %v", completed, err)
+	}
+	lateResult, err := store.CompleteTaskCleanup(context.Background(), application.TaskCleanupCompletion{
+		OperationID: completed.OperationID, SubjectDigest: completed.SubjectDigest,
+		RequestOperationID: late.OperationID, RequestSubjectDigest: late.SubjectDigest,
+		At: first.At.Add(5 * time.Minute),
+	})
+	if err != nil || lateResult.Operation.ID != late.OperationID || lateResult.Task.State != domain.TaskCleaned {
+		t.Fatalf("CompleteTaskCleanup(late retry) = %#v, %v", lateResult, err)
+	}
+}
+
+func TestTaskCleanupStore_RejectsFreshOperationAlreadyOwnedByAnotherCommand(t *testing.T) {
+	store, task, _ := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	operation := storeOperation("cleanup-operation-collision", task.StateVersion+1)
+	if err := store.RecordOperation(context.Background(), operation); err != nil {
+		t.Fatalf("RecordOperation(collision) error = %v", err)
+	}
+	mutation := cleanupTestMutation(task, operation.ID)
+	if _, err := store.BeginTaskCleanup(context.Background(), mutation); !errors.Is(err, application.ErrConflict) {
+		t.Fatalf("BeginTaskCleanup(operation collision) error = %v, want ErrConflict", err)
+	}
+	unchanged, err := store.GetTask(context.Background(), task.Handle)
+	if err != nil || unchanged.State != domain.TaskDelivered {
+		t.Fatalf("GetTask(after operation collision) = %#v, %v", unchanged, err)
 	}
 }
 

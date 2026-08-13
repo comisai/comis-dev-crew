@@ -160,7 +160,16 @@ repository, pinned base, branch, and path identity.
 Deterministic bounded branch naming is collision-safe; retries return the same
 worktree. Dirty, divergent, unpushed, symlink-escaped, primary-checkout,
 live-sibling, untracked-target, and cleanup-ambiguous postures fail closed without
-overwriting or removing work.
+overwriting or removing work. A task held by one refused cleanup can be resumed by
+a fresh same-task caller operation after the safety condition is corrected; the
+original cleanup record remains the sole release/removal authority and the retry
+is stored as an alias of the one completed effect.
+
+Threat posture: resumption cannot select a task, worktree, lease, head, or delivery
+record from the fresh caller operation. The unique existing task cleanup record
+remains authoritative, an operation ID already owned by another command is rejected,
+and the service re-proves the clean exact worktree and current forge truth before
+host release and again before removal authorization.
 
 ## Reporter seam
 

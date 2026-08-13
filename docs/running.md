@@ -137,6 +137,13 @@ bounded operation reconciliation and, after a completed durable outcome, one exa
 idempotent replay. The command defaults to a separate `mcp.sock` and validates the
 out-of-band service instance against every private call context.
 
+`cleanup_task` may refuse after it has placed the task in a durable cleanup hold,
+for example when the exact worktree is dirty. Once that safety condition is
+corrected, call `cleanup_task` again with the same task handle. The service resumes
+the existing cleanup record even though the new MCP invocation has a fresh caller
+operation ID, and records both operation identities against the single completed
+cleanup effect.
+
 ## Operator CLI surface
 
 ```text
