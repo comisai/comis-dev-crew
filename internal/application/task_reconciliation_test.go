@@ -108,6 +108,84 @@ func TestTaskCandidateReconciler_ClassifiesMissingDurableAuthorityAsPrecondition
 	}
 }
 
+func TestTaskCandidateReconciler_ClassifiesBoundaryFailuresWithoutLeakingAuthority(t *testing.T) {
+	now := time.Date(2026, time.August, 13, 10, 8, 0, 0, time.UTC)
+	tests := []struct {
+		name      string
+		command   ReconcileTaskCommand
+		configure func(*taskReconciliationStore, *taskReconciliationInspector)
+		clock     Clock
+		wantCode  domain.ErrorCode
+		wantRetry bool
+	}{
+		{name: "invalid closed action", command: ReconcileTaskCommand{
+			OperationID: "operation-reconcile-boundary", TaskHandle: "task-reconcile-application",
+			Action: ReconcileTaskAction("invented"),
+		}, wantCode: domain.ErrorInvalidArgument},
+		{name: "replay lookup unavailable", configure: func(store *taskReconciliationStore, _ *taskReconciliationInspector) {
+			store.replayErr = ErrConflict
+		}, wantCode: domain.ErrorConflict},
+		{name: "authority is not found", configure: func(store *taskReconciliationStore, _ *taskReconciliationInspector) {
+			store.authorityErr = ErrNotFound
+		}, wantCode: domain.ErrorPrecondition},
+		{name: "service clock is invalid", clock: func() time.Time { return time.Time{} },
+			wantCode: domain.ErrorUnavailable, wantRetry: true},
+		{name: "commit authority changed", configure: func(store *taskReconciliationStore, _ *taskReconciliationInspector) {
+			store.commitErr = ErrPrecondition
+		}, wantCode: domain.ErrorPrecondition},
+		{name: "commit replay conflicts", configure: func(store *taskReconciliationStore, _ *taskReconciliationInspector) {
+			store.commitErr = ErrConflict
+		}, wantCode: domain.ErrorConflict},
+		{name: "commit result names another task", configure: func(store *taskReconciliationStore, _ *taskReconciliationInspector) {
+			store.result = MutationResult{Task: domain.Task{Handle: "task-reconcile-other"}}
+		}, wantCode: domain.ErrorUnavailable, wantRetry: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			authority := reconciliationAuthority(now)
+			store := &taskReconciliationStore{authority: authority}
+			inspector := &taskReconciliationInspector{snapshot: WorkspaceSnapshot{
+				TaskHandle: authority.Task.Handle, RepositoryID: authority.Task.RepositoryID,
+				WorktreePath: authority.Preparation.RequestedWorkspaceRoot,
+				Branch:       "devcrew/task-reconcile-boundary", HeadRevision: strings.Repeat("b", 40),
+				Cleanliness: WorkspaceClean,
+			}}
+			if test.configure != nil {
+				test.configure(store, inspector)
+			}
+			clock := test.clock
+			if clock == nil {
+				clock = func() time.Time { return now }
+			}
+			reconciler, err := NewTaskCandidateReconciler(TaskCandidateReconcilerConfig{
+				Store: store, Workspaces: inspector, Clock: clock,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			command := test.command
+			if command.OperationID == "" {
+				command = ReconcileTaskCommand{
+					OperationID: "operation-reconcile-boundary", TaskHandle: authority.Task.Handle,
+					Action: ReconcileValidateCleanCandidate,
+				}
+			}
+			_, err = reconciler.ReconcileTask(context.Background(), command)
+			var failure *domain.Failure
+			if !errors.As(err, &failure) || failure.Code != test.wantCode || failure.Retryable != test.wantRetry {
+				t.Fatalf("ReconcileTask() error = %#v, want %s retry=%t", err, test.wantCode, test.wantRetry)
+			}
+		})
+	}
+
+	if err := reconciliationPreconditionFailure("", "", nil); err.Error() != "task reconciliation precondition classification failed" {
+		t.Fatalf("reconciliationPreconditionFailure(invalid) = %v", err)
+	}
+	if err := reconciliationUnavailableFailure("", "", nil); err.Error() != "task reconciliation availability classification failed" {
+		t.Fatalf("reconciliationUnavailableFailure(invalid) = %v", err)
+	}
+}
+
 func TestTaskCandidateReconciler_RefusesAmbiguousOrUnsafeRecoveryEvidence(t *testing.T) {
 	now := time.Date(2026, time.August, 13, 10, 10, 0, 0, time.UTC)
 	privateCause := errors.New("private workspace and terminal detail")
@@ -227,6 +305,7 @@ type taskReconciliationStore struct {
 	replayErr      error
 	authorityErr   error
 	commitErr      error
+	result         MutationResult
 	authorityCalls int
 	commitCalls    int
 }
@@ -251,6 +330,9 @@ func (store *taskReconciliationStore) CommitTaskCandidateReconciliation(
 	store.mutation = mutation
 	if store.commitErr != nil {
 		return MutationResult{}, store.commitErr
+	}
+	if store.result.Task.Handle != "" {
+		return store.result, nil
 	}
 	return MutationResult{Task: store.authority.Task}, nil
 }

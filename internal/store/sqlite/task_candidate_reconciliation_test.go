@@ -91,6 +91,55 @@ func TestTaskRecoveryEvidence_DistinguishesSettledCandidateGapFromRestartAmbigui
 	}
 }
 
+func TestTaskRecoveryEvidence_RefusesInvalidOrContradictoryAuthority(t *testing.T) {
+	store, task, _, _ := openUnknownCandidateReconciliationFixture(t, "task-recovery-refusal")
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.ReadTaskRecoveryEvidence(context.Background(), "../invalid"); err == nil {
+		t.Fatal("ReadTaskRecoveryEvidence(invalid handle) error = nil")
+	}
+	if _, err := store.ReadTaskRecoveryEvidence(context.Background(), "task-recovery-missing"); !errors.Is(err, application.ErrNotFound) {
+		t.Fatalf("ReadTaskRecoveryEvidence(missing) error = %v, want not found", err)
+	}
+	if _, err := store.db.Exec("UPDATE tasks SET state = 'working' WHERE handle = ?", task.Handle); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReadTaskRecoveryEvidence(context.Background(), task.Handle); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("ReadTaskRecoveryEvidence(non-unknown) error = %v, want precondition", err)
+	}
+}
+
+func TestTaskRecoveryEvidence_TreatsCandidateReportAndAmbiguousPreparationAsUnresolved(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Store, domain.Task)
+	}{
+		{name: "worker candidate exists", mutate: func(store *Store, task domain.Task) {
+			_, _ = store.db.Exec(`INSERT INTO reports(
+				task_handle, local_report_id, subject_digest, schema_version, brief_revision,
+				brief_revision_hash, kind, external_key, summary, details, state_version, accepted_at)
+				VALUES (?, 'candidate-recovery-existing', ?, 1, ?, ?, 'candidate_complete', '',
+				'Candidate exists.', '', 999, ?)`, task.Handle, strings.Repeat("e", 64),
+				task.BriefRevision, task.BriefRevisionHash, formatTime(task.UpdatedAt))
+		}},
+		{name: "preparation operation is ambiguous", mutate: func(store *Store, task domain.Task) {
+			operation := storeOperation("operation-prepare-recovery-second", task.StateVersion)
+			operation.ResultRef = task.Handle
+			_ = store.RecordOperation(context.Background(), operation)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store, task, _, _ := openUnknownCandidateReconciliationFixture(t, "task-recovery-unresolved")
+			t.Cleanup(func() { _ = store.Close() })
+			test.mutate(store, task)
+			evidence, err := store.ReadTaskRecoveryEvidence(context.Background(), task.Handle)
+			if err != nil || evidence.Kind != application.RecoveryRestartEvidenceUnresolved {
+				t.Fatalf("ReadTaskRecoveryEvidence() = %#v, %v", evidence, err)
+			}
+		})
+	}
+}
+
 func TestTaskCandidateReconciliation_RefusesChangedAuthorityAndUnsafeCandidate(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -137,6 +186,15 @@ func TestTaskCandidateReconciliation_RefusesChangedAuthorityAndUnsafeCandidate(t
 				VALUES ('validation-reconcile-active', ?, 'go-test', 'go', 123,
 				'start-123', 'group-123', 'running', ?, ?)`, mutation.TaskHandle,
 				formatTime(mutation.At.Add(-time.Minute)), formatTime(mutation.At.Add(-time.Minute)))
+		}},
+		{name: "decision remains unresolved", mutate: func(store *Store, mutation *application.TaskCandidateReconciliationMutation) {
+			task, _ := store.GetTask(context.Background(), mutation.TaskHandle)
+			_, _ = store.db.Exec(`INSERT INTO reports(
+				task_handle, local_report_id, subject_digest, schema_version, brief_revision,
+				brief_revision_hash, kind, external_key, summary, details, state_version, accepted_at)
+				VALUES (?, 'decision-reconcile-open', ?, 1, ?, ?, 'decision', 'decision-reconcile',
+				'A bounded decision is required.', '', 999, ?)`, task.Handle, strings.Repeat("e", 64),
+				task.BriefRevision, task.BriefRevisionHash, formatTime(task.UpdatedAt))
 		}},
 	}
 	for _, test := range tests {
