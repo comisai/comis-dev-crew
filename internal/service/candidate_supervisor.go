@@ -60,6 +60,8 @@ type candidateSupervisor struct {
 	config candidateSupervisorConfig
 }
 
+var errCandidatePullRequestTruthUnavailable = errors.New("validate task candidate: pull-request truth is unavailable")
+
 func newCandidateSupervisor(config candidateSupervisorConfig) (*candidateSupervisor, error) {
 	if config.Store == nil || config.Git == nil || config.Catalog == nil || config.Runner == nil ||
 		config.PullRequests == nil || config.InspectArtifact == nil || config.Clock == nil ||
@@ -70,8 +72,8 @@ func newCandidateSupervisor(config candidateSupervisorConfig) (*candidateSupervi
 	return &candidateSupervisor{config: config}, nil
 }
 
-// Run recovers the durable validating-task queue. Unknown evidence remains in
-// validating and is retried; infrastructure errors stop the supervisor. An
+// Run recovers the durable validating-task queue. Unknown evidence and
+// temporarily unavailable forge truth remain validating and are retried. An
 // explicit rejection durably fails only its task and leaves supervision alive.
 func (supervisor *candidateSupervisor) Run(ctx context.Context) error {
 	if supervisor == nil || ctx == nil {
@@ -96,6 +98,9 @@ func (supervisor *candidateSupervisor) Run(ctx context.Context) error {
 			if err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
+				}
+				if errors.Is(err, errCandidatePullRequestTruthUnavailable) {
+					continue
 				}
 				return fmt.Errorf("run candidate supervisor: %w", err)
 			}
@@ -261,7 +266,7 @@ func (supervisor *candidateSupervisor) attachDeliveryEvidence(
 			Title: "Task " + task.Handle, RequiredChecks: required,
 		})
 		if err != nil {
-			return nil, candidateDeliveryMaterial{}, errors.New("validate task candidate: pull-request truth is unavailable")
+			return nil, candidateDeliveryMaterial{}, errCandidatePullRequestTruthUnavailable
 		}
 		bundle.ForgeEvidence = &truth.Evidence
 		return required, candidateDeliveryMaterial{referenceURL: truth.URL}, nil
