@@ -16,8 +16,9 @@ import (
 )
 
 type fixtureExecutor struct {
-	manifest Manifest
-	calls    []Command
+	manifest            Manifest
+	currentBaseRevision string
+	calls               []Command
 }
 
 func (executor *fixtureExecutor) Run(_ context.Context, command Command) ([]byte, error) {
@@ -75,7 +76,14 @@ func (executor *fixtureExecutor) Run(_ context.Context, command Command) ([]byte
 			return []byte{}, nil
 		}
 		if strings.Contains(args, "rev-parse "+manifest.GitHub.BaseBranch) {
-			return []byte(strings.Repeat("d", 40) + "\n"), nil
+			revision := executor.currentBaseRevision
+			if revision == "" {
+				revision = strings.Repeat("d", 40)
+			}
+			return []byte(revision + "\n"), nil
+		}
+		if strings.Contains(args, "merge-base --is-ancestor") {
+			return []byte{}, nil
 		}
 	}
 	if command.Path == manifest.GitHub.CLIPath {
@@ -97,6 +105,26 @@ func (executor *fixtureExecutor) Run(_ context.Context, command Command) ([]byte
 		}
 	}
 	return nil, errors.New("unexpected command: " + command.Path + " " + args)
+}
+
+func TestCollectAcceptsSharedPinnedTaskBaseWhenCanonicalBranchAdvances(t *testing.T) {
+	manifest := validManifest()
+	executor := &fixtureExecutor{manifest: manifest, currentBaseRevision: strings.Repeat("f", 40)}
+	root := filepath.Join(t.TempDir(), "evidence")
+	verdict, err := Collect(context.Background(), manifest, root, executor, manifest.EndedAtMs)
+	if err != nil || !verdict.Passed {
+		t.Fatalf("Collect(advanced canonical base) = %#v, %v", verdict, err)
+	}
+	wantAncestorCheck := "merge-base --is-ancestor " + strings.Repeat("d", 40) + " " + strings.Repeat("f", 40)
+	found := false
+	for _, call := range executor.calls {
+		if call.Path == manifest.GitHub.GitPath && strings.Contains(strings.Join(call.Args, " "), wantAncestorCheck) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Git calls = %#v, want pinned-base ancestry check", executor.calls)
+	}
 }
 
 func TestCollectWritesPrivateBoundedEvidenceAndPassingVerdict(t *testing.T) {
