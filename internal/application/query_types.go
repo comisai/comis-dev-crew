@@ -61,8 +61,26 @@ const (
 	ActionResolveBlock  NextAction = "resolve_block"
 	ActionInspectHealth NextAction = "inspect_service_health"
 	ActionReconcileTask NextAction = "reconcile_task"
+	ActionPrepareTask   NextAction = "prepare_task"
 	ActionNone          NextAction = "none"
 )
+
+// TaskRecoveryEvidenceKind is the closed durable explanation of why an
+// unknown task can or cannot enter clean-candidate reconciliation.
+type TaskRecoveryEvidenceKind string
+
+const (
+	RecoveryTerminalSettledWithoutCandidate TaskRecoveryEvidenceKind = "terminal_settled_without_candidate"
+	RecoveryRestartEvidenceUnresolved       TaskRecoveryEvidenceKind = "restart_evidence_unresolved"
+)
+
+// TaskRecoveryEvidence carries server-owned recovery authority to the query
+// layer. Authority is populated only for a settled terminal without a worker
+// candidate report.
+type TaskRecoveryEvidence struct {
+	Kind      TaskRecoveryEvidenceKind
+	Authority TaskReconciliationAuthority
+}
 
 // DiagnosticCheck is one bounded readiness observation.
 type DiagnosticCheck struct {

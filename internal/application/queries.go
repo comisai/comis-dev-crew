@@ -22,21 +22,27 @@ type candidateEvidenceReader interface {
 	LatestCandidateEvidence(context.Context, string) (*domain.SealedDeliveryEvidence, domain.CandidateJudgment, error)
 }
 
+type taskRecoveryEvidenceReader interface {
+	ReadTaskRecoveryEvidence(context.Context, string) (TaskRecoveryEvidence, error)
+}
+
 // Queries owns every canonical read-only application handler.
 type Queries struct {
-	repository Repository
-	harnesses  WorkerHarnessResolver
-	host       HostIntegrationStatus
-	clock      Clock
+	repository               Repository
+	harnesses                WorkerHarnessResolver
+	host                     HostIntegrationStatus
+	reconciliationWorkspaces ReconciliationWorkspaceInspector
+	clock                    Clock
 }
 
 // QueryConfig supplies durable read authority and the reviewed worker adapter
 // registry. Harnesses may be absent only for the legacy read-only service mode.
 type QueryConfig struct {
-	Repository Repository
-	Harnesses  WorkerHarnessResolver
-	Host       HostIntegrationStatus
-	Clock      Clock
+	Repository               Repository
+	Harnesses                WorkerHarnessResolver
+	Host                     HostIntegrationStatus
+	ReconciliationWorkspaces ReconciliationWorkspaceInspector
+	Clock                    Clock
 }
 
 // NewQueries validates and binds the read-side dependencies.
@@ -47,7 +53,10 @@ func NewQueries(config QueryConfig) (*Queries, error) {
 	if config.Clock == nil {
 		return nil, errors.New("create queries: clock is required")
 	}
-	return &Queries{repository: config.Repository, harnesses: config.Harnesses, host: config.Host, clock: config.Clock}, nil
+	return &Queries{
+		repository: config.Repository, harnesses: config.Harnesses, host: config.Host,
+		reconciliationWorkspaces: config.ReconciliationWorkspaces, clock: config.Clock,
+	}, nil
 }
 
 // Diagnose returns bounded readiness without treating absent host integration as healthy.
@@ -164,6 +173,12 @@ func (queries *Queries) ExplainTask(ctx context.Context, handle string) (TaskExp
 	}
 	now := queries.now()
 	reason, explanation, rootCause, actions := explainState(task.State)
+	if task.State == domain.TaskUnknown {
+		reason, explanation, rootCause, actions, err = queries.explainUnknownRecovery(ctx, task)
+		if err != nil {
+			return TaskExplanation{}, err
+		}
+	}
 	if task.State == domain.TaskFailed {
 		candidateReason, candidateExplanation, candidateRootCause, found, candidateErr := queries.explainCandidateFailure(ctx, task.Handle)
 		if candidateErr != nil {
@@ -186,6 +201,68 @@ func (queries *Queries) ExplainTask(ctx context.Context, handle string) (TaskExp
 		LikelyRootCause: rootCause,
 		NextSafeActions: actions,
 	}, nil
+}
+
+func (queries *Queries) explainUnknownRecovery(
+	ctx context.Context,
+	task domain.Task,
+) (string, string, string, []NextAction, error) {
+	if queries.host == nil || !queries.host.Connected() {
+		return "host_integration_unavailable",
+			"Task recovery is waiting for the authenticated host integration.",
+			"Current terminal authority cannot be refreshed while host control is unavailable.",
+			[]NextAction{ActionInspectHealth}, nil
+	}
+	reader, ok := queries.repository.(taskRecoveryEvidenceReader)
+	if !ok {
+		return restartEvidenceUnresolvedExplanation()
+	}
+	evidence, err := reader.ReadTaskRecoveryEvidence(ctx, task.Handle)
+	if err != nil {
+		return "", "", "", nil, translateReadError(err, "task recovery evidence")
+	}
+	switch evidence.Kind {
+	case RecoveryRestartEvidenceUnresolved:
+		return restartEvidenceUnresolvedExplanation()
+	case RecoveryTerminalSettledWithoutCandidate:
+		if queries.reconciliationWorkspaces == nil {
+			return workspaceNotRecoverableExplanation()
+		}
+		authority := evidence.Authority
+		_, inspectErr := queries.reconciliationWorkspaces.InspectReconciliationCandidate(ctx, ReconciliationWorkspaceRequest{
+			PreparationOperationID: authority.PreparationOperationID,
+			TaskHandle:             task.Handle,
+			RepositoryID:           task.RepositoryID,
+			WorktreePath:           authority.Preparation.RequestedWorkspaceRoot,
+			BaseRevision:           task.BaseRevision,
+		})
+		if inspectErr != nil {
+			if ctx.Err() != nil {
+				return "", "", "", nil, translateReadError(ctx.Err(), "task recovery workspace")
+			}
+			return workspaceNotRecoverableExplanation()
+		}
+		return "terminal_exited_without_candidate_evidence",
+			"The worker terminal exited without an authoritative candidate report.",
+			"The exact registered worktree still contains a clean non-base candidate.",
+			[]NextAction{ActionInspectTask, ActionReconcileTask}, nil
+	default:
+		return restartEvidenceUnresolvedExplanation()
+	}
+}
+
+func restartEvidenceUnresolvedExplanation() (string, string, string, []NextAction, error) {
+	return "restart_evidence_unresolved",
+		"Task recovery authority remains unresolved after a service restart or terminal interruption.",
+		"A settled terminal and exact candidate origin cannot both be proven.",
+		[]NextAction{ActionInspectHealth, ActionInspectTask}, nil
+}
+
+func workspaceNotRecoverableExplanation() (string, string, string, []NextAction, error) {
+	return "workspace_not_recoverable",
+		"The registered task workspace cannot be proven as a recoverable clean candidate.",
+		"The worktree is missing, changed, dirty, divergent, or no longer matches its preparation authority.",
+		[]NextAction{ActionInspectTask, ActionPrepareTask}, nil
 }
 
 func (queries *Queries) explainCandidateFailure(
@@ -376,6 +453,8 @@ func explainState(state domain.TaskState) (string, string, string, []NextAction)
 		return "task_blocked", "Task progress is blocked.", "A required input or external condition is unresolved.", []NextAction{ActionInspectTask, ActionResolveBlock}
 	case domain.TaskUnknown:
 		return "task_unknown", "Task posture cannot be proven from current evidence.", "One or more authoritative observations are missing or contradictory.", []NextAction{ActionInspectHealth, ActionReconcileTask}
+	case domain.TaskReconciling:
+		return "reconciliation_in_progress", "Task reconciliation is already in progress.", "A durable recovery operation owns the current transition.", []NextAction{ActionInspectTask}
 	case domain.TaskFailed, domain.TaskCancelled, domain.TaskCleanupHeld:
 		return "task_" + string(state), "Task requires operator review.", "The durable state records a terminal or safety-held posture.", []NextAction{ActionInspectTask}
 	case domain.TaskDelivered, domain.TaskCleaned:
