@@ -50,6 +50,7 @@ const (
 	MethodGetLaunchPlan Method = "GetLaunchPlan"
 	MethodOperation     Method = "GetOperation"
 	MethodPrepareTask   Method = "PrepareTask"
+	MethodReconcileTask Method = "ReconcileTask"
 	MethodHandbackTask  Method = "HandbackTask"
 	MethodCleanupTask   Method = "CleanupTask"
 )
@@ -57,7 +58,7 @@ const (
 func (method Method) valid() bool {
 	switch method {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
-		MethodOperation, MethodPrepareTask, MethodHandbackTask, MethodCleanupTask:
+		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask:
 		return true
 	default:
 		return false
@@ -75,7 +76,7 @@ const (
 
 // SideEffect returns the authoritative method classification.
 func (method Method) SideEffect() SideEffectClass {
-	if method == MethodPrepareTask || method == MethodHandbackTask || method == MethodCleanupTask {
+	if method == MethodPrepareTask || method == MethodReconcileTask || method == MethodHandbackTask || method == MethodCleanupTask {
 		return SideEffectMutate
 	}
 	return SideEffectRead
@@ -129,6 +130,11 @@ type TaskInterventions interface {
 	HandbackTask(context.Context, application.HandbackTaskCommand) (application.MutationResult, error)
 }
 
+// TaskReconciliation is the canonical unknown-task recovery surface.
+type TaskReconciliation interface {
+	ReconcileTask(context.Context, application.ReconcileTaskCommand) (application.MutationResult, error)
+}
+
 // TaskCleanup is the canonical release-before-removal mutation surface.
 type TaskCleanup interface {
 	CleanupTask(context.Context, application.CleanupTaskCommand) (application.MutationResult, error)
@@ -138,6 +144,7 @@ type TaskCleanup interface {
 type HandlerConfig struct {
 	Queries           ReadQueries
 	Mutations         TaskMutations
+	Reconciliation    TaskReconciliation
 	Interventions     TaskInterventions
 	Cleanup           TaskCleanup
 	ServiceInstanceID string
@@ -148,6 +155,13 @@ type HandlerConfig struct {
 type HandbackTaskInput struct {
 	TaskHandle string                     `json:"taskHandle"`
 	Action     application.HandbackAction `json:"action"`
+}
+
+// ReconcileTaskInput selects one unknown task and the closed clean-candidate
+// validation action. Filesystem and execution authority are intentionally absent.
+type ReconcileTaskInput struct {
+	TaskHandle string                          `json:"taskHandle"`
+	Action     application.ReconcileTaskAction `json:"action"`
 }
 
 // CleanupTaskInput selects one durably delivered task.
