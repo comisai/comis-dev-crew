@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -89,5 +90,25 @@ func TestStore_ReadTaskEvidenceDoesNotOverclaimPendingDelivery(t *testing.T) {
 	}
 	if evidence.Delivery.Status != application.DeliveryEvidencePending {
 		t.Fatalf("delivery status = %q, want pending until final task delivery", evidence.Delivery.Status)
+	}
+}
+
+func TestStore_TaskEvidenceSnapshotsShareOneDurableReadBoundary(t *testing.T) {
+	store, task, sealed := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "snapshot.db"))
+	observation, err := store.ReadTaskObservation(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("ReadTaskObservation() error = %v", err)
+	}
+	if observation.Task.Handle != task.Handle || observation.Task.StateVersion != task.StateVersion ||
+		observation.Evidence.Candidate.EvidenceDigest != sealed.Digest() {
+		t.Fatalf("task observation = %#v, want one exact task/evidence snapshot", observation)
+	}
+	observations, stateVersion, err := store.TaskEvidenceSnapshot(context.Background())
+	if err != nil {
+		t.Fatalf("TaskEvidenceSnapshot() error = %v", err)
+	}
+	if len(observations) != 1 || !reflect.DeepEqual(observations[0], observation) || stateVersion != task.StateVersion {
+		t.Fatalf("task evidence snapshot = %#v version %d, want observation %#v version %d",
+			observations, stateVersion, observation, task.StateVersion)
 	}
 }
