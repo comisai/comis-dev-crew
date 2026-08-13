@@ -208,6 +208,37 @@ func TestQueries_ExposeContentFreeEvidenceAcrossTaskViews(t *testing.T) {
 	}
 }
 
+func TestQueries_UseAtomicTaskEvidenceRepositoryWhenAvailable(t *testing.T) {
+	task := queryTask("task-atomic-view", domain.TaskWorking, 5)
+	repository := &queryRepository{
+		tasks: []domain.Task{task}, stateVersion: task.StateVersion,
+		taskEvidence: TaskEvidenceView{
+			Candidate:  CandidateEvidenceView{Status: CandidateEvidenceNone},
+			Activity:   ActivityEvidenceView{Status: ActivityEvidenceNone},
+			Decision:   DecisionEvidenceView{Status: DecisionEvidenceNone},
+			Validation: ValidationEvidenceView{Status: ValidationEvidenceNotStarted},
+			Delivery:   DeliveryEvidenceView{Status: DeliveryEvidenceNotStarted},
+			Cleanup:    CleanupEvidenceView{Status: CleanupEvidenceNotStarted},
+		},
+	}
+	queries, err := NewQueries(QueryConfig{Repository: repository, Clock: time.Now})
+	if err != nil {
+		t.Fatalf("NewQueries() error = %v", err)
+	}
+	if _, err := queries.ShowTask(context.Background(), task.Handle); err != nil {
+		t.Fatalf("ShowTask() error = %v", err)
+	}
+	if !repository.observationCalled {
+		t.Fatal("ShowTask() did not use the atomic task observation")
+	}
+	if _, err := queries.Fleet(context.Background()); err != nil {
+		t.Fatalf("Fleet() error = %v", err)
+	}
+	if !repository.evidenceSnapshotCalled {
+		t.Fatal("Fleet() did not use the atomic task evidence snapshot")
+	}
+}
+
 func TestQueries_ExplainFailedCandidateFromDurableJudgment(t *testing.T) {
 	for _, test := range []struct {
 		name      string
@@ -665,22 +696,42 @@ func failureCode(err error) domain.ErrorCode {
 }
 
 type queryRepository struct {
-	tasks              []domain.Task
-	operation          domain.OperationRecord
-	preparation        ManagedRunPreparation
-	preparationErr     error
-	stateVersion       int64
-	stateVersionErr    error
-	readErr            error
-	readCalled         bool
-	snapshotCalled     bool
-	candidateJudgment  domain.CandidateJudgment
-	candidateEvidence  *domain.SealedDeliveryEvidence
-	candidateErr       error
-	candidateCalled    bool
-	taskEvidence       TaskEvidenceView
-	taskEvidenceErr    error
-	taskEvidenceCalled bool
+	tasks                  []domain.Task
+	operation              domain.OperationRecord
+	preparation            ManagedRunPreparation
+	preparationErr         error
+	stateVersion           int64
+	stateVersionErr        error
+	readErr                error
+	readCalled             bool
+	snapshotCalled         bool
+	candidateJudgment      domain.CandidateJudgment
+	candidateEvidence      *domain.SealedDeliveryEvidence
+	candidateErr           error
+	candidateCalled        bool
+	taskEvidence           TaskEvidenceView
+	taskEvidenceErr        error
+	taskEvidenceCalled     bool
+	observationCalled      bool
+	evidenceSnapshotCalled bool
+}
+
+func (repository *queryRepository) ReadTaskObservation(ctx context.Context, handle string) (TaskObservation, error) {
+	repository.observationCalled = true
+	task, err := repository.GetTask(ctx, handle)
+	if err != nil {
+		return TaskObservation{}, err
+	}
+	return TaskObservation{Task: task, Evidence: repository.taskEvidence}, nil
+}
+
+func (repository *queryRepository) TaskEvidenceSnapshot(context.Context) ([]TaskObservation, int64, error) {
+	repository.evidenceSnapshotCalled = true
+	observations := make([]TaskObservation, 0, len(repository.tasks))
+	for _, task := range repository.tasks {
+		observations = append(observations, TaskObservation{Task: task, Evidence: repository.taskEvidence})
+	}
+	return observations, repository.stateVersion, repository.readErr
 }
 
 func (repository *queryRepository) ReadTaskEvidence(context.Context, string) (TaskEvidenceView, error) {
