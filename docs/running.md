@@ -102,7 +102,10 @@ local or forge check records the rejection and advances only that task to
 `failed`; the candidate supervisor remains available for unrelated tasks and a
 service restart does not rerun the rejected candidate. Incomplete, pending, or
 otherwise unknown evidence stays `validating` and is retried without being
-treated as success or failure.
+treated as success or failure. Temporary GitHub pull-request truth failures
+also leave the task `validating` and are retried without stopping the candidate
+supervisor. Other pull-request delivery errors still stop supervision so that
+permanent failures remain visible.
 
 `task explain` reads the latest durable candidate judgment for a failed task and
 distinguishes a required local-validation failure from a required forge-check

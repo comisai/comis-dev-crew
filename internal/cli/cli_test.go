@@ -114,6 +114,39 @@ func TestRun_CleanupUsesStableReleaseBeforeRemovalCommand(t *testing.T) {
 	}
 }
 
+func TestRun_CleanupReportsOpenHoldWithoutLeakingOperatorReason(t *testing.T) {
+	privateReason := "release review contains operator-authored private detail"
+	failure, err := domain.NewFailure(
+		domain.ErrorPrecondition,
+		true,
+		"cleanup is blocked by an open task hold",
+		"close the exact task cleanup hold, then retry cleanup",
+		errors.New(privateReason),
+	)
+	if err != nil {
+		t.Fatalf("NewFailure() error = %v", err)
+	}
+	client := fixtureClient()
+	client.err = failure
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := Run(context.Background(), []string{
+		"task", "cleanup", "task-0001", "--operation", "operation-cleanup-cli", "--format", "json",
+	}, &stdout, &stderr, testConfig(client))
+	want := "devcrew: precondition: cleanup is blocked by an open task hold\n" +
+		"Hint: close the exact task cleanup hold, then retry cleanup\n"
+	if exitCode != ExitRejected || stdout.Len() != 0 || stderr.String() != want {
+		t.Fatalf("Run() = %d, stdout=%q stderr=%q, want rejected cleanup diagnostic", exitCode, stdout.String(), stderr.String())
+	}
+	if strings.Contains(stderr.String(), privateReason) {
+		t.Fatalf("cleanup diagnostic leaked operator-authored reason: %q", stderr.String())
+	}
+	if len(client.calls) != 1 || client.calls[0] != "cleanup:task-0001" || client.operationID != "operation-cleanup-cli" {
+		t.Fatalf("client calls/operation = %v/%q", client.calls, client.operationID)
+	}
+	t.Logf("operator CLI transcript:\n%s", stderr.String())
+}
+
 func TestRun_HelpAndVersionDoNotConnect(t *testing.T) {
 	for _, test := range []struct {
 		name string

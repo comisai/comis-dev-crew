@@ -356,6 +356,7 @@ func (adapter *GitHubAdapter) requestJSON(
 
 func retryableGitHubNetworkError(err error) bool {
 	var networkError net.Error
+	//lint:ignore SA1019 Preserve explicit temporary signals from legacy network errors as retryable forge truth failures.
 	return errors.As(err, &networkError) && (networkError.Timeout() || networkError.Temporary())
 }
 

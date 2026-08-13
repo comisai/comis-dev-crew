@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -359,6 +361,70 @@ func TestCandidateSupervisor_RunRetriesUnavailableForgeTruthWithoutStoppingServi
 	if fixture.store.task.State != domain.TaskCandidateComplete {
 		t.Fatalf("recovered forge task state = %q, want %q", fixture.store.task.State, domain.TaskCandidateComplete)
 	}
+	t.Logf("candidate supervisor stayed live across transient GitHub truth failure: attempts=%d final_state=%s",
+		attempts, fixture.store.task.State)
+}
+
+func TestCandidateSupervisor_RunRecoversFromTemporaryGitHubStatusEndToEnd(t *testing.T) {
+	fixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	fixture.git.snapshots = []devgit.CandidateSnapshot{
+		fixture.snapshot, fixture.snapshot,
+		fixture.snapshot, fixture.snapshot,
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		requests++
+		response.Header().Set("Content-Type", "application/json")
+		if requests == 1 {
+			response.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		switch request.URL.Path {
+		case "/repos/comisai/fixture/pulls":
+			_, _ = response.Write([]byte(`[{"number":17}]`))
+		case "/repos/comisai/fixture/pulls/17":
+			_, _ = fmt.Fprintf(response,
+				`{"number":17,"state":"open","html_url":"https://example.com/pull/17","head":{"sha":%q,"ref":%q},"base":{"ref":"main"}}`,
+				fixture.snapshot.HeadRevision, fixture.snapshot.Branch)
+		case "/repos/comisai/fixture/commits/" + fixture.snapshot.HeadRevision + "/check-runs":
+			_, _ = response.Write([]byte(`{"check_runs":[{"name":"ci/unit","status":"completed","conclusion":"success"}]}`))
+		default:
+			response.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+	pusher := &candidateSupervisorBranchPusher{}
+	adapter, err := forge.NewGitHubAdapter(forge.GitHubConfig{
+		APIBaseURL: server.URL, Owner: "comisai", Repository: "fixture",
+		RepositoryIdentity: fixture.task.RepositoryID, BaseBranch: "main",
+		HTTPClient: server.Client(), Pusher: pusher,
+		ReadCredentials: candidateSupervisorCredentialSource{credential: forge.Credential{
+			Kind: forge.CredentialRead, Secret: "read-token",
+			Scopes: []forge.CredentialScope{forge.ScopeContentsRead, forge.ScopePullRequestsRead, forge.ScopeChecksRead},
+		}},
+		PushCredentials: candidateSupervisorCredentialSource{credential: forge.Credential{
+			Kind: forge.CredentialPush, Secret: "push-token", Scopes: []forge.CredentialScope{forge.ScopeContentsWrite},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("NewGitHubAdapter() error = %v", err)
+	}
+	config := fixture.config()
+	config.PullRequests = adapter
+	ctx, cancel := context.WithCancel(context.Background())
+	fixture.store.onCommit = cancel
+	supervisor, err := newCandidateSupervisor(config)
+	if err != nil {
+		t.Fatalf("newCandidateSupervisor() error = %v", err)
+	}
+	if err := supervisor.Run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context.Canceled after recovered delivery", err)
+	}
+	if requests != 4 || pusher.calls != 2 || fixture.store.task.State != domain.TaskCandidateComplete {
+		t.Fatalf("recovered GitHub delivery: requests=%d pushes=%d state=%q", requests, pusher.calls, fixture.store.task.State)
+	}
+	t.Logf("GitHub 503 was retried by the live candidate supervisor: http_requests=%d pushes=%d final_state=%s",
+		requests, pusher.calls, fixture.store.task.State)
 }
 
 func TestCandidateSupervisor_RunSurfacesPermanentForgeDeliveryFailure(t *testing.T) {
@@ -581,6 +647,23 @@ type candidateSupervisorPullRequests struct {
 	calls     int
 	err       error
 	onDeliver func()
+}
+
+type candidateSupervisorCredentialSource struct{ credential forge.Credential }
+
+func (source candidateSupervisorCredentialSource) Resolve(context.Context) (forge.Credential, error) {
+	return source.credential, nil
+}
+
+type candidateSupervisorBranchPusher struct{ calls int }
+
+func (pusher *candidateSupervisorBranchPusher) Push(
+	context.Context,
+	forge.Credential,
+	forge.BranchPushRequest,
+) error {
+	pusher.calls++
+	return nil
 }
 
 func (pullRequests *candidateSupervisorPullRequests) DeliverPullRequest(
