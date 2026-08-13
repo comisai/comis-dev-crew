@@ -1,0 +1,165 @@
+package livecampaign
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
+)
+
+type fixtureExecutor struct {
+	manifest Manifest
+	calls    []Command
+}
+
+func (executor *fixtureExecutor) Run(_ context.Context, command Command) ([]byte, error) {
+	executor.calls = append(executor.calls, command)
+	args := strings.Join(command.Args, " ")
+	manifest := executor.manifest
+	encode := func(value any) ([]byte, error) { return json.Marshal(value) }
+	if command.Path == manifest.DevCrew.CLIPath {
+		switch {
+		case args == "--socket "+manifest.DevCrew.SocketPath+" service status":
+			return []byte("SERVICE HEALTH COMPLETENESS\ndevcrew-service healthy complete\n"), nil
+		case args == "--socket "+manifest.DevCrew.SocketPath+" doctor --format json":
+			return encode(application.DiagnosticReport{SchemaVersion: 1, CapturedAtMs: manifest.EndedAtMs, StateVersion: 20, Completeness: application.CompletenessComplete, ServiceHealth: application.HealthHealthy, ComisHealth: application.HealthHealthy})
+		case args == "--socket "+manifest.DevCrew.SocketPath+" status --format json":
+			return encode(application.FleetSnapshot{SchemaVersion: 1, CapturedAtMs: manifest.EndedAtMs, StateVersion: 20, Completeness: application.CompletenessComplete, ServiceHealth: application.HealthHealthy, ComisHealth: application.HealthHealthy, Tasks: []application.TaskSummary{acceptedTask(manifest.Tasks[0]).Summary, acceptedTask(manifest.Tasks[1]).Summary}})
+		}
+		for _, task := range manifest.Tasks {
+			detail := acceptedTask(task)
+			if task.TaskHandle == manifest.Tasks[1].TaskHandle {
+				detail.Summary.Head = strings.Repeat("e", 40)
+				detail.Evidence.Candidate.HeadRevision = detail.Summary.Head
+				detail.Evidence.Delivery.PullRequestID = "github-pr-18"
+				detail.Evidence.Cleanup.OperationID = "operation-cleanup-claude"
+			}
+			if args == "--socket "+manifest.DevCrew.SocketPath+" task show "+task.TaskHandle+" --format json" {
+				return encode(detail)
+			}
+			if args == "--socket "+manifest.DevCrew.SocketPath+" task explain "+task.TaskHandle+" --format json" {
+				return encode(application.TaskExplanation{SchemaVersion: 1, CapturedAtMs: manifest.EndedAtMs, Completeness: application.CompletenessComplete, Summary: detail.Summary, Evidence: detail.Evidence, ReasonCode: "task_cleaned", Explanation: "Task cleanup is complete.", LikelyRootCause: "none", NextSafeActions: []application.NextAction{application.ActionNone}})
+			}
+		}
+		for _, operation := range manifest.Operations {
+			if args == "--socket "+manifest.DevCrew.SocketPath+" task operation "+operation.OperationID+" --format json" {
+				return encode(application.OperationView{SchemaVersion: 1, CapturedAtMs: manifest.EndedAtMs, OperationID: operation.OperationID, Command: operation.Command, SubjectDigest: strings.Repeat("f", 64), Status: domain.OperationCompleted, StateVersion: 20, CreatedAtMs: manifest.StartedAtMs, UpdatedAtMs: manifest.EndedAtMs})
+			}
+		}
+	}
+	if command.Path == manifest.Comis.NodePath && len(command.Args) > 1 && command.Args[0] == manifest.Comis.CLIScriptPath {
+		switch command.Args[1] {
+		case "messages":
+			return encode(completeMessages(manifest))
+		case "system-health":
+			return []byte(`{"schemaVersion":1,"windowHours":24,"sessions":{"total":2,"degraded":0}}`), nil
+		case "explain":
+			return []byte(`{"schemaVersion":1,"session":{"outcome":"completed"}}`), nil
+		case "secrets":
+			return []byte("[]"), nil
+		}
+	}
+	if command.Path == manifest.Comis.NodePath && len(command.Args) > 0 && command.Args[0] == manifest.Comis.SecretResidencyScript {
+		return []byte(`{"schemaVersion":1,"scannedFiles":10,"readErrors":[],"totalMatches":0,"secrets":{"TELEGRAM_BOT_TOKEN":{"retrieved":true,"totalMatches":0},"GITHUB_TOKEN":{"retrieved":true,"totalMatches":0}}}`), nil
+	}
+	if command.Path == manifest.GitHub.GitPath {
+		if strings.Contains(args, "status --porcelain=v1") {
+			return []byte{}, nil
+		}
+		if strings.Contains(args, "rev-parse "+manifest.GitHub.BaseBranch) {
+			return []byte(strings.Repeat("d", 40) + "\n"), nil
+		}
+	}
+	if command.Path == manifest.GitHub.CLIPath {
+		for index, task := range manifest.Tasks {
+			number := 17 + index
+			head := strings.Repeat("a", 40)
+			if index == 1 {
+				head = strings.Repeat("e", 40)
+			}
+			if args == "api repos/"+manifest.GitHub.Repository+"/pulls/"+strconv.Itoa(number) {
+				pull := GitHubPull{Number: number, State: "open", HTMLURL: "https://github.com/" + manifest.GitHub.Repository + "/pull/" + strconv.Itoa(number)}
+				pull.Head.SHA, pull.Head.Ref, pull.Base.Ref = head, "devcrew/"+task.TaskHandle, manifest.GitHub.BaseBranch
+				return encode(pull)
+			}
+			if args == "api -H Accept: application/vnd.github+json repos/"+manifest.GitHub.Repository+"/commits/"+head+"/check-runs" {
+				success := "success"
+				return encode(GitHubChecks{Runs: []GitHubCheckRun{{Name: "validate", Status: "completed", Conclusion: &success}}})
+			}
+		}
+	}
+	return nil, errors.New("unexpected command: " + command.Path + " " + args)
+}
+
+func TestCollectWritesPrivateBoundedEvidenceAndPassingVerdict(t *testing.T) {
+	manifest := validManifest()
+	executor := &fixtureExecutor{manifest: manifest}
+	root := filepath.Join(t.TempDir(), "evidence")
+	verdict, err := Collect(context.Background(), manifest, root, executor, manifest.EndedAtMs)
+	if err != nil {
+		t.Fatalf("Collect() error = %v", err)
+	}
+	if !verdict.Passed || verdict.CampaignID != manifest.CampaignID || len(verdict.Checks) < 7 {
+		t.Fatalf("verdict = %#v", verdict)
+	}
+	info, err := os.Stat(verdict.EvidenceDirectory)
+	if err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("evidence directory mode = %v, %v", info, err)
+	}
+	for _, name := range []string{"manifest.json", "devcrew-service-status.txt", "devcrew-fleet.json", "telegram-checkpoints.json", "git-truth.json", "secret-residency.json", "hashes.json", "verdict.json"} {
+		info, err := os.Stat(filepath.Join(verdict.EvidenceDirectory, name))
+		if err != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("artifact %s mode = %v, %v", name, info, err)
+		}
+	}
+	checkpointContents, err := os.ReadFile(filepath.Join(verdict.EvidenceDirectory, "telegram-checkpoints.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, checkpoint := range manifest.Telegram.Checkpoints {
+		if strings.Contains(string(checkpointContents), checkpoint.Marker) {
+			t.Fatalf("checkpoint artifact retained message marker %s", checkpoint.Marker)
+		}
+	}
+}
+
+func TestCollectRefusesExistingCampaignEvidenceDirectory(t *testing.T) {
+	manifest := validManifest()
+	root := filepath.Join(t.TempDir(), "evidence")
+	if err := os.MkdirAll(filepath.Join(root, manifest.CampaignID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Collect(context.Background(), manifest, root, &fixtureExecutor{manifest: manifest}, manifest.EndedAtMs)
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("expected existing-directory refusal, got %v", err)
+	}
+}
+
+func TestCollectUsesOnlyFixedExecutableAndArgumentCatalog(t *testing.T) {
+	manifest := validManifest()
+	executor := &fixtureExecutor{manifest: manifest}
+	root := filepath.Join(t.TempDir(), "evidence")
+	if _, err := Collect(context.Background(), manifest, root, executor, manifest.EndedAtMs); err != nil {
+		t.Fatal(err)
+	}
+	allowed := map[string]bool{
+		manifest.DevCrew.CLIPath: true, manifest.Comis.NodePath: true,
+		manifest.GitHub.CLIPath: true, manifest.GitHub.GitPath: true,
+	}
+	for _, call := range executor.calls {
+		if !allowed[call.Path] {
+			t.Fatalf("unexpected executable %q", call.Path)
+		}
+		if reflect.DeepEqual(call.Args, []string{"-c"}) {
+			t.Fatalf("shell arguments are forbidden: %#v", call)
+		}
+	}
+}
