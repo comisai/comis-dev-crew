@@ -5,7 +5,7 @@ SHELL := /bin/sh
 .PHONY: docs-check format-check mod-check generate-check vet staticcheck \
 	test-architecture test coverage test-race test-conformance test-integration \
 	test-fuzz-smoke build cross-build vulncheck license-check secret-check smoke \
-	test-live verify verify-full post-full-check protocol-sync protocol-check
+	test-live live-closeout verify verify-full post-full-check protocol-sync protocol-check
 
 docs-check:
 	go run ./tools/checkdocs
@@ -83,6 +83,11 @@ post-full-check:
 
 test-live:
 	go test -mod=readonly -tags=live -count=1 -timeout=2h ./test/live/...
+
+live-closeout:
+	@test -n "$(DEVCREW_LIVE_MANIFEST)" || { echo "DEVCREW_LIVE_MANIFEST is required"; exit 1; }
+	@test -n "$(DEVCREW_LIVE_EVIDENCE_ROOT)" || { echo "DEVCREW_LIVE_EVIDENCE_ROOT is required"; exit 1; }
+	go run ./tools/livecloseout --manifest "$(DEVCREW_LIVE_MANIFEST)" --evidence-root "$(DEVCREW_LIVE_EVIDENCE_ROOT)"
 
 verify: docs-check format-check mod-check generate-check vet staticcheck test-architecture test coverage test-race test-conformance build
 

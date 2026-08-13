@@ -142,8 +142,10 @@ make verify
 ```
 
 Use `make verify-full` before a push or production-readiness claim. The protected
-`make test-live` campaign is separate and requires explicitly configured external
-prerequisites.
+`make test-live` campaign is separate: it runs only on the dedicated Linux host,
+requires a real human Telegram sender plus an owner-private manifest, and fails
+when any external prerequisite or promised evidence row is unavailable. After a
+completed campaign, `make live-closeout` reruns the same bounded evidence collector.
 
 Additional references:
 

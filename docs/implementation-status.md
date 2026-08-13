@@ -19,6 +19,13 @@ launch descriptors, candidate validation, forge truth, delivery, unknown-task
 reconciliation, handback, and safe cleanup. Merge authority and unattended worker
 settling are not claimed.
 
+The protected live gate is implemented for a dedicated Linux runner and a real
+human Telegram sender. It observes two working lanes, restarts only manifest-bound
+isolated MCP, DevCrew, and Comis units, waits for post-restart Telegram evidence,
+then verifies cleaned task, operation, Comis, Git, GitHub, and count-only secret
+residency truth. This is an executable gate, not a claim that the external campaign
+has run; release readiness still requires a passing protected invocation.
+
 ## Foundation
 
 The maintainer-created bootstrap was adopted without reinitializing its history.

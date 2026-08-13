@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "e0-real-telegram-YYYYMMDD",
+  "startedAtMs": 0,
+  "endedAtMs": 0,
+  "devcrew": {
+    "cliPath": "/opt/comis-dev-crew/bin/devcrew",
+    "socketPath": "/run/devcrew-e0-live/service.sock",
+    "repositoryId": "comis-repository"
+  },
+  "comis": {
+    "nodePath": "/usr/bin/node",
+    "cliScriptPath": "/opt/comis/packages/cli/dist/cli.js",
+    "codeRoot": "/opt/comis",
+    "dataDir": "/var/lib/comis-e0-live",
+    "agentId": "devcrew-liaison",
+    "secretResidencyScript": "/opt/comis/test/live/self-driving/scripts/secret-residency.mjs",
+    "secretNames": ["TELEGRAM_BOT_TOKEN", "GITHUB_TOKEN"],
+    "explainRefs": ["root-session-replace-with-origin-run"]
+  },
+  "telegram": {
+    "originChatId": "replace-origin-chat",
+    "newerChatId": "replace-newer-chat",
+    "senderId": "replace-human-sender",
+    "checkpoints": [
+      {"kind": "task_request", "chatId": "replace-origin-chat", "marker": "e0cp-task-replace"},
+      {"kind": "unrelated_conversation", "chatId": "replace-newer-chat", "marker": "e0cp-newer-replace"},
+      {"kind": "mcp_restarted_ack", "chatId": "replace-origin-chat", "marker": "e0cp-mcp-replace"},
+      {"kind": "decision_reply", "chatId": "replace-origin-chat", "marker": "e0cp-decision-replace"},
+      {"kind": "pause_handback", "chatId": "replace-origin-chat", "marker": "e0cp-handback-replace"},
+      {"kind": "reconcile_approval", "chatId": "replace-origin-chat", "marker": "e0cp-reconcile-replace"},
+      {"kind": "devcrew_restart_ready", "chatId": "replace-origin-chat", "marker": "e0cp-devcrew-ready-replace"},
+      {"kind": "devcrew_restarted_ack", "chatId": "replace-origin-chat", "marker": "e0cp-devcrew-ack-replace"},
+      {"kind": "comis_restart_ready", "chatId": "replace-origin-chat", "marker": "e0cp-comis-ready-replace"},
+      {"kind": "comis_restarted_ack", "chatId": "replace-origin-chat", "marker": "e0cp-comis-ack-replace"},
+      {"kind": "cleanup_confirmation", "chatId": "replace-origin-chat", "marker": "e0cp-cleanup-replace"}
+    ]
+  },
+  "github": {
+    "cliPath": "/usr/bin/gh",
+    "gitPath": "/usr/bin/git",
+    "repository": "comisai/comis",
+    "primaryCheckout": "/srv/comis-e0-live/repository",
+    "baseBranch": "main",
+    "requiredChecks": ["validate"]
+  },
+  "services": {
+    "systemctlPath": "/usr/bin/systemctl",
+    "isolationLabel": "e0-live",
+    "mcpUnit": "devcrew-e0-live-mcp.service",
+    "devcrewUnit": "devcrew-e0-live.service",
+    "comisUnit": "comis-e0-live.service"
+  },
+  "tasks": [
+    {"taskHandle": "replace-recovered-task", "workerProfileId": "codex-reviewed", "managedRunId": "replace-recovered-run", "expectReconciliation": true},
+    {"taskHandle": "replace-handback-task", "workerProfileId": "claude-reviewed", "managedRunId": "replace-handback-run", "expectReconciliation": false}
+  ],
+  "operations": [
+    {"operationId": "replace-reconcile-operation", "taskHandle": "replace-recovered-task", "command": "ReconcileTask"},
+    {"operationId": "replace-handback-operation", "taskHandle": "replace-handback-task", "command": "HandbackTask"},
+    {"operationId": "replace-cleanup-recovered", "taskHandle": "replace-recovered-task", "command": "CleanupTask"},
+    {"operationId": "replace-cleanup-handback", "taskHandle": "replace-handback-task", "command": "CleanupTask"}
+  ]
+}

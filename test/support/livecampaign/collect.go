@@ -29,20 +29,6 @@ type Executor interface {
 	Run(context.Context, Command) ([]byte, error)
 }
 
-type EvidenceCheck struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
-}
-
-type Verdict struct {
-	SchemaVersion     int             `json:"schemaVersion"`
-	CampaignID        string          `json:"campaignId"`
-	CapturedAtMs      int64           `json:"capturedAtMs"`
-	Passed            bool            `json:"passed"`
-	EvidenceDirectory string          `json:"evidenceDirectory"`
-	Checks            []EvidenceCheck `json:"checks"`
-}
-
 type collector struct {
 	ctx       context.Context
 	manifest  Manifest
@@ -50,37 +36,6 @@ type collector struct {
 	directory string
 	artifacts []string
 	checks    []EvidenceCheck
-}
-
-type gitTruth struct {
-	Repository      string `json:"repository"`
-	PrimaryCheckout string `json:"primaryCheckout"`
-	BaseBranch      string `json:"baseBranch"`
-	BaseRevision    string `json:"baseRevision"`
-	PrimaryClean    bool   `json:"primaryClean"`
-}
-
-type pullRequestEvidence struct {
-	TaskHandle  string           `json:"taskHandle"`
-	PullRequest GitHubPull       `json:"pullRequest"`
-	Checks      []GitHubCheckRun `json:"checks"`
-}
-
-type residencyReport struct {
-	SchemaVersion int      `json:"schemaVersion"`
-	ScannedFiles  int      `json:"scannedFiles"`
-	ReadErrors    []string `json:"readErrors"`
-	TotalMatches  int      `json:"totalMatches"`
-	Secrets       map[string]struct {
-		Retrieved    bool `json:"retrieved"`
-		TotalMatches int  `json:"totalMatches"`
-	} `json:"secrets"`
-}
-
-type artifactHash struct {
-	File   string `json:"file"`
-	SHA256 string `json:"sha256"`
-	Bytes  int    `json:"bytes"`
 }
 
 func Collect(ctx context.Context, manifest Manifest, outputRoot string, executor Executor, capturedAtMs int64) (Verdict, error) {

@@ -207,6 +207,59 @@ operation ID or one locally minted request ID.
 
 All four commands support `--help` and `--version`.
 
+## Protected real-Telegram campaign
+
+The real-channel E0 gate is intentionally separate from repository verification.
+It requires a dedicated self-hosted Linux runner operating as the service owner,
+an isolated Comis/DevCrew deployment, one real human Telegram sender, repository-
+scoped GitHub read/push authority without merge permission, and permission to
+restart only the three isolated systemd units named in the manifest. The Telegram
+bot credential remains in Comis secret management; it is never a workflow input.
+
+Copy `test/live/manifest.example.json` outside the repository, replace every
+placeholder with current content-free identities, set mode `0600`, and keep the
+evidence root owner-private. The manifest must describe exactly two ship lanes:
+one Codex/Claude profile per lane, exactly one recovered candidate, one handback,
+and one cleanup operation per task. Its eleven opaque `e0cp-*` markers are sent by
+the human from the Telegram app at the named checkpoints. The unrelated marker
+must use a newer distinct conversation; all other markers remain in the original
+preparation conversation.
+
+The runner first observes both tasks simultaneously in `working`. It then replaces
+the stateless MCP facade, waits for the human acknowledgement, waits for decision,
+handback, and reconciliation checkpoints, and restarts DevCrew and Comis at their
+separate ready markers. An acknowledgement recorded before its corresponding
+restart does not satisfy the gate. Final cleanup must leave both tasks `cleaned`.
+
+Run the protected campaign:
+
+```sh
+DEVCREW_LIVE_MANIFEST=/absolute/private/e0-campaign.json \
+DEVCREW_LIVE_EVIDENCE_ROOT=/absolute/private/evidence \
+make test-live
+```
+
+`GH_TOKEN` must already be injected by the protected runner environment; never
+place its literal in the manifest or shell history. The GitHub Actions workflow
+uses the protected `devcrew-live` environment and `DEVCREW_LIVE_GH_TOKEN` secret.
+It is manual-only because a scheduled job cannot supply the required real human
+checkpoints honestly.
+
+For evidence-only closeout after the campaign state is already terminal:
+
+```sh
+DEVCREW_LIVE_MANIFEST=/absolute/private/e0-campaign.json \
+DEVCREW_LIVE_EVIDENCE_ROOT=/absolute/private/evidence \
+make live-closeout
+```
+
+Each run creates one non-overwriting `0700` campaign directory with `0600`
+artifacts. It contains service/fleet/task/operation projections, content-free
+Telegram checkpoint rows, Comis explanation and system-health reports, clean Git
+base truth, current open/unmerged GitHub pull-request and required-check truth,
+plaintext-secret audit plus count-only residency results, artifact hashes, and a
+single verdict. Raw Telegram message bodies and command stderr are never retained.
+
 ## Worker reporter contract
 
 Workers receive `devcrew-report` with `COMIS_EXECUTION_ATTACHMENT` and
