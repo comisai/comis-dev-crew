@@ -81,7 +81,13 @@ func TestLiveCampaignExecutorHelperProcess(t *testing.T) {
 
 func TestValidateRuntimeRejectsNonSocketAndNonPrivateDataRoot(t *testing.T) {
 	manifest := validManifest()
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	program := filepath.Join(root, "program")
 	if err := os.WriteFile(program, []byte("fixture"), 0o700); err != nil {
 		t.Fatal(err)
