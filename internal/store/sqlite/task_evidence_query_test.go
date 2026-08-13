@@ -30,7 +30,8 @@ func TestStore_ReadTaskEvidenceProjectsContentFreeDurableReferences(t *testing.T
 	if evidence.Decision.Status != "none" || evidence.Validation.Status != "accepted" {
 		t.Fatalf("decision/validation evidence = %#v / %#v", evidence.Decision, evidence.Validation)
 	}
-	if evidence.Delivery.Status != "delivered" || evidence.Delivery.PullRequestID != "github-pr-17" ||
+	if evidence.Delivery.Status != "delivered" ||
+		evidence.Delivery.PullRequestID != sealed.Bundle().ForgeEvidence.PullRequestID ||
 		evidence.Delivery.EvidenceOperationID == "" || evidence.Delivery.EvidenceRef == "" {
 		t.Fatalf("delivery evidence = %#v, want delivered forge and outbox references", evidence.Delivery)
 	}
