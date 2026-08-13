@@ -260,7 +260,8 @@ make live-closeout
 Each run creates one non-overwriting `0700` campaign directory with `0600`
 artifacts. It contains service/fleet/task/operation projections, content-free
 Telegram checkpoint rows, Comis explanation and system-health reports, clean Git
-base truth, current open/unmerged GitHub pull-request and required-check truth,
+truth proving both tasks share one pinned base that remains an ancestor of the
+current base-branch tip, current open/unmerged GitHub pull-request and required-check truth,
 plaintext-secret audit plus count-only residency results, artifact hashes, and a
 single verdict. Raw Telegram message bodies and command stderr are never retained.
 

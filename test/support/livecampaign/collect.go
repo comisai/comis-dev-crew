@@ -242,26 +242,28 @@ func (instance *collector) collectGitAndForge() error {
 	if err != nil {
 		return fmt.Errorf("collect live closeout: Git base revision unavailable: %w", err)
 	}
-	baseRevision := strings.TrimSpace(string(base))
-	if !revisionPattern.MatchString(baseRevision) {
+	currentBaseRevision := strings.TrimSpace(string(base))
+	if !revisionPattern.MatchString(currentBaseRevision) {
 		return errors.New("collect live closeout: Git base revision is invalid")
-	}
-	gitEvidence := gitTruth{
-		Repository: instance.manifest.GitHub.Repository, PrimaryCheckout: instance.manifest.GitHub.PrimaryCheckout,
-		BaseBranch: instance.manifest.GitHub.BaseBranch, BaseRevision: baseRevision, PrimaryClean: true,
-	}
-	if err := instance.writeJSON("git-truth.json", gitEvidence); err != nil {
-		return err
 	}
 	pulls := make([]pullRequestEvidence, 0, len(instance.manifest.Tasks))
 	seenBranches := make(map[string]struct{}, len(instance.manifest.Tasks))
+	taskBaseRevision := ""
 	for _, expectation := range instance.manifest.Tasks {
 		var detail application.TaskDetail
 		if err := instance.readArtifactJSON("devcrew-task-"+expectation.TaskHandle+".json", &detail); err != nil {
 			return err
 		}
-		if detail.BaseRevision != baseRevision {
-			return fmt.Errorf("collect live closeout: task %s base differs from current canonical Git base", expectation.TaskHandle)
+		if taskBaseRevision == "" {
+			taskBaseRevision = detail.BaseRevision
+			if _, err := instance.run(Command{Path: instance.manifest.GitHub.GitPath, Args: []string{
+				"-C", instance.manifest.GitHub.PrimaryCheckout, "merge-base", "--is-ancestor",
+				taskBaseRevision, currentBaseRevision,
+			}}); err != nil {
+				return fmt.Errorf("collect live closeout: pinned task base is not an ancestor of the current canonical Git base: %w", err)
+			}
+		} else if detail.BaseRevision != taskBaseRevision {
+			return errors.New("collect live closeout: task bases do not share one pinned revision")
 		}
 		number := strings.TrimPrefix(detail.Evidence.Delivery.PullRequestID, "github-pr-")
 		var pull GitHubPull
@@ -285,6 +287,14 @@ func (instance *collector) collectGitAndForge() error {
 		}
 		seenBranches[pull.Head.Ref] = struct{}{}
 		pulls = append(pulls, pullRequestEvidence{TaskHandle: expectation.TaskHandle, PullRequest: pull, Checks: checks.Runs})
+	}
+	gitEvidence := gitTruth{
+		Repository: instance.manifest.GitHub.Repository, PrimaryCheckout: instance.manifest.GitHub.PrimaryCheckout,
+		BaseBranch: instance.manifest.GitHub.BaseBranch, TaskBaseRevision: taskBaseRevision,
+		CurrentBaseRevision: currentBaseRevision, PrimaryClean: true,
+	}
+	if err := instance.writeJSON("git-truth.json", gitEvidence); err != nil {
+		return err
 	}
 	if err := instance.writeJSON("github-truth.json", pulls); err != nil {
 		return err

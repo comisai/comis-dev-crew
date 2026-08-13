@@ -125,6 +125,18 @@ func TestCollectAcceptsSharedPinnedTaskBaseWhenCanonicalBranchAdvances(t *testin
 	if !found {
 		t.Fatalf("Git calls = %#v, want pinned-base ancestry check", executor.calls)
 	}
+	contents, err := os.ReadFile(filepath.Join(verdict.EvidenceDirectory, "git-truth.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var truth gitTruth
+	if err := json.Unmarshal(contents, &truth); err != nil {
+		t.Fatal(err)
+	}
+	if truth.TaskBaseRevision != strings.Repeat("d", 40) ||
+		truth.CurrentBaseRevision != strings.Repeat("f", 40) {
+		t.Fatalf("Git truth = %#v, want distinct pinned and current base revisions", truth)
+	}
 }
 
 func TestCollectWritesPrivateBoundedEvidenceAndPassingVerdict(t *testing.T) {

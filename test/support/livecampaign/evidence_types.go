@@ -15,11 +15,12 @@ type Verdict struct {
 }
 
 type gitTruth struct {
-	Repository      string `json:"repository"`
-	PrimaryCheckout string `json:"primaryCheckout"`
-	BaseBranch      string `json:"baseBranch"`
-	BaseRevision    string `json:"baseRevision"`
-	PrimaryClean    bool   `json:"primaryClean"`
+	Repository          string `json:"repository"`
+	PrimaryCheckout     string `json:"primaryCheckout"`
+	BaseBranch          string `json:"baseBranch"`
+	TaskBaseRevision    string `json:"taskBaseRevision"`
+	CurrentBaseRevision string `json:"currentBaseRevision"`
+	PrimaryClean        bool   `json:"primaryClean"`
 }
 
 type pullRequestEvidence struct {
