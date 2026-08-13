@@ -42,7 +42,7 @@ func validManifest() Manifest {
 			},
 		},
 		GitHub: GitHubTarget{
-			CLIPath: "/usr/bin/gh", Repository: "comisai/comis", PrimaryCheckout: "/srv/comis-primary",
+			CLIPath: "/usr/bin/gh", GitPath: "/usr/bin/git", Repository: "comisai/comis", PrimaryCheckout: "/srv/comis-primary",
 			BaseBranch: "main", RequiredChecks: []string{"validate"},
 		},
 		Services: ServiceTargets{

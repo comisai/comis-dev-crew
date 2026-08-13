@@ -84,6 +84,7 @@ type TelegramCheckpoint struct {
 
 type GitHubTarget struct {
 	CLIPath         string   `json:"cliPath"`
+	GitPath         string   `json:"gitPath"`
 	Repository      string   `json:"repository"`
 	PrimaryCheckout string   `json:"primaryCheckout"`
 	BaseBranch      string   `json:"baseBranch"`
@@ -172,6 +173,7 @@ func (manifest Manifest) validate() error {
 		"comis.dataDir":               manifest.Comis.DataDir,
 		"comis.secretResidencyScript": manifest.Comis.SecretResidencyScript,
 		"github.cliPath":              manifest.GitHub.CLIPath,
+		"github.gitPath":              manifest.GitHub.GitPath,
 		"github.primaryCheckout":      manifest.GitHub.PrimaryCheckout,
 		"services.systemctlPath":      manifest.Services.SystemctlPath,
 	} {
@@ -203,7 +205,7 @@ func (manifest Manifest) validate() error {
 	if err := validateUniqueStrings("Comis explanation references", manifest.Comis.ExplainRefs, safeReferencePattern.MatchString); err != nil {
 		return err
 	}
-	if err := validateUniqueStrings("GitHub required checks", manifest.GitHub.RequiredChecks, safeReferencePattern.MatchString); err != nil {
+	if err := validateUniqueStrings("GitHub required checks", manifest.GitHub.RequiredChecks, validDisplayName); err != nil {
 		return err
 	}
 	if err := manifest.validateCheckpoints(); err != nil {
@@ -213,6 +215,18 @@ func (manifest Manifest) validate() error {
 		return err
 	}
 	return manifest.validateTasksAndOperations()
+}
+
+func validDisplayName(value string) bool {
+	if value == "" || len(value) > 256 {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func validateUniqueStrings(name string, values []string, valid func(string) bool) error {
