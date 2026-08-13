@@ -73,17 +73,57 @@ func proveCleanupDatabaseSafety(ctx context.Context, transaction *sql.Tx, task d
 	if evidenceTotal != 2 || evidenceDelivered != 2 {
 		return fmt.Errorf("task cleanup evidence delivery is incomplete: %w", application.ErrPrecondition)
 	}
+	return nil
+}
+
+func proveCleanupCandidateOrigin(
+	ctx context.Context,
+	transaction *sql.Tx,
+	task domain.Task,
+	preparationOperationID string,
+	worktreePath string,
+	headRevision string,
+) error {
 	var candidateTotal, candidateDelivered int
 	if err := transaction.QueryRowContext(ctx, `SELECT COUNT(*), COUNT(o.delivered_at)
-        FROM reports r JOIN comis_report_outbox o
-        ON o.task_handle = r.task_handle AND o.local_report_id = r.local_report_id
-        WHERE r.task_handle = ? AND r.kind = 'candidate_complete'`, task.Handle).Scan(
+		FROM reports r JOIN comis_report_outbox o
+		ON o.task_handle = r.task_handle AND o.local_report_id = r.local_report_id
+		WHERE r.task_handle = ? AND r.kind = 'candidate_complete'`, task.Handle).Scan(
 		&candidateTotal, &candidateDelivered,
 	); err != nil {
 		return fmt.Errorf("inspect task cleanup report delivery: %w", err)
 	}
-	if candidateTotal != 1 || candidateDelivered != 1 {
-		return fmt.Errorf("task cleanup report delivery is incomplete: %w", application.ErrPrecondition)
+	var reconciliationTotal int
+	if err := transaction.QueryRowContext(ctx, `SELECT COUNT(*)
+		FROM task_candidate_reconciliations r
+		JOIN operations recovery ON recovery.id = r.operation_id
+		JOIN operations preparation ON preparation.id = r.preparation_operation_id
+		JOIN task_preparations p ON p.task_handle = r.task_handle
+		JOIN task_terminal_bindings terminal ON terminal.task_handle = r.task_handle
+		WHERE r.task_handle = ? AND r.action = ?
+		AND r.preparation_operation_id = ?
+		AND r.repository_id = ? AND r.worktree_path = ?
+		AND p.requested_workspace_root = r.worktree_path
+		AND r.base_revision = ? AND r.head_revision = ? AND r.cleanliness = ?
+		AND terminal.terminal_session_id = r.terminal_session_id
+		AND terminal.latest_transition = r.terminal_transition
+		AND terminal.updated_at = r.terminal_observed_at
+		AND recovery.command = ? AND recovery.status = ? AND recovery.result_ref = r.task_handle
+		AND recovery.state_version = r.completed_state_version
+		AND preparation.command = ? AND preparation.status = ? AND preparation.result_ref = r.task_handle
+		AND r.started_state_version + 1 = r.completed_state_version
+		AND r.completed_state_version <= ?`,
+		task.Handle, application.ReconcileValidateCleanCandidate, preparationOperationID,
+		task.RepositoryID, worktreePath, task.BaseRevision, headRevision, application.WorkspaceClean,
+		commandReconcileTask, domain.OperationCompleted, commandPrepareTask, domain.OperationCompleted,
+		task.StateVersion,
+	).Scan(&reconciliationTotal); err != nil {
+		return fmt.Errorf("inspect task cleanup reconciliation evidence: %w", err)
+	}
+	reportOrigin := candidateTotal == 1 && candidateDelivered == 1 && reconciliationTotal == 0
+	reconciliationOrigin := candidateTotal == 0 && candidateDelivered == 0 && reconciliationTotal == 1
+	if !reportOrigin && !reconciliationOrigin {
+		return fmt.Errorf("task cleanup candidate origin is incomplete or ambiguous: %w", application.ErrPrecondition)
 	}
 	return nil
 }
