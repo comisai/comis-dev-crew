@@ -95,12 +95,22 @@ divergent, ambiguous, active, or mismatched authority leaves the task unchanged.
 The normal candidate supervisor re-reads the exact head around fixed validation.
 Cleanup later accepts exactly one candidate origin: a delivered worker candidate
 report or one exact completed reconciliation record matching the sealed head.
+After successful recovery validation, the two exact server-owned evidence
+publications drive the task to `delivered`; the service does not create a worker
+report merely to close the state machine.
 
 `ExplainTask` combines durable terminal posture, current host connectivity, and
 fresh registered-worktree inspection. Its closed recovery reasons distinguish a
 settled terminal without candidate evidence, unresolved restart evidence,
 unavailable host integration, an unrecoverable workspace, and reconciliation in
 progress, with reachable reason-specific next actions.
+
+Canonical task detail and explanation projections include content-free evidence
+references for candidate, report activity, decision posture, validation, forge
+delivery, cleanup, and opaque host authority. Fleet rows consume the same durable
+postures for head, activity, validation, blocking, and attention. Custody and
+process observations remain explicitly `unknown` until a process-evidence
+contract exists.
 
 ## Mutation boundary
 

@@ -107,9 +107,22 @@ also leave the task `validating` and are retried without stopping the candidate
 supervisor. Other pull-request delivery errors still stop supervision so that
 permanent failures remain visible.
 
+For a worker-reported candidate, the final authenticated candidate report closes
+delivery after both evidence publications are acknowledged. For a reconciled
+candidate, no worker report is invented: acknowledgement of both server-owned
+publications atomically closes the task as `delivered`. Cleanup accepts exactly
+one of those origins and refuses missing or ambiguous evidence.
+
 `task explain` reads the latest durable candidate judgment for a failed task and
 distinguishes a required local-validation failure from a required forge-check
 failure. Other terminal failures retain the generic failed-task explanation.
+`task show` and JSON `explain_task` output also include a content-free `evidence`
+projection. It joins the candidate head and digest, latest authenticated report,
+decision and resolution references, validation status, forge and outbox delivery
+references, cleanup stage and open-hold count, and opaque run, lease, attachment,
+and preparation-operation identities. Missing authority remains `none`,
+`not_started`, or `unknown`; process and custody fields remain `unknown` because
+E0 has no durable process-observation contract.
 
 An SSH deploy-key push route uses
 `ssh://git@HOST/OWNER/REPOSITORY.git` and additionally requires the canonical

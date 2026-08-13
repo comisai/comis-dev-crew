@@ -92,6 +92,10 @@ devcrew --socket /absolute/private/run/devcrew.sock tasks list --format json
 devcrew --socket /absolute/private/run/devcrew.sock task explain TASK --format json
 ```
 
+Task detail and explanation JSON include content-free evidence and authority
+references, allowing candidate, report, validation, delivery, and cleanup state
+to be reconciled without reading SQLite or worker output.
+
 Without explicit path flags, the service and CLI derive matching locations from
 the operating system's user configuration directory. For the full Comis and
 coding-worker configuration, see [Running comis-dev-crew](docs/running.md).
