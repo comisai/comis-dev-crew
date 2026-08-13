@@ -82,6 +82,7 @@ func TestControlHandshakeRequestsCompleteRequiredScopeSet(t *testing.T) {
 	})
 	want := []ServiceScope{
 		ServiceScopeHealth,
+		ServiceScopeAttentionResponse,
 		ServiceScopeEvidence,
 		ServiceScopeReport,
 		ServiceScopeWorkspaceLease,
@@ -95,7 +96,7 @@ func TestControlHandshakeRequestsCompleteRequiredScopeSet(t *testing.T) {
 		t.Fatal("complete required scope set was rejected")
 	}
 	if sameControlScopes(want[:len(want)-1]) {
-		t.Fatal("missing execution attachment scope was accepted")
+		t.Fatal("missing required control scope was accepted")
 	}
 }
 

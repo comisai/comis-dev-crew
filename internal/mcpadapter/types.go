@@ -55,14 +55,14 @@ type TaskInput struct {
 
 // PrepareTaskInput is the public model-visible task contract.
 type PrepareTaskInput struct {
-	Shape              domain.TaskShape    `json:"shape"`
-	RepositoryID       string              `json:"repositoryId"`
-	BaseRevision       string              `json:"baseRevision"`
-	AcceptanceCriteria []string            `json:"acceptanceCriteria"`
-	Constraints        []string            `json:"constraints"`
-	ValidationProfile  string              `json:"validationProfile"`
-	DeliveryMode       domain.DeliveryMode `json:"deliveryMode"`
-	WorkerProfileID    string              `json:"workerProfileId"`
+	Shape              domain.TaskShape    `json:"shape" jsonschema:"task shape; use exactly ship or scout"`
+	RepositoryID       string              `json:"repositoryId" jsonschema:"operator-configured repository catalog identity"`
+	BaseRevision       string              `json:"baseRevision" jsonschema:"exact 40-character lowercase hexadecimal Git revision"`
+	AcceptanceCriteria []string            `json:"acceptanceCriteria" jsonschema:"ordered acceptance criteria; provide a JSON array of strings"`
+	Constraints        []string            `json:"constraints" jsonschema:"ordered task constraints; provide a JSON array of strings, using an empty array when there are none"`
+	ValidationProfile  string              `json:"validationProfile" jsonschema:"operator-configured validation profile identity"`
+	DeliveryMode       domain.DeliveryMode `json:"deliveryMode" jsonschema:"use exactly pull_request for ship or report for scout"`
+	WorkerProfileID    string              `json:"workerProfileId" jsonschema:"operator-configured worker profile identity"`
 }
 
 // HandbackTaskInput selects one safe paused task for developer-work validation.

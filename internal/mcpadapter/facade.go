@@ -54,7 +54,7 @@ func (facade *Facade) Run(ctx context.Context, transport mcp.Transport) error {
 }
 
 func (facade *Facade) registerTools() {
-	mcp.AddTool(facade.server, tool(ToolPrepareTask, "Prepare one durable development task.", false), facade.prepareTask)
+	mcp.AddTool(facade.server, tool(ToolPrepareTask, "Prepare one durable development task; acceptanceCriteria and constraints must be JSON arrays.", false), facade.prepareTask)
 	mcp.AddTool(facade.server, tool(ToolHandbackTask, "Validate developer work after one safe paused worker exits.", false), facade.handbackTask)
 	mcp.AddTool(facade.server, cleanupTool(), facade.cleanupTask)
 	mcp.AddTool(facade.server, tool(ToolListTasks, "List durable development tasks.", true), facade.listTasks)

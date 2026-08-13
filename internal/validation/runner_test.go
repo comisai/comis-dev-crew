@@ -61,11 +61,13 @@ func TestRunner_RecoveryRechecksOSIdentityAndFailsClosed(t *testing.T) {
 		ProcessGroupIdentity: "4321", State: ProcessRunning, StartedAt: startedAt, ObservedAt: startedAt,
 	}
 	tests := []struct {
-		name       string
-		record     ProcessRecord
-		observe    ProcessObservation
-		observeErr error
-		wantState  ProcessState
+		name              string
+		record            ProcessRecord
+		observe           ProcessObservation
+		observeErr        error
+		executablePresent bool
+		scanErr           error
+		wantState         ProcessState
 	}{
 		{name: "matching process stays running", record: running, observe: ProcessObservation{
 			PID: 4321, StartIdentity: "darwin-100-200", ProcessGroupIdentity: "4321", ExecutableLabel: filepath.Base(executable),
@@ -74,10 +76,18 @@ func TestRunner_RecoveryRechecksOSIdentityAndFailsClosed(t *testing.T) {
 			PID: 4321, StartIdentity: "darwin-999-999", ProcessGroupIdentity: "4321", ExecutableLabel: filepath.Base(executable),
 		}, wantState: ProcessUnknown},
 		{name: "absent process becomes exited without invented code", record: running, observeErr: ErrProcessAbsent, wantState: ProcessExited},
-		{name: "pre-start crash becomes unknown", record: ProcessRecord{
+		{name: "pre-start record becomes absent only after exact executable scan", record: ProcessRecord{
 			TaskHandle: "task-alpha", OperationID: "validate-alpha", ProgramID: "fixture-program",
 			ExecutableLabel: filepath.Base(executable), State: ProcessStarting, StartedAt: startedAt, ObservedAt: startedAt,
-		}, wantState: ProcessUnknown},
+		}, wantState: ProcessAbsent},
+		{name: "pre-start matching executable remains unknown", record: ProcessRecord{
+			TaskHandle: "task-alpha", OperationID: "validate-alpha", ProgramID: "fixture-program",
+			ExecutableLabel: filepath.Base(executable), State: ProcessStarting, StartedAt: startedAt, ObservedAt: startedAt,
+		}, executablePresent: true, wantState: ProcessUnknown},
+		{name: "pre-start unavailable scan remains unknown", record: ProcessRecord{
+			TaskHandle: "task-alpha", OperationID: "validate-alpha", ProgramID: "fixture-program",
+			ExecutableLabel: filepath.Base(executable), State: ProcessStarting, StartedAt: startedAt, ObservedAt: startedAt,
+		}, scanErr: errors.New("process scan unavailable"), wantState: ProcessUnknown},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -87,6 +97,9 @@ func TestRunner_RecoveryRechecksOSIdentityAndFailsClosed(t *testing.T) {
 				Clock: func() time.Time { return startedAt.Add(time.Minute) },
 				ObserveProcess: func(context.Context, int) (ProcessObservation, error) {
 					return test.observe, test.observeErr
+				},
+				ObserveExecutableLabel: func(context.Context, string) (bool, error) {
+					return test.executablePresent, test.scanErr
 				},
 			})
 			if runErr != nil {
@@ -107,6 +120,30 @@ func TestRunner_RecoveryRechecksOSIdentityAndFailsClosed(t *testing.T) {
 				t.Fatalf("Recover() = %#v", result)
 			}
 		})
+	}
+}
+
+func TestRunner_RecordsAbsentWhenFixedProgramCannotStart(t *testing.T) {
+	executable := filepath.Join(t.TempDir(), "missing-validation-program")
+	if err := os.WriteFile(executable, []byte("not an executable image\n"), 0o700); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	catalog := runnerCatalog(t, executable, []string{"ignored"})
+	store := &recordingProcessStore{}
+	runner, err := NewRunner(RunnerConfig{Catalog: catalog, Processes: store, MaxOutputBytes: 128})
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+	_, err = runner.Run(context.Background(), RunRequest{
+		OperationID: "validate-missing", TaskHandle: "task-alpha", ProfileID: "fixture-default", CheckID: "unit",
+		Fields: TaskFields{TaskHandle: "task-alpha", WorktreePath: t.TempDir(), BaseRevision: strings.Repeat("a", 40), HeadRevision: strings.Repeat("b", 40)},
+	})
+	if err == nil {
+		t.Fatal("Run(missing program) error = nil")
+	}
+	records := store.snapshot()
+	if len(records) != 2 || records[0].State != ProcessStarting || records[1].State != ProcessAbsent {
+		t.Fatalf("process records = %#v, want starting then absent", records)
 	}
 }
 

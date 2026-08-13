@@ -70,6 +70,45 @@ func TestFacade_OfficialSDKCatalogAndPrivatePreparation(t *testing.T) {
 	}
 }
 
+func TestFacade_PrepareTaskSchemaExplainsEveryClosedArgument(t *testing.T) {
+	client := &fakeClient{}
+	facade, err := New(Config{
+		Client: client, ServiceInstanceID: "service-instance-0001", Version: "test",
+		NewOperationID: func() (string, error) { return "reconcile-0001", nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools, err := connectFacade(t, facade).ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, listed := range tools.Tools {
+		if listed.Name != ToolPrepareTask {
+			continue
+		}
+		schema, marshalErr := json.Marshal(listed.InputSchema)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		visible := listed.Description + "\n" + string(schema)
+		for _, required := range []string{
+			"acceptanceCriteria and constraints must be JSON arrays",
+			"ordered acceptance criteria",
+			"ordered task constraints",
+			"ship or scout",
+			"pull_request for ship or report for scout",
+			"exact 40-character lowercase hexadecimal Git revision",
+		} {
+			if !strings.Contains(visible, required) {
+				t.Fatalf("prepare_task model contract omitted %q: %s", required, visible)
+			}
+		}
+		return
+	}
+	t.Fatal("prepare_task tool is absent")
+}
+
 func TestFacade_ReadToolsUseOneCanonicalCommandAndIgnoreForgedRunMetadata(t *testing.T) {
 	client := &fakeClient{}
 	facade, err := New(Config{

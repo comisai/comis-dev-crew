@@ -20,6 +20,9 @@ const serviceUsage = `Usage: devcrew-service [--database PATH] [--socket PATH]
          --comis-handshake-operation ID --codex-profile ID --codex-executable PATH
          --codex-version VERSION --codex-model MODEL --codex-effort EFFORT
 		 --codex-terminal-allow-entry ID --codex-network POSTURE --codex-concurrency N
+		 [--claude-profile ID --claude-executable PATH --claude-version VERSION
+		  --claude-model MODEL --claude-effort EFFORT --claude-terminal-allow-entry ID
+		  --claude-network POSTURE --claude-concurrency N --claude-config-directory PATH]
 		 --candidate-config PATH [--fixture-worker --fixture-decision TEXT --fixture-artifact FILE]
 
 Run the sole durable comis-dev-crew service authority.
@@ -48,6 +51,15 @@ Options:
   --codex-terminal-allow-entry ID Reviewed Comis terminal allow-entry identity
   --codex-network POSTURE         disabled, restricted, or host
   --codex-concurrency N           Reviewed profile concurrency limit
+  --claude-profile ID             Exact reviewed Claude Code profile identity
+  --claude-executable PATH        Canonical Claude Code executable path
+  --claude-version VERSION        Exact reviewed Claude Code version output
+  --claude-model MODEL            Pinned Claude model
+  --claude-effort EFFORT          Pinned Claude reasoning effort
+  --claude-terminal-allow-entry ID  Reviewed Comis terminal allow-entry identity
+  --claude-network POSTURE        disabled, restricted, or host
+  --claude-concurrency N          Reviewed profile concurrency limit
+  --claude-config-directory PATH  Owner-private Claude Code config directory
   --candidate-config PATH         Owner-private validation and forge policy
   --fixture-worker                Enable the deterministic in-process worker
   --fixture-decision TEXT         Fixed deterministic worker decision response
@@ -93,6 +105,15 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	var codexTerminalAllowEntry string
 	var codexNetwork string
 	var codexConcurrency int
+	var claudeProfileID string
+	var claudeExecutable string
+	var claudeVersion string
+	var claudeModel string
+	var claudeEffort string
+	var claudeTerminalAllowEntry string
+	var claudeNetwork string
+	var claudeConcurrency int
+	var claudeConfigDirectory string
 	var candidateConfigPath string
 	var fixtureDecision string
 	preparationTTL := 10 * time.Minute
@@ -123,6 +144,15 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	flags.StringVar(&codexTerminalAllowEntry, "codex-terminal-allow-entry", "", "reviewed Comis terminal allow-entry identity")
 	flags.StringVar(&codexNetwork, "codex-network", "", "reviewed network posture")
 	flags.IntVar(&codexConcurrency, "codex-concurrency", 0, "reviewed profile concurrency limit")
+	flags.StringVar(&claudeProfileID, "claude-profile", "", "exact reviewed Claude Code profile identity")
+	flags.StringVar(&claudeExecutable, "claude-executable", "", "canonical Claude Code executable path")
+	flags.StringVar(&claudeVersion, "claude-version", "", "exact reviewed Claude Code version output")
+	flags.StringVar(&claudeModel, "claude-model", "", "pinned Claude model")
+	flags.StringVar(&claudeEffort, "claude-effort", "", "pinned Claude reasoning effort")
+	flags.StringVar(&claudeTerminalAllowEntry, "claude-terminal-allow-entry", "", "reviewed Comis terminal allow-entry identity")
+	flags.StringVar(&claudeNetwork, "claude-network", "", "reviewed Claude network posture")
+	flags.IntVar(&claudeConcurrency, "claude-concurrency", 0, "reviewed Claude profile concurrency limit")
+	flags.StringVar(&claudeConfigDirectory, "claude-config-directory", "", "owner-private Claude Code config directory")
 	flags.StringVar(&candidateConfigPath, "candidate-config", "", "owner-private validation and forge policy")
 	flags.BoolVar(&fixtureWorker, "fixture-worker", false, "enable deterministic in-process worker")
 	flags.StringVar(&fixtureDecision, "fixture-decision", "", "fixed deterministic worker decision response")
@@ -173,6 +203,25 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 			}
 		}
 	}
+	claudeValues := []string{
+		claudeProfileID, claudeExecutable, claudeVersion, claudeModel, claudeEffort,
+		claudeTerminalAllowEntry, claudeNetwork, claudeConfigDirectory,
+	}
+	claudeConfigured := claudeConcurrency != 0
+	for _, value := range claudeValues {
+		claudeConfigured = claudeConfigured || value != ""
+	}
+	validClaudeNetwork := claudeNetwork == string(workers.NetworkDisabled) || claudeNetwork == string(workers.NetworkRestricted) || claudeNetwork == string(workers.NetworkHost)
+	if claudeConfigured && (!installed || claudeConcurrency < 1 || claudeConcurrency > 64 || !validClaudeNetwork) {
+		return writeServiceDiagnostic(stderr, "devcrew-service: Claude composition is incomplete\nHint: configure every Claude worker option together with the installed service\n", 2)
+	}
+	if claudeConfigured {
+		for _, value := range claudeValues {
+			if value == "" {
+				return writeServiceDiagnostic(stderr, "devcrew-service: Claude composition is incomplete\nHint: configure every Claude worker option together with the installed service\n", 2)
+			}
+		}
+	}
 	fixtureConfigured := fixtureWorker || fixtureDecision != "" || fixtureArtifact != ""
 	if fixtureConfigured && (!installed || !fixtureWorker || strings.TrimSpace(fixtureDecision) == "" || fixtureArtifact == "") {
 		return writeServiceDiagnostic(stderr, "devcrew-service: deterministic fixture composition is incomplete\nHint: configure the fixture worker, decision, and artifact together\n", 2)
@@ -200,6 +249,14 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 			Model: codexModel, Effort: codexEffort, TerminalAllowEntryID: codexTerminalAllowEntry,
 			Network: workers.NetworkPosture(codexNetwork), ConcurrencyLimit: codexConcurrency,
 		}
+		if claudeConfigured {
+			serviceConfig.ClaudeComposition = &ClaudeComposition{
+				ProfileID: claudeProfileID, Executable: claudeExecutable, ExpectedVersion: claudeVersion,
+				Model: claudeModel, Effort: claudeEffort, TerminalAllowEntryID: claudeTerminalAllowEntry,
+				Network: workers.NetworkPosture(claudeNetwork), ConcurrencyLimit: claudeConcurrency,
+				ConfigDirectory: claudeConfigDirectory,
+			}
+		}
 		validationComposition, forgeComposition, readErr := readCandidateComposition(candidateConfigPath)
 		if readErr != nil {
 			return writeServiceDiagnostic(stderr, "devcrew-service: candidate configuration is invalid\nHint: provide one canonical owner-private reviewed candidate policy\n", 2)
@@ -213,17 +270,71 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 		}
 	}
 	if err := runService(ctx, serviceConfig); err != nil {
+		cause := serviceFailureCause(err)
+		causeLine := ""
+		if cause != "" {
+			causeLine = fmt.Sprintf("Failure cause: %s\n", cause)
+		}
 		return writeServiceDiagnostic(stderr, fmt.Sprintf(
-			"devcrew-service: service stopped with an error\nFailure class: %s\nHint: inspect local configuration and service health\n",
-			serviceFailureClass(err),
+			"devcrew-service: service stopped with an error\nFailure class: %s\n%sHint: %s\n",
+			serviceFailureClass(err), causeLine, serviceFailureHint(err),
 		), 1)
 	}
 	return 0
 }
 
+func serviceFailureCause(err error) string {
+	message := err.Error()
+	causes := []struct {
+		match string
+		name  string
+	}{
+		{"run service repository composition", "repository_composition"},
+		{"run service Codex", "codex_composition"},
+		{"run service Claude", "claude_composition"},
+		{"run service validation composition", "validation_composition"},
+		{"run service forge read credential", "forge_read_credential"},
+		{"run service forge push credential", "forge_push_credential"},
+		{"run service: forge read and push identities", "forge_identity_separation"},
+		{"run service forge push composition", "forge_push_composition"},
+		{"run service GitHub composition", "forge_api_composition"},
+		{"run service: exact Codex version is unavailable", "codex_composition"},
+		{"run service: exact Claude version is unavailable", "claude_composition"},
+		{"recover runtime attachments: prepare runtime attachment: workspace is not canonical", "runtime_attachment_workspace_unavailable"},
+		{"validate task candidate: read task", "candidate_task_unavailable"},
+		{"validate task candidate: durable worktree is unavailable", "candidate_worktree_unavailable"},
+		{"validate task candidate: reviewed profile is unavailable", "candidate_profile_unavailable"},
+		{"validate task candidate: decision inventory is unavailable", "candidate_decision_inventory_unavailable"},
+		{"validate task candidate: unresolved decisions remain", "candidate_decisions_unresolved"},
+		{"validate task candidate: Git evidence is unavailable", "candidate_git_evidence_unavailable"},
+		{"validate task candidate: validation process identity is unavailable", "candidate_validation_identity_unavailable"},
+		{"validate task candidate: validation receipt is incomplete", "candidate_validation_receipt_incomplete"},
+		{"validate task candidate: Git evidence changed during validation", "candidate_git_evidence_changed"},
+		{"validate task candidate: pull-request truth is unavailable", "candidate_pull_request_truth_unavailable"},
+		{"validate task candidate: report artifact is unavailable", "candidate_report_artifact_unavailable"},
+		{"candidate evidence was not accepted", "candidate_evidence_rejected"},
+		{"durable task queue is unavailable", "candidate_queue_unavailable"},
+	}
+	for _, cause := range causes {
+		if strings.Contains(message, cause.match) {
+			return cause.name
+		}
+	}
+	return ""
+}
+
 func serviceFailureClass(err error) string {
 	message := err.Error()
 	switch {
+	case strings.Contains(message, "run service repository composition"),
+		strings.Contains(message, "run service Codex"),
+		strings.Contains(message, "run service Claude"),
+		strings.Contains(message, "run service validation composition"),
+		strings.Contains(message, "run service forge"),
+		strings.Contains(message, "run service GitHub composition"),
+		strings.Contains(message, "run service: exact Codex version is unavailable"),
+		strings.Contains(message, "run service: exact Claude version is unavailable"):
+		return "installed_composition"
 	case strings.Contains(message, "candidate supervisor: validate task candidate: pull-request truth is unavailable"):
 		return "candidate_pull_request_truth"
 	case strings.Contains(message, "candidate supervisor: candidate evidence was not accepted"):
@@ -232,6 +343,8 @@ func serviceFailureClass(err error) string {
 		return "candidate_supervision"
 	case strings.Contains(message, "run service validation recovery"):
 		return "validation_process_recovery"
+	case strings.Contains(message, "run service runtime attachment recovery"):
+		return "runtime_attachment_recovery"
 	case strings.Contains(message, "run service startup reconciliation"):
 		return "startup_reconciliation"
 	case strings.Contains(message, "run service local endpoint"):
@@ -243,6 +356,13 @@ func serviceFailureClass(err error) string {
 	default:
 		return "service_runtime"
 	}
+}
+
+func serviceFailureHint(err error) string {
+	if strings.Contains(err.Error(), "recover runtime attachments: prepare runtime attachment: workspace is not canonical") {
+		return "inspect cleaned-task attachment recovery and durable workspace state"
+	}
+	return "inspect local configuration and service health"
 }
 
 func writeServiceDiagnostic(destination io.Writer, message string, successCode int) int {

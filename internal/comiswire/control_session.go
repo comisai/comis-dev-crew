@@ -364,6 +364,7 @@ func sameControlScopes(scopes []ServiceScope) bool {
 func requiredControlScopes() []ServiceScope {
 	return []ServiceScope{
 		ServiceScopeHealth,
+		ServiceScopeAttentionResponse,
 		ServiceScopeEvidence,
 		ServiceScopeReport,
 		ServiceScopeWorkspaceLease,

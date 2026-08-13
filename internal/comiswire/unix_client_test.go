@@ -45,6 +45,36 @@ func TestAuthenticatedUnixClientAddsProtectedBearerToGeneratedHandshake(t *testi
 	server.wait(t)
 }
 
+func TestAuthenticatedUnixClientAddsProtectedBearerToAttentionReceive(t *testing.T) {
+	const bearer = "fixture_bearer_000000000000000000000001"
+	private := "Use the existing PostgreSQL adapter."
+	server := startWireServer(t, 1, func(request string) string {
+		var frame map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(request), &frame); err != nil {
+			t.Fatalf("decode authenticated attention frame: %v", err)
+		}
+		var gotBearer string
+		if err := json.Unmarshal(frame["bearer"], &gotBearer); err != nil || gotBearer != bearer || len(frame) != 5 {
+			t.Fatalf("authenticated attention bearer and fields = %q, %v, %d", gotBearer, err, len(frame))
+		}
+		return fmt.Sprintf(
+			`{"jsonrpc":"2.0","id":%q,"result":{"managedRunId":"managed-run_a","externalKey":"database-choice","state":"delivered","response":%q}}`,
+			requestID(request), private,
+		)
+	})
+	client, err := NewAuthenticatedUnixClient(server.path, bearer, time.Second)
+	if err != nil {
+		t.Fatalf("NewAuthenticatedUnixClient() error = %v", err)
+	}
+	result, err := client.ReceiveAttentionResponse(context.Background(), ReceiveAttentionResponseRequestParams{
+		OperationID: "operation_attention_authenticated", ManagedRunID: "managed-run_a", ExternalKey: "database-choice",
+	})
+	if err != nil || result.Response == nil || *result.Response != private {
+		t.Fatalf("ReceiveAttentionResponse() = %#v, %v", result, err)
+	}
+	server.wait(t)
+}
+
 func TestAuthenticatedUnixClientRejectsUnsafeCredentialAndDecodesCredentialFailure(t *testing.T) {
 	directory := newCanonicalTempDirectory(t)
 	if _, err := NewAuthenticatedUnixClient(filepath.Join(directory, "capability.sock"), "short", time.Second); err == nil {

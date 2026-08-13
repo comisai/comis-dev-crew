@@ -288,8 +288,44 @@ func TestCandidateSupervisor_RunRecoversDurableValidatingTaskAndJoinsCancellatio
 	if err != nil {
 		t.Fatalf("newCandidateSupervisor(rejected evidence) error = %v", err)
 	}
-	if err := rejectedSupervisor.Run(context.Background()); err == nil {
-		t.Fatal("Run(rejected evidence) error = nil")
+	rejectedContext, cancelRejected := context.WithCancel(context.Background())
+	rejectedFixture.store.onCommit = cancelRejected
+	if err := rejectedSupervisor.Run(rejectedContext); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run(rejected evidence) error = %v, want joined cancellation", err)
+	}
+	if rejectedFixture.store.task.State != domain.TaskFailed || rejectedFixture.runner.calls != 1 {
+		t.Fatalf("rejected evidence task = %q with %d validation calls, want failed after one call",
+			rejectedFixture.store.task.State, rejectedFixture.runner.calls)
+	}
+}
+
+func TestCandidateSupervisor_RunRetriesPendingForgeTruthWithoutStoppingService(t *testing.T) {
+	fixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	fixture.git.snapshots = []devgit.CandidateSnapshot{
+		fixture.snapshot, fixture.snapshot,
+		fixture.snapshot, fixture.snapshot,
+	}
+	fixture.pullRequests.truth.Evidence.CheckConclusions[0].Conclusion = domain.CheckPending
+	ctx, cancel := context.WithCancel(context.Background())
+	commits := 0
+	fixture.store.onCommit = func() {
+		commits++
+		if commits == 2 {
+			cancel()
+		}
+	}
+	supervisor, err := newCandidateSupervisor(fixture.config())
+	if err != nil {
+		t.Fatalf("newCandidateSupervisor() error = %v", err)
+	}
+	if err := supervisor.Run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context.Canceled after retry", err)
+	}
+	if commits != 2 || fixture.pullRequests.calls != 2 {
+		t.Fatalf("pending forge attempts: commits=%d pull-request calls=%d, want two each", commits, fixture.pullRequests.calls)
+	}
+	if fixture.store.task.State != domain.TaskValidating {
+		t.Fatalf("pending forge task state = %q, want %q", fixture.store.task.State, domain.TaskValidating)
 	}
 }
 
@@ -450,6 +486,8 @@ func (store *candidateSupervisorStore) CommitCandidateEvidence(
 	updated := store.task
 	if judgment.Outcome == domain.CandidateAccepted {
 		updated.State = domain.TaskCandidateComplete
+	} else if judgment.Outcome == domain.CandidateRejected {
+		updated.State = domain.TaskFailed
 	}
 	store.task = updated
 	if store.onCommit != nil {

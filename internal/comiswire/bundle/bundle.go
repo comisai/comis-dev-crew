@@ -172,7 +172,7 @@ func validateMethods(manifest Manifest) error {
 		if !oneOf(method.Direction, "bidirectional", "comis-to-service", "service-to-comis") {
 			return fmt.Errorf("method %q has unknown direction %q", name, method.Direction)
 		}
-		if method.RequiredServiceScope != nil && !oneOf(*method.RequiredServiceScope, "evidence", "health", "report", "workspace_lease") {
+		if method.RequiredServiceScope != nil && !oneOf(*method.RequiredServiceScope, "attention_response", "evidence", "health", "report", "workspace_lease") {
 			return fmt.Errorf("method %q has unknown service scope %q", name, *method.RequiredServiceScope)
 		}
 		if !method.OperationIDRequired || method.MaxRequestBytes != manifest.Limits.MaxRequestBytes || method.MaxResponseBytes != manifest.Limits.MaxResponseBytes || len(method.SemanticInvariants) == 0 {

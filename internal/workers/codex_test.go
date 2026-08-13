@@ -50,7 +50,7 @@ func TestCodexAdapter_ProbesAndPinsExactInstalledVersion(t *testing.T) {
 func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(t *testing.T) {
 	profile := availableCodexProfile(codexFixtureExecutable(t), "codex-reviewed")
 	profile.Unattended = true
-	profile.EnvironmentKeys = append(profile.EnvironmentKeys, "DEV_CREW_ATTACHMENT_TARGET_NAME")
+	profile.EnvironmentKeys = append(profile.EnvironmentKeys, "COMIS_EXECUTION_ATTACHMENT_TARGET_NAME")
 	catalog, err := workers.NewProfileCatalog([]workers.StaticProfile{profile})
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +87,8 @@ func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(
 	wantArguments := []string{
 		"exec", "--json", "--strict-config", "--ignore-user-config", "--ignore-rules", "--ephemeral",
 		"--color", "never", "--model", profile.Model, "--sandbox", "workspace-write",
-		"-c", `model_reasoning_effort="high"`, "--cd", request.WorkingDirectory, "-",
+		"-c", `model_reasoning_effort="high"`, "--cd", request.WorkingDirectory,
+		"Before doing any task work, acknowledge the exact protected launch binding with `devcrew-report acknowledge`. Then read the pinned task brief with `devcrew-report brief`. If either command fails, stop without reading or changing the workspace; do not continue task work. Run `devcrew-report --help` before reporting and use only its exact flag syntax; do not invent JSON or stdin formats. Use `devcrew-report` for sparse progress, decisions, blocked state, candidate completion, and failure. Treat the protected runtime attachment as the only task/report authority.\n",
 	}
 	if strings.Join(descriptor.Arguments, "\x00") != strings.Join(wantArguments, "\x00") {
 		t.Fatalf("Codex argv = %q, want %q", descriptor.Arguments, wantArguments)
@@ -101,14 +102,19 @@ func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(
 			t.Fatalf("Codex process input leaked task authority %q", secret)
 		}
 	}
-	bootstrap := string(descriptor.StandardInput)
+	if len(descriptor.StandardInput) != 0 {
+		t.Fatalf("Codex launch must not depend on post-create stdin: %q", descriptor.StandardInput)
+	}
+	bootstrap := descriptor.Arguments[len(descriptor.Arguments)-1]
 	if !strings.Contains(bootstrap, "devcrew-report acknowledge") ||
 		!strings.Contains(bootstrap, "devcrew-report brief") ||
+		!strings.Contains(bootstrap, "If either command fails, stop without reading or changing the workspace") ||
+		!strings.Contains(bootstrap, "Run `devcrew-report --help` before reporting") ||
 		strings.Index(bootstrap, "devcrew-report acknowledge") > strings.Index(bootstrap, "devcrew-report brief") ||
-		!containsString(descriptor.EnvironmentKeys, "DEV_CREW_ATTACHMENT") ||
-		!containsString(descriptor.EnvironmentKeys, "DEV_CREW_ATTACHMENT_TARGET_NAME") ||
-		len(descriptor.EnvironmentBindings) != 2 || descriptor.EnvironmentBindings["DEV_CREW_ATTACHMENT"] != attachmentMount ||
-		descriptor.EnvironmentBindings["DEV_CREW_ATTACHMENT_TARGET_NAME"] != attachmentTarget {
+		!containsString(descriptor.EnvironmentKeys, "COMIS_EXECUTION_ATTACHMENT") ||
+		!containsString(descriptor.EnvironmentKeys, "COMIS_EXECUTION_ATTACHMENT_TARGET_NAME") ||
+		len(descriptor.EnvironmentBindings) != 2 || descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT"] != attachmentMount ||
+		descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT_TARGET_NAME"] != attachmentTarget {
 		t.Fatalf("Codex bootstrap does not use protected attachment: %#v", descriptor)
 	}
 	if descriptor.ExpectedAcknowledgement.TaskHandle != request.TaskHandle ||

@@ -16,6 +16,7 @@ const (
 	PayloadHandshakeResponse     PayloadTarget = "handshake-response"
 	PayloadHealthResponse        PayloadTarget = "health-response"
 	PayloadPutEvidenceResponse   PayloadTarget = "put-evidence-response"
+	PayloadAttentionResponse     PayloadTarget = "receive-attention-response"
 	PayloadReleaseResponse       PayloadTarget = "release-response"
 	PayloadReportResponse        PayloadTarget = "report-response"
 	PayloadTerminalEventResponse PayloadTarget = "terminal-event-response"
@@ -34,7 +35,7 @@ type requestHeader struct {
 func (target PayloadTarget) Valid() bool {
 	switch target {
 	case PayloadRequest, PayloadAbandonResponse, PayloadActivateResponse, PayloadErrorResponse,
-		PayloadHandshakeResponse, PayloadHealthResponse, PayloadPutEvidenceResponse, PayloadReleaseResponse, PayloadReportResponse,
+		PayloadHandshakeResponse, PayloadHealthResponse, PayloadPutEvidenceResponse, PayloadAttentionResponse, PayloadReleaseResponse, PayloadReportResponse,
 		PayloadTerminalEventResponse, PayloadMCPCallContext, PayloadMCPManagedRunResult:
 		return true
 	default:
@@ -101,6 +102,8 @@ func payloadContract(target PayloadTarget, contents []byte) (string, any, error)
 		return schemaHealthResponse, &HealthResponse{}, nil
 	case PayloadPutEvidenceResponse:
 		return schemaPutEvidenceResponse, &PutEvidenceResponse{}, nil
+	case PayloadAttentionResponse:
+		return schemaReceiveAttentionResponseResponse, &ReceiveAttentionResponseResponse{}, nil
 	case PayloadReleaseResponse:
 		return schemaReleaseResponse, &ReleaseResponse{}, nil
 	case PayloadReportResponse:
@@ -132,6 +135,8 @@ func requestContract(contents []byte) (string, any, error) {
 		return schemaActivateRequest, &ActivateRequest{}, nil
 	case MethodManagedRunsPutEvidence:
 		return schemaPutEvidenceRequest, &PutEvidenceRequest{}, nil
+	case MethodManagedRunsReceiveAttentionResponse:
+		return schemaReceiveAttentionResponseRequest, &ReceiveAttentionResponseRequest{}, nil
 	case MethodManagedRunsRelease:
 		return schemaReleaseRequest, &ReleaseRequest{}, nil
 	case MethodManagedRunsReport:

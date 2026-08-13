@@ -38,6 +38,10 @@ func (record ProcessRecord) Validate() error {
 		if record.ExitCode != nil || (record.PID != 0 && !hasProcessIdentity) {
 			return errors.New("validate validation process: unknown evidence is incomplete")
 		}
+	case ProcessAbsent:
+		if record.PID != 0 || record.StartIdentity != "" || record.ProcessGroupIdentity != "" || record.ExitCode != nil {
+			return errors.New("validate validation process: absent evidence is contradictory")
+		}
 	default:
 		return errors.New("validate validation process: state is unknown")
 	}
@@ -67,7 +71,15 @@ func (record ProcessRecord) CanFollow(previous ProcessRecord) error {
 	if previous.State == ProcessStarting && record.State == ProcessRunning {
 		return nil
 	}
+	if previous.State == ProcessStarting && record.State == ProcessExited &&
+		record.PID > 0 && record.StartIdentity != "" && record.ProcessGroupIdentity != "" && record.ExitCode != nil {
+		return nil
+	}
 	if previous.State == ProcessStarting && record.State == ProcessUnknown && record.PID == 0 {
+		return nil
+	}
+	if (previous.State == ProcessStarting || (previous.State == ProcessUnknown && previous.PID == 0)) &&
+		record.State == ProcessAbsent && record.PID == 0 {
 		return nil
 	}
 	if previous.State == ProcessRunning && (record.State == ProcessExited || record.State == ProcessUnknown) &&

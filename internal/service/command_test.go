@@ -97,6 +97,66 @@ func TestRunCommand_UsesExplicitPathsAndSafeFailure(t *testing.T) {
 	}
 }
 
+func TestRunCommand_ReportsSafeCandidateFailureCauseWithoutPrivateDetails(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	privateDetail := "private worktree path detail"
+	exitCode := RunCommand(context.Background(), nil, &stdout, &stderr, CommandConfig{
+		DefaultDatabasePath: "/private/tmp/default.db",
+		DefaultSocketPath:   "/private/tmp/default.sock",
+		RunService: func(context.Context, Config) error {
+			return errors.New("run candidate supervisor: validate task candidate: Git evidence is unavailable: " + privateDetail)
+		},
+	})
+	if exitCode != 1 || !strings.Contains(stderr.String(), "Failure cause: candidate_git_evidence_unavailable") {
+		t.Fatalf("RunCommand(candidate failure) = %d, stderr=%q", exitCode, stderr.String())
+	}
+	if strings.Contains(stdout.String()+stderr.String(), privateDetail) {
+		t.Fatalf("candidate diagnostic leaked private detail: %q", stderr.String())
+	}
+}
+
+func TestRunCommand_ReportsInstalledCompositionFailureWithoutPrivateDetails(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	privateDetail := "/private/repositories/worktrees"
+	exitCode := RunCommand(context.Background(), nil, &stdout, &stderr, CommandConfig{
+		DefaultDatabasePath: "/private/tmp/default.db",
+		DefaultSocketPath:   "/private/tmp/default.sock",
+		RunService: func(context.Context, Config) error {
+			return errors.New("run service forge push composition: transport rejected " + privateDetail)
+		},
+	})
+	if exitCode != 1 || !strings.Contains(stderr.String(), "Failure class: installed_composition") ||
+		!strings.Contains(stderr.String(), "Failure cause: forge_push_composition") {
+		t.Fatalf("RunCommand(composition failure) = %d, stderr=%q", exitCode, stderr.String())
+	}
+	if strings.Contains(stdout.String()+stderr.String(), privateDetail) {
+		t.Fatalf("composition diagnostic leaked private detail: %q", stderr.String())
+	}
+}
+
+func TestRunCommand_ReportsRuntimeAttachmentRecoveryFailureActionably(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	privateDetail := "/private/removed-worktree"
+	exitCode := RunCommand(context.Background(), nil, &stdout, &stderr, CommandConfig{
+		DefaultDatabasePath: "/private/tmp/default.db",
+		DefaultSocketPath:   "/private/tmp/default.sock",
+		RunService: func(context.Context, Config) error {
+			return errors.New("run service runtime attachment recovery: recover runtime attachments: prepare runtime attachment: workspace is not canonical: " + privateDetail)
+		},
+	})
+	if exitCode != 1 || !strings.Contains(stderr.String(), "Failure class: runtime_attachment_recovery") ||
+		!strings.Contains(stderr.String(), "Failure cause: runtime_attachment_workspace_unavailable") ||
+		!strings.Contains(stderr.String(), "Hint: inspect cleaned-task attachment recovery and durable workspace state") {
+		t.Fatalf("RunCommand(runtime attachment recovery failure) = %d, stderr=%q", exitCode, stderr.String())
+	}
+	if strings.Contains(stdout.String()+stderr.String(), privateDetail) {
+		t.Fatalf("runtime attachment diagnostic leaked private detail: %q", stderr.String())
+	}
+}
+
 func TestRunCommand_RejectsMissingCompositionDependencies(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -166,6 +226,15 @@ func TestRunCommand_ComposesInstalledLaneWithExplicitDeterministicFixture(t *tes
 		"--codex-terminal-allow-entry", "codex-confined",
 		"--codex-network", "restricted",
 		"--codex-concurrency", "2",
+		"--claude-profile", "claude-reviewed",
+		"--claude-executable", "/opt/claude/bin/claude",
+		"--claude-version", "2.1.224 (Claude Code)",
+		"--claude-model", "claude-opus-4-6",
+		"--claude-effort", "high",
+		"--claude-terminal-allow-entry", "claude-confined",
+		"--claude-network", "restricted",
+		"--claude-concurrency", "2",
+		"--claude-config-directory", "/private/config/claude",
 		"--candidate-config", candidateConfigPath,
 		"--fixture-worker",
 		"--fixture-decision", "use the bounded fixture choice",
@@ -200,6 +269,17 @@ func TestRunCommand_ComposesInstalledLaneWithExplicitDeterministicFixture(t *tes
 		got.FixtureComposition == nil || got.FixtureComposition.Decision != "use the bounded fixture choice" {
 		t.Fatalf("installed service config = %#v", got)
 	}
+	claude := reflect.ValueOf(got).FieldByName("ClaudeComposition")
+	if !claude.IsValid() || claude.IsNil() {
+		t.Fatalf("Claude composition is unavailable: %#v", got)
+	}
+	claude = claude.Elem()
+	if claude.FieldByName("ProfileID").String() != "claude-reviewed" ||
+		claude.FieldByName("Executable").String() != "/opt/claude/bin/claude" ||
+		claude.FieldByName("ExpectedVersion").String() != "2.1.224 (Claude Code)" ||
+		claude.FieldByName("ConfigDirectory").String() != "/private/config/claude" {
+		t.Fatalf("Claude composition = %#v", claude.Interface())
+	}
 	artifact := reflect.ValueOf(*got.FixtureComposition).FieldByName("ArtifactRelativePath")
 	if !artifact.IsValid() || artifact.String() != "report.md" {
 		t.Fatalf("fixture artifact configuration = %#v", got.FixtureComposition)
@@ -224,6 +304,15 @@ func TestRunCommand_RejectsPartialInstalledCompositionWithoutLeakingValues(t *te
 	}
 	if strings.Contains(stdout.String()+stderr.String(), privateValue) {
 		t.Fatalf("partial-composition diagnostic leaked private value: %q", stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	exitCode = RunCommand(context.Background(), []string{
+		"--database", "/private/state/devcrew.db", "--socket", "/private/run/operator.sock",
+		"--claude-profile", "claude-reviewed",
+	}, &stdout, &stderr, CommandConfig{})
+	if exitCode != 2 || !strings.Contains(stderr.String(), "Claude composition is incomplete") {
+		t.Fatalf("RunCommand(partial Claude) = %d, stderr=%q", exitCode, stderr.String())
 	}
 	stdout.Reset()
 	stderr.Reset()

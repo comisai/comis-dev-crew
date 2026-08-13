@@ -45,6 +45,11 @@ type authenticatedPutEvidenceRequest struct {
 	Bearer string `json:"bearer"`
 }
 
+type authenticatedReceiveAttentionResponseRequest struct {
+	ReceiveAttentionResponseRequest
+	Bearer string `json:"bearer"`
+}
+
 type authenticatedReleaseRequest struct {
 	ReleaseRequest
 	Bearer string `json:"bearer"`
@@ -166,6 +171,8 @@ func addInstanceCredential(request any, bearer string) (any, error) {
 		return authenticatedReportRequest{ReportRequest: envelope, Bearer: bearer}, nil
 	case PutEvidenceRequest:
 		return authenticatedPutEvidenceRequest{PutEvidenceRequest: envelope, Bearer: bearer}, nil
+	case ReceiveAttentionResponseRequest:
+		return authenticatedReceiveAttentionResponseRequest{ReceiveAttentionResponseRequest: envelope, Bearer: bearer}, nil
 	case ReleaseRequest:
 		return authenticatedReleaseRequest{ReleaseRequest: envelope, Bearer: bearer}, nil
 	default:
@@ -182,6 +189,8 @@ func outboundOperationID(request any) (OperationID, error) {
 	case ReportRequest:
 		return envelope.ID, nil
 	case PutEvidenceRequest:
+		return envelope.ID, nil
+	case ReceiveAttentionResponseRequest:
 		return envelope.ID, nil
 	case ReleaseRequest:
 		return envelope.ID, nil

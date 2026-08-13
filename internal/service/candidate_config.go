@@ -47,6 +47,9 @@ type candidateForgeDocument struct {
 	PushCredentialFile     string `json:"pushCredentialFile"`
 	CredentialDirectory    string `json:"credentialDirectory"`
 	LocalFixtureRemoteRoot string `json:"localFixtureRemoteRoot"`
+	SSHTransportExecutable string `json:"sshTransportExecutable"`
+	SSHExecutable          string `json:"sshExecutable"`
+	SSHKnownHostsFile      string `json:"sshKnownHostsFile"`
 }
 
 func readCandidateComposition(path string) (*ValidationComposition, *ForgeComposition, error) {
@@ -97,6 +100,8 @@ func readCandidateComposition(path string) (*ValidationComposition, *ForgeCompos
 			RemoteURL: document.Forge.RemoteURL, ReadCredentialFile: document.Forge.ReadCredentialFile,
 			PushCredentialFile: document.Forge.PushCredentialFile, CredentialDirectory: document.Forge.CredentialDirectory,
 			LocalFixtureRemoteRoot: document.Forge.LocalFixtureRemoteRoot,
+			SSHTransportExecutable: document.Forge.SSHTransportExecutable,
+			SSHExecutable:          document.Forge.SSHExecutable, SSHKnownHostsFile: document.Forge.SSHKnownHostsFile,
 		}, nil
 }
 

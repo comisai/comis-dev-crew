@@ -58,6 +58,35 @@ func TestQueries_ProduceStablePartialFleetAndDiagnosticSnapshots(t *testing.T) {
 	}
 }
 
+func TestQueries_ProjectConfiguredDisconnectedHostAsDegraded(t *testing.T) {
+	queries, err := NewQueries(QueryConfig{
+		Repository: &queryRepository{}, Host: queryHostStatus(false), Clock: time.Now,
+	})
+	if err != nil {
+		t.Fatalf("NewQueries() error = %v", err)
+	}
+	report, err := queries.Diagnose(context.Background())
+	if err != nil {
+		t.Fatalf("Diagnose() error = %v", err)
+	}
+	if report.Completeness != CompletenessComplete || report.ServiceHealth != HealthDegraded ||
+		report.ComisHealth != HealthUnavailable || len(report.Checks) != 3 || report.Checks[2].Status != CheckFail {
+		t.Fatalf("Diagnose() = %#v, want complete disconnected-host failure", report)
+	}
+	fleet, err := queries.Fleet(context.Background())
+	if err != nil {
+		t.Fatalf("Fleet() error = %v", err)
+	}
+	if fleet.Completeness != CompletenessComplete || fleet.ServiceHealth != HealthDegraded ||
+		fleet.ComisHealth != HealthUnavailable {
+		t.Fatalf("Fleet() = %#v, want degraded disconnected-host posture", fleet)
+	}
+}
+
+type queryHostStatus bool
+
+func (status queryHostStatus) Connected() bool { return bool(status) }
+
 func TestQueries_ListShowExplainAndOperationShareCanonicalProjections(t *testing.T) {
 	now := time.Date(2026, time.August, 8, 21, 0, 0, 0, time.UTC)
 	task := queryTask("task-0001", domain.TaskBlocked, 4)
@@ -97,6 +126,84 @@ func TestQueries_ListShowExplainAndOperationShareCanonicalProjections(t *testing
 	if operationView.OperationID != operation.ID || operationView.Status != operation.Status || operationView.SubjectDigest != operation.SubjectDigest {
 		t.Fatalf("Operation() = %#v, want durable operation projection", operationView)
 	}
+}
+
+func TestQueries_ExplainFailedCandidateFromDurableJudgment(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		reason    domain.CandidateReason
+		wantCode  string
+		wantCause string
+	}{
+		{name: "local validation failure", reason: domain.CandidateValidationFailed, wantCode: "candidate_validation_failed", wantCause: "required local validation check failed"},
+		{name: "forge validation failure", reason: domain.CandidateForgeFailed, wantCode: "candidate_forge_failed", wantCause: "required forge check failed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			task := queryTask("task-candidate-failed", domain.TaskFailed, 8)
+			repository := &queryRepository{
+				tasks: []domain.Task{task},
+				candidateJudgment: domain.CandidateJudgment{
+					Outcome: domain.CandidateRejected,
+					Reason:  test.reason,
+				},
+			}
+			queries, err := NewQueries(QueryConfig{Repository: repository, Clock: time.Now})
+			if err != nil {
+				t.Fatalf("NewQueries() error = %v", err)
+			}
+			explanation, err := queries.ExplainTask(context.Background(), task.Handle)
+			if err != nil {
+				t.Fatalf("ExplainTask() error = %v", err)
+			}
+			if !repository.candidateCalled || explanation.ReasonCode != test.wantCode ||
+				!strings.Contains(explanation.LikelyRootCause, test.wantCause) ||
+				len(explanation.NextSafeActions) != 1 || explanation.NextSafeActions[0] != ActionInspectTask {
+				t.Fatalf("ExplainTask(rejected candidate) = %#v, judgment read = %v", explanation, repository.candidateCalled)
+			}
+		})
+	}
+}
+
+func TestQueries_ExplainFailedCandidateFallbacksRemainFailClosed(t *testing.T) {
+	task := queryTask("task-candidate-fallback", domain.TaskFailed, 9)
+
+	t.Run("missing candidate evidence keeps generic task failure", func(t *testing.T) {
+		repository := &queryRepository{tasks: []domain.Task{task}, candidateErr: ErrNotFound}
+		queries, err := NewQueries(QueryConfig{Repository: repository, Clock: time.Now})
+		if err != nil {
+			t.Fatalf("NewQueries() error = %v", err)
+		}
+		explanation, err := queries.ExplainTask(context.Background(), task.Handle)
+		if err != nil || !repository.candidateCalled || explanation.ReasonCode != "task_failed" {
+			t.Fatalf("ExplainTask(missing judgment) = %#v, %v, judgment read = %v", explanation, err, repository.candidateCalled)
+		}
+	})
+
+	t.Run("unreadable candidate evidence returns safe internal failure", func(t *testing.T) {
+		repository := &queryRepository{tasks: []domain.Task{task}, candidateErr: errors.New("private candidate store failure")}
+		queries, err := NewQueries(QueryConfig{Repository: repository, Clock: time.Now})
+		if err != nil {
+			t.Fatalf("NewQueries() error = %v", err)
+		}
+		if _, err := queries.ExplainTask(context.Background(), task.Handle); failureCode(err) != domain.ErrorInternal {
+			t.Fatalf("ExplainTask(unreadable judgment) error = %v, want safe internal failure", err)
+		}
+	})
+
+	t.Run("non-rejected candidate judgment keeps generic task failure", func(t *testing.T) {
+		repository := &queryRepository{
+			tasks:             []domain.Task{task},
+			candidateJudgment: domain.CandidateJudgment{Outcome: domain.CandidateAccepted, Reason: domain.CandidateEvidenceAccepted},
+		}
+		queries, err := NewQueries(QueryConfig{Repository: repository, Clock: time.Now})
+		if err != nil {
+			t.Fatalf("NewQueries() error = %v", err)
+		}
+		explanation, err := queries.ExplainTask(context.Background(), task.Handle)
+		if err != nil || explanation.ReasonCode != "task_failed" {
+			t.Fatalf("ExplainTask(non-rejected judgment) = %#v, %v", explanation, err)
+		}
+	})
 }
 
 func TestQueries_GetLaunchPlanBuildsAndSafelyProjectsReviewedDescriptor(t *testing.T) {
@@ -146,7 +253,15 @@ func TestQueries_GetLaunchPlanBuildsAndSafelyProjectsReviewedDescriptor(t *testi
 	if err != nil {
 		t.Fatalf("Marshal(plan) error = %v", err)
 	}
-	for _, forbidden := range []string{workspace, "/usr/local/bin/codex", "--model", "DEV_CREW_ATTACHMENT", task.ExecutionAttachmentID} {
+	for _, required := range []string{
+		`"managedRunId":"` + task.ManagedRunID + `"`,
+		`"workspaceLeaseId":"` + task.WorkspaceLeaseID + `"`,
+	} {
+		if !strings.Contains(string(encoded), required) {
+			t.Fatalf("launch plan omitted required managed terminal authority %q: %s", required, encoded)
+		}
+	}
+	for _, forbidden := range []string{workspace, "/usr/local/bin/codex", "--model", "COMIS_EXECUTION_ATTACHMENT", task.ExecutionAttachmentID} {
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("launch plan leaked protected process material %q: %s", forbidden, encoded)
 		}
@@ -470,15 +585,26 @@ func failureCode(err error) domain.ErrorCode {
 }
 
 type queryRepository struct {
-	tasks           []domain.Task
-	operation       domain.OperationRecord
-	preparation     ManagedRunPreparation
-	preparationErr  error
-	stateVersion    int64
-	stateVersionErr error
-	readErr         error
-	readCalled      bool
-	snapshotCalled  bool
+	tasks             []domain.Task
+	operation         domain.OperationRecord
+	preparation       ManagedRunPreparation
+	preparationErr    error
+	stateVersion      int64
+	stateVersionErr   error
+	readErr           error
+	readCalled        bool
+	snapshotCalled    bool
+	candidateJudgment domain.CandidateJudgment
+	candidateErr      error
+	candidateCalled   bool
+}
+
+func (repository *queryRepository) LatestCandidateEvidence(
+	context.Context,
+	string,
+) (*domain.SealedDeliveryEvidence, domain.CandidateJudgment, error) {
+	repository.candidateCalled = true
+	return nil, repository.candidateJudgment, repository.candidateErr
 }
 
 func (repository *queryRepository) GetManagedRunPreparation(context.Context, string) (ManagedRunPreparation, error) {
@@ -526,8 +652,8 @@ func (adapter *queryHarnessAdapter) BuildLaunchDescriptor(_ context.Context, req
 	return WorkerLaunchDescriptor{
 		ProfileID: request.ProfileID, Harness: "codex", Executable: "/usr/local/bin/codex",
 		Arguments: []string{"--model", "reviewed-model"}, WorkingDirectory: request.WorkingDirectory,
-		EnvironmentKeys:     []string{"DEV_CREW_ATTACHMENT"},
-		EnvironmentBindings: map[string]string{"DEV_CREW_ATTACHMENT": request.Attachment.MountSocketPath},
+		EnvironmentKeys:     []string{"COMIS_EXECUTION_ATTACHMENT"},
+		EnvironmentBindings: map[string]string{"COMIS_EXECUTION_ATTACHMENT": request.Attachment.MountSocketPath},
 		TerminalAllowEntry:  "terminal-codex-reviewed", Attachment: request.Attachment,
 		ExpectedAcknowledgement: LaunchAcknowledgement{
 			TaskHandle: request.TaskHandle, ManagedRunID: request.ManagedRunID,

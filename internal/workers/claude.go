@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -18,42 +18,49 @@ import (
 )
 
 const (
-	maximumCodexProbeBytes = 8 * 1024
-	codexBootstrapPrompt   = "Before doing any task work, acknowledge the exact protected launch binding with `devcrew-report acknowledge`. Then read the pinned task brief with `devcrew-report brief`. If either command fails, stop without reading or changing the workspace; do not continue task work. Run `devcrew-report --help` before reporting and use only its exact flag syntax; do not invent JSON or stdin formats. Use `devcrew-report` for sparse progress, decisions, blocked state, candidate completion, and failure. Treat the protected runtime attachment as the only task/report authority.\n"
+	maximumClaudeProbeBytes = 8 * 1024
+	claudeBootstrapPrompt   = "Before doing any task work, acknowledge the exact protected launch binding with `devcrew-report acknowledge`. Then read the pinned task brief with `devcrew-report brief`. If either command fails, stop without reading or changing the workspace; do not continue task work. Run `devcrew-report --help` before reporting and use only its exact flag syntax; do not invent JSON or stdin formats. Use `devcrew-report` for sparse progress, decisions, blocked state, candidate completion, and failure. Treat the protected runtime attachment as the only task/report authority.\n"
+	claudeConfigEnvironment = "CLAUDE_CONFIG_DIR"
 )
 
-var codexVersionPattern = regexp.MustCompile(`^codex-cli [0-9]+\.[0-9]+\.[0-9]+$`)
+var claudeVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+ \(Claude Code\)$`)
 
-// CodexAdapterConfig pins one exact profile installation and the version whose
-// lifecycle semantics were reviewed.
-type CodexAdapterConfig struct {
+// ClaudeAdapterConfig pins one exact profile installation, version, and
+// owner-private authentication directory.
+type ClaudeAdapterConfig struct {
 	Profiles             *ProfileCatalog
 	ProfileID            string
 	ExpectedVersion      string
 	VersionArguments     []string
 	ProbeEnvironment     map[string]string
+	ConfigDirectory      string
 	SettleSignalVerified bool
 }
 
-// CodexAdapter implements the application-owned essential harness boundary.
-type CodexAdapter struct {
+// ClaudeAdapter implements the application-owned essential harness boundary.
+type ClaudeAdapter struct {
 	profiles             *ProfileCatalog
 	profileID            string
 	expectedVersion      string
 	versionArguments     []string
 	probeEnvironment     []string
+	configDirectory      string
 	settleSignalVerified bool
 }
 
-// NewCodexAdapter validates one exact static Codex profile and version pin.
-func NewCodexAdapter(config CodexAdapterConfig) (*CodexAdapter, error) {
+// NewClaudeAdapter validates one exact static Claude Code profile and version pin.
+func NewClaudeAdapter(config ClaudeAdapterConfig) (*ClaudeAdapter, error) {
 	if config.Profiles == nil || !profileIDPattern.MatchString(config.ProfileID) ||
-		!codexVersionPattern.MatchString(config.ExpectedVersion) {
-		return nil, errors.New("create Codex adapter: profile catalog, profile ID, and version pin are required")
+		!claudeVersionPattern.MatchString(config.ExpectedVersion) {
+		return nil, errors.New("create Claude adapter: profile catalog, profile ID, and version pin are required")
 	}
 	profile, found := config.Profiles.profiles[config.ProfileID]
-	if !found || profile.Harness != HarnessCodex {
-		return nil, errors.New("create Codex adapter: exact Codex profile is unavailable")
+	if !found || profile.Harness != HarnessClaude {
+		return nil, errors.New("create Claude adapter: exact Claude profile is unavailable")
+	}
+	configDirectory, err := validateClaudeConfigDirectory(config.ConfigDirectory)
+	if err != nil {
+		return nil, err
 	}
 	versionArguments := append([]string(nil), config.VersionArguments...)
 	if len(versionArguments) == 0 {
@@ -61,45 +68,50 @@ func NewCodexAdapter(config CodexAdapterConfig) (*CodexAdapter, error) {
 	}
 	for _, argument := range versionArguments {
 		if argument == "" || len([]byte(argument)) > 1024 || strings.ContainsAny(argument, "\x00\r\n") {
-			return nil, errors.New("create Codex adapter: version argv is invalid")
+			return nil, errors.New("create Claude adapter: version argv is invalid")
 		}
 	}
-	probeEnvironment := make([]string, 0, len(config.ProbeEnvironment))
+	probeEnvironment := make([]string, 0, len(config.ProbeEnvironment)+1)
+	probeValues := make(map[string]string, len(config.ProbeEnvironment)+1)
 	for key, value := range config.ProbeEnvironment {
+		probeValues[key] = value
+	}
+	probeValues[claudeConfigEnvironment] = configDirectory
+	for key, value := range probeValues {
 		if !containsEnvironmentKey(profile.EnvironmentKeys, key) || strings.ContainsRune(value, '\x00') {
-			return nil, errors.New("create Codex adapter: probe environment is outside the profile allowlist")
+			return nil, errors.New("create Claude adapter: probe environment is outside the profile allowlist")
 		}
 		probeEnvironment = append(probeEnvironment, key+"="+value)
 	}
 	sort.Strings(probeEnvironment)
-	return &CodexAdapter{
+	return &ClaudeAdapter{
 		profiles: config.Profiles, profileID: config.ProfileID, expectedVersion: config.ExpectedVersion,
 		versionArguments: versionArguments, probeEnvironment: probeEnvironment,
-		settleSignalVerified: config.SettleSignalVerified,
+		configDirectory: configDirectory, settleSignalVerified: config.SettleSignalVerified,
 	}, nil
 }
 
 // ID identifies the adapter family without leaking installed paths.
-func (adapter *CodexAdapter) ID() string { return string(HarnessCodex) }
+func (adapter *ClaudeAdapter) ID() string { return string(HarnessClaude) }
 
 // ProbeVersion executes only the exact pinned executable and entry-point argv.
-func (adapter *CodexAdapter) ProbeVersion(ctx context.Context) (application.HarnessVersionProbe, error) {
+func (adapter *ClaudeAdapter) ProbeVersion(ctx context.Context) (application.HarnessVersionProbe, error) {
 	if ctx == nil {
-		return application.HarnessVersionProbe{}, errors.New("probe Codex version: context is required")
+		return application.HarnessVersionProbe{}, errors.New("probe Claude version: context is required")
 	}
 	if err := ctx.Err(); err != nil {
 		return application.HarnessVersionProbe{}, err
 	}
 	if adapter == nil || adapter.profiles == nil {
-		return application.HarnessVersionProbe{}, errors.New("probe Codex version: adapter is unavailable")
+		return application.HarnessVersionProbe{}, errors.New("probe Claude version: adapter is unavailable")
 	}
 	profile := adapter.profiles.profiles[adapter.profileID]
 	arguments := append(append([]string(nil), profile.ExecutableArguments...), adapter.versionArguments...)
 	command := exec.CommandContext(ctx, profile.Executable, arguments...)
 	command.Env = append([]string(nil), adapter.probeEnvironment...)
 	command.WaitDelay = time.Second
-	stdout := &codexBoundedBuffer{limit: maximumCodexProbeBytes}
-	stderr := &codexBoundedBuffer{limit: maximumCodexProbeBytes}
+	stdout := &claudeBoundedBuffer{limit: maximumClaudeProbeBytes}
+	stderr := &claudeBoundedBuffer{limit: maximumClaudeProbeBytes}
 	command.Stdout, command.Stderr = stdout, stderr
 	if err := command.Run(); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -110,7 +122,7 @@ func (adapter *CodexAdapter) ProbeVersion(ctx context.Context) (application.Harn
 		}, nil
 	}
 	version := strings.TrimSuffix(stdout.buffer.String(), "\n")
-	if !codexVersionPattern.MatchString(version) {
+	if !claudeVersionPattern.MatchString(version) {
 		return application.HarnessVersionProbe{
 			Availability: application.HarnessUnknown, Reason: application.HarnessReasonCapabilityUnknown,
 		}, nil
@@ -124,15 +136,16 @@ func (adapter *CodexAdapter) ProbeVersion(ctx context.Context) (application.Harn
 	return application.HarnessVersionProbe{Version: version, Availability: application.HarnessAvailable}, nil
 }
 
-// BuildLaunchDescriptor creates a reviewed codex exec argv. The generic
-// bootstrap is the positional prompt so a PTY-backed terminal starts atomically;
-// task binding remains in the expected acknowledgement and protected mount.
-func (adapter *CodexAdapter) BuildLaunchDescriptor(
+// BuildLaunchDescriptor creates a fixed Claude Code argv inside the selected
+// Comis jail. The generic bootstrap is the positional print-mode prompt so a
+// PTY-backed terminal starts atomically; task authority remains in the protected
+// runtime attachment.
+func (adapter *ClaudeAdapter) BuildLaunchDescriptor(
 	ctx context.Context,
 	request application.WorkerLaunchRequest,
 ) (application.WorkerLaunchDescriptor, error) {
 	if ctx == nil {
-		return application.WorkerLaunchDescriptor{}, errors.New("build Codex launch descriptor: context is required")
+		return application.WorkerLaunchDescriptor{}, errors.New("build Claude launch descriptor: context is required")
 	}
 	if err := ctx.Err(); err != nil {
 		return application.WorkerLaunchDescriptor{}, err
@@ -146,22 +159,27 @@ func (adapter *CodexAdapter) BuildLaunchDescriptor(
 	if err != nil {
 		return application.WorkerLaunchDescriptor{}, err
 	}
-	if err := validateCodexLaunchBinding(request); err != nil {
+	if err := validateClaudeLaunchBinding(request); err != nil {
 		return application.WorkerLaunchDescriptor{}, err
 	}
-	if err := validateRuntimeAttachment(request.Attachment); err != nil {
+	if err := validateClaudeRuntimeAttachment(request.Attachment); err != nil {
 		return application.WorkerLaunchDescriptor{}, err
 	}
-	if !containsEnvironmentKey(base.EnvironmentKeys, application.RuntimeAttachmentPathEnvironment) ||
-		!containsEnvironmentKey(base.EnvironmentKeys, application.RuntimeAttachmentTargetEnvironment) {
-		return application.WorkerLaunchDescriptor{}, errors.New("build Codex launch descriptor: attachment environment keys are not allowed")
+	for _, key := range []string{
+		application.RuntimeAttachmentPathEnvironment,
+		application.RuntimeAttachmentTargetEnvironment,
+		claudeConfigEnvironment,
+	} {
+		if !containsEnvironmentKey(base.EnvironmentKeys, key) {
+			return application.WorkerLaunchDescriptor{}, errors.New("build Claude launch descriptor: required environment key is not allowed")
+		}
 	}
 	arguments := append([]string(nil), base.Arguments...)
 	arguments = append(arguments,
-		"--strict-config", "--ignore-user-config", "--ignore-rules", "--ephemeral",
-		"--color", "never", "--model", base.Model, "--sandbox", "workspace-write",
-		"-c", fmt.Sprintf("model_reasoning_effort=%q", base.Effort),
-		"--cd", request.WorkingDirectory, codexBootstrapPrompt,
+		"--input-format", "text", "--output-format", "stream-json", "--verbose",
+		"--no-session-persistence", "--safe-mode", "--no-chrome", "--disable-slash-commands",
+		"--strict-mcp-config", "--dangerously-skip-permissions", "--permission-mode", "bypassPermissions",
+		"--model", base.Model, "--effort", base.Effort, claudeBootstrapPrompt,
 	)
 	unattended := base.Unattended && adapter.settleSignalVerified
 	var degradedReason application.HarnessReason
@@ -175,6 +193,7 @@ func (adapter *CodexAdapter) BuildLaunchDescriptor(
 		EnvironmentBindings: map[string]string{
 			application.RuntimeAttachmentPathEnvironment:   request.Attachment.MountSocketPath,
 			application.RuntimeAttachmentTargetEnvironment: request.Attachment.AttachmentTargetName,
+			claudeConfigEnvironment:                        adapter.configDirectory,
 		},
 		Model: base.Model, Effort: base.Effort, TerminalAllowEntry: base.TerminalAllowEntry,
 		Network: string(base.Network), ConcurrencyLimit: base.ConcurrencyLimit,
@@ -188,9 +207,9 @@ func (adapter *CodexAdapter) BuildLaunchDescriptor(
 	}, nil
 }
 
-// ClassifySemanticActivity uses only fresh Codex JSONL or a positively
-// attributed process exit. Turn completion without a task report is unknown.
-func (adapter *CodexAdapter) ClassifySemanticActivity(observation application.HarnessObservation) application.SemanticActivityResult {
+// ClassifySemanticActivity accepts only fresh Claude Code stream-json events
+// or a positively attributed process exit.
+func (adapter *ClaudeAdapter) ClassifySemanticActivity(observation application.HarnessObservation) application.SemanticActivityResult {
 	if observation.FreshnessTTL <= 0 || observation.ObservedAt.IsZero() || observation.Now.IsZero() ||
 		observation.ObservedAt.After(observation.Now) {
 		return semanticUnknown(application.SemanticReasonMissing)
@@ -204,7 +223,7 @@ func (adapter *CodexAdapter) ClassifySemanticActivity(observation application.Ha
 	if len(observation.EventJSON) == 0 {
 		return semanticUnknown(application.SemanticReasonMissing)
 	}
-	if len(observation.EventJSON) > maximumCodexProbeBytes {
+	if len(observation.EventJSON) > maximumClaudeProbeBytes {
 		return semanticUnknown(application.SemanticReasonMalformed)
 	}
 	var event struct {
@@ -214,77 +233,70 @@ func (adapter *CodexAdapter) ClassifySemanticActivity(observation application.Ha
 		return semanticUnknown(application.SemanticReasonMalformed)
 	}
 	switch event.Type {
-	case "thread.started", "turn.started", "item.started", "item.updated", "item.completed":
+	case "system", "assistant", "user":
 		return application.SemanticActivityResult{State: application.ActivityBusy}
-	case "request.user_input":
-		return application.SemanticActivityResult{State: application.ActivityAwaitingInput}
-	case "turn.completed":
+	case "result":
 		return semanticUnknown(application.SemanticReasonSettledWithoutReport)
 	default:
 		return semanticUnknown(application.SemanticReasonUnsupported)
 	}
 }
 
-func validateCodexLaunchBinding(request application.WorkerLaunchRequest) error {
-	if err := domain.ValidateTaskHandle(request.TaskHandle); err != nil {
-		return errors.New("build Codex launch descriptor: task binding is invalid")
+func validateClaudeConfigDirectory(path string) (string, error) {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path || len([]byte(path)) > 4096 || strings.ContainsAny(path, "\x00\r\n") {
+		return "", errors.New("create Claude adapter: config directory is invalid")
 	}
-	if err := domain.ValidateAuthorityReference("managedRunId", request.ManagedRunID); err != nil {
-		return errors.New("build Codex launch descriptor: task binding is invalid")
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
+		return "", errors.New("create Claude adapter: config directory is unavailable or unsafe")
 	}
-	if err := domain.ValidateAuthorityReference("workspaceLeaseId", request.WorkspaceLeaseID); err != nil {
-		return errors.New("build Codex launch descriptor: task binding is invalid")
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil || resolved != path {
+		return "", errors.New("create Claude adapter: config directory is not canonical")
 	}
-	if request.BriefRevision < 1 {
-		return errors.New("build Codex launch descriptor: brief binding is invalid")
+	return path, nil
+}
+
+func validateClaudeLaunchBinding(request application.WorkerLaunchRequest) error {
+	if domain.ValidateTaskHandle(request.TaskHandle) != nil ||
+		domain.ValidateAuthorityReference("managedRunId", request.ManagedRunID) != nil ||
+		domain.ValidateAuthorityReference("workspaceLeaseId", request.WorkspaceLeaseID) != nil {
+		return errors.New("build Claude launch descriptor: task binding is invalid")
 	}
-	if err := domain.ValidateBriefRevisionHash(request.BriefRevisionHash); err != nil {
-		return errors.New("build Codex launch descriptor: brief binding is invalid")
+	if request.BriefRevision < 1 || domain.ValidateBriefRevisionHash(request.BriefRevisionHash) != nil {
+		return errors.New("build Claude launch descriptor: brief binding is invalid")
 	}
 	return nil
 }
 
-func validateRuntimeAttachment(attachment application.RuntimeSocketAttachment) error {
+func validateClaudeRuntimeAttachment(attachment application.RuntimeSocketAttachment) error {
 	if domain.ValidateAuthorityReference("executionAttachmentId", attachment.ExecutionAttachmentID) != nil ||
 		domain.ValidateAttachmentTargetName(attachment.AttachmentTargetName) != nil {
-		return errors.New("build Codex launch descriptor: runtime attachment authority is invalid")
+		return errors.New("build Claude launch descriptor: runtime attachment authority is invalid")
 	}
 	expectedMount := filepath.Join(application.RuntimeAttachmentMountDirectory, attachment.AttachmentTargetName)
 	if attachment.MountSocketPath != expectedMount || filepath.Clean(attachment.MountSocketPath) != attachment.MountSocketPath ||
 		strings.ContainsAny(attachment.MountSocketPath, "\x00\r\n") {
-		return errors.New("build Codex launch descriptor: runtime attachment mount differs from activation")
+		return errors.New("build Claude launch descriptor: runtime attachment mount differs from activation")
 	}
 	return nil
 }
 
-func containsEnvironmentKey(keys []string, want string) bool {
-	for _, key := range keys {
-		if key == want {
-			return true
-		}
-	}
-	return false
-}
-
-func semanticUnknown(reason application.SemanticReason) application.SemanticActivityResult {
-	return application.SemanticActivityResult{State: application.ActivityUnknown, Reason: reason}
-}
-
-type codexBoundedBuffer struct {
+type claudeBoundedBuffer struct {
 	buffer bytes.Buffer
 	limit  int
 }
 
-func (destination *codexBoundedBuffer) Write(contents []byte) (int, error) {
+func (destination *claudeBoundedBuffer) Write(contents []byte) (int, error) {
 	remaining := destination.limit - destination.buffer.Len()
 	if remaining <= 0 {
-		return 0, errors.New("codex probe output exceeded its bound")
+		return 0, errors.New("claude probe output exceeded its bound")
 	}
 	if len(contents) > remaining {
 		_, _ = destination.buffer.Write(contents[:remaining])
-		return remaining, errors.New("codex probe output exceeded its bound")
+		return remaining, errors.New("claude probe output exceeded its bound")
 	}
 	return destination.buffer.Write(contents)
 }
 
-var _ application.WorkerHarnessAdapter = (*CodexAdapter)(nil)
+var _ application.WorkerHarnessAdapter = (*ClaudeAdapter)(nil)

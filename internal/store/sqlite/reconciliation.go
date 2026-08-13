@@ -25,6 +25,9 @@ func (store *Store) ReconcileStartup(ctx context.Context, at time.Time) (applica
 	}
 	defer func() { _ = transaction.Rollback() }()
 	result := application.StartupReconciliation{}
+	if err := reconcileSettledTerminalBindings(ctx, transaction); err != nil {
+		return result, err
+	}
 
 	tasks, err := listTasks(ctx, transaction)
 	if err != nil {
@@ -78,6 +81,57 @@ func (store *Store) ReconcileStartup(ctx context.Context, at time.Time) (applica
 		return application.StartupReconciliation{}, fmt.Errorf("commit startup reconciliation: %w", err)
 	}
 	return result, nil
+}
+
+func reconcileSettledTerminalBindings(ctx context.Context, transaction *sql.Tx) (resultErr error) {
+	type terminalReference struct {
+		taskHandle        string
+		terminalSessionID string
+	}
+	rows, err := transaction.QueryContext(ctx, `SELECT task_handle, terminal_session_id
+        FROM task_terminal_bindings WHERE latest_transition = 'lost' ORDER BY task_handle`)
+	if err != nil {
+		return fmt.Errorf("list terminal bindings requiring reconciliation: %w", err)
+	}
+	defer func() { resultErr = errors.Join(resultErr, rows.Close()) }()
+	references := make([]terminalReference, 0)
+	for rows.Next() {
+		var reference terminalReference
+		if err := rows.Scan(&reference.taskHandle, &reference.terminalSessionID); err != nil {
+			return fmt.Errorf("scan terminal binding requiring reconciliation: %w", err)
+		}
+		references = append(references, reference)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("list terminal bindings requiring reconciliation: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close terminal bindings requiring reconciliation: %w", err)
+	}
+	for _, reference := range references {
+		transition, observedAt, settled, err := lastSettledTerminalPosture(
+			ctx, transaction, reference.taskHandle, reference.terminalSessionID,
+		)
+		if err != nil {
+			return fmt.Errorf("reconcile settled terminal binding: %w", err)
+		}
+		if !settled {
+			continue
+		}
+		result, err := transaction.ExecContext(ctx, `UPDATE task_terminal_bindings
+            SET latest_transition = ?, updated_at = ?
+            WHERE task_handle = ? AND terminal_session_id = ? AND latest_transition = 'lost'`,
+			transition, formatTime(observedAt), reference.taskHandle, reference.terminalSessionID,
+		)
+		if err != nil {
+			return fmt.Errorf("update settled terminal binding: %w", err)
+		}
+		updated, err := result.RowsAffected()
+		if err != nil || updated != 1 {
+			return errors.New("update settled terminal binding: exact lost posture was not repaired")
+		}
+	}
+	return nil
 }
 
 func runtimeSensitiveState(state domain.TaskState) bool {

@@ -214,6 +214,30 @@ func TestControlConnectionPersistsAcrossBidirectionalTrafficAndReplaysAfterRecon
 	}
 }
 
+func TestControlConnectionHealthTracksPublishedAuthenticatedSession(t *testing.T) {
+	connection, err := NewControlConnection(ControlConnectionConfig{
+		SocketPath: filepath.Join(newCanonicalTempDirectory(t), "control.sock"), Credential: controlTestBearer,
+		ServiceInstanceID: "service-instance_health", HandshakeOperationID: "operation_handshake_health",
+		Handler: controlHandlerStub{}, RequestTimeout: time.Second,
+		MinimumBackoff: time.Millisecond, MaximumBackoff: 2 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewControlConnection() error = %v", err)
+	}
+	if connection.Connected() {
+		t.Fatal("Connected() = true before authenticated session publication")
+	}
+	session := &controlSession{}
+	connection.publish(session)
+	if !connection.Connected() {
+		t.Fatal("Connected() = false after authenticated session publication")
+	}
+	connection.unpublish(session)
+	if connection.Connected() {
+		t.Fatal("Connected() = true after session removal")
+	}
+}
+
 func TestControlConnectionSendsVerifiedEvidenceOnAuthenticatedPersistentSession(t *testing.T) {
 	socketPath, listener := controlTestListener(t)
 	handler := &durableControlHandler{activations: make(map[OperationID]ActivateRequestParams)}
@@ -366,6 +390,68 @@ func TestControlConnectionSendsReleaseOnPersistentAuthenticatedSession(t *testin
 	}
 }
 
+func TestControlConnectionReceivesPrivateAttentionResponseOnAuthenticatedSession(t *testing.T) {
+	socketPath, listener := controlTestListener(t)
+	handler := &durableControlHandler{activations: make(map[OperationID]ActivateRequestParams)}
+	connection, err := NewControlConnection(ControlConnectionConfig{
+		SocketPath: socketPath, Credential: controlTestBearer,
+		ServiceInstanceID: "service-instance_a", HandshakeOperationID: "operation_handshake_a",
+		Handler: handler, RequestTimeout: time.Second,
+		MinimumBackoff: time.Millisecond, MaximumBackoff: 2 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewControlConnection() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- connection.Run(ctx) }()
+	serverDone := make(chan error, 1)
+	private := "Use the existing PostgreSQL adapter."
+	go func() {
+		peer, acceptErr := listener.AcceptUnix()
+		if acceptErr != nil {
+			serverDone <- acceptErr
+			return
+		}
+		defer peer.Close()
+		if handshakeErr := serveHandshake(peer); handshakeErr != nil {
+			serverDone <- handshakeErr
+			return
+		}
+		var request authenticatedReceiveAttentionResponseRequest
+		if readErr := readControlFrame(peer, &request); readErr != nil {
+			serverDone <- readErr
+			return
+		}
+		if request.Bearer != controlTestBearer || request.Method != MethodManagedRunsReceiveAttentionResponse ||
+			request.Params.ManagedRunID != "managed-run_a" || request.Params.ExternalKey != "database-choice" {
+			serverDone <- errors.New("attention receive did not preserve authenticated exact authority")
+			return
+		}
+		serverDone <- writeControlFrame(peer, ReceiveAttentionResponseResponse{
+			JSONRPC: JSONRPCVersion, ID: request.ID,
+			Result: ReceiveAttentionResponseResponseResult{
+				ManagedRunID: request.Params.ManagedRunID, ExternalKey: request.Params.ExternalKey,
+				State: ManagedRunStateDelivered, Response: &private,
+			},
+		})
+	}()
+
+	result, err := connection.ReceiveAttentionResponse(context.Background(), ReceiveAttentionResponseRequestParams{
+		OperationID: "operation_attention_a", ManagedRunID: "managed-run_a", ExternalKey: "database-choice",
+	})
+	if err != nil || result.State != ManagedRunStateDelivered || result.Response == nil || *result.Response != private {
+		t.Fatalf("ReceiveAttentionResponse() = %#v, %v", result, err)
+	}
+	if serverErr := <-serverDone; serverErr != nil {
+		t.Fatalf("control fixture server error = %v", serverErr)
+	}
+	cancel()
+	if err := <-runDone; err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
 func TestControlConnectionRejectsInvalidEvidenceAndReleaseBeforeDispatch(t *testing.T) {
 	socketPath, _ := controlTestListener(t)
 	connection, err := NewControlConnection(ControlConnectionConfig{
@@ -412,6 +498,20 @@ func TestControlConnectionRejectsInvalidEvidenceAndReleaseBeforeDispatch(t *test
 	cancel()
 	if _, err := connection.PutEvidence(canceled, params); !errors.Is(err, context.Canceled) {
 		t.Fatalf("PutEvidence(canceled) error = %v, want context.Canceled", err)
+	}
+	attention := ReceiveAttentionResponseRequestParams{
+		OperationID: "operation_attention_validation", ManagedRunID: "managed-run_a", ExternalKey: "database-choice",
+	}
+	if _, err := connection.ReceiveAttentionResponse(missingContext(), attention); err == nil {
+		t.Fatal("ReceiveAttentionResponse(nil context) error = nil")
+	}
+	invalidAttention := attention
+	invalidAttention.OperationID = "bad operation"
+	if _, err := connection.ReceiveAttentionResponse(context.Background(), invalidAttention); err == nil {
+		t.Fatal("ReceiveAttentionResponse(invalid request) error = nil")
+	}
+	if _, err := connection.ReceiveAttentionResponse(canceled, attention); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ReceiveAttentionResponse(canceled) error = %v, want context.Canceled", err)
 	}
 	if _, err := connection.Release(missingContext(), ReleaseRequestParams{
 		OperationID: "operation_release_validation", ManagedRunID: "managed-run_a",

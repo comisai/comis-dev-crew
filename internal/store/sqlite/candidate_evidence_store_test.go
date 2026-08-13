@@ -73,6 +73,37 @@ func TestCandidateEvidenceStore_PersistsExactJudgmentAndAdvancesAcceptedTaskOnce
 	}
 }
 
+func TestCandidateEvidenceStore_AdvancesRejectedTaskToDurableFailure(t *testing.T) {
+	databasePath := filepath.Join(canonicalTempDir(t), "devcrew.db")
+	store, err := Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	task := candidateEvidenceTask(t, "task-evidence-rejected")
+	if err := store.CreateTask(context.Background(), task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	bundle := candidateEvidence(t, task, strings.Repeat("b", 40)).Bundle()
+	bundle.ValidationReceipts[0].Conclusion = domain.CheckFailed
+	sealed, err := domain.SealDeliveryEvidence(bundle)
+	if err != nil {
+		t.Fatalf("SealDeliveryEvidence() error = %v", err)
+	}
+	updated, judgment, err := store.CommitCandidateEvidence(
+		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"},
+		task.UpdatedAt.Add(5*time.Minute), nil,
+	)
+	if err != nil || judgment.Outcome != domain.CandidateRejected ||
+		judgment.Reason != domain.CandidateValidationFailed || updated.State != domain.TaskFailed {
+		t.Fatalf("CommitCandidateEvidence(rejected) = %#v, %#v, %v", updated, judgment, err)
+	}
+	stored, err := store.GetTask(context.Background(), task.Handle)
+	if err != nil || stored.State != domain.TaskFailed || stored.StateVersion != updated.StateVersion {
+		t.Fatalf("GetTask(rejected) = %#v, %v", stored, err)
+	}
+}
+
 func TestCandidateEvidenceStore_RefusesCrossTaskStaleAndCorruptEvidence(t *testing.T) {
 	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
 	if err != nil {
@@ -211,6 +242,131 @@ func TestCandidateEvidenceStore_FailsClosedForInvalidInputsStateAndVerdicts(t *t
 	if _, _, err := (*Store)(nil).LatestCandidateEvidence(context.Background(), prepared.Handle); err == nil {
 		t.Fatal("LatestCandidateEvidence(nil store) error = nil")
 	}
+}
+
+func TestCandidateEvidenceStore_FailsClosedAcrossMissingAndExhaustedTaskState(t *testing.T) {
+	t.Run("missing task", func(t *testing.T) {
+		store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+		if err != nil {
+			t.Fatalf("Open() error = %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		task := candidateEvidenceTask(t, "task-evidence-missing")
+		sealed := candidateEvidence(t, task, strings.Repeat("b", 40))
+		if _, _, err := store.CommitCandidateEvidence(
+			context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"},
+			task.UpdatedAt.Add(5*time.Minute), candidateEvidencePublications(t, task, sealed),
+		); !errors.Is(err, application.ErrNotFound) {
+			t.Fatalf("CommitCandidateEvidence(missing task) error = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("regressive judgment", func(t *testing.T) {
+		store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+		if err != nil {
+			t.Fatalf("Open() error = %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		task := candidateEvidenceTask(t, "task-evidence-regressive")
+		if err := store.CreateTask(context.Background(), task); err != nil {
+			t.Fatalf("CreateTask() error = %v", err)
+		}
+		sealed := candidateEvidence(t, task, strings.Repeat("b", 40))
+		if _, _, err := store.CommitCandidateEvidence(
+			context.Background(), task.Handle, sealed, []string{"missing"}, []string{"ci/unit"},
+			task.UpdatedAt.Add(-time.Second), nil,
+		); err == nil {
+			t.Fatal("CommitCandidateEvidence(regressive judgment) error = nil")
+		}
+	})
+
+	t.Run("exhausted state version", func(t *testing.T) {
+		store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+		if err != nil {
+			t.Fatalf("Open() error = %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		task := candidateEvidenceTask(t, "task-evidence-exhausted")
+		task.StateVersion = int64(^uint64(0) >> 1)
+		if err := store.CreateTask(context.Background(), task); err != nil {
+			t.Fatalf("CreateTask() error = %v", err)
+		}
+		sealed := candidateEvidence(t, task, strings.Repeat("b", 40))
+		if _, _, err := store.CommitCandidateEvidence(
+			context.Background(), task.Handle, sealed, []string{"missing"}, []string{"ci/unit"},
+			task.UpdatedAt.Add(5*time.Minute), nil,
+		); err == nil {
+			t.Fatal("CommitCandidateEvidence(exhausted version) error = nil")
+		}
+	})
+
+	t.Run("accepted evidence without publications", func(t *testing.T) {
+		store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+		if err != nil {
+			t.Fatalf("Open() error = %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		task := candidateEvidenceTask(t, "task-evidence-publications")
+		if err := store.CreateTask(context.Background(), task); err != nil {
+			t.Fatalf("CreateTask() error = %v", err)
+		}
+		sealed := candidateEvidence(t, task, strings.Repeat("b", 40))
+		if _, _, err := store.CommitCandidateEvidence(
+			context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"},
+			task.UpdatedAt.Add(5*time.Minute), nil,
+		); err == nil {
+			t.Fatal("CommitCandidateEvidence(missing publications) error = nil")
+		}
+	})
+}
+
+func TestCandidateEvidenceStore_ReplayRejectsCorruptDurableState(t *testing.T) {
+	setup := func(t *testing.T, handle string) (*Store, domain.Task, *domain.SealedDeliveryEvidence, []application.ComisEvidencePublication, time.Time) {
+		t.Helper()
+		store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+		if err != nil {
+			t.Fatalf("Open() error = %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		task := candidateEvidenceTask(t, handle)
+		if err := store.CreateTask(context.Background(), task); err != nil {
+			t.Fatalf("CreateTask() error = %v", err)
+		}
+		sealed := candidateEvidence(t, task, strings.Repeat("b", 40))
+		publications := candidateEvidencePublications(t, task, sealed)
+		judgedAt := task.UpdatedAt.Add(5 * time.Minute)
+		if _, judgment, err := store.CommitCandidateEvidence(
+			context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt, publications,
+		); err != nil || judgment.Outcome != domain.CandidateAccepted {
+			t.Fatalf("CommitCandidateEvidence() judgment = %#v, error = %v", judgment, err)
+		}
+		return store, task, sealed, publications, judgedAt
+	}
+
+	t.Run("publication no longer matches", func(t *testing.T) {
+		store, task, sealed, publications, judgedAt := setup(t, "task-evidence-corrupt-publication")
+		if _, err := store.db.Exec(`UPDATE comis_evidence_outbox SET content_hash = ?
+			WHERE operation_id = ?`, strings.Repeat("c", 64), publications[0].OperationID); err != nil {
+			t.Fatalf("corrupt candidate publication: %v", err)
+		}
+		if _, _, err := store.CommitCandidateEvidence(
+			context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt, publications,
+		); !errors.Is(err, application.ErrConflict) {
+			t.Fatalf("CommitCandidateEvidence(corrupt publication) error = %v, want conflict", err)
+		}
+	})
+
+	t.Run("task record no longer decodes", func(t *testing.T) {
+		store, task, sealed, publications, judgedAt := setup(t, "task-evidence-corrupt-task")
+		if _, err := store.db.Exec("UPDATE tasks SET state = 'forged' WHERE handle = ?", task.Handle); err != nil {
+			t.Fatalf("corrupt candidate task: %v", err)
+		}
+		if _, _, err := store.CommitCandidateEvidence(
+			context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, judgedAt, publications,
+		); err == nil {
+			t.Fatal("CommitCandidateEvidence(corrupt task) error = nil")
+		}
+	})
 }
 
 func TestCandidateEvidenceStore_RollsBackStorageFailuresAndRejectsCorruptMetadata(t *testing.T) {

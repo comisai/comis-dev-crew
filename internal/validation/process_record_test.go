@@ -31,7 +31,10 @@ func TestProcessRecord_ValidatesClosedLifecycleAndMonotonicIdentity(t *testing.T
 	preStartUnknown := starting
 	preStartUnknown.State = ProcessUnknown
 	preStartUnknown.ObservedAt = startedAt.Add(2 * time.Second)
-	for _, record := range []ProcessRecord{starting, running, exited, unknown, recoveredExit, preStartUnknown} {
+	absent := starting
+	absent.State = ProcessAbsent
+	absent.ObservedAt = startedAt.Add(3 * time.Second)
+	for _, record := range []ProcessRecord{starting, running, exited, unknown, recoveredExit, preStartUnknown, absent} {
 		if err := record.Validate(); err != nil {
 			t.Fatalf("Validate(%s) error = %v", record.State, err)
 		}
@@ -42,8 +45,14 @@ func TestProcessRecord_ValidatesClosedLifecycleAndMonotonicIdentity(t *testing.T
 	if err := exited.CanFollow(running); err != nil {
 		t.Fatalf("exited.CanFollow(running) error = %v", err)
 	}
+	if err := exited.CanFollow(starting); err != nil {
+		t.Fatalf("exited.CanFollow(starting) error = %v", err)
+	}
 	if err := unknown.CanFollow(running); err != nil {
 		t.Fatalf("unknown.CanFollow(running) error = %v", err)
+	}
+	if err := absent.CanFollow(preStartUnknown); err != nil {
+		t.Fatalf("absent.CanFollow(preStartUnknown) error = %v", err)
 	}
 	if err := running.CanFollow(running); err != nil {
 		t.Fatalf("running.CanFollow(replay) error = %v", err)

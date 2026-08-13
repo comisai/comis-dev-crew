@@ -198,7 +198,7 @@ func TestAdapterParity_LaunchPlanMatchesDirectCLIJSONAndMCPWithoutProcessMateria
 		t.Fatalf("launch-plan parity mismatch direct=%#v CLI=%#v MCP=%#v", direct, cliPlan, mcpPlan)
 	}
 	encoded := string(encodeJSON(t, direct)) + cliOutput + string(encodeJSON(t, mcpResult.StructuredContent))
-	for _, forbidden := range []string{"/private/", "/run/comis/attachments", "--model", "DEV_CREW_ATTACHMENT", "execution-attachment-parity"} {
+	for _, forbidden := range []string{"/private/", "/run/comis/attachments", "--model", "COMIS_EXECUTION_ATTACHMENT", "execution-attachment-parity"} {
 		if strings.Contains(encoded, forbidden) {
 			t.Fatalf("launch-plan parity fixture leaked %q: %s", forbidden, encoded)
 		}

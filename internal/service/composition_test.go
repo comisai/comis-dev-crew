@@ -39,6 +39,10 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 	if _, err := configured.WorkerHarnesses.ResolveWorkerHarness("codex-unreviewed"); err == nil {
 		t.Fatal("ResolveWorkerHarness(unreviewed) error = nil")
 	}
+	claudeAdapter, err := configured.WorkerHarnesses.ResolveWorkerHarness("claude-reviewed")
+	if err != nil || claudeAdapter.ID() != "claude" {
+		t.Fatalf("ResolveWorkerHarness(Claude) = %#v, %v", claudeAdapter, err)
+	}
 	descriptor, err := adapter.BuildLaunchDescriptor(context.Background(), application.WorkerLaunchRequest{
 		ProfileID: "codex-reviewed", Shape: domain.ShapeShip, WorkingDirectory: configuration.RepositoryComposition.PrimaryCheckout,
 		TaskHandle: "task-installed-plan", ManagedRunID: "managed-run-installed-plan",
@@ -58,8 +62,8 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 		t.Fatalf("installed Codex launch posture = %#v", descriptor)
 	}
 	if len(descriptor.EnvironmentBindings) != 2 ||
-		descriptor.EnvironmentBindings["DEV_CREW_ATTACHMENT"] != descriptor.Attachment.MountSocketPath ||
-		descriptor.EnvironmentBindings["DEV_CREW_ATTACHMENT_TARGET_NAME"] != descriptor.Attachment.AttachmentTargetName {
+		descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT"] != descriptor.Attachment.MountSocketPath ||
+		descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT_TARGET_NAME"] != descriptor.Attachment.AttachmentTargetName {
 		t.Fatalf("installed Codex attachment bindings = %#v", descriptor.EnvironmentBindings)
 	}
 	taskID, err := configured.TaskIDs("operation-installed-stable")
@@ -94,6 +98,16 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 	}
 	if passthrough, err := composeComisControl(Config{}, nil); err != nil || passthrough != nil {
 		t.Fatalf("composeComisControl(empty) = %#v, %v", passthrough, err)
+	}
+}
+
+func TestInstalledControlReconnectBackoffPreservesMultipleHandshakeAttempts(t *testing.T) {
+	if comisMaximumBackoff >= comisRequestTimeout/2 {
+		t.Fatalf(
+			"control reconnect maximum backoff = %s, want less than half the %s handshake window",
+			comisMaximumBackoff,
+			comisRequestTimeout,
+		)
 	}
 }
 
@@ -289,7 +303,7 @@ func TestReadOwnerCredential_EnforcesCanonicalPrivateBoundedFile(t *testing.T) {
 		t.Fatal("readOwnerCredential(public) error = nil")
 	}
 	oversized := filepath.Join(root, "oversized.credential")
-	writeServiceCredential(t, oversized, strings.Repeat("a", 513), 0o600)
+	writeServiceCredential(t, oversized, strings.Repeat("a", 4097), 0o600)
 	if _, err := readOwnerCredential(oversized); err == nil {
 		t.Fatal("readOwnerCredential(oversized) error = nil")
 	}
@@ -297,6 +311,18 @@ func TestReadOwnerCredential_EnforcesCanonicalPrivateBoundedFile(t *testing.T) {
 	writeServiceCredential(t, whitespace, "invalid credential value", 0o600)
 	if _, err := readOwnerCredential(whitespace); err == nil {
 		t.Fatal("readOwnerCredential(whitespace) error = nil")
+	}
+}
+
+func TestReadOwnerCredential_AcceptsBoundedSSHDeployKeyMaterial(t *testing.T) {
+	root := shortTempDir(t)
+	path := filepath.Join(root, "push-key.credential")
+	material := strings.Repeat("a", 1024)
+	writeServiceCredential(t, path, material, 0o600)
+
+	credential, err := readOwnerCredential(path)
+	if err != nil || credential != material {
+		t.Fatalf("readOwnerCredential(SSH deploy key) length = %d, %v", len(credential), err)
 	}
 }
 
@@ -384,6 +410,12 @@ func installedServiceConfig(t *testing.T, root string) Config {
 			ExpectedVersion: "codex-cli 0.147.0", Model: "gpt-5.5-codex", Effort: "high",
 			TerminalAllowEntryID: "codex-confined", Network: workers.NetworkRestricted, ConcurrencyLimit: 2,
 		},
+		ClaudeComposition: &ClaudeComposition{
+			ProfileID: "claude-reviewed", Executable: serviceClaudeExecutable(t, root),
+			ExpectedVersion: "2.1.224 (Claude Code)", Model: "claude-opus-4-6", Effort: "high",
+			TerminalAllowEntryID: "claude-confined", Network: workers.NetworkRestricted, ConcurrencyLimit: 2,
+			ConfigDirectory: serviceClaudeConfigDirectory(t, root),
+		},
 		ValidationComposition: &ValidationComposition{
 			Programs: []validation.Program{{ID: "repo-check", Executable: validationExecutable}},
 			Profiles: []validation.Profile{{
@@ -415,6 +447,30 @@ func serviceCodexExecutable(t *testing.T, root string) string {
 		t.Fatal(err)
 	}
 	return executable
+}
+
+func serviceClaudeExecutable(t *testing.T, root string) string {
+	t.Helper()
+	executable := filepath.Join(root, "bin", "claude")
+	if err := os.MkdirAll(filepath.Dir(executable), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\nprintf '2.1.224 (Claude Code)\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return executable
+}
+
+func serviceClaudeConfigDirectory(t *testing.T, root string) string {
+	t.Helper()
+	path := filepath.Join(root, "claude-config")
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func writeServiceCredential(t *testing.T, path, contents string, mode os.FileMode) {

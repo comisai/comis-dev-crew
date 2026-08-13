@@ -18,6 +18,7 @@ type RuntimeCapability interface {
 	Brief(context.Context) (domain.WorkerBrief, error)
 	Report(context.Context, domain.WorkerReport) (domain.ReportReceipt, error)
 	Acknowledge(context.Context, string) error
+	AwaitDecision(context.Context, string) (string, error)
 }
 
 // CommandConfig supplies composition-root dependencies without exposing them
@@ -122,6 +123,15 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 		writeRuntimeFailure(stderr)
 		return 1
 	}
+	if parsed.kind == domain.ReportDecision {
+		response, err := config.Capability.AwaitDecision(ctx, parsed.key)
+		if err != nil {
+			writeRuntimeFailure(stderr)
+			return 1
+		}
+		fmt.Fprintln(stdout, response)
+		return 0
+	}
 	fmt.Fprintf(stdout, "accepted %s at state %d\n", receipt.LocalReportID, receipt.StateVersion)
 	return 0
 }
@@ -198,7 +208,16 @@ func readCommandBrief(ctx context.Context, capability RuntimeCapability) (domain
 
 func writeCommandUsage(output io.Writer) {
 	fmt.Fprintln(output, "Usage: devcrew-report <command> [options]")
-	fmt.Fprintln(output, "Commands: acknowledge, brief, progress, decision, blocked, paused, candidate-complete, failed, resolved")
+	fmt.Fprintln(output, "Commands:")
+	fmt.Fprintln(output, "  acknowledge")
+	fmt.Fprintln(output, "  brief")
+	fmt.Fprintln(output, "  progress --summary TEXT")
+	fmt.Fprintln(output, "  decision --key KEY --question TEXT")
+	fmt.Fprintln(output, "  blocked --summary TEXT")
+	fmt.Fprintln(output, "  paused --summary TEXT")
+	fmt.Fprintln(output, "  candidate-complete --summary TEXT --artifact REF")
+	fmt.Fprintln(output, "  failed --summary TEXT")
+	fmt.Fprintln(output, "  resolved --key KEY --summary TEXT")
 	fmt.Fprintln(output, "Reports accept only bounded content fields; task authority comes from the protected runtime attachment.")
 }
 

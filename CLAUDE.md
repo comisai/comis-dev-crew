@@ -11,15 +11,16 @@ Read and follow `AGENTS.md` before making changes. `AGENTS.md` is the authoritat
 
 ## Service operations
 
-`devcrew-service` has no service lifecycle yet. Do not invent launch, repair, or database
-commands until the canonical local API and service supervisor are implemented and documented.
+`devcrew-service` owns the installed lifecycle, worker launch supervision,
+candidate validation, delivery, handback, and cleanup. Use only the canonical
+local API and operator CLI; never mutate its database directly.
 
 ## Live prerequisites
 
-`make test-live` is protected and intentionally unavailable during scaffold development. The
-future campaign requires an explicitly configured Comis instance, Telegram captain thread,
-private GitHub fixture repository, and supported authenticated worker profile. A missing
-prerequisite is a failure, not a skip.
+`make test-live` is protected. A live campaign requires an explicitly configured
+Comis instance, Telegram captain thread, disposable GitHub fixture repository,
+and supported authenticated worker profiles. A missing prerequisite is a failure,
+not a skip.
 
 ## Troubleshooting read order
 

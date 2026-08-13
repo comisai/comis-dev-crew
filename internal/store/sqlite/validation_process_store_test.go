@@ -72,6 +72,22 @@ func TestValidationProcessStore_PersistsLifecycleAcrossRestart(t *testing.T) {
 	if err != nil || len(active) != 0 {
 		t.Fatalf("active processes after exit = %#v, %v", active, err)
 	}
+	absentStarting := starting
+	absentStarting.OperationID = "validate-task-absent"
+	absentStarting.ObservedAt = startedAt.Add(3 * time.Second)
+	if err := store.Record(context.Background(), absentStarting); err != nil {
+		t.Fatalf("Record(absent starting) error = %v", err)
+	}
+	absent := absentStarting
+	absent.State = validation.ProcessAbsent
+	absent.ObservedAt = startedAt.Add(4 * time.Second)
+	if err := store.Record(context.Background(), absent); err != nil {
+		t.Fatalf("Record(absent) error = %v", err)
+	}
+	active, err = store.ListActiveValidationProcesses(context.Background())
+	if err != nil || len(active) != 0 {
+		t.Fatalf("active processes after absent = %#v, %v", active, err)
+	}
 }
 
 func TestValidationProcessStore_RejectsForgedAndRegressiveLifecycle(t *testing.T) {
@@ -220,8 +236,33 @@ func TestValidationProcessStore_FailsClosedForUnavailableStoreTaskAndCorruptTime
 	if _, err := store.db.Exec(`UPDATE validation_processes SET started_at = 'invalid-time'`); err != nil {
 		t.Fatalf("corrupt validation process time: %v", err)
 	}
+	if _, found, err := findValidationProcess(context.Background(), store.db, starting.OperationID); err == nil || found {
+		t.Fatalf("findValidationProcess(corrupt time) found = %t, error = %v", found, err)
+	}
+	if err := store.Record(context.Background(), starting); err == nil {
+		t.Fatal("Record(corrupt prior process) error = nil")
+	}
 	if _, err := store.ListActiveValidationProcesses(context.Background()); err == nil {
 		t.Fatal("ListActiveValidationProcesses(corrupt time) error = nil")
+	}
+	if _, err := store.db.Exec(`UPDATE validation_processes SET started_at = ?, observed_at = 'invalid-time'`, formatTime(starting.StartedAt)); err != nil {
+		t.Fatalf("corrupt validation process observation time: %v", err)
+	}
+	if _, err := store.ListActiveValidationProcesses(context.Background()); err == nil {
+		t.Fatal("ListActiveValidationProcesses(corrupt observation time) error = nil")
+	}
+	if _, err := store.db.Exec(`UPDATE validation_processes SET observed_at = ?`, formatTime(starting.ObservedAt)); err != nil {
+		t.Fatalf("restore validation process observation time: %v", err)
+	}
+	transaction, err := store.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("BeginTx() error = %v", err)
+	}
+	t.Cleanup(func() { _ = transaction.Rollback() })
+	missing := starting
+	missing.OperationID = "validate-process-missing-update"
+	if err := updateValidationProcess(context.Background(), transaction, missing); err == nil {
+		t.Fatal("updateValidationProcess(missing) error = nil")
 	}
 }
 

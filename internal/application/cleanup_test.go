@@ -76,7 +76,9 @@ func TestCleanupCoordinator_RefusesDirtyWorkspaceBeforeHostRelease(t *testing.T)
 		OperationID: record.OperationID, TaskHandle: record.TaskHandle,
 	})
 	var failure *domain.Failure
-	if !errors.As(cleanupErr, &failure) || failure.Code != domain.ErrorPrecondition {
+	if !errors.As(cleanupErr, &failure) || failure.Code != domain.ErrorPrecondition || !failure.Retryable ||
+		failure.Message != "cleanup requires a clean task worktree" ||
+		failure.Hint != "remove uncommitted changes from the exact task worktree, then retry cleanup" {
 		t.Fatalf("CleanupTask(dirty workspace) error = %v, want precondition failure", cleanupErr)
 	}
 	if cleanupErr == nil {
@@ -84,6 +86,90 @@ func TestCleanupCoordinator_RefusesDirtyWorkspaceBeforeHostRelease(t *testing.T)
 	}
 	if releaser.calls != 0 || remover.calls != 0 || store.releaseCalls != 0 {
 		t.Fatalf("unsafe side effects: release=%d remove=%d recorded=%d", releaser.calls, remover.calls, store.releaseCalls)
+	}
+}
+
+func TestCleanupCoordinator_ResumesHeldCleanupWithFreshCallerOperation(t *testing.T) {
+	now := time.Date(2026, time.August, 11, 20, 0, 0, 0, time.UTC)
+	head := strings.Repeat("b", 40)
+	record := cleanupFixtureRecord(head)
+	store := &cleanupStoreFixture{record: record}
+	workspace := &cleanupWorkspaceFixture{snapshot: cleanupFixtureSnapshot(record, head)}
+	forge := &cleanupForgeFixture{truth: PullRequestDeliveryTruth{
+		RepositoryID: record.RepositoryID, PullRequestID: record.PullRequestID,
+		HeadRevision: head, Checks: []ForgeCheckTruth{{Name: "ci/unit", Conclusion: domain.CheckPassed}},
+	}}
+	coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
+		Store: store, Workspaces: workspace, Forge: forge, Releaser: &cleanupReleaseFixture{},
+		Remover: &cleanupRemovalFixture{}, Clock: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := coordinator.CleanupTask(context.Background(), CleanupTaskCommand{
+		OperationID: "cleanup-task-retry", TaskHandle: record.TaskHandle,
+	})
+	if err != nil {
+		t.Fatalf("CleanupTask(fresh retry operation) error = %v", err)
+	}
+	if result.Task.State != domain.TaskCleaned || store.completeCalls != 1 {
+		t.Fatalf("CleanupTask(fresh retry operation) = %#v, store = %#v", result, store)
+	}
+}
+
+func TestCleanupCoordinator_ClassifiesOperatorActionableDependencyFailures(t *testing.T) {
+	now := time.Date(2026, time.August, 11, 20, 30, 0, 0, time.UTC)
+	head := strings.Repeat("b", 40)
+	tests := []struct {
+		name         string
+		workspaceErr error
+		forgeErr     error
+		wantMessage  string
+		wantHint     string
+	}{
+		{
+			name: "workspace inspection", workspaceErr: errors.New("private workspace detail"),
+			wantMessage: "cleanup workspace inspection failed",
+			wantHint:    "inspect the exact task worktree and configured repository before retrying",
+		},
+		{
+			name: "pull request verification", forgeErr: errors.New("private forge detail"),
+			wantMessage: "cleanup pull request verification failed",
+			wantHint:    "inspect the recorded pull request, head, and required checks before retrying",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			record := cleanupFixtureRecord(head)
+			workspace := &cleanupWorkspaceFixture{snapshot: cleanupFixtureSnapshot(record, head), err: test.workspaceErr}
+			forge := &cleanupForgeFixture{truth: PullRequestDeliveryTruth{
+				RepositoryID: record.RepositoryID, PullRequestID: record.PullRequestID,
+				HeadRevision: head, Checks: []ForgeCheckTruth{{Name: "ci/unit", Conclusion: domain.CheckPassed}},
+			}, err: test.forgeErr}
+			coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
+				Store: &cleanupStoreFixture{record: record}, Workspaces: workspace, Forge: forge,
+				Releaser: &cleanupReleaseFixture{}, Remover: &cleanupRemovalFixture{},
+				Clock: func() time.Time { return now },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, cleanupErr := coordinator.CleanupTask(context.Background(), CleanupTaskCommand{
+				OperationID: record.OperationID, TaskHandle: record.TaskHandle,
+			})
+			var failure *domain.Failure
+			if !errors.As(cleanupErr, &failure) || failure.Code != domain.ErrorUnavailable || !failure.Retryable ||
+				failure.Message != test.wantMessage || failure.Hint != test.wantHint {
+				t.Fatalf("CleanupTask() error = %#v, want actionable dependency failure", cleanupErr)
+			}
+		})
+	}
+}
+
+func TestCleanupFailureClassifierFailsClosedForInvalidOperatorFields(t *testing.T) {
+	dependencyFailure := cleanupDependencyFailure("", "", errors.New("private dependency detail"))
+	if dependencyFailure == nil || dependencyFailure.Error() != "cleanup dependency failure classification failed" {
+		t.Fatalf("cleanupDependencyFailure(invalid fields) = %v", dependencyFailure)
 	}
 }
 
@@ -136,9 +222,9 @@ func TestCleanupCoordinator_FailsClosedAcrossCleanupBoundaries(t *testing.T) {
 		store.beginErr = errors.New("store unavailable")
 		runFailure(t, coordinator)
 	})
-	t.Run("durable identity mismatch", func(t *testing.T) {
+	t.Run("durable task identity mismatch", func(t *testing.T) {
 		record := cleanupFixtureRecord(head)
-		record.OperationID = "cleanup-task-other"
+		record.TaskHandle = "task-cleanup-other"
 		coordinator, _, _, _, _, _ := newCoordinator(record)
 		runFailure(t, coordinator)
 	})

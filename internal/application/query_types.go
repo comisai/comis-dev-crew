@@ -169,9 +169,11 @@ type OperationView struct {
 	UpdatedAtMs   int64                  `json:"updatedAtMs"`
 }
 
-// LaunchPlan is the safe reviewed launch-requirements projection. Executable,
-// argv, environment, working-directory, and host attachment source fields are
-// deliberately absent.
+// LaunchPlan is the safe reviewed launch-requirements projection. The opaque
+// run and lease handles are included because the Comis terminal API requires
+// both to select the server-owned workspace and attachment authority.
+// Executable, argv, environment, working-directory, and host attachment source
+// fields are deliberately absent.
 type LaunchPlan struct {
 	SchemaVersion        int              `json:"schemaVersion"`
 	CapturedAtMs         int64            `json:"capturedAtMs"`
@@ -184,6 +186,8 @@ type LaunchPlan struct {
 	Freshness            Freshness        `json:"freshness"`
 	WorkerProfileID      string           `json:"workerProfileId"`
 	TerminalAllowEntryID string           `json:"terminalAllowEntryId"`
+	ManagedRunID         string           `json:"managedRunId"`
+	WorkspaceLeaseID     string           `json:"workspaceLeaseId"`
 	BriefRevisionHash    string           `json:"briefRevisionHash"`
 	AttachmentTargetName string           `json:"attachmentTargetName"`
 }

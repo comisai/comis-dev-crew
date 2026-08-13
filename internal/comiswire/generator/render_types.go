@@ -296,7 +296,7 @@ func mergeObjectVariants(node schemaNode) (schemaNode, error) {
 		}
 		for property, child := range variant.Properties {
 			if previous, exists := merged.Properties[property]; exists && !reflect.DeepEqual(previous, child) {
-				combined, ok := mergeVariantStringConstants(previous, child)
+				combined, ok := mergeVariantNodes(previous, child)
 				if !ok {
 					return schemaNode{}, fmt.Errorf("object union property %s has conflicting schemas", property)
 				}
@@ -324,6 +324,17 @@ func mergeObjectVariants(node schemaNode) (schemaNode, error) {
 	}
 	sort.Strings(merged.Required)
 	return merged, nil
+}
+
+func mergeVariantNodes(left, right schemaNode) (schemaNode, bool) {
+	if combined, ok := mergeVariantStringConstants(left, right); ok {
+		return combined, true
+	}
+	if left.Type != "object" || right.Type != "object" {
+		return schemaNode{}, false
+	}
+	combined, err := mergeObjectVariants(schemaNode{AnyOf: []schemaNode{left, right}})
+	return combined, err == nil
 }
 
 func mergeVariantStringConstants(left, right schemaNode) (schemaNode, bool) {

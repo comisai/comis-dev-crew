@@ -62,7 +62,7 @@ func (store *Store) ListActiveValidationProcesses(ctx context.Context) (records 
         task_handle, operation_id, program_id, executable_label, pid,
         start_identity, process_group_identity, state, started_at,
         observed_at, exit_code
-    FROM validation_processes WHERE state <> 'exited'
+    FROM validation_processes WHERE state NOT IN ('exited', 'absent')
     ORDER BY observed_at, operation_id`
 	rows, err := store.db.QueryContext(ctx, query)
 	if err != nil {

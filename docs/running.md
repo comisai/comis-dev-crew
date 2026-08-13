@@ -20,7 +20,7 @@ broad-root, non-regular, live, or identity-ambiguous targets. Without explicit
 flags, `devcrew-service` and `devcrew` derive the same paths under the operating
 system's user configuration directory.
 
-## Full Comis and Codex lane
+## Full Comis and coding-worker lane
 
 Prerequisites, all of which fail closed if unmet:
 
@@ -59,6 +59,15 @@ devcrew-service \
   --codex-terminal-allow-entry codex-confined \
   --codex-network restricted \
   --codex-concurrency 2 \
+  --claude-profile claude-reviewed \
+  --claude-executable /absolute/path/to/claude \
+  --claude-version "2.1.224 (Claude Code)" \
+  --claude-model claude-opus-4-6 \
+  --claude-effort high \
+  --claude-terminal-allow-entry claude-confined \
+  --claude-network restricted \
+  --claude-concurrency 2 \
+  --claude-config-directory /absolute/private/claude-config \
   --candidate-config /absolute/private/candidate.json
 ```
 
@@ -69,6 +78,15 @@ verified worktree in the managed-run preparation, and binds the same mutation
 authority to the dedicated MCP endpoint. It never accepts the protected bearer on
 its command line.
 
+The Codex profile is required by the installed E0 composition. The Claude Code
+profile is optional but all of its flags are an atomic group. Its executable must
+be the canonical regular reviewed artifact and its config directory must be a
+canonical owner-private (`0700`) directory. The terminal allow entry exposes only
+the required authentication material read-only. Both adapters use fixed argv,
+ignore project-level worker configuration, keep task authority in the protected
+reporter attachment, and remain explicitly degraded because neither reviewed CLI
+provides a trustworthy task-settle signal.
+
 ### Candidate configuration
 
 The candidate configuration is a strict owner-private JSON document. It fixes
@@ -78,6 +96,25 @@ names distinct owner-private read and push credential files; the service rejects
 shared identities. `localFixtureRemoteRoot` permits a `file://` remote only for
 an explicitly bounded local test fixture and must be absent for the production
 HTTPS route.
+
+Accepted evidence advances a task to `candidate_complete`. A conclusive failed
+local or forge check records the rejection and advances only that task to
+`failed`; the candidate supervisor remains available for unrelated tasks and a
+service restart does not rerun the rejected candidate. Incomplete, pending, or
+otherwise unknown evidence stays `validating` and is retried without being
+treated as success or failure.
+
+`task explain` reads the latest durable candidate judgment for a failed task and
+distinguishes a required local-validation failure from a required forge-check
+failure. Other terminal failures retain the generic failed-task explanation.
+
+An SSH deploy-key push route uses
+`ssh://git@HOST/OWNER/REPOSITORY.git` and additionally requires the canonical
+service executable as `sshTransportExecutable`, the canonical OpenSSH binary as
+`sshExecutable`, and a regular non-writable pinned host-key file as
+`sshKnownHostsFile`. The push credential file contains a base64-encoded OpenSSH
+private deploy key. The service materializes it as `0600` only for the bounded Git
+operation, invokes fixed SSH argv without a shell, and removes it before return.
 
 ## MCP facade
 
@@ -90,8 +127,8 @@ devcrew-mcp \
   --service-instance service-instance-devcrew
 ```
 
-The facade defines five tools: `prepare_task`, `list_tasks`, `get_task`,
-`explain_task`, and `get_launch_plan`. Every call must carry a
+The facade defines seven tools: `prepare_task`, `handback_task`, `cleanup_task`,
+`list_tasks`, `get_task`, `explain_task`, and `get_launch_plan`. Every call must carry a
 generated-schema-valid `comis.callContext`; the configured service identity must
 match, while optional managed-run references grant no task authority. Preparation
 returns its visible task outcome separately from the private schema-validated
@@ -99,6 +136,13 @@ returns its visible task outcome separately from the private schema-validated
 bounded operation reconciliation and, after a completed durable outcome, one exact
 idempotent replay. The command defaults to a separate `mcp.sock` and validates the
 out-of-band service instance against every private call context.
+
+`cleanup_task` may refuse after it has placed the task in a durable cleanup hold,
+for example when the exact worktree is dirty. Once that safety condition is
+corrected, call `cleanup_task` again with the same task handle. The service resumes
+the existing cleanup record even though the new MCP invocation has a fresh caller
+operation ID, and records both operation identities against the single completed
+cleanup effect.
 
 ## Operator CLI surface
 
@@ -124,8 +168,8 @@ All four commands support `--help` and `--version`.
 
 ## Worker reporter contract
 
-Workers receive `devcrew-report` with `DEV_CREW_ATTACHMENT` and
-`DEV_CREW_ATTACHMENT_TARGET_NAME` set by the launch descriptor from the same
+Workers receive `devcrew-report` with `COMIS_EXECUTION_ATTACHMENT` and
+`COMIS_EXECUTION_ATTACHMENT_TARGET_NAME` set by the host-managed terminal from the same
 activation-returned binding. The former is the Comis-protected task socket at
 `/run/comis/attachments/<attachmentTargetName>`; the latter must exactly match
 that path's host-assigned `attachment-<32 lowercase hex>.sock` basename. The
@@ -138,8 +182,12 @@ Subcommands:
 - `acknowledge` verifies and echoes the socket-bound task, run, and lease, the
   actual canonical working directory, and the brief revision, before task state
   may become `working`.
-- `progress`, `decision`, `blocked`, `paused`, `candidate-complete`, `failed`,
-  and `resolved` append bounded sparse reports.
+- `progress`, `blocked`, `paused`, `candidate-complete`, `failed`, and
+  `resolved` append bounded sparse reports.
+- `decision` first durably appends the keyed attention report, then waits for
+  the exact owner response and writes only that private response to stdout.
+  Pending delivery stays silent and cancellation exits without inventing an
+  answer.
 
 A candidate report remains non-terminal until service validation.
 
@@ -156,6 +204,13 @@ capability is never used.
 
 The boundary is deliberately narrow. The service rejects symlinks in every
 runtime-root component before creating anything, owns each task directory and
-socket, and never places the host source path in Codex argv, stdin, or
+socket, and never places the host source path in worker argv, stdin, or
 environment. Comis alone carries the source into the protected mount identified by
 activation; an altered attachment ID, target name, or mount path fails closed.
+For attention responses, the worker supplies only the bounded decision key. The
+socket-bound server derives the managed run, mints a fresh operation identity
+for every poll, and reaches Comis only through the service-owned authenticated
+control connection. Unbound sockets, altered response identity, invalid state,
+and content on a pending response fail closed. The private response crosses only
+the owner-only attachment and worker stdout; errors and service diagnostics do
+not include it.

@@ -22,7 +22,7 @@ const (
 	comisReportMaximumBackoff = 5 * time.Second
 	comisRequestTimeout       = 5 * time.Second
 	comisMinimumBackoff       = 100 * time.Millisecond
-	comisMaximumBackoff       = 5 * time.Second
+	comisMaximumBackoff       = time.Second
 	fixturePollInterval       = 25 * time.Millisecond
 )
 
@@ -31,7 +31,9 @@ const (
 type ComisControl interface {
 	comiswire.ReportSender
 	comiswire.EvidenceSender
+	comiswire.AttentionResponseReceiver
 	application.ManagedRunReleaser
+	application.HostIntegrationStatus
 	Run(context.Context) error
 }
 
@@ -54,6 +56,7 @@ type Config struct {
 	RepositoryComposition    *RepositoryComposition
 	ComisComposition         *ComisComposition
 	CodexComposition         *CodexComposition
+	ClaudeComposition        *ClaudeComposition
 	ValidationComposition    *ValidationComposition
 	ForgeComposition         *ForgeComposition
 	FixtureComposition       *FixtureComposition
@@ -101,6 +104,20 @@ type CodexComposition struct {
 	ConcurrencyLimit     int
 }
 
+// ClaudeComposition is one exact operator-reviewed production worker profile.
+// Its owner-private config directory is exposed read-only by the terminal jail.
+type ClaudeComposition struct {
+	ProfileID            string
+	Executable           string
+	ExpectedVersion      string
+	Model                string
+	Effort               string
+	TerminalAllowEntryID string
+	Network              workers.NetworkPosture
+	ConcurrencyLimit     int
+	ConfigDirectory      string
+}
+
 // ValidationComposition is the immutable operator-reviewed candidate policy.
 type ValidationComposition struct {
 	Programs       []validation.Program
@@ -120,6 +137,9 @@ type ForgeComposition struct {
 	PushCredentialFile     string
 	CredentialDirectory    string
 	LocalFixtureRemoteRoot string
+	SSHTransportExecutable string
+	SSHExecutable          string
+	SSHKnownHostsFile      string
 }
 
 // FixtureComposition enables the reviewed deterministic worker with one fixed
@@ -186,17 +206,12 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 			return fmt.Errorf("run service candidate supervisor: %w", runnerErr)
 		}
 	}
-	queries, err := application.NewQueries(application.QueryConfig{
-		Repository: store, Harnesses: config.WorkerHarnesses, Clock: clock,
-	})
-	if err != nil {
-		return fmt.Errorf("run service queries: %w", err)
-	}
 	var attachmentSupervisor *runtimeAttachmentCoordinator
 	if config.RuntimeAttachments == nil && config.RuntimeRoot != "" {
 		attachmentSupervisor, err = newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
 			RuntimeRoot: config.RuntimeRoot, Store: store, Clock: clock,
-			NewCredential: func() (string, error) { return randomIdentity("runtime-credential", 16) },
+			NewCredential:           func() (string, error) { return randomIdentity("runtime-credential", 16) },
+			NewAttentionOperationID: func() (string, error) { return randomIdentity("attention-response", 16) },
 		})
 		if err != nil {
 			return fmt.Errorf("run service runtime attachments: %w", err)
@@ -237,6 +252,17 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	control, err := composeComisControl(config, controlMutations)
 	if err != nil {
 		return err
+	}
+	if attachmentSupervisor != nil && control != nil {
+		if err := attachmentSupervisor.SetAttentionResponseReceiver(control); err != nil {
+			return fmt.Errorf("run service runtime attention responses: %w", err)
+		}
+	}
+	queries, err := application.NewQueries(application.QueryConfig{
+		Repository: store, Harnesses: config.WorkerHarnesses, Host: control, Clock: clock,
+	})
+	if err != nil {
+		return fmt.Errorf("run service queries: %w", err)
 	}
 	var cleanup *application.CleanupCoordinator
 	if config.cleanupRemover != nil || config.cleanupForge != nil {

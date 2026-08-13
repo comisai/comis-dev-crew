@@ -196,7 +196,125 @@ func TestTerminalLifecycle_ExpectedExitPreservesSafePausedCustody(t *testing.T) 
 	}
 }
 
+func TestTerminalLifecycle_RestartLossDoesNotReplaceSettledExitEvidence(t *testing.T) {
+	store, task, workspace, now := openTerminalLifecycleFixture(t, "task-terminal-settled-restart", true)
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+	if _, err := store.CommitTerminalEvent(ctx, terminalEventMutation(
+		task, "operation-terminal-settled-running", application.TerminalRunning, now.Add(3*time.Minute),
+	)); err != nil {
+		t.Fatalf("CommitTerminalEvent(running) error = %v", err)
+	}
+	if _, err := store.CommitWorkerLaunchAcknowledgement(ctx, application.WorkerLaunchAcknowledgementMutation{
+		OperationID: "operation-terminal-settled-ack", SubjectDigest: strings.Repeat("9", 64),
+		Acknowledgement: terminalLaunchAcknowledgement(task, workspace), At: now.Add(3 * time.Minute),
+	}); err != nil {
+		t.Fatalf("CommitWorkerLaunchAcknowledgement() error = %v", err)
+	}
+	exitedAt := now.Add(4 * time.Minute)
+	if _, err := store.CommitTerminalEvent(ctx, terminalEventMutation(
+		task, "operation-terminal-settled-exited", application.TerminalExited, exitedAt,
+	)); err != nil {
+		t.Fatalf("CommitTerminalEvent(exited) error = %v", err)
+	}
+	if _, err := store.CommitTerminalEvent(ctx, terminalEventMutation(
+		task, "operation-terminal-restart-lost", application.TerminalLost, now.Add(5*time.Minute),
+	)); err != nil {
+		t.Fatalf("CommitTerminalEvent(lost after exit) error = %v", err)
+	}
+
+	binding, found, err := findTerminalBinding(ctx, store.db, task.Handle)
+	if err != nil || !found {
+		t.Fatalf("findTerminalBinding() = %#v, %t, %v", binding, found, err)
+	}
+	if binding.latestTransition != application.TerminalExited || !binding.updatedAt.Equal(exitedAt) {
+		t.Fatalf("settled binding = transition %q at %s, want exited at %s",
+			binding.latestTransition, binding.updatedAt, exitedAt)
+	}
+	var lostEvents int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_terminal_events
+        WHERE task_handle = ? AND transition = 'lost'`, task.Handle).Scan(&lostEvents); err != nil {
+		t.Fatalf("count retained loss events: %v", err)
+	}
+	if lostEvents != 1 {
+		t.Fatalf("retained loss events = %d, want 1", lostEvents)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE task_terminal_bindings
+        SET latest_transition = 'lost', updated_at = ? WHERE task_handle = ?`,
+		formatTime(now.Add(5*time.Minute)), task.Handle); err != nil {
+		t.Fatalf("seed previously weakened binding: %v", err)
+	}
+	if _, err := store.CommitTerminalEvent(ctx, terminalEventMutation(
+		task, "operation-terminal-restart-lost-replay", application.TerminalLost, now.Add(6*time.Minute),
+	)); err != nil {
+		t.Fatalf("CommitTerminalEvent(repeated loss after restart) error = %v", err)
+	}
+	binding, found, err = findTerminalBinding(ctx, store.db, task.Handle)
+	if err != nil || !found {
+		t.Fatalf("findTerminalBinding(recovered) = %#v, %t, %v", binding, found, err)
+	}
+	if binding.latestTransition != application.TerminalExited || !binding.updatedAt.Equal(exitedAt) {
+		t.Fatalf("recovered binding = transition %q at %s, want exited at %s",
+			binding.latestTransition, binding.updatedAt, exitedAt)
+	}
+}
+
 func TestTerminalLifecycle_StorageHelpersFailClosed(t *testing.T) {
+	t.Run("missing settled terminal posture", func(t *testing.T) {
+		store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+		if err != nil {
+			t.Fatalf("Open() error = %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		transition, observedAt, found, err := lastSettledTerminalPosture(
+			context.Background(), store.db, "task-terminal-missing", "terminal-session-missing",
+		)
+		if err != nil || found || transition != "" || !observedAt.IsZero() {
+			t.Fatalf("lastSettledTerminalPosture(missing) = %q, %s, %t, %v", transition, observedAt, found, err)
+		}
+	})
+
+	t.Run("corrupt settled terminal posture time", func(t *testing.T) {
+		store, task, workspace, now := openTerminalLifecycleFixture(t, "task-terminal-corrupt-posture", true)
+		t.Cleanup(func() { _ = store.Close() })
+		ctx := context.Background()
+		if _, err := store.CommitTerminalEvent(ctx, terminalEventMutation(
+			task, "operation-terminal-corrupt-posture-running", application.TerminalRunning, now.Add(3*time.Minute),
+		)); err != nil {
+			t.Fatalf("CommitTerminalEvent(running) error = %v", err)
+		}
+		if transition, observedAt, found, err := lastSettledTerminalPosture(
+			ctx, store.db, task.Handle, "terminal-session-primary",
+		); err != nil || found || transition != "" || !observedAt.IsZero() {
+			t.Fatalf("lastSettledTerminalPosture(running) = %q, %s, %t, %v", transition, observedAt, found, err)
+		}
+		if _, err := store.CommitWorkerLaunchAcknowledgement(ctx, application.WorkerLaunchAcknowledgementMutation{
+			OperationID: "operation-terminal-corrupt-posture-ack", SubjectDigest: strings.Repeat("7", 64),
+			Acknowledgement: terminalLaunchAcknowledgement(task, workspace), At: now.Add(4 * time.Minute),
+		}); err != nil {
+			t.Fatalf("CommitWorkerLaunchAcknowledgement() error = %v", err)
+		}
+		if _, err := store.CommitTerminalEvent(ctx, terminalEventMutation(
+			task, "operation-terminal-corrupt-posture-exited", application.TerminalExited, now.Add(5*time.Minute),
+		)); err != nil {
+			t.Fatalf("CommitTerminalEvent(exited) error = %v", err)
+		}
+		if _, err := store.db.Exec(`UPDATE task_terminal_events SET observed_at = 'not-a-time'
+			WHERE task_handle = ? AND transition = 'exited'`, task.Handle); err != nil {
+			t.Fatalf("corrupt settled terminal posture: %v", err)
+		}
+		if _, _, _, err := lastSettledTerminalPosture(
+			ctx, store.db, task.Handle, "terminal-session-primary",
+		); err == nil {
+			t.Fatal("lastSettledTerminalPosture(corrupt time) error = nil")
+		}
+		if _, err := store.CommitTerminalEvent(ctx, terminalEventMutation(
+			task, "operation-terminal-corrupt-posture-lost", application.TerminalLost, now.Add(6*time.Minute),
+		)); err == nil {
+			t.Fatal("CommitTerminalEvent(lost after corrupt posture) error = nil")
+		}
+	})
+
 	t.Run("missing preparation", func(t *testing.T) {
 		store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
 		if err != nil {
@@ -313,6 +431,13 @@ func TestTerminalLifecycle_StorageHelpersFailClosed(t *testing.T) {
 		}
 		if _, err := getTaskByBinding(context.Background(), store.db, task.ManagedRunID, task.WorkspaceLeaseID); err == nil {
 			t.Fatal("getTaskByBinding(closed) error = nil")
+		}
+		if err := putTerminalBinding(context.Background(), store.db, storedTerminalBinding{
+			taskHandle: task.Handle, managedRunID: task.ManagedRunID,
+			workspaceLeaseID: task.WorkspaceLeaseID, terminalSessionID: "terminal-session-primary",
+			latestTransition: application.TerminalRunning, runningObserved: true, updatedAt: task.UpdatedAt,
+		}, true); err == nil {
+			t.Fatal("putTerminalBinding(closed) error = nil")
 		}
 		cause := errors.New("storage unavailable")
 		if err := terminalConstraintFailure("terminal helper", cause); !errors.Is(err, cause) {

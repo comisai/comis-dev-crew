@@ -28,10 +28,11 @@ var (
 type HarnessID string
 
 const (
-	HarnessCodex HarnessID = "codex"
+	HarnessCodex  HarnessID = "codex"
+	HarnessClaude HarnessID = "claude"
 )
 
-func (harness HarnessID) valid() bool { return harness == HarnessCodex }
+func (harness HarnessID) valid() bool { return harness == HarnessCodex || harness == HarnessClaude }
 
 // NetworkPosture describes the operator-reviewed terminal network capability.
 type NetworkPosture string

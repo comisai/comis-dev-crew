@@ -58,9 +58,25 @@ func (store *Store) CommitTerminalEvent(ctx context.Context, mutation applicatio
 			workspaceLeaseID: mutation.WorkspaceLeaseID, terminalSessionID: mutation.TerminalSessionID,
 		}
 	}
-	binding.latestTransition = mutation.Transition
+	settledBeforeLoss := false
+	if found && mutation.Transition == application.TerminalLost {
+		settledTransition, settledAt, settled, settleErr := lastSettledTerminalPosture(
+			ctx, transaction, task.Handle, mutation.TerminalSessionID,
+		)
+		if settleErr != nil {
+			return application.MutationResult{}, settleErr
+		}
+		if settled {
+			binding.latestTransition = settledTransition
+			binding.updatedAt = settledAt
+			settledBeforeLoss = true
+		}
+	}
+	if !settledBeforeLoss {
+		binding.latestTransition = mutation.Transition
+		binding.updatedAt = mutation.At
+	}
 	binding.runningObserved = binding.runningObserved || mutation.Transition == application.TerminalRunning
-	binding.updatedAt = mutation.At
 
 	updated := task
 	if terminalUnavailable(mutation.Transition) && terminalLossChangesTask(task.State) {
@@ -269,6 +285,32 @@ func findTerminalBinding(ctx context.Context, source queryer, taskHandle string)
 	}
 	binding.updatedAt = parsed
 	return binding, true, nil
+}
+
+func lastSettledTerminalPosture(
+	ctx context.Context,
+	source queryer,
+	taskHandle string,
+	terminalSessionID string,
+) (application.TerminalTransition, time.Time, bool, error) {
+	const query = `SELECT transition, observed_at FROM task_terminal_events
+        WHERE task_handle = ? AND terminal_session_id = ? AND transition <> 'lost'
+        ORDER BY rowid DESC LIMIT 1`
+	var transition application.TerminalTransition
+	var observedAt string
+	if err := source.QueryRowContext(ctx, query, taskHandle, terminalSessionID).Scan(&transition, &observedAt); errors.Is(err, sql.ErrNoRows) {
+		return "", time.Time{}, false, nil
+	} else if err != nil {
+		return "", time.Time{}, false, fmt.Errorf("read terminal posture before loss: %w", err)
+	}
+	if transition != application.TerminalExited && transition != application.TerminalReleased {
+		return "", time.Time{}, false, nil
+	}
+	parsed, err := parseTime(observedAt)
+	if err != nil {
+		return "", time.Time{}, false, fmt.Errorf("parse terminal posture before loss: %w", err)
+	}
+	return transition, parsed, true, nil
 }
 
 func putTerminalBinding(ctx context.Context, target execer, binding storedTerminalBinding, exists bool) error {

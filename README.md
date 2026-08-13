@@ -92,7 +92,7 @@ devcrew --socket /absolute/private/run/devcrew.sock tasks list --format json
 
 Without explicit path flags, the service and CLI derive matching locations from
 the operating system's user configuration directory. For the full Comis and
-Codex configuration, see [Running comis-dev-crew](docs/running.md).
+coding-worker configuration, see [Running comis-dev-crew](docs/running.md).
 
 ## Executables
 

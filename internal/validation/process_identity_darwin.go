@@ -45,6 +45,29 @@ func observeOSProcess(ctx context.Context, pid int) (ProcessObservation, error) 
 	}, nil
 }
 
+func observeOSExecutableLabel(ctx context.Context, label string) (bool, error) {
+	if ctx == nil || !processIdentityPattern.MatchString(label) {
+		return false, errors.New("scan validation processes: context and executable label are required")
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	processes, err := unix.SysctlKinfoProcSlice("kern.proc.all")
+	if err != nil {
+		return false, errors.New("scan validation processes: kernel query failed")
+	}
+	for _, process := range processes {
+		labelBytes := make([]byte, len(process.Proc.P_comm))
+		for index, character := range process.Proc.P_comm {
+			labelBytes[index] = byte(character)
+		}
+		if string(bytes.TrimRight(labelBytes, "\x00")) == label && process.Proc.P_stat != 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func expectedExecutableLabel(executable string) string {
 	label := filepath.Base(executable)
 	if len(label) > len(unix.KinfoProc{}.Proc.P_comm)-1 {

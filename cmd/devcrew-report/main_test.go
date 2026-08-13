@@ -9,10 +9,17 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/application"
 )
 
+func TestReporterConsumesHostManagedAttachmentEnvironment(t *testing.T) {
+	if application.RuntimeAttachmentPathEnvironment != "COMIS_EXECUTION_ATTACHMENT" ||
+		application.RuntimeAttachmentTargetEnvironment != "COMIS_EXECUTION_ATTACHMENT_TARGET_NAME" {
+		t.Fatalf("runtime attachment environment = %q, %q", application.RuntimeAttachmentPathEnvironment, application.RuntimeAttachmentTargetEnvironment)
+	}
+}
+
 func TestRunFailsLoudlyBeforeCommandDispatchWhenMountedClientConstructionFails(t *testing.T) {
-	t.Setenv(application.RuntimeAttachmentPathEnvironment,
+	t.Setenv("COMIS_EXECUTION_ATTACHMENT",
 		"/run/comis/attachments/attachment-0123456789abcdef0123456789abcdef.sock")
-	t.Setenv(application.RuntimeAttachmentTargetEnvironment,
+	t.Setenv("COMIS_EXECUTION_ATTACHMENT_TARGET_NAME",
 		"attachment-ffffffffffffffffffffffffffffffff.sock")
 	var stdout, stderr bytes.Buffer
 	exit := run(context.Background(), []string{"brief"}, &stdout, &stderr)
@@ -23,8 +30,8 @@ func TestRunFailsLoudlyBeforeCommandDispatchWhenMountedClientConstructionFails(t
 }
 
 func TestRunExposesMetadataCommandsWithoutAMountedAttachment(t *testing.T) {
-	t.Setenv(application.RuntimeAttachmentPathEnvironment, "")
-	t.Setenv(application.RuntimeAttachmentTargetEnvironment, "")
+	t.Setenv("COMIS_EXECUTION_ATTACHMENT", "")
+	t.Setenv("COMIS_EXECUTION_ATTACHMENT_TARGET_NAME", "")
 	for _, test := range []struct {
 		name string
 		args []string
