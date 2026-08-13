@@ -404,6 +404,15 @@ type fakeClient struct {
 	operationID  string
 }
 
+func (client *fakeClient) ReconcileTask(
+	_ context.Context,
+	operationID string,
+	input localapi.ReconcileTaskInput,
+) (localapi.TaskMutationResult, error) {
+	client.record(operationID, "reconcile:"+input.TaskHandle+":"+string(input.Action))
+	return client.taskMutation, client.err
+}
+
 func (client *fakeClient) CleanupTask(
 	_ context.Context,
 	operationID string,
