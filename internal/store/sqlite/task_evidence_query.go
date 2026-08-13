@@ -13,26 +13,65 @@ import (
 // ReadTaskEvidence returns one content-free diagnostic snapshot from a single
 // durable read transaction. It never treats missing evidence as success.
 func (store *Store) ReadTaskEvidence(ctx context.Context, taskHandle string) (application.TaskEvidenceView, error) {
+	observation, err := store.ReadTaskObservation(ctx, taskHandle)
+	return observation.Evidence, err
+}
+
+// ReadTaskObservation joins one task and its evidence in a single transaction.
+func (store *Store) ReadTaskObservation(ctx context.Context, taskHandle string) (application.TaskObservation, error) {
 	if store == nil || store.db == nil || ctx == nil || domain.ValidateTaskHandle(taskHandle) != nil {
-		return application.TaskEvidenceView{}, errors.New("read task evidence: input is invalid")
+		return application.TaskObservation{}, errors.New("read task observation: input is invalid")
 	}
 	transaction, err := store.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return application.TaskEvidenceView{}, fmt.Errorf("begin task evidence read: %w", err)
+		return application.TaskObservation{}, fmt.Errorf("begin task observation read: %w", err)
 	}
 	defer func() { _ = transaction.Rollback() }()
 	task, err := getTask(ctx, transaction, taskHandle)
 	if err != nil {
-		return application.TaskEvidenceView{}, err
+		return application.TaskObservation{}, err
 	}
 	evidence, err := readTaskEvidence(ctx, transaction, task)
 	if err != nil {
-		return application.TaskEvidenceView{}, err
+		return application.TaskObservation{}, err
 	}
 	if err := transaction.Commit(); err != nil {
-		return application.TaskEvidenceView{}, fmt.Errorf("commit task evidence read: %w", err)
+		return application.TaskObservation{}, fmt.Errorf("commit task observation read: %w", err)
 	}
-	return evidence, nil
+	return application.TaskObservation{Task: task, Evidence: evidence}, nil
+}
+
+// TaskEvidenceSnapshot reads all task rows, evidence, and the advertised
+// global version without allowing a concurrent mutation to mix projections.
+func (store *Store) TaskEvidenceSnapshot(ctx context.Context) ([]application.TaskObservation, int64, error) {
+	if store == nil || store.db == nil || ctx == nil {
+		return nil, 0, errors.New("read task evidence snapshot: input is invalid")
+	}
+	transaction, err := store.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, 0, fmt.Errorf("begin task evidence snapshot: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	tasks, err := listTasks(ctx, transaction)
+	if err != nil {
+		return nil, 0, err
+	}
+	observations := make([]application.TaskObservation, 0, len(tasks))
+	for _, task := range tasks {
+		evidence, readErr := readTaskEvidence(ctx, transaction, task)
+		if readErr != nil {
+			return nil, 0, readErr
+		}
+		observations = append(observations, application.TaskObservation{Task: task, Evidence: evidence})
+	}
+	stateVersion, err := currentStateVersion(ctx, transaction)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := transaction.Commit(); err != nil {
+		return nil, 0, fmt.Errorf("commit task evidence snapshot: %w", err)
+	}
+	return observations, stateVersion, nil
 }
 
 func readTaskEvidence(

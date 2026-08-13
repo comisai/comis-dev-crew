@@ -125,3 +125,9 @@ type TaskEvidenceView struct {
 	Cleanup    CleanupEvidenceView    `json:"cleanup"`
 	Authority  TaskAuthorityView      `json:"authority"`
 }
+
+// TaskObservation joins one task row to evidence read in the same durable snapshot.
+type TaskObservation struct {
+	Task     domain.Task
+	Evidence TaskEvidenceView
+}
