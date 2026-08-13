@@ -186,11 +186,12 @@ func TestTaskCleanupStore_RefusesOpenHoldUnsettledRuntimeAndUndeliveredEvidence(
 	for _, test := range []struct {
 		name   string
 		mutate func(*Store, domain.Task)
+		want   error
 	}{
 		{name: "open cleanup hold", mutate: func(store *Store, task domain.Task) {
 			_, _ = store.db.Exec(`INSERT INTO task_cleanup_holds(task_handle, hold_id, reason, opened_at)
                 VALUES (?, 'hold-review', 'review remains open', ?)`, task.Handle, formatTime(task.UpdatedAt))
-		}},
+		}, want: application.ErrCleanupOpenHold},
 		{name: "running terminal", mutate: func(store *Store, task domain.Task) {
 			_, _ = store.db.Exec("UPDATE task_terminal_bindings SET latest_transition = 'running' WHERE task_handle = ?", task.Handle)
 		}},
@@ -227,8 +228,8 @@ func TestTaskCleanupStore_RefusesOpenHoldUnsettledRuntimeAndUndeliveredEvidence(
 				TaskHandle: task.Handle, ReleaseOperationID: "release-refused-0001",
 				ReleasedAt: task.UpdatedAt.Add(time.Minute), At: task.UpdatedAt.Add(time.Minute),
 			})
-			if !errors.Is(err, application.ErrPrecondition) {
-				t.Fatalf("BeginTaskCleanup() error = %v, want ErrPrecondition", err)
+			if !errors.Is(err, application.ErrPrecondition) || test.want != nil && !errors.Is(err, test.want) {
+				t.Fatalf("BeginTaskCleanup() error = %v, want classified precondition", err)
 			}
 		})
 	}
@@ -251,23 +252,6 @@ func TestTaskCleanupStore_AcceptsDurablyAbsentValidationProcess(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("BeginTaskCleanup(absent validation) error = %v", err)
-	}
-}
-
-func TestTaskCleanupStore_ClassifiesOpenHoldForOperatorDiagnosis(t *testing.T) {
-	store, task, _ := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
-	t.Cleanup(func() { _ = store.Close() })
-	if _, err := store.db.Exec(`INSERT INTO task_cleanup_holds(task_handle, hold_id, reason, opened_at)
-        VALUES (?, 'hold-diagnosis', 'review remains open', ?)`, task.Handle, formatTime(task.UpdatedAt)); err != nil {
-		t.Fatalf("seed open cleanup hold: %v", err)
-	}
-	_, err := store.BeginTaskCleanup(context.Background(), application.TaskCleanupMutation{
-		OperationID: "cleanup-diagnosis-0001", SubjectDigest: strings.Repeat("e", 64),
-		TaskHandle: task.Handle, ReleaseOperationID: "release-diagnosis-0001",
-		ReleasedAt: task.UpdatedAt.Add(time.Minute), At: task.UpdatedAt.Add(time.Minute),
-	})
-	if !errors.Is(err, application.ErrCleanupOpenHold) || !errors.Is(err, application.ErrPrecondition) {
-		t.Fatalf("BeginTaskCleanup(open hold) error = %v, want classified cleanup hold precondition", err)
 	}
 }
 
