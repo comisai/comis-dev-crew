@@ -26,7 +26,8 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 	if configured.Repositories == nil || configured.Workspaces == nil {
 		t.Fatalf("installed repository configuration = %#v", configured)
 	}
-	if configured.candidateGit == nil || configured.validationCatalog == nil ||
+	if configured.candidateGit == nil || configured.workspaceInspector == nil || configured.reconciliationInspector == nil ||
+		configured.validationCatalog == nil ||
 		configured.pullRequests == nil || configured.cleanupRemover == nil || configured.cleanupForge == nil ||
 		configured.validationMaxOutputBytes != 64<<10 ||
 		configured.validationPollInterval != 25*time.Millisecond {
