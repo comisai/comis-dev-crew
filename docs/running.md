@@ -144,6 +144,11 @@ the existing cleanup record even though the new MCP invocation has a fresh calle
 operation ID, and records both operation identities against the single completed
 cleanup effect.
 
+Cleanup refuses before release when an operator cleanup hold remains open. The
+error names the closed `open task hold` category and directs the operator to close
+that exact hold; it never includes the operator-authored hold reason. Dirty-worktree
+refusals likewise name the clean-worktree action required before a safe retry.
+
 ## Operator CLI surface
 
 ```text

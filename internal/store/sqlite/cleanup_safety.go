@@ -25,19 +25,20 @@ func validateCleanupMutation(store *Store, ctx context.Context, mutation applica
 
 func proveCleanupDatabaseSafety(ctx context.Context, transaction *sql.Tx, task domain.Task) error {
 	queries := []struct {
-		name  string
-		query string
-		args  []any
+		name    string
+		query   string
+		args    []any
+		blocker error
 	}{
 		{name: "open hold", query: `SELECT COUNT(*) FROM task_cleanup_holds
-            WHERE task_handle = ? AND closed_at IS NULL`, args: []any{task.Handle}},
+            WHERE task_handle = ? AND closed_at IS NULL`, args: []any{task.Handle}, blocker: application.ErrCleanupOpenHold},
 		{name: "active validation", query: `SELECT COUNT(*) FROM validation_processes
-		    WHERE task_handle = ? AND state NOT IN ('exited', 'absent')`, args: []any{task.Handle}},
+		    WHERE task_handle = ? AND state NOT IN ('exited', 'absent')`, args: []any{task.Handle}, blocker: application.ErrPrecondition},
 		{name: "unresolved decision", query: `SELECT COUNT(*) FROM reports d
             WHERE d.task_handle = ? AND d.kind = 'decision' AND NOT EXISTS (
                 SELECT 1 FROM reports r WHERE r.task_handle = d.task_handle
                 AND r.kind = 'resolution' AND r.external_key = d.external_key
-            )`, args: []any{task.Handle}},
+			)`, args: []any{task.Handle}, blocker: application.ErrPrecondition},
 	}
 	for _, check := range queries {
 		var count int
@@ -45,7 +46,7 @@ func proveCleanupDatabaseSafety(ctx context.Context, transaction *sql.Tx, task d
 			return fmt.Errorf("inspect task cleanup %s: %w", check.name, err)
 		}
 		if count != 0 {
-			return fmt.Errorf("task cleanup %s remains: %w", check.name, application.ErrPrecondition)
+			return fmt.Errorf("task cleanup %s remains: %w", check.name, check.blocker)
 		}
 	}
 	var managedRunID, workspaceLeaseID string

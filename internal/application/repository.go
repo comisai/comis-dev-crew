@@ -19,6 +19,16 @@ var (
 	ErrInvalidInput = errors.New("mutation input is invalid")
 )
 
+type cleanupOpenHoldError struct{}
+
+func (cleanupOpenHoldError) Error() string { return "cleanup hold remains open" }
+
+func (cleanupOpenHoldError) Is(target error) bool { return target == ErrPrecondition }
+
+// ErrCleanupOpenHold identifies the closed cleanup blocker without exposing
+// the operator-authored hold reason across a transport boundary.
+var ErrCleanupOpenHold error = cleanupOpenHoldError{}
+
 // Repository is the consumer-owned durable port used by canonical handlers.
 // Its mutations are wired only into the service-owned mutation path.
 type Repository interface {
