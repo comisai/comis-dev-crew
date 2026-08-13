@@ -94,3 +94,48 @@ func TestDependencyFailureExposesOnlyApplicationOwnedStage(t *testing.T) {
 		t.Fatalf("dependency failure = %#v", failure)
 	}
 }
+
+func TestQueriesFallbackExplanationsRemainExplicitWithoutOptionalEvidenceReaders(t *testing.T) {
+	tests := []struct {
+		name       string
+		task       domain.Task
+		host       HostIntegrationStatus
+		wantReason string
+	}{
+		{
+			name: "unknown recovery evidence reader is absent",
+			task: queryTask("task-fallback-unknown", domain.TaskUnknown, 8), host: queryHostStatus(true),
+			wantReason: "restart_evidence_unresolved",
+		},
+		{
+			name:       "candidate evidence reader is absent",
+			task:       queryTask("task-fallback-failed", domain.TaskFailed, 9),
+			wantReason: "task_failed",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repository := &nonAtomicQueryRepository{inner: &queryRepository{
+				tasks: []domain.Task{test.task}, stateVersion: test.task.StateVersion,
+			}}
+			queries, err := NewQueries(QueryConfig{Repository: repository, Host: test.host, Clock: time.Now})
+			if err != nil {
+				t.Fatal(err)
+			}
+			explanation, err := queries.ExplainTask(context.Background(), test.task.Handle)
+			if err != nil || explanation.ReasonCode != test.wantReason {
+				t.Fatalf("ExplainTask() = %#v, %v", explanation, err)
+			}
+		})
+	}
+
+	queries, err := NewQueries(QueryConfig{
+		Repository: &nonAtomicQueryRepository{inner: &queryRepository{}}, Clock: time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ExplainTask(context.Background(), "../invalid"); failureCode(err) != domain.ErrorInvalidArgument {
+		t.Fatalf("ExplainTask(invalid handle) error = %v", err)
+	}
+}

@@ -46,9 +46,16 @@ func TestTaskEvidenceStatusReducersCoverEveryClosedPosture(t *testing.T) {
 }
 
 func TestTaskEvidenceReadFailsClosedAtInputAndStorageBoundaries(t *testing.T) {
+	var absentStore *Store
+	if _, _, err := absentStore.TaskEvidenceSnapshot(context.Background()); err == nil {
+		t.Fatal("TaskEvidenceSnapshot(nil store) error = nil")
+	}
 	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "evidence-boundaries.db"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := store.ReadTaskObservation(context.Background(), "task-evidence-absent"); err == nil {
+		t.Fatal("ReadTaskObservation(absent task) error = nil")
 	}
 	if _, err := store.ReadTaskEvidence(context.Background(), "../invalid"); err == nil {
 		t.Fatal("ReadTaskEvidence(invalid handle) error = nil")
@@ -69,6 +76,66 @@ func TestTaskEvidenceReadFailsClosedAtInputAndStorageBoundaries(t *testing.T) {
 	}
 }
 
+func TestTaskEvidenceReadProjectsDurableCleanupOperation(t *testing.T) {
+	store, task, _ := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "cleanup-evidence.db"))
+	mutation := cleanupTestMutation(task, "cleanup-evidence-operation")
+	record, err := store.BeginTaskCleanup(context.Background(), mutation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := store.ReadTaskEvidence(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evidence.Cleanup.Status != application.CleanupEvidencePrepared ||
+		evidence.Cleanup.OperationID != record.OperationID {
+		t.Fatalf("cleanup evidence = %#v, want prepared operation %q", evidence.Cleanup, record.OperationID)
+	}
+}
+
+func TestTaskEvidenceReadRejectsMissingDurableEvidenceTables(t *testing.T) {
+	tests := []struct {
+		name      string
+		table     string
+		errorText string
+	}{
+		{name: "candidate evidence", table: "candidate_evidence", errorText: "read task candidate evidence"},
+		{name: "candidate reconciliation", table: "task_candidate_reconciliations", errorText: "read task reconciliation evidence"},
+		{name: "authenticated reports", table: "reports", errorText: "read task report evidence"},
+		{name: "validation processes", table: "validation_processes", errorText: "read task validation evidence"},
+		{name: "delivery outbox", table: "comis_evidence_outbox", errorText: "read task delivery evidence"},
+		{name: "cleanup holds", table: "task_cleanup_holds", errorText: "read task cleanup holds"},
+		{name: "cleanup operations", table: "task_cleanup_operations", errorText: "read task cleanup evidence"},
+		{name: "preparation operations", table: "operations", errorText: "read task preparation evidence"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "missing-evidence.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			task := storeTask("task-missing-evidence", 1)
+			if err := store.CreateTask(context.Background(), task); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.db.Exec("DROP TABLE " + test.table); err != nil {
+				t.Fatalf("drop bounded fixture table: %v", err)
+			}
+			if _, err := store.ReadTaskEvidence(context.Background(), task.Handle); err == nil ||
+				!strings.Contains(err.Error(), test.errorText) {
+				t.Fatalf("ReadTaskEvidence(missing %s) error = %v", test.table, err)
+			}
+			if test.table == "candidate_evidence" {
+				if _, _, err := store.TaskEvidenceSnapshot(context.Background()); err == nil ||
+					!strings.Contains(err.Error(), test.errorText) {
+					t.Fatalf("TaskEvidenceSnapshot(missing %s) error = %v", test.table, err)
+				}
+			}
+		})
+	}
+}
+
 func TestTaskEvidenceRejectsJudgmentThatDiffersFromReconciliationHead(t *testing.T) {
 	store, task, _, now := openUnknownCandidateReconciliationFixture(t, "task-evidence-head-conflict")
 	t.Cleanup(func() { _ = store.Close() })
@@ -80,6 +147,11 @@ func TestTaskEvidenceRejectsJudgmentThatDiffersFromReconciliationHead(t *testing
 	result, err := store.CommitTaskCandidateReconciliation(context.Background(), mutation)
 	if err != nil {
 		t.Fatal(err)
+	}
+	reconciled, err := store.ReadTaskEvidence(context.Background(), task.Handle)
+	if err != nil || reconciled.Candidate.Status != application.CandidateEvidenceReconciled ||
+		reconciled.Candidate.ReconciliationOperationID != mutation.OperationID {
+		t.Fatalf("reconciled candidate origin = %#v, %v", reconciled.Candidate, err)
 	}
 	sealed := candidateEvidence(t, result.Task, mutation.Snapshot.HeadRevision)
 	if _, _, err := store.CommitCandidateEvidence(
@@ -98,6 +170,93 @@ func TestTaskEvidenceRejectsJudgmentThatDiffersFromReconciliationHead(t *testing
 		!strings.Contains(err.Error(), "judged head differs") {
 		t.Fatalf("ReadTaskEvidence(conflicting origin) error = %v", err)
 	}
+}
+
+func TestTaskEvidenceRejectsCandidateIdentityThatDiffersFromTask(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "candidate-identity.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	task := candidateEvidenceTask(t, "task-candidate-identity")
+	if err := store.CreateTask(context.Background(), task); err != nil {
+		t.Fatal(err)
+	}
+	sealed := candidateEvidence(t, task, strings.Repeat("d", 40))
+	if _, _, err := store.CommitCandidateEvidence(
+		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"},
+		sealed.Bundle().ProducedAt, candidateEvidencePublications(t, task, sealed),
+	); err != nil {
+		t.Fatal(err)
+	}
+	different := task
+	different.RepositoryID = "different-repository"
+	different, err = different.PinBriefRevision()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(
+		"UPDATE tasks SET repository_id = ?, brief_revision_hash = ? WHERE handle = ?",
+		different.RepositoryID, different.BriefRevisionHash, task.Handle,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReadTaskEvidence(context.Background(), task.Handle); err == nil ||
+		!strings.Contains(err.Error(), "candidate identity differs") {
+		t.Fatalf("ReadTaskEvidence(different candidate identity) error = %v", err)
+	}
+}
+
+func TestTaskEvidenceReadRejectsCorruptDurableEvidence(t *testing.T) {
+	t.Run("candidate payload", func(t *testing.T) {
+		store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "corrupt-candidate.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		task := candidateEvidenceTask(t, "task-corrupt-candidate")
+		if err := store.CreateTask(context.Background(), task); err != nil {
+			t.Fatal(err)
+		}
+		sealed := candidateEvidence(t, task, strings.Repeat("c", 40))
+		if _, _, err := store.CommitCandidateEvidence(
+			context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"},
+			sealed.Bundle().ProducedAt, candidateEvidencePublications(t, task, sealed),
+		); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.db.Exec("UPDATE candidate_evidence SET canonical = '{}' WHERE task_handle = ?", task.Handle); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.ReadTaskEvidence(context.Background(), task.Handle); err == nil ||
+			!strings.Contains(err.Error(), "stored candidate evidence") {
+			t.Fatalf("ReadTaskEvidence(corrupt candidate) error = %v", err)
+		}
+	})
+
+	t.Run("report timestamp", func(t *testing.T) {
+		store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "corrupt-report.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		task := storeTask("task-corrupt-report", 1)
+		if err := store.CreateTask(context.Background(), task); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.db.Exec(`INSERT INTO reports(
+			task_handle, local_report_id, subject_digest, schema_version, brief_revision,
+			brief_revision_hash, kind, external_key, summary, details, state_version, accepted_at)
+			VALUES (?, 'report-corrupt-time', ?, 1, ?, ?, 'progress', '', 'bounded posture', '', 2, 'invalid-time')`,
+			task.Handle, strings.Repeat("f", 64), task.BriefRevision, task.BriefRevisionHash,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.ReadTaskEvidence(context.Background(), task.Handle); err == nil ||
+			!strings.Contains(err.Error(), "accepted time is invalid") {
+			t.Fatalf("ReadTaskEvidence(corrupt report time) error = %v", err)
+		}
+	})
 }
 
 func TestTaskEvidenceEmptyAndDecisionPosturesRemainExplicit(t *testing.T) {
