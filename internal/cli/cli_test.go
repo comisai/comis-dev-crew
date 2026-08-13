@@ -91,6 +91,31 @@ func TestRun_HandbackValidatesDeveloperWorkThroughCanonicalClient(t *testing.T) 
 	}
 }
 
+func TestRun_ReconcilesCleanUnknownCandidateThroughCanonicalClient(t *testing.T) {
+	client := fixtureClient()
+	client.taskMutation = localapi.TaskMutationResult{
+		SchemaVersion: 1, OperationID: "operation-reconcile-cli", TaskHandle: "task-0001",
+		State: domain.TaskValidating, StateVersion: 16, SideEffect: localapi.SideEffectMutate,
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := Run(context.Background(), []string{
+		"task", "reconcile", "task-0001", "--action", "validate-clean-candidate",
+		"--operation", "operation-reconcile-cli", "--format", "json",
+	}, &stdout, &stderr, testConfig(client))
+	if exitCode != ExitSuccess {
+		t.Fatalf("Run() exit = %d, stderr = %q", exitCode, stderr.String())
+	}
+	if len(client.calls) != 1 || client.calls[0] != "reconcile:task-0001:validate-clean-candidate" ||
+		client.operationID != "operation-reconcile-cli" {
+		t.Fatalf("client calls/operation = %v/%q", client.calls, client.operationID)
+	}
+	var result localapi.TaskMutationResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || result != client.taskMutation {
+		t.Fatalf("reconciliation JSON = %#v, %v", result, err)
+	}
+}
+
 func TestRun_CleanupUsesStableReleaseBeforeRemovalCommand(t *testing.T) {
 	client := fixtureClient()
 	client.taskMutation = localapi.TaskMutationResult{
@@ -261,6 +286,9 @@ func TestRun_RejectsInvalidSyntaxAndReferencesBeforeConnecting(t *testing.T) {
 		{"task", "show", "../escape"},
 		{"task", "explain", "bad id"},
 		{"task", "operation", "bad id"},
+		{"task", "reconcile", "task-0001"},
+		{"task", "reconcile", "task-0001", "--action", "validate-developer-work"},
+		{"task", "reconcile", "task-0001", "--action", "validate-clean-candidate", "--worktree", "/forged"},
 		{"initiative", "list"},
 	}
 	for _, args := range tests {
