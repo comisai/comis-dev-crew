@@ -73,6 +73,24 @@ func TestTaskCandidateReconciliation_PersistsExactEvidenceWithoutWorkerReport(t 
 	}
 }
 
+func TestTaskRecoveryEvidence_DistinguishesSettledCandidateGapFromRestartAmbiguity(t *testing.T) {
+	store, task, _, _ := openUnknownCandidateReconciliationFixture(t, "task-recovery-evidence")
+	t.Cleanup(func() { _ = store.Close() })
+	evidence, err := store.ReadTaskRecoveryEvidence(context.Background(), task.Handle)
+	if err != nil || evidence.Kind != application.RecoveryTerminalSettledWithoutCandidate ||
+		evidence.Authority.Task.Handle != task.Handle || evidence.Authority.TerminalTransition != application.TerminalExited {
+		t.Fatalf("ReadTaskRecoveryEvidence(settled) = %#v, %v", evidence, err)
+	}
+	if _, err := store.db.Exec("UPDATE task_terminal_bindings SET latest_transition = 'running' WHERE task_handle = ?", task.Handle); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err = store.ReadTaskRecoveryEvidence(context.Background(), task.Handle)
+	if err != nil || evidence.Kind != application.RecoveryRestartEvidenceUnresolved ||
+		!reflect.DeepEqual(evidence.Authority, application.TaskReconciliationAuthority{}) {
+		t.Fatalf("ReadTaskRecoveryEvidence(running) = %#v, %v", evidence, err)
+	}
+}
+
 func TestTaskCandidateReconciliation_RefusesChangedAuthorityAndUnsafeCandidate(t *testing.T) {
 	tests := []struct {
 		name   string
