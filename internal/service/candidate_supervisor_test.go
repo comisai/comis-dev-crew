@@ -335,7 +335,7 @@ func TestCandidateSupervisor_RunRetriesUnavailableForgeTruthWithoutStoppingServi
 		fixture.snapshot, fixture.snapshot,
 		fixture.snapshot, fixture.snapshot,
 	}
-	fixture.pullRequests.err = errors.New("fixture remote unavailable")
+	fixture.pullRequests.err = fmt.Errorf("fixture remote unavailable: %w", forge.ErrPullRequestTruthUnavailable)
 	ctx, cancel := context.WithCancel(context.Background())
 	attempts := 0
 	fixture.pullRequests.onDeliver = func() {
@@ -358,6 +358,24 @@ func TestCandidateSupervisor_RunRetriesUnavailableForgeTruthWithoutStoppingServi
 	}
 	if fixture.store.task.State != domain.TaskCandidateComplete {
 		t.Fatalf("recovered forge task state = %q, want %q", fixture.store.task.State, domain.TaskCandidateComplete)
+	}
+}
+
+func TestCandidateSupervisor_RunSurfacesPermanentForgeDeliveryFailure(t *testing.T) {
+	fixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	permanent := errors.New("fixture permanent forge failure")
+	fixture.pullRequests.err = permanent
+	supervisor, err := newCandidateSupervisor(fixture.config())
+	if err != nil {
+		t.Fatalf("newCandidateSupervisor() error = %v", err)
+	}
+	runErr := supervisor.Run(context.Background())
+	if !errors.Is(runErr, permanent) {
+		t.Fatalf("Run() error = %v, want preserved permanent failure", runErr)
+	}
+	if fixture.pullRequests.calls != 1 || fixture.store.task.State != domain.TaskValidating {
+		t.Fatalf("permanent forge failure calls=%d state=%q, want one call and validating task",
+			fixture.pullRequests.calls, fixture.store.task.State)
 	}
 }
 

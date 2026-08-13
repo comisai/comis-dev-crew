@@ -183,8 +183,8 @@ func TestGitHubAdapter_RefusesSharedCredentialsChangedHeadAndUnboundedResponses(
 		Branch: "devcrew/task-fixture", HeadRevision: head, Title: "Task fixture",
 		RequiredChecks: []string{"ci/unit"},
 	}
-	if _, err := adapter.DeliverPullRequest(context.Background(), request); err == nil {
-		t.Fatal("DeliverPullRequest(shared credentials) error = nil")
+	if _, err := adapter.DeliverPullRequest(context.Background(), request); err == nil || errors.Is(err, ErrPullRequestTruthUnavailable) {
+		t.Fatalf("DeliverPullRequest(shared credentials) error = %v, want permanent failure", err)
 	}
 	configuration.PushCredentials = staticCredentialSource{credential: Credential{
 		Kind: CredentialPush, Secret: "push-token", Scopes: []CredentialScope{ScopeContentsWrite},
@@ -193,12 +193,51 @@ func TestGitHubAdapter_RefusesSharedCredentialsChangedHeadAndUnboundedResponses(
 	if err != nil {
 		t.Fatalf("NewGitHubAdapter(changed head) error = %v", err)
 	}
-	if _, err := adapter.DeliverPullRequest(context.Background(), request); err == nil {
-		t.Fatal("DeliverPullRequest(changed head) error = nil")
+	if _, err := adapter.DeliverPullRequest(context.Background(), request); err == nil || errors.Is(err, ErrPullRequestTruthUnavailable) {
+		t.Fatalf("DeliverPullRequest(changed head) error = %v, want permanent failure", err)
 	}
 	var oversized map[string]any
 	if err := adapter.requestJSON(context.Background(), "read-token", http.MethodGet, adapter.repositoryPath("oversized"), nil, nil, &oversized); err == nil {
 		t.Fatal("requestJSON(oversized) error = nil")
+	}
+}
+
+func TestGitHubAdapter_ClassifiesOnlyRetryableRemoteFailuresAsUnavailableTruth(t *testing.T) {
+	statuses := map[string]int{
+		"/timeout": http.StatusRequestTimeout, "/too-early": http.StatusTooEarly,
+		"/rate-limit": http.StatusTooManyRequests, "/server": http.StatusServiceUnavailable,
+		"/rate-limit-forbidden": http.StatusForbidden, "/forbidden": http.StatusForbidden,
+		"/not-found": http.StatusNotFound, "/invalid": http.StatusUnprocessableEntity,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/rate-limit-forbidden" {
+			response.Header().Set("X-RateLimit-Remaining", "0")
+		}
+		response.WriteHeader(statuses[request.URL.Path])
+	}))
+	t.Cleanup(server.Close)
+	configuration := validGitHubConfig(server)
+	adapter, err := NewGitHubAdapter(configuration)
+	if err != nil {
+		t.Fatalf("NewGitHubAdapter() error = %v", err)
+	}
+	for _, path := range []string{"/timeout", "/too-early", "/rate-limit", "/server", "/rate-limit-forbidden"} {
+		if err := adapter.requestJSON(context.Background(), "read-token", http.MethodGet, path, nil, nil, nil); !errors.Is(err, ErrPullRequestTruthUnavailable) {
+			t.Fatalf("requestJSON(%s) error = %v, want unavailable truth", path, err)
+		}
+	}
+	for _, path := range []string{"/forbidden", "/not-found", "/invalid"} {
+		if err := adapter.requestJSON(context.Background(), "read-token", http.MethodGet, path, nil, nil, nil); err == nil || errors.Is(err, ErrPullRequestTruthUnavailable) {
+			t.Fatalf("requestJSON(%s) error = %v, want permanent failure", path, err)
+		}
+	}
+	adapter.config.HTTPClient = &http.Client{Transport: githubErrorTransport{err: githubTimeoutError{}}}
+	if err := adapter.requestJSON(context.Background(), "read-token", http.MethodGet, "/transport", nil, nil, nil); !errors.Is(err, ErrPullRequestTruthUnavailable) {
+		t.Fatalf("requestJSON(transport) error = %v, want unavailable truth", err)
+	}
+	adapter.config.HTTPClient = &http.Client{Transport: githubErrorTransport{err: errors.New("permanent transport failure")}}
+	if err := adapter.requestJSON(context.Background(), "read-token", http.MethodGet, "/transport", nil, nil, nil); err == nil || errors.Is(err, ErrPullRequestTruthUnavailable) {
+		t.Fatalf("requestJSON(permanent transport) error = %v, want permanent failure", err)
 	}
 }
 
@@ -268,8 +307,8 @@ func TestGitHubAdapter_RejectsInvalidConfigurationRequestsAndDependencies(t *tes
 	configuration = validGitHubConfig(server)
 	configuration.Pusher = failingBranchPusher{}
 	adapter, _ = NewGitHubAdapter(configuration)
-	if _, err := adapter.DeliverPullRequest(context.Background(), valid); err == nil {
-		t.Fatal("DeliverPullRequest(push failure) error = nil")
+	if _, err := adapter.DeliverPullRequest(context.Background(), valid); err == nil || errors.Is(err, ErrPullRequestTruthUnavailable) {
+		t.Fatalf("DeliverPullRequest(push failure) error = %v, want permanent failure", err)
 	}
 }
 
@@ -319,6 +358,18 @@ type failingBranchPusher struct{}
 func (failingBranchPusher) Push(context.Context, Credential, BranchPushRequest) error {
 	return errors.New("push failed")
 }
+
+type githubErrorTransport struct{ err error }
+
+func (transport githubErrorTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, transport.err
+}
+
+type githubTimeoutError struct{}
+
+func (githubTimeoutError) Error() string   { return "request timed out" }
+func (githubTimeoutError) Timeout() bool   { return true }
+func (githubTimeoutError) Temporary() bool { return true }
 
 func (pusher *recordingBranchPusher) Push(_ context.Context, credential Credential, request BranchPushRequest) error {
 	pusher.calls++
