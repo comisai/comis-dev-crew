@@ -240,6 +240,33 @@ func TestTaskRecoveryEvidence_SurfacesDurableReadFailures(t *testing.T) {
 	}
 }
 
+func TestTaskReconciliation_HelpersClassifyConstraintAndClosedStoreFailures(t *testing.T) {
+	constraint := codedReconciliationError{code: sqliteConstraintCode}
+	if err := taskReconciliationConstraintFailure("insert recovery evidence", constraint); !errors.Is(err, application.ErrConflict) {
+		t.Fatalf("taskReconciliationConstraintFailure(constraint) = %v", err)
+	}
+	store, task, _, _ := openUnknownCandidateReconciliationFixture(t, "task-recovery-closed")
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReadTaskRecoveryEvidence(context.Background(), task.Handle); err == nil {
+		t.Fatal("ReadTaskRecoveryEvidence(closed store) error = nil")
+	}
+	if _, err := store.ReadTaskReconciliationAuthority(context.Background(), task.Handle); err == nil {
+		t.Fatal("ReadTaskReconciliationAuthority(closed store) error = nil")
+	}
+	if _, err := taskPreparationOperationID(context.Background(), store.db, task.Handle); err == nil {
+		t.Fatal("taskPreparationOperationID(closed store) error = nil")
+	}
+}
+
+type codedReconciliationError struct {
+	code int
+}
+
+func (err codedReconciliationError) Error() string { return "coded reconciliation storage error" }
+func (err codedReconciliationError) Code() int     { return err.code }
+
 func TestTaskCandidateReconciliation_RefusesChangedAuthorityAndUnsafeCandidate(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -341,6 +368,9 @@ func TestTaskCandidateReconciliation_FailsAtomicallyAcrossStorageBoundaries(t *t
 		{name: "evidence insert failure", mutate: func(store *Store, _ *application.TaskCandidateReconciliationMutation) {
 			_, _ = store.db.Exec(`CREATE TRIGGER fail_reconcile_evidence_insert BEFORE INSERT ON task_candidate_reconciliations
 				BEGIN SELECT RAISE(FAIL, 'reconciliation evidence unavailable'); END`)
+		}},
+		{name: "authority read failure", mutate: func(store *Store, mutation *application.TaskCandidateReconciliationMutation) {
+			_, _ = store.db.Exec("DELETE FROM task_preparations WHERE task_handle = ?", mutation.TaskHandle)
 		}},
 	}
 	for _, test := range tests {
