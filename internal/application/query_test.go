@@ -128,6 +128,39 @@ func TestQueries_ListShowExplainAndOperationShareCanonicalProjections(t *testing
 	}
 }
 
+func TestQueries_ProjectDurableCandidateAndReportEvidence(t *testing.T) {
+	now := time.Date(2026, time.August, 8, 21, 0, 0, 0, time.UTC)
+	task := queryTask("task-evidence-0001", domain.TaskDelivered, 9)
+	task.ReportCursor = 3
+	sealed := queryCandidateEvidence(t, task, now.Add(-time.Minute))
+	repository := &queryRepository{
+		tasks:             []domain.Task{task},
+		stateVersion:      task.StateVersion,
+		candidateEvidence: sealed,
+		candidateJudgment: domain.CandidateJudgment{
+			Outcome: domain.CandidateAccepted,
+			Reason:  domain.CandidateEvidenceAccepted,
+		},
+	}
+	queries, err := NewQueries(QueryConfig{Repository: repository, Clock: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("NewQueries() error = %v", err)
+	}
+
+	show, err := queries.ShowTask(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("ShowTask() error = %v", err)
+	}
+	if show.Summary.Head != sealed.Bundle().HeadRevision || show.Summary.Activity != "authenticated_report" ||
+		show.Summary.Validation != string(domain.CandidateAccepted) || show.Summary.BlockedBy != "none" ||
+		show.Summary.Attention != "none" {
+		t.Fatalf("ShowTask() summary = %#v, want durable candidate and report posture", show.Summary)
+	}
+	if !repository.candidateCalled {
+		t.Fatal("ShowTask() did not read durable candidate evidence")
+	}
+}
+
 func TestQueries_ExplainFailedCandidateFromDurableJudgment(t *testing.T) {
 	for _, test := range []struct {
 		name      string
@@ -595,6 +628,7 @@ type queryRepository struct {
 	readCalled        bool
 	snapshotCalled    bool
 	candidateJudgment domain.CandidateJudgment
+	candidateEvidence *domain.SealedDeliveryEvidence
 	candidateErr      error
 	candidateCalled   bool
 }
@@ -604,7 +638,7 @@ func (repository *queryRepository) LatestCandidateEvidence(
 	string,
 ) (*domain.SealedDeliveryEvidence, domain.CandidateJudgment, error) {
 	repository.candidateCalled = true
-	return nil, repository.candidateJudgment, repository.candidateErr
+	return repository.candidateEvidence, repository.candidateJudgment, repository.candidateErr
 }
 
 func (repository *queryRepository) GetManagedRunPreparation(context.Context, string) (ManagedRunPreparation, error) {
@@ -747,6 +781,29 @@ func queryTask(handle string, state domain.TaskState, stateVersion int64) domain
 		panic(err)
 	}
 	return pinned
+}
+
+func queryCandidateEvidence(t *testing.T, task domain.Task, producedAt time.Time) *domain.SealedDeliveryEvidence {
+	t.Helper()
+	head := strings.Repeat("b", 40)
+	sealed, err := domain.SealDeliveryEvidence(domain.DeliveryEvidenceBundle{
+		SchemaVersion: 1, TaskHandle: task.Handle, RepositoryIdentity: task.RepositoryID,
+		BaseRevision: task.BaseRevision, HeadRevision: head, WorktreeCleanliness: domain.WorktreeClean,
+		ValidationReceipts: []domain.ValidationEvidenceReceipt{{
+			CheckID: "unit", ProgramID: "go-test", HeadRevision: head,
+			Conclusion: domain.CheckPassed, Required: true, OutputHash: strings.Repeat("c", 64),
+			StartedAt: producedAt.Add(-time.Second), CompletedAt: producedAt,
+		}},
+		ForgeEvidence: &domain.ForgeEvidence{
+			Repository: task.RepositoryID, PullRequestID: "github-pr-17", HeadRevision: head,
+			CheckConclusions: []domain.ForgeCheckEvidence{{Name: "ci/unit", Conclusion: domain.CheckPassed}},
+		},
+		ProducedAt: producedAt, ExpiresAt: producedAt.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("SealDeliveryEvidence() error = %v", err)
+	}
+	return sealed
 }
 
 func queryOperation(id string, stateVersion int64) domain.OperationRecord {
