@@ -216,7 +216,7 @@ func TestRun_HumanReadCommandsUseOneCanonicalClient(t *testing.T) {
 		{name: "doctor", args: []string{"doctor"}, wantCall: "diagnose", wantOutput: "CHECK"},
 		{name: "fleet status", args: []string{"status"}, wantCall: "fleet", wantOutput: "INIT/COMPONENT"},
 		{name: "task list", args: []string{"tasks", "list"}, wantCall: "list", wantOutput: "task-0001"},
-		{name: "task show", args: []string{"task", "show", "task-0001"}, wantCall: "show:task-0001", wantOutput: "taskHandle: \"task-0001\""},
+		{name: "task show", args: []string{"task", "show", "task-0001"}, wantCall: "show:task-0001", wantOutput: "preparationOperationId: \"prepare-view-0001\""},
 		{name: "task explain", args: []string{"task", "explain", "task-0001"}, wantCall: "explain:task-0001", wantOutput: "REASON"},
 		{name: "task operation", args: []string{"task", "operation", "op-0001"}, wantCall: "operation:op-0001", wantOutput: "OPERATION"},
 		{name: "task launch plan", args: []string{"task", "launch-plan", "task-0001"}, wantCall: "launch-plan:task-0001", wantOutput: `"terminalAllowEntryId"`},
@@ -514,6 +514,27 @@ func fixtureClient() *fakeClient {
 		detail: application.TaskDetail{
 			SchemaVersion: 1, CapturedAtMs: 1234, Completeness: application.CompletenessPartial,
 			Summary: summary, Shape: domain.ShapeShip, BaseRevision: strings.Repeat("a", 40),
+			Evidence: application.TaskEvidenceView{
+				Candidate: application.CandidateEvidenceView{
+					Status: application.CandidateEvidenceJudged, HeadRevision: strings.Repeat("b", 40),
+					EvidenceDigest: strings.Repeat("c", 64),
+				},
+				Activity: application.ActivityEvidenceView{
+					Status:   application.ActivityEvidenceAuthenticatedReport,
+					ReportID: "report-view-0001", ReportKind: domain.ReportCandidateComplete, AcceptedAtMs: 1234,
+				},
+				Decision:   application.DecisionEvidenceView{Status: application.DecisionEvidenceNone},
+				Validation: application.ValidationEvidenceView{Status: application.ValidationEvidenceAccepted, EvidenceDigest: strings.Repeat("c", 64)},
+				Delivery: application.DeliveryEvidenceView{
+					Status: application.DeliveryEvidenceDelivered, EvidenceOperationID: "delivery-view-0001",
+					EvidenceRef: "evidence-view-0001", PullRequestID: "github-pr-17",
+				},
+				Cleanup: application.CleanupEvidenceView{Status: application.CleanupEvidenceNotStarted},
+				Authority: application.TaskAuthorityView{
+					ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001",
+					ExecutionAttachmentID: "attachment-view-0001", PreparationOperationID: "prepare-view-0001",
+				},
+			},
 			BriefRevision: 1, ValidationProfile: "go-default", DeliveryMode: domain.DeliveryPullRequest,
 			StateVersion: 7, CreatedAtMs: 1, UpdatedAtMs: 2,
 		},
