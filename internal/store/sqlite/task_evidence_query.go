@@ -64,7 +64,7 @@ func readTaskEvidence(
 	if err := readValidationDiagnostic(ctx, source, task.Handle, &evidence); err != nil {
 		return application.TaskEvidenceView{}, err
 	}
-	if err := readDeliveryDiagnostic(ctx, source, task.Handle, &evidence); err != nil {
+	if err := readDeliveryDiagnostic(ctx, source, task, &evidence); err != nil {
 		return application.TaskEvidenceView{}, err
 	}
 	if err := readCleanupDiagnostic(ctx, source, task, &evidence); err != nil {
@@ -236,7 +236,7 @@ func readValidationDiagnostic(
 func readDeliveryDiagnostic(
 	ctx context.Context,
 	source queryer,
-	taskHandle string,
+	task domain.Task,
 	evidence *application.TaskEvidenceView,
 ) error {
 	const query = `SELECT operation_id, evidence_ref, delivered_at
@@ -245,9 +245,9 @@ func readDeliveryDiagnostic(
 		ORDER BY state_version DESC, evidence_ref LIMIT 1`
 	var operationID, evidenceRef string
 	var deliveredAt sql.NullString
-	if err := source.QueryRowContext(ctx, query, taskHandle).Scan(&operationID, &evidenceRef, &deliveredAt); err == nil {
+	if err := source.QueryRowContext(ctx, query, task.Handle).Scan(&operationID, &evidenceRef, &deliveredAt); err == nil {
 		status := application.DeliveryEvidencePending
-		if deliveredAt.Valid {
+		if deliveredAt.Valid && taskDeliveryComplete(task.State) {
 			status = application.DeliveryEvidenceDelivered
 		}
 		evidence.Delivery.Status = status
@@ -257,7 +257,19 @@ func readDeliveryDiagnostic(
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("read task delivery evidence: %w", err)
 	}
+	if taskDeliveryComplete(task.State) {
+		evidence.Delivery.Status = application.DeliveryEvidenceUnknown
+	}
 	return nil
+}
+
+func taskDeliveryComplete(state domain.TaskState) bool {
+	switch state {
+	case domain.TaskDelivered, domain.TaskCleanupHeld, domain.TaskCleaned:
+		return true
+	default:
+		return false
+	}
 }
 
 func readCleanupDiagnostic(
