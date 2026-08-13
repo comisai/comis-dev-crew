@@ -172,6 +172,42 @@ func TestFacade_HandbackTaskUsesAuthenticatedCanonicalMutation(t *testing.T) {
 	}
 }
 
+func TestFacade_ReconcileTaskUsesClosedIdempotentCanonicalMutation(t *testing.T) {
+	client := &fakeClient{reconcileResult: localapi.TaskMutationResult{
+		SchemaVersion: 1, OperationID: "reconcile-task-0001", TaskHandle: "task-0001",
+		State: domain.TaskValidating, StateVersion: 20, SideEffect: localapi.SideEffectMutate,
+	}}
+	facade, err := New(Config{
+		Client: client, ServiceInstanceID: "service-instance-0001", Version: "test",
+		NewOperationID: func() (string, error) { return "reconcile-read-0001", nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := connectFacade(t, facade)
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Meta: callMeta("reconcile-task-0001", "service-instance-0001"), Name: ToolReconcileTask,
+		Arguments: ReconcileTaskInput{TaskHandle: "task-0001", Action: application.ReconcileValidateCleanCandidate},
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("CallTool(reconcile_task) = %#v, %v", result, err)
+	}
+	if got := strings.Join(client.calls, ","); got != "reconcile:reconcile-task-0001:task-0001:validate-clean-candidate" {
+		t.Fatalf("reconciliation calls = %q", got)
+	}
+	tools, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, listed := range tools.Tools {
+		if listed.Name == ToolReconcileTask && (listed.Annotations == nil || listed.Annotations.ReadOnlyHint ||
+			!listed.Annotations.IdempotentHint || listed.Annotations.DestructiveHint == nil || *listed.Annotations.DestructiveHint ||
+			listed.Annotations.OpenWorldHint == nil || *listed.Annotations.OpenWorldHint) {
+			t.Fatalf("reconciliation annotations = %#v", listed.Annotations)
+		}
+	}
+}
+
 func TestFacade_CleanupTaskDeclaresDestructiveOpenWorldMutation(t *testing.T) {
 	client := &fakeClient{cleanupResult: localapi.TaskMutationResult{
 		SchemaVersion: 1, OperationID: "cleanup-0001", TaskHandle: "task-0001",
@@ -336,7 +372,7 @@ func TestFacade_UncertainTerminalMutationsReconcileBeforeExactRetry(t *testing.T
 
 func assertToolCatalog(t *testing.T, tools []*mcp.Tool) {
 	t.Helper()
-	want := map[string]bool{ToolPrepareTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true}
+	want := map[string]bool{ToolPrepareTask: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true}
 	if len(tools) != len(want) {
 		t.Fatalf("tool count = %d, want %d", len(tools), len(want))
 	}
