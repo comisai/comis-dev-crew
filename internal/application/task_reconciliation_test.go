@@ -88,6 +88,26 @@ func TestTaskCandidateReconciler_ReplaysBeforeAuthorityOrWorkspaceInspection(t *
 	}
 }
 
+func TestTaskCandidateReconciler_ClassifiesMissingDurableAuthorityAsPrecondition(t *testing.T) {
+	now := time.Date(2026, time.August, 13, 10, 7, 0, 0, time.UTC)
+	authority := reconciliationAuthority(now)
+	store := &taskReconciliationStore{authorityErr: ErrPrecondition}
+	reconciler, err := NewTaskCandidateReconciler(TaskCandidateReconcilerConfig{
+		Store: store, Workspaces: &taskReconciliationInspector{}, Clock: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = reconciler.ReconcileTask(context.Background(), ReconcileTaskCommand{
+		OperationID: "operation-reconcile-precondition", TaskHandle: authority.Task.Handle,
+		Action: ReconcileValidateCleanCandidate,
+	})
+	var failure *domain.Failure
+	if !errors.As(err, &failure) || failure.Code != domain.ErrorPrecondition || failure.Retryable {
+		t.Fatalf("ReconcileTask(missing authority) error = %#v, want nonretryable precondition", err)
+	}
+}
+
 func TestTaskCandidateReconciler_RefusesAmbiguousOrUnsafeRecoveryEvidence(t *testing.T) {
 	now := time.Date(2026, time.August, 13, 10, 10, 0, 0, time.UTC)
 	privateCause := errors.New("private workspace and terminal detail")
