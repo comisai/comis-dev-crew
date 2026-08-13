@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -70,6 +71,72 @@ func TestTaskCandidateReconciliation_PersistsExactEvidenceWithoutWorkerReport(t 
 	altered.SubjectDigest = strings.Repeat("e", 64)
 	if _, err := reconciliations.CommitTaskCandidateReconciliation(context.Background(), altered); !errors.Is(err, application.ErrConflict) {
 		t.Fatalf("CommitTaskCandidateReconciliation(altered replay) error = %v, want conflict", err)
+	}
+}
+
+func TestTaskCandidateReconciliation_AuthorityReadFailsClosedAtEachDurableBoundary(t *testing.T) {
+	if store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db")); err != nil {
+		t.Fatal(err)
+	} else {
+		t.Cleanup(func() { _ = store.Close() })
+		if _, err := store.ReadTaskReconciliationAuthority(context.Background(), "../invalid"); err == nil {
+			t.Fatal("ReadTaskReconciliationAuthority(invalid handle) error = nil")
+		}
+		if _, err := store.ReadTaskReconciliationAuthority(context.Background(), "task-reconcile-missing"); !errors.Is(err, application.ErrNotFound) {
+			t.Fatalf("ReadTaskReconciliationAuthority(missing) error = %v", err)
+		}
+		cancelled, cancel := context.WithCancel(context.Background())
+		cancel()
+		if _, err := store.ReadTaskReconciliationAuthority(cancelled, "task-reconcile-cancelled"); err == nil {
+			t.Fatal("ReadTaskReconciliationAuthority(cancelled) error = nil")
+		}
+	}
+	tests := []struct {
+		name   string
+		mutate func(*Store, domain.Task)
+	}{
+		{name: "preparation is missing", mutate: func(store *Store, task domain.Task) {
+			_, _ = store.db.Exec("DELETE FROM task_preparations WHERE task_handle = ?", task.Handle)
+		}},
+		{name: "preparation operation is missing", mutate: func(store *Store, task domain.Task) {
+			_, _ = store.db.Exec("DELETE FROM operations WHERE command = 'PrepareTask' AND result_ref = ?", task.Handle)
+		}},
+		{name: "terminal binding is missing", mutate: func(store *Store, task domain.Task) {
+			_, _ = store.db.Exec("DELETE FROM task_terminal_bindings WHERE task_handle = ?", task.Handle)
+		}},
+		{name: "terminal run binding differs", mutate: func(store *Store, task domain.Task) {
+			_, _ = store.db.Exec("UPDATE task_terminal_bindings SET managed_run_id = 'managed-run-other' WHERE task_handle = ?", task.Handle)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store, task, _, _ := openUnknownCandidateReconciliationFixture(t, "task-reconcile-authority")
+			t.Cleanup(func() { _ = store.Close() })
+			test.mutate(store, task)
+			if _, err := store.ReadTaskReconciliationAuthority(context.Background(), task.Handle); err == nil {
+				t.Fatal("ReadTaskReconciliationAuthority() error = nil")
+			}
+		})
+	}
+}
+
+func TestTaskCandidateReconciliation_CancelledCommitDoesNotMutateTask(t *testing.T) {
+	store, task, _, now := openUnknownCandidateReconciliationFixture(t, "task-reconcile-cancelled")
+	t.Cleanup(func() { _ = store.Close() })
+	authority, err := store.ReadTaskReconciliationAuthority(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := store.CommitTaskCandidateReconciliation(
+		ctx, candidateReconciliationMutation(authority, now, "operation-reconcile-cancelled"),
+	); err == nil {
+		t.Fatal("CommitTaskCandidateReconciliation(cancelled) error = nil")
+	}
+	unchanged, err := store.GetTask(context.Background(), task.Handle)
+	if err != nil || unchanged.State != domain.TaskUnknown {
+		t.Fatalf("task after cancelled commit = %#v, %v", unchanged, err)
 	}
 }
 
