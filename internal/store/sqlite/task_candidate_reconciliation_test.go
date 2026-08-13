@@ -207,6 +207,39 @@ func TestTaskRecoveryEvidence_TreatsCandidateReportAndAmbiguousPreparationAsUnre
 	}
 }
 
+func TestTaskRecoveryEvidence_SurfacesDurableReadFailures(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*testing.T, *Store, domain.Task)
+	}{
+		{name: "report catalog is unavailable", mutate: func(t *testing.T, store *Store, _ domain.Task) {
+			if _, err := store.db.Exec("ALTER TABLE reports RENAME TO reports_unavailable"); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "terminal evidence is malformed", mutate: func(t *testing.T, store *Store, task domain.Task) {
+			if _, err := store.db.Exec("UPDATE task_terminal_bindings SET updated_at = 'not-a-time' WHERE task_handle = ?", task.Handle); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "preparation evidence is malformed", mutate: func(t *testing.T, store *Store, task domain.Task) {
+			if _, err := store.db.Exec("UPDATE task_preparations SET expires_at = 'not-a-time' WHERE task_handle = ?", task.Handle); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store, task, _, _ := openUnknownCandidateReconciliationFixture(t, "task-recovery-read-failure")
+			t.Cleanup(func() { _ = store.Close() })
+			test.mutate(t, store, task)
+			if _, err := store.ReadTaskRecoveryEvidence(context.Background(), task.Handle); err == nil {
+				t.Fatal("ReadTaskRecoveryEvidence() error = nil")
+			}
+		})
+	}
+}
+
 func TestTaskCandidateReconciliation_RefusesChangedAuthorityAndUnsafeCandidate(t *testing.T) {
 	tests := []struct {
 		name   string
