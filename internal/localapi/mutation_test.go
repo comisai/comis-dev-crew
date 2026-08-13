@@ -32,6 +32,12 @@ type apiCleanup struct {
 	err     error
 }
 
+type apiTaskReconciliation struct {
+	command application.ReconcileTaskCommand
+	result  application.MutationResult
+	err     error
+}
+
 func TestDecodePrepareTaskInput_UsesStrictBoundedPayload(t *testing.T) {
 	input, err := DecodePrepareTaskInput([]byte(`{
         "shape":"scout","repositoryId":"product-api",
@@ -57,6 +63,14 @@ func (cleanup *apiCleanup) CleanupTask(
 ) (application.MutationResult, error) {
 	cleanup.command = command
 	return cleanup.result, cleanup.err
+}
+
+func (reconciliation *apiTaskReconciliation) ReconcileTask(
+	_ context.Context,
+	command application.ReconcileTaskCommand,
+) (application.MutationResult, error) {
+	reconciliation.command = command
+	return reconciliation.result, reconciliation.err
 }
 
 func (interventions *apiInterventions) HandbackTask(
@@ -154,6 +168,49 @@ func TestServerClient_HandbackUsesCanonicalRevalidationMutation(t *testing.T) {
 	}
 }
 
+func TestServerClient_ReconcileTaskUsesClosedServerAuthorityMutation(t *testing.T) {
+	reconciliation := &apiTaskReconciliation{result: application.MutationResult{
+		Task: domain.Task{Handle: "task-reconcile-local", State: domain.TaskValidating, StateVersion: 25},
+		Operation: domain.OperationRecord{
+			ID: "operation-reconcile-local", Status: domain.OperationCompleted, StateVersion: 25,
+		},
+	}}
+	handler, err := NewHandler(HandlerConfig{
+		Queries: &apiQueries{}, Reconciliation: reconciliation, Clock: time.Now,
+	})
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	socketPath := startHandlerServer(t, handler, CallerMCPFacade)
+	client, err := NewClient(socketPath, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := ReconcileTaskInput{
+		TaskHandle: "task-reconcile-local", Action: application.ReconcileValidateCleanCandidate,
+	}
+	result, err := client.ReconcileTask(context.Background(), "operation-reconcile-local", input)
+	if err != nil {
+		t.Fatalf("ReconcileTask() error = %v", err)
+	}
+	if result.TaskHandle != input.TaskHandle || result.State != domain.TaskValidating ||
+		result.StateVersion != 25 || result.SideEffect != SideEffectMutate {
+		t.Fatalf("ReconcileTask() = %#v", result)
+	}
+	if reconciliation.command.OperationID != "operation-reconcile-local" ||
+		reconciliation.command.TaskHandle != input.TaskHandle ||
+		reconciliation.command.Action != input.Action {
+		t.Fatalf("canonical reconciliation command = %#v", reconciliation.command)
+	}
+
+	forged := []byte(`{"protocolVersion":"devcrew.local.v1","operationId":"operation-reconcile-forged","method":"ReconcileTask","payload":{"taskHandle":"task-reconcile-local","action":"validate-clean-candidate","worktreePath":"/forged","headRevision":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}`)
+	outcome := handler.handle(context.Background(), CallerMCPFacade, forged)
+	if outcome.Error == nil || outcome.Error.Code != domain.ErrorInvalidArgument ||
+		reconciliation.command.OperationID == "operation-reconcile-forged" {
+		t.Fatalf("forged reconciliation outcome = %#v command=%#v", outcome, reconciliation.command)
+	}
+}
+
 func TestServerClient_CleanupUsesCanonicalReleaseBeforeRemovalMutation(t *testing.T) {
 	cleanup := &apiCleanup{result: application.MutationResult{
 		Task: domain.Task{Handle: "task-cleanup-local", State: domain.TaskCleaned, StateVersion: 34},
@@ -234,7 +291,8 @@ func TestPrepareTaskDefensiveConfigurationAndIncompleteOutcome(t *testing.T) {
 	if outcome := incomplete.handle(context.Background(), CallerOperatorCLI, payload); outcome.Error == nil || outcome.Error.Code != domain.ErrorInternal {
 		t.Fatalf("incomplete prepare outcome = %#v", outcome)
 	}
-	if MethodListTasks.SideEffect() != SideEffectRead || MethodGetLaunchPlan.SideEffect() != SideEffectRead || MethodPrepareTask.SideEffect() != SideEffectMutate {
+	if MethodListTasks.SideEffect() != SideEffectRead || MethodGetLaunchPlan.SideEffect() != SideEffectRead ||
+		MethodPrepareTask.SideEffect() != SideEffectMutate || MethodReconcileTask.SideEffect() != SideEffectMutate {
 		t.Fatal("method side-effect classification drifted")
 	}
 }
