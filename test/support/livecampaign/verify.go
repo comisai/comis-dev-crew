@@ -137,10 +137,10 @@ func VerifyOperation(expectation OperationExpectation, view application.Operatio
 
 func VerifyMessages(manifest Manifest, report MessageReport) ([]CheckpointEvidence, error) {
 	if report.Schema != "comis-offline-channel-messages-report" || report.SchemaVersion != 2 {
-		return nil, errors.New("Telegram message report has an unsupported schema")
+		return nil, errors.New("telegram message report has an unsupported schema")
 	}
 	if !report.Completeness.Complete || len(report.Completeness.Reasons) != 0 {
-		return nil, errors.New("Telegram message evidence is incomplete")
+		return nil, errors.New("telegram message evidence is incomplete")
 	}
 	evidenceByKind := make(map[string]CheckpointEvidence, len(manifest.Telegram.Checkpoints))
 	for _, checkpoint := range manifest.Telegram.Checkpoints {
@@ -151,17 +151,17 @@ func VerifyMessages(manifest Manifest, report MessageReport) ([]CheckpointEviden
 			}
 		}
 		if len(matches) != 1 {
-			return nil, fmt.Errorf("Telegram checkpoint %s must occur in exactly one message", checkpoint.Kind)
+			return nil, fmt.Errorf("telegram checkpoint %s must occur in exactly one message", checkpoint.Kind)
 		}
 		message := matches[0]
 		if message.ChannelType != "telegram" || message.Origin != "user" || message.SenderID != manifest.Telegram.SenderID {
-			return nil, fmt.Errorf("Telegram checkpoint %s is not from the required human sender", checkpoint.Kind)
+			return nil, fmt.Errorf("telegram checkpoint %s is not from the required human sender", checkpoint.Kind)
 		}
 		if message.ChatID != checkpoint.ChatID || message.AgentID != manifest.Comis.AgentID || message.SessionKey == "" {
-			return nil, fmt.Errorf("Telegram checkpoint %s is bound to the wrong origin", checkpoint.Kind)
+			return nil, fmt.Errorf("telegram checkpoint %s is bound to the wrong origin", checkpoint.Kind)
 		}
 		if message.EpochMs < manifest.StartedAtMs || message.EpochMs > manifest.EndedAtMs {
-			return nil, fmt.Errorf("Telegram checkpoint %s is outside the campaign window", checkpoint.Kind)
+			return nil, fmt.Errorf("telegram checkpoint %s is outside the campaign window", checkpoint.Kind)
 		}
 		messageID := ""
 		if message.MessageID != nil {
@@ -245,7 +245,7 @@ func verifyCheckpointOrder(evidence map[string]CheckpointEvidence) error {
 		{"comis_restarted_ack", "cleanup_confirmation"},
 	} {
 		if !before(pair[0], pair[1]) {
-			return fmt.Errorf("Telegram checkpoint %s must precede %s", pair[0], pair[1])
+			return fmt.Errorf("telegram checkpoint %s must precede %s", pair[0], pair[1])
 		}
 	}
 	return nil

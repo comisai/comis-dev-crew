@@ -250,26 +250,26 @@ func (manifest Manifest) validateCheckpoints() error {
 	if len(manifest.Telegram.Checkpoints) != len(requiredCheckpointKinds) {
 		for _, kind := range requiredCheckpointKinds {
 			if !hasCheckpoint(manifest.Telegram.Checkpoints, kind) {
-				return fmt.Errorf("Telegram checkpoint %s is required", kind)
+				return fmt.Errorf("telegram checkpoint %s is required", kind)
 			}
 		}
-		return errors.New("Telegram checkpoints must contain exactly the closed required catalog")
+		return errors.New("telegram checkpoints must contain exactly the closed required catalog")
 	}
 	seenKinds := make(map[string]struct{}, len(requiredCheckpointKinds))
 	seenMarkers := make(map[string]struct{}, len(requiredCheckpointKinds))
 	for _, checkpoint := range manifest.Telegram.Checkpoints {
 		if !contains(requiredCheckpointKinds, checkpoint.Kind) {
-			return fmt.Errorf("unknown Telegram checkpoint kind %s", checkpoint.Kind)
+			return fmt.Errorf("unknown telegram checkpoint kind %s", checkpoint.Kind)
 		}
 		if _, exists := seenKinds[checkpoint.Kind]; exists {
-			return fmt.Errorf("Telegram checkpoint kind %s is duplicated", checkpoint.Kind)
+			return fmt.Errorf("telegram checkpoint kind %s is duplicated", checkpoint.Kind)
 		}
 		seenKinds[checkpoint.Kind] = struct{}{}
 		if !checkpointMarkerPattern.MatchString(checkpoint.Marker) {
-			return fmt.Errorf("Telegram checkpoint %s marker must be one bounded e0cp identifier", checkpoint.Kind)
+			return fmt.Errorf("telegram checkpoint %s marker must be one bounded e0cp identifier", checkpoint.Kind)
 		}
 		if _, exists := seenMarkers[checkpoint.Marker]; exists {
-			return errors.New("Telegram checkpoint markers must be unique")
+			return errors.New("telegram checkpoint markers must be unique")
 		}
 		seenMarkers[checkpoint.Marker] = struct{}{}
 		expectedChat := manifest.Telegram.OriginChatID
@@ -277,12 +277,12 @@ func (manifest Manifest) validateCheckpoints() error {
 			expectedChat = manifest.Telegram.NewerChatID
 		}
 		if checkpoint.ChatID != expectedChat {
-			return fmt.Errorf("Telegram checkpoint %s is bound to the wrong conversation", checkpoint.Kind)
+			return fmt.Errorf("telegram checkpoint %s is bound to the wrong conversation", checkpoint.Kind)
 		}
 	}
 	for _, kind := range requiredCheckpointKinds {
 		if _, exists := seenKinds[kind]; !exists {
-			return fmt.Errorf("Telegram checkpoint %s is required", kind)
+			return fmt.Errorf("telegram checkpoint %s is required", kind)
 		}
 	}
 	return nil

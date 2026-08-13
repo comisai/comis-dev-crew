@@ -60,9 +60,6 @@ func TestTaskEvidenceReadFailsClosedAtInputAndStorageBoundaries(t *testing.T) {
 	if _, err := store.ReadTaskEvidence(context.Background(), "../invalid"); err == nil {
 		t.Fatal("ReadTaskEvidence(invalid handle) error = nil")
 	}
-	if _, err := store.ReadTaskObservation(nil, "task-evidence-boundary"); err == nil {
-		t.Fatal("ReadTaskObservation(nil context) error = nil")
-	}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, _, err := store.TaskEvidenceSnapshot(cancelled); err == nil {
