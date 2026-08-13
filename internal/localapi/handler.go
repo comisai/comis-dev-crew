@@ -264,6 +264,19 @@ func outcomeFromError(operationID string, err error) Outcome {
 			},
 		}
 	}
+	type safeDependency interface {
+		SafeDependencyMessage() string
+	}
+	var dependency safeDependency
+	if errors.As(err, &dependency) {
+		classified, classifyErr := domain.NewFailure(
+			domain.ErrorUnavailable, true, dependency.SafeDependencyMessage(),
+			"inspect service dependency health and exact configuration", err,
+		)
+		if classifyErr == nil {
+			return outcomeFromError(operationID, classified)
+		}
+	}
 	return rejectedOutcome(operationID, domain.ErrorInternal, false, "query failed", "inspect service health", err)
 }
 
