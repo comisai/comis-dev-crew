@@ -91,6 +91,7 @@ func TestControlConnectionPersistsAcrossBidirectionalTrafficAndReplaysAfterRecon
 		},
 	}
 	firstReady := make(chan struct{})
+	reportConsumed := make(chan struct{})
 	firstComplete := make(chan struct{})
 	secondComplete := make(chan struct{})
 	serverDone := make(chan error, 1)
@@ -138,6 +139,11 @@ func TestControlConnectionPersistsAcrossBidirectionalTrafficAndReplaysAfterRecon
 			return
 		}
 		close(firstComplete)
+		// Do not drop the session until the client has consumed the response.
+		// Closing straight after the write races its read and surfaces as an
+		// uncertain EOF. The reconnect this test exercises still happens, just
+		// after the report is safely delivered.
+		<-reportConsumed
 		_ = first.Close()
 
 		second, err := listener.AcceptUnix()
@@ -188,6 +194,7 @@ func TestControlConnectionPersistsAcrossBidirectionalTrafficAndReplaysAfterRecon
 	if reportResult.AcceptedSequence != 1 || reportResult.ServiceReportID != "service-report_a" {
 		t.Fatalf("Report() = %#v", reportResult)
 	}
+	close(reportConsumed)
 	select {
 	case <-firstComplete:
 	case <-time.After(time.Second):
@@ -271,14 +278,22 @@ func TestControlConnectionSendsVerifiedEvidenceOnAuthenticatedPersistentSession(
 			return
 		}
 		retainedUntil := int64(1_800_000_000_000)
-		serverDone <- writeControlFrame(peer, PutEvidenceResponse{
+		if writeErr := writeControlFrame(peer, PutEvidenceResponse{
 			JSONRPC: JSONRPCVersion, ID: request.ID,
 			Result: PutEvidenceResponseResult{
 				ManagedRunID: request.Params.ManagedRunID, EvidenceRef: request.Params.EvidenceRef,
 				ContentHash: request.Params.ContentHash, VerificationLevel: request.Params.VerificationLevel,
 				RetainedUntilMs: &retainedUntil,
 			},
-		})
+		}); writeErr != nil {
+			serverDone <- writeErr
+			return
+		}
+		serverDone <- nil
+		// Hold the peer open until the test cancels. Returning here would run
+		// the deferred Close and can tear the session down before the client
+		// has consumed its response, which surfaces as an uncertain EOF.
+		<-ctx.Done()
 	}()
 
 	result, err := connection.PutEvidence(context.Background(), PutEvidenceRequestParams{
@@ -339,14 +354,22 @@ func TestControlConnectionSendsReleaseOnPersistentAuthenticatedSession(t *testin
 			serverDone <- errors.New("release did not use authenticated persistent connection")
 			return
 		}
-		serverDone <- writeControlFrame(peer, ReleaseResponse{
+		if writeErr := writeControlFrame(peer, ReleaseResponse{
 			JSONRPC: JSONRPCVersion, ID: request.ID,
 			Result: ReleaseResponseResult{
 				ManagedRunID: request.Params.ManagedRunID, WorkspaceLeaseID: request.Params.WorkspaceLeaseID,
 				State: ManagedRunState("released"), Disposition: request.Params.Disposition,
 				ReleasedAtMs: request.Params.ReleasedAtMs,
 			},
-		})
+		}); writeErr != nil {
+			serverDone <- writeErr
+			return
+		}
+		serverDone <- nil
+		// Hold the peer open until the test cancels. Returning here would run
+		// the deferred Close and can tear the session down before the client
+		// has consumed its response, which surfaces as an uncertain EOF.
+		<-ctx.Done()
 	}()
 
 	var releaser application.ManagedRunReleaser = connection
@@ -564,13 +587,29 @@ func activateResult(params ActivateRequestParams) ActivateResponseResult {
 	}
 }
 
-func controlTestListener(t *testing.T) (string, *net.UnixListener) {
+// socketTempDir creates a temporary directory short enough to hold a Unix
+// socket path, which the kernel bounds near 104 bytes. The platform temporary
+// directory is far longer than that on macOS, so this resolves /tmp instead and
+// keeps the result canonical: macOS reports /tmp as a symlink to /private/tmp,
+// and the connection paths compare canonical identities. Resolving rather than
+// hard-coding either spelling keeps the helper correct on Linux and macOS.
+func socketTempDir(t *testing.T, prefix string) string {
 	t.Helper()
-	directory, err := os.MkdirTemp("/private/tmp", "dc-ctl-")
+	root, err := filepath.EvalSymlinks("/tmp")
+	if err != nil {
+		t.Fatalf("resolve /tmp: %v", err)
+	}
+	directory, err := os.MkdirTemp(root, prefix)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	return directory
+}
+
+func controlTestListener(t *testing.T) (string, *net.UnixListener) {
+	t.Helper()
+	directory := socketTempDir(t, "dc-ctl-")
 	path := filepath.Join(directory, "control.sock")
 	address, err := net.ResolveUnixAddr("unix", path)
 	if err != nil {

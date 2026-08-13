@@ -1,0 +1,99 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish release archives
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go mod download
+
+      # AGENTS.md requires the full gate before any release claim. A tag that
+      # cannot pass verify-full must not become a downloadable artifact.
+      - name: Full verification gate
+        run: make verify-full
+
+      - name: Build release archives
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME}"
+          mkdir -p dist
+          for platform in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
+            goos="${platform%/*}"
+            goarch="${platform#*/}"
+            staging="$(mktemp -d)"
+            mkdir -p "${staging}/bin"
+            for name in devcrew devcrew-service devcrew-mcp devcrew-report; do
+              CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" \
+                go build -trimpath -o "${staging}/bin/${name}" "./cmd/${name}"
+            done
+            cp LICENSE NOTICE README.md "${staging}/"
+            # Sorted names and a fixed timestamp keep the archive byte-stable
+            # for a given commit, so a rebuild reproduces the same digest.
+            tar --sort=name --mtime="@0" --owner=0 --group=0 --numeric-owner \
+              -czf "dist/comis-dev-crew-${version}-${goos}-${goarch}.tar.gz" \
+              -C "${staging}" .
+            rm -rf "${staging}"
+          done
+          cd dist && sha256sum ./*.tar.gz | sed 's|\./||' > checksums.txt
+          cat checksums.txt
+
+      # Proves the published archive is the shape docs/install.sh expects:
+      # every command present under bin/, executable, and answering --version.
+      - name: Verify the linux/amd64 archive installs
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME}"
+          root="$(mktemp -d)"
+          tar xzf "dist/comis-dev-crew-${version}-linux-amd64.tar.gz" -C "${root}"
+          for name in devcrew devcrew-service devcrew-mcp devcrew-report; do
+            test -x "${root}/bin/${name}" || { echo "missing bin/${name}"; exit 1; }
+            "${root}/bin/${name}" --version
+          done
+          test -f "${root}/LICENSE" && test -f "${root}/NOTICE"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME}"
+          prerelease=""
+          case "${version}" in
+            v0.*) prerelease="--prerelease" ;;
+          esac
+          gh release create "${version}" dist/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${version}" \
+            --verify-tag \
+            ${prerelease} \
+            --notes "comis-dev-crew ${version}
+
+          Install:
+
+              curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/docs/install.sh | sh
+
+          Verify the archive digest against \`checksums.txt\` before use; the
+          installer does this automatically and refuses a mismatch.
+
+          This project is pre-release. Read the status section in the README
+          before running it against anything you care about. Executables report
+          \`dev\` for \`--version\` until the version provenance mechanism is
+          ratified."

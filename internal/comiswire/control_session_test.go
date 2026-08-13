@@ -45,7 +45,7 @@ func (stub controlHandlerStub) TerminalEvent(ctx context.Context, params Termina
 
 func TestControlConnectionRejectsInvalidConfiguration(t *testing.T) {
 	valid := ControlConnectionConfig{
-		SocketPath: filepath.Join("/private/tmp", "control-config.sock"), Credential: controlTestBearer,
+		SocketPath: filepath.Join(socketTempDir(t, "dc-cfg-"), "control-config.sock"), Credential: controlTestBearer,
 		ServiceInstanceID: "service-instance_a", HandshakeOperationID: "operation_handshake_a",
 		Handler: controlHandlerStub{}, RequestTimeout: time.Second,
 		MinimumBackoff: time.Millisecond, MaximumBackoff: time.Second,
@@ -435,16 +435,12 @@ func TestControlConnectionConnectFailsClosedAtSocketAndHandshakeBoundaries(t *te
 		RequestTimeout: time.Second, MinimumBackoff: time.Millisecond, MaximumBackoff: time.Second,
 	}
 	missing := &ControlConnection{config: base, changed: make(chan struct{})}
-	missing.config.SocketPath = filepath.Join("/private/tmp", "devcrew-missing-control.sock")
+	missing.config.SocketPath = filepath.Join(socketTempDir(t, "dc-missing-"), "devcrew-missing-control.sock")
 	if _, err := missing.connect(context.Background()); err == nil {
 		t.Fatal("connect(missing socket) error = nil")
 	}
 
-	directory, err := os.MkdirTemp("/private/tmp", "dc-stale-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	directory := socketTempDir(t, "dc-stale-")
 	stalePath := filepath.Join(directory, "stale.sock")
 	address, err := net.ResolveUnixAddr("unix", stalePath)
 	if err != nil {

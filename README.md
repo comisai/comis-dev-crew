@@ -1,146 +1,156 @@
 # comis-dev-crew
 
-A Go companion service for the [Comis](https://github.com/comisai/comis) agent
-platform. It supervises multiple coding-CLI workers in isolated Git worktrees and
-keeps durable, replay-safe custody of the resulting task state.
+[![ci](https://img.shields.io/github/actions/workflow/status/comisai/comis-dev-crew/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/comisai/comis-dev-crew/actions/workflows/ci.yml)
+[![security](https://img.shields.io/github/actions/workflow/status/comisai/comis-dev-crew/security.yml?branch=main&style=flat-square&label=security)](https://github.com/comisai/comis-dev-crew/actions/workflows/security.yml)
+[![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-blue?style=flat-square)](#installation)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
 
-Comis owns human identity, conversations, immutable policy, capabilities,
-approvals, terminal confinement, continuation, delivery, and generic
-observability. This repository owns development tasks, worktrees, worker adapters,
-reports, evidence, forge truth, delivery safety, and cleanup. It is not a second
-agent platform.
+**Durable, fail-closed supervision for coding workers in isolated Git worktrees.**
 
-## Status: pre-release
+`comis-dev-crew` is the Go companion service for
+[Comis](https://github.com/comisai/comis). Comis owns identity, conversations,
+policy, capabilities, approvals, and terminal confinement. This project owns
+development tasks, worktrees, worker adapters, evidence, validation, delivery
+safety, and cleanup.
 
-**This is unreleased E0 foundation work. There is no tagged version, no supported
-deployment, and no stability or security guarantee.** Do not point it at
-repositories, credentials, or hosts you are not prepared to lose access to.
+> **Pre-release:** the project is under active E0 development. There is no
+> supported production deployment or stability guarantee. Review the
+> [implementation status](docs/implementation-status.md) before using it with
+> important repositories, hosts, or credentials.
 
-What works today: durable SQLite state with a single writer, a strict owner-only
-local JSON-RPC API, a read-only operator CLI, an authenticated and digest-pinned
-Comis protocol adapter, the first canonical mutation boundary with replay-safe
-task preparation and activation, an append-only worker reporter seam, fixed
-exact-version Codex and Claude Code worker adapters, installed supervision,
-candidate validation and delivery, and a seven-tool MCP facade on the official
-Go SDK.
+## Key properties
 
-What is not claimed: a supported production deployment, public operator mutation
-transport, merge authority, external-event ingress, or trustworthy unattended
-settling from either worker CLI. Further capabilities remain behind explicit
-platform gates.
+- **Isolated work:** every task runs in a dedicated Git worktree.
+- **Durable state:** SQLite records task transitions through a single service
+  writer.
+- **Replay-safe operations:** stable operation IDs prevent duplicate logical
+  effects across retries and restarts.
+- **Evidence-based transitions:** incomplete or contradictory evidence becomes
+  `unknown`; it never becomes success or cleanup authority.
+- **Narrow interfaces:** the CLI and MCP adapter use the same owner-only local
+  JSON-RPC API instead of writing state directly.
 
-[docs/implementation-status.md](docs/implementation-status.md) records the
-subsystem-by-subsystem detail, including what each component explicitly refuses
-to claim.
+## Installation
 
-## Executables
+Supported release targets are macOS and Linux on AMD64 and ARM64.
 
-| Command | Role |
-| --- | --- |
-| `devcrew-service` | Long-lived service; the only production composition root for durable domain mutation |
-| `devcrew` | Operator CLI over the typed local client |
-| `devcrew-mcp` | Stateless seven-tool MCP facade on the official SDK stdio transport |
-| `devcrew-report` | Restricted task-scoped worker brief reader and sparse reporter |
+### Release installer
 
-All four support `--help` and `--version`.
+Review the [installer script](docs/install.sh), then install the latest published
+release:
 
-## Requirements
+```sh
+curl -fsSL https://raw.githubusercontent.com/comisai/comis-dev-crew/main/docs/install.sh | sh
+```
 
-- The exact Go toolchain pinned in [go.mod](go.mod).
-- Linux or macOS. The SQLite adapter is pure Go, so `darwin/amd64`,
-  `darwin/arm64`, `linux/amd64`, and `linux/arm64` cross-compile without CGO.
-- A real Comis instance and exact reviewed Codex or Claude Code CLI profiles for
-  anything beyond the read-only service.
+The installer verifies the archive against the release `checksums.txt`, installs
+all four executables in `~/.comis-dev-crew/bin`, and links them into a directory
+on `PATH`. To install a specific release or change the destination:
 
-## Build
+```sh
+curl -fsSL https://raw.githubusercontent.com/comisai/comis-dev-crew/main/docs/install.sh \
+  | DEVCREW_VERSION=v0.1.0 \
+    DEVCREW_INSTALL_DIR="$HOME/.comis-dev-crew/bin" \
+    DEVCREW_LINK_DIR="$HOME/.local/bin" sh
+```
 
-```text
+Replace `v0.1.0` with the required tag. The installer exits without changing the
+system if it cannot find a release or verify its checksum.
+
+> No release is published yet. Until one is available, use the source build
+> below.
+
+### Build from source
+
+Use the exact Go toolchain declared in [go.mod](go.mod):
+
+```sh
 git clone https://github.com/comisai/comis-dev-crew.git
 cd comis-dev-crew
 go build -trimpath -o bin/ ./cmd/...
 ```
 
-That writes all four executables into the ignored `bin/` directory. `make build`
-compiles the same packages as a check without emitting them, and `go install
-./cmd/...` places them on your `GOBIN` path instead. There is no tagged version,
-so every build reports `dev`.
+This creates the four executables in `bin/`. Alternatively, `go install
+./cmd/...` installs them into `GOBIN`.
 
-## Quickstart
+## Quick start
 
-The read-only service needs two explicit canonical paths:
+Start the service with private, canonical state and socket paths:
 
-```text
-bin/devcrew-service --database /absolute/private/state/devcrew.db \
+```sh
+devcrew-service \
+  --database /absolute/private/state/devcrew.db \
   --socket /absolute/private/run/devcrew.sock
 ```
 
-Then query it:
+In another terminal, inspect service and task state:
 
-```text
-bin/devcrew --socket /absolute/private/run/devcrew.sock status
-bin/devcrew --socket /absolute/private/run/devcrew.sock tasks list --format json
+```sh
+devcrew --socket /absolute/private/run/devcrew.sock service status
+devcrew --socket /absolute/private/run/devcrew.sock tasks list --format json
 ```
 
-The service creates its state and runtime directories as owner-only and refuses
-relative, non-canonical, symlinked, broad-root, non-regular, live, or
-identity-ambiguous targets. Without explicit flags, both binaries derive the same
-paths under the operating system's user configuration directory.
+Without explicit path flags, the service and CLI derive matching locations from
+the operating system's user configuration directory. For the full Comis and
+coding-worker configuration, see [Running comis-dev-crew](docs/running.md).
 
-[docs/running.md](docs/running.md) covers the full Comis and coding-worker lane, the
-complete flag set, the MCP facade, the operator CLI surface, and the worker
-reporter contract.
+## Executables
 
-## Design principles
+| Command | Purpose |
+| --- | --- |
+| `devcrew-service` | Long-lived service and sole production writer of durable state |
+| `devcrew` | Human and script-friendly operator CLI |
+| `devcrew-mcp` | Stateless MCP adapter over the canonical local API |
+| `devcrew-report` | Restricted, task-scoped worker reporter |
 
-These are enforced by the test suite, not just documented:
+Every command supports `--help` and `--version`.
 
-- **One durable writer.** Only `devcrew-service` mutates the SQLite store,
-  through the application mutation coordinator. The CLI, MCP adapter, reporter,
-  and tooling never become alternate writers.
-- **Unknown stays unknown.** Missing, stale, malformed, contradictory, or
-  incomplete evidence becomes `unknown`. It never becomes success, idle, absence,
-  or cleanup safety.
-- **External content is never authority.** Worker text, reports, artifacts, forge
-  responses, and MCP metadata cannot grant capability, raise trust, choose
-  identity, or satisfy approval.
-- **Fail closed on ambiguity.** Dirty, divergent, symlink-escaped, or
-  cleanup-ambiguous postures refuse the operation rather than overwrite or remove
-  work. A refused cleanup remains durably held; after the operator restores a
-  clean worktree, a fresh cleanup call for that exact task resumes the held
-  release-before-removal sequence.
-- **Content-free diagnostics.** Normal logs and events carry no briefs,
-  objectives, reports, diffs, terminal output, paths, full arguments, environment
-  values, or credentials.
+## Architecture
 
-The full protocol is [AGENTS.md](AGENTS.md), which is authoritative for this tree.
+Production dependencies point inward:
+
+```text
+cmd/*  ->  adapters  ->  internal/application  ->  internal/domain
+```
+
+The domain contains pure types and invariants. Application packages define
+commands, queries, reducers, and consumer-owned interfaces. Adapters provide
+SQLite, local API, Git, forge, worker, reporter, and Comis integration. The four
+commands are composition roots only.
+
+The complete engineering and security contract is in [AGENTS.md](AGENTS.md).
 
 ## Development
 
-Read [AGENTS.md](AGENTS.md) before changing anything, then install the repository
-hook:
+Read [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md), then enable
+the repository hooks:
 
-```text
+```sh
 git config core.hooksPath .githooks
 ```
 
-```text
-make verify       # handoff gate
-make verify-full  # push and readiness gate
+Run the required verification gate before handing off a change:
+
+```sh
+make verify
 ```
 
-`make test-live` is a separate protected campaign requiring real external
-prerequisites; it fails rather than skips when they are absent, and it is not part
-of `verify-full`.
+Use `make verify-full` before a push or production-readiness claim. The protected
+`make test-live` campaign is separate and requires explicitly configured external
+prerequisites.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request,
-and [DEPENDENCIES.md](DEPENDENCIES.md) for accepted dependency provenance.
-[CLAUDE.md](CLAUDE.md) contains Claude-specific operational notes only.
+Additional references:
+
+- [Implementation status](docs/implementation-status.md)
+- [Operations guide](docs/running.md)
+- [Dependency policy](DEPENDENCIES.md)
+- [Security policy](SECURITY.md)
 
 ## Security
 
-Report vulnerabilities privately. See [SECURITY.md](SECURITY.md). Do not open a
-public issue for a suspected vulnerability.
+Report suspected vulnerabilities privately as described in
+[SECURITY.md](SECURITY.md). Do not disclose them in a public issue.
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Licensed under Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

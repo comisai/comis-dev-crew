@@ -96,7 +96,7 @@ func TestNewUnixClientRejectsUnsafeEndpointConfiguration(t *testing.T) {
 		timeout time.Duration
 	}{
 		{name: "relative path", path: "capability.sock", timeout: time.Second},
-		{name: "noncanonical path", path: filepath.Join(t.TempDir(), "nested", "..", "capability.sock"), timeout: time.Second},
+		{name: "noncanonical path", path: filepath.Join(symlinkedDirectory(t, canonicalDirectory), "capability.sock"), timeout: time.Second},
 		{name: "oversized path", path: filepath.Join(string(filepath.Separator), strings.Repeat("x", 104)), timeout: time.Second},
 		{name: "nonpositive timeout", path: filepath.Join(canonicalDirectory, "capability.sock"), timeout: 0},
 	} {
@@ -376,6 +376,24 @@ func startWireServer(t *testing.T, calls int, respond func(string) string) *wire
 		}
 	})
 	return server
+}
+
+// symlinkedDirectory returns a path that reaches a real directory through a
+// symlink, so it is genuinely noncanonical on every supported platform.
+// Building one with a "nested/.." segment does not work: filepath.Join cleans
+// it away, leaving a path that is noncanonical only where the temporary root
+// itself happens to be a symlink, as it is on macOS but not on Linux.
+func symlinkedDirectory(t *testing.T, canonical string) string {
+	t.Helper()
+	target := filepath.Join(canonical, "target")
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		t.Fatalf("create symlink target: %v", err)
+	}
+	alias := filepath.Join(canonical, "alias")
+	if err := os.Symlink(target, alias); err != nil {
+		t.Fatalf("create directory symlink: %v", err)
+	}
+	return alias
 }
 
 func newCanonicalTempDirectory(t *testing.T) string {
