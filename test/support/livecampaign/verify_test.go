@@ -9,10 +9,6 @@ import (
 )
 
 func acceptedTask(expectation TaskExpectation) application.TaskDetail {
-	candidateStatus := application.CandidateEvidenceJudged
-	if expectation.ExpectReconciliation {
-		candidateStatus = application.CandidateEvidenceReconciled
-	}
 	return application.TaskDetail{
 		SchemaVersion: 1, Completeness: application.CompletenessComplete,
 		Summary: application.TaskSummary{
@@ -23,7 +19,7 @@ func acceptedTask(expectation TaskExpectation) application.TaskDetail {
 		},
 		Evidence: application.TaskEvidenceView{
 			Candidate: application.CandidateEvidenceView{
-				Status: candidateStatus, HeadRevision: strings.Repeat("a", 40), EvidenceDigest: strings.Repeat("b", 64),
+				Status: application.CandidateEvidenceJudged, HeadRevision: strings.Repeat("a", 40), EvidenceDigest: strings.Repeat("b", 64),
 				ReconciliationOperationID: func() string {
 					if expectation.ExpectReconciliation {
 						return "operation-reconcile-e0"
@@ -31,7 +27,7 @@ func acceptedTask(expectation TaskExpectation) application.TaskDetail {
 					return ""
 				}(),
 			},
-			Validation: application.ValidationEvidenceView{Status: application.ValidationEvidenceAccepted, EvidenceDigest: strings.Repeat("c", 64)},
+			Validation: application.ValidationEvidenceView{Status: application.ValidationEvidenceAccepted, EvidenceDigest: strings.Repeat("b", 64)},
 			Delivery: application.DeliveryEvidenceView{
 				Status: application.DeliveryEvidenceDelivered, EvidenceOperationID: "operation-delivery-e0",
 				EvidenceRef: "evidence-delivery-e0", PullRequestID: "github-pr-17",
@@ -70,8 +66,8 @@ func TestTaskEvidenceRequiresExactCleanedDeliveryPosture(t *testing.T) {
 	}
 	for name, mutate := range map[string]func(*application.TaskDetail){
 		"not cleaned": func(value *application.TaskDetail) { value.Summary.State = domain.TaskDelivered },
-		"wrong candidate origin": func(value *application.TaskDetail) {
-			value.Evidence.Candidate.Status = application.CandidateEvidenceJudged
+		"missing candidate origin": func(value *application.TaskDetail) {
+			value.Evidence.Candidate.ReconciliationOperationID = ""
 		},
 		"validation absent": func(value *application.TaskDetail) {
 			value.Evidence.Validation.Status = application.ValidationEvidenceNotStarted
@@ -95,7 +91,8 @@ func TestOperationEvidenceRequiresCompletedNamedCommand(t *testing.T) {
 	expectation := validManifest().Operations[0]
 	view := application.OperationView{
 		SchemaVersion: 1, OperationID: expectation.OperationID, Command: expectation.Command,
-		Status: domain.OperationCompleted,
+		SubjectDigest: strings.Repeat("d", 64), Status: domain.OperationCompleted,
+		StateVersion: 9, CreatedAtMs: 1000, UpdatedAtMs: 2000,
 	}
 	if err := VerifyOperation(expectation, view); err != nil {
 		t.Fatalf("verify completed operation: %v", err)
@@ -135,6 +132,7 @@ func TestGitHubEvidenceRequiresCurrentOpenUnmergedHeadAndChecks(t *testing.T) {
 	manifest := validManifest()
 	detail := acceptedTask(manifest.Tasks[0])
 	pull := GitHubPull{Number: 17, State: "open"}
+	pull.HTMLURL = "https://github.com/comisai/comis/pull/17"
 	pull.Head.SHA = detail.Evidence.Candidate.HeadRevision
 	pull.Head.Ref = "devcrew/task-codex-e0"
 	pull.Base.Ref = manifest.GitHub.BaseBranch
