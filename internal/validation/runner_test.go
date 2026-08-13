@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -45,6 +46,34 @@ func TestRunner_RecordsRealValidationProcessAndBoundedReceipt(t *testing.T) {
 	}
 	if strings.Contains(running.StartIdentity, "success") {
 		t.Fatalf("process record leaked arguments: %#v", running)
+	}
+}
+
+func TestRunner_ObservesReviewedExternalExecutableBeforeCompletion(t *testing.T) {
+	executable, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Fatalf("exec.LookPath(sleep) error = %v", err)
+	}
+	executable, err = filepath.EvalSymlinks(executable)
+	if err != nil {
+		t.Fatalf("filepath.EvalSymlinks(sleep) error = %v", err)
+	}
+	catalog := runnerCatalog(t, executable, []string{"1"})
+	store := &recordingProcessStore{}
+	runner, err := NewRunner(RunnerConfig{Catalog: catalog, Processes: store, MaxOutputBytes: 128})
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+	receipt, err := runner.Run(context.Background(), RunRequest{
+		OperationID: "validate-external", TaskHandle: "task-alpha", ProfileID: "fixture-default", CheckID: "unit",
+		Fields: TaskFields{TaskHandle: "task-alpha", WorktreePath: t.TempDir(), BaseRevision: strings.Repeat("a", 40), HeadRevision: strings.Repeat("b", 40)},
+	})
+	if err != nil || !receipt.Passed {
+		t.Fatalf("Run(external executable) = %#v, %v", receipt, err)
+	}
+	records := store.snapshot()
+	if len(records) != 3 || records[1].State != ProcessRunning || records[2].State != ProcessExited {
+		t.Fatalf("external process records = %#v", records)
 	}
 }
 
