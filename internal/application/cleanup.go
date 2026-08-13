@@ -220,7 +220,7 @@ func (coordinator *CleanupCoordinator) CleanupTask(ctx context.Context, command 
 		ReleasedAt:         now, At: now,
 	})
 	if err != nil {
-		return MutationResult{}, mutationCommitFailure(err)
+		return MutationResult{}, cleanupCommitFailure(err)
 	}
 	for {
 		if record.TaskHandle != command.TaskHandle {
@@ -349,6 +349,23 @@ func cleanupVerificationFailure(cause error) error {
 		return cause
 	}
 	return mutationCommitFailure(cause)
+}
+
+func cleanupCommitFailure(cause error) error {
+	if !errors.Is(cause, ErrCleanupOpenHold) {
+		return mutationCommitFailure(cause)
+	}
+	failure, err := domain.NewFailure(
+		domain.ErrorPrecondition,
+		true,
+		"cleanup is blocked by an open task hold",
+		"close the exact task cleanup hold, then retry cleanup",
+		cause,
+	)
+	if err != nil {
+		return errors.New("cleanup open hold failure classification failed")
+	}
+	return failure
 }
 
 func cleanupDirtyWorkspaceFailure() error {
