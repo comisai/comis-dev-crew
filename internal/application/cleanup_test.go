@@ -76,7 +76,9 @@ func TestCleanupCoordinator_RefusesDirtyWorkspaceBeforeHostRelease(t *testing.T)
 		OperationID: record.OperationID, TaskHandle: record.TaskHandle,
 	})
 	var failure *domain.Failure
-	if !errors.As(cleanupErr, &failure) || failure.Code != domain.ErrorPrecondition {
+	if !errors.As(cleanupErr, &failure) || failure.Code != domain.ErrorPrecondition || !failure.Retryable ||
+		failure.Message != "cleanup requires a clean task worktree" ||
+		failure.Hint != "remove uncommitted changes from the exact task worktree, then retry cleanup" {
 		t.Fatalf("CleanupTask(dirty workspace) error = %v, want precondition failure", cleanupErr)
 	}
 	if cleanupErr == nil {
@@ -84,6 +86,34 @@ func TestCleanupCoordinator_RefusesDirtyWorkspaceBeforeHostRelease(t *testing.T)
 	}
 	if releaser.calls != 0 || remover.calls != 0 || store.releaseCalls != 0 {
 		t.Fatalf("unsafe side effects: release=%d remove=%d recorded=%d", releaser.calls, remover.calls, store.releaseCalls)
+	}
+}
+
+func TestCleanupCoordinator_ResumesHeldCleanupWithFreshCallerOperation(t *testing.T) {
+	now := time.Date(2026, time.August, 11, 20, 0, 0, 0, time.UTC)
+	head := strings.Repeat("b", 40)
+	record := cleanupFixtureRecord(head)
+	store := &cleanupStoreFixture{record: record}
+	workspace := &cleanupWorkspaceFixture{snapshot: cleanupFixtureSnapshot(record, head)}
+	forge := &cleanupForgeFixture{truth: PullRequestDeliveryTruth{
+		RepositoryID: record.RepositoryID, PullRequestID: record.PullRequestID,
+		HeadRevision: head, Checks: []ForgeCheckTruth{{Name: "ci/unit", Conclusion: domain.CheckPassed}},
+	}}
+	coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
+		Store: store, Workspaces: workspace, Forge: forge, Releaser: &cleanupReleaseFixture{},
+		Remover: &cleanupRemovalFixture{}, Clock: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := coordinator.CleanupTask(context.Background(), CleanupTaskCommand{
+		OperationID: "cleanup-task-retry", TaskHandle: record.TaskHandle,
+	})
+	if err != nil {
+		t.Fatalf("CleanupTask(fresh retry operation) error = %v", err)
+	}
+	if result.Task.State != domain.TaskCleaned || store.completeCalls != 1 {
+		t.Fatalf("CleanupTask(fresh retry operation) = %#v, store = %#v", result, store)
 	}
 }
 

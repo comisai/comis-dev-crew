@@ -95,6 +95,24 @@ func TestTaskCleanupStore_PersistsReleaseBeforeExactRemovalAuthorizationAndCompl
 	}
 }
 
+func TestTaskCleanupStore_ReturnsHeldCleanupForFreshSameTaskOperation(t *testing.T) {
+	store, task, _ := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	first := cleanupTestMutation(task, "cleanup-held-original")
+	record, err := store.BeginTaskCleanup(context.Background(), first)
+	if err != nil {
+		t.Fatalf("BeginTaskCleanup(original) error = %v", err)
+	}
+	retry := cleanupTestMutation(task, "cleanup-held-retry")
+	resumed, err := store.BeginTaskCleanup(context.Background(), retry)
+	if err != nil {
+		t.Fatalf("BeginTaskCleanup(fresh same-task operation) error = %v", err)
+	}
+	if resumed.OperationID != record.OperationID || resumed.SubjectDigest != record.SubjectDigest ||
+		resumed.TaskHandle != task.Handle || resumed.Stage != application.CleanupPrepared {
+		t.Fatalf("BeginTaskCleanup(fresh same-task operation) = %#v, want %#v", resumed, record)
+	}
+}
+
 func TestTaskCleanupStore_RefusesOpenHoldUnsettledRuntimeAndUndeliveredEvidence(t *testing.T) {
 	for _, test := range []struct {
 		name   string
