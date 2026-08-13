@@ -291,11 +291,27 @@ func TestPrepareTaskDefensiveConfigurationAndIncompleteOutcome(t *testing.T) {
 	if outcome := incomplete.handle(context.Background(), CallerOperatorCLI, payload); outcome.Error == nil || outcome.Error.Code != domain.ErrorInternal {
 		t.Fatalf("incomplete prepare outcome = %#v", outcome)
 	}
+	dependency, err := NewHandler(HandlerConfig{
+		Queries: &apiQueries{}, Mutations: &apiMutations{err: safeDependencyTestError("workspace preparation failed")},
+		ServiceInstanceID: "service-instance_a", Clock: time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome := dependency.handle(context.Background(), CallerMCPFacade, payload); outcome.Error == nil ||
+		outcome.Error.Code != domain.ErrorUnavailable || outcome.Error.Message != "workspace preparation failed" {
+		t.Fatalf("dependency prepare outcome = %#v, want safe unavailable stage", outcome)
+	}
 	if MethodListTasks.SideEffect() != SideEffectRead || MethodGetLaunchPlan.SideEffect() != SideEffectRead ||
 		MethodPrepareTask.SideEffect() != SideEffectMutate || MethodReconcileTask.SideEffect() != SideEffectMutate {
 		t.Fatal("method side-effect classification drifted")
 	}
 }
+
+type safeDependencyTestError string
+
+func (failure safeDependencyTestError) Error() string                 { return "private dependency detail" }
+func (failure safeDependencyTestError) SafeDependencyMessage() string { return string(failure) }
 
 // socketTempDir creates a temporary directory short enough to hold a Unix
 // socket path, which the kernel bounds near 104 bytes. The platform temporary
