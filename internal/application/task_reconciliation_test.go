@@ -36,7 +36,7 @@ func TestTaskCandidateReconciler_ValidatesCleanUnknownCandidateWithoutWorkerRepo
 	}
 	wantRequest := ReconciliationWorkspaceRequest{
 		PreparationOperationID: authority.PreparationOperationID,
-		TaskHandle: authority.Task.Handle, RepositoryID: authority.Task.RepositoryID,
+		TaskHandle:             authority.Task.Handle, RepositoryID: authority.Task.RepositoryID,
 		WorktreePath: authority.Preparation.RequestedWorkspaceRoot,
 		BaseRevision: authority.Task.BaseRevision,
 	}
