@@ -13,6 +13,7 @@ import (
 
 const (
 	ToolPrepareTask   = "prepare_task"
+	ToolReconcileTask = "reconcile_task"
 	ToolHandbackTask  = "handback_task"
 	ToolCleanupTask   = "cleanup_task"
 	ToolListTasks     = "list_tasks"
@@ -27,6 +28,7 @@ const (
 // Client is the sole canonical local-service surface used by the facade.
 type Client interface {
 	PrepareTask(context.Context, string, localapi.PrepareTaskInput) (localapi.PrepareTaskResult, error)
+	ReconcileTask(context.Context, string, localapi.ReconcileTaskInput) (localapi.TaskMutationResult, error)
 	HandbackTask(context.Context, string, localapi.HandbackTaskInput) (localapi.TaskMutationResult, error)
 	CleanupTask(context.Context, string, localapi.CleanupTaskInput) (localapi.TaskMutationResult, error)
 	ListTasks(context.Context, string) (application.TaskList, error)
@@ -69,6 +71,13 @@ type PrepareTaskInput struct {
 type HandbackTaskInput struct {
 	TaskHandle string                     `json:"taskHandle" jsonschema:"opaque task handle"`
 	Action     application.HandbackAction `json:"action" jsonschema:"validate-developer-work"`
+}
+
+// ReconcileTaskInput selects one unknown task for exact clean-candidate
+// validation without accepting caller-provided filesystem or Git authority.
+type ReconcileTaskInput struct {
+	TaskHandle string                          `json:"taskHandle" jsonschema:"opaque task handle"`
+	Action     application.ReconcileTaskAction `json:"action" jsonschema:"validate-clean-candidate"`
 }
 
 func (input PrepareTaskInput) local() localapi.PrepareTaskInput {

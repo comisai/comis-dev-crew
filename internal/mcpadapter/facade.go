@@ -14,7 +14,7 @@ import (
 const defaultReconcileTimeout = 2 * time.Second
 const maximumReconcileTimeout = 10 * time.Second
 
-// New creates the exact seven-tool official-SDK facade.
+// New creates the exact eight-tool official-SDK facade.
 func New(config Config) (*Facade, error) {
 	if config.Client == nil || config.NewOperationID == nil {
 		return nil, errors.New("create MCP facade: local client and operation source are required")
@@ -55,12 +55,28 @@ func (facade *Facade) Run(ctx context.Context, transport mcp.Transport) error {
 
 func (facade *Facade) registerTools() {
 	mcp.AddTool(facade.server, tool(ToolPrepareTask, "Prepare one durable development task; acceptanceCriteria and constraints must be JSON arrays.", false), facade.prepareTask)
+	mcp.AddTool(facade.server, tool(ToolReconcileTask, "Validate one exact clean candidate after its worker terminal ended without a candidate report.", false), facade.reconcileTask)
 	mcp.AddTool(facade.server, tool(ToolHandbackTask, "Validate developer work after one safe paused worker exits.", false), facade.handbackTask)
 	mcp.AddTool(facade.server, cleanupTool(), facade.cleanupTask)
 	mcp.AddTool(facade.server, tool(ToolListTasks, "List durable development tasks.", true), facade.listTasks)
 	mcp.AddTool(facade.server, tool(ToolGetTask, "Get one durable development task.", true), facade.getTask)
 	mcp.AddTool(facade.server, tool(ToolExplainTask, "Explain one durable task posture.", true), facade.explainTask)
 	mcp.AddTool(facade.server, tool(ToolGetLaunchPlan, "Get reviewed launch requirements for one ready task.", true), facade.getLaunchPlan)
+}
+
+func (facade *Facade) reconcileTask(
+	ctx context.Context,
+	request *mcp.CallToolRequest,
+	input ReconcileTaskInput,
+) (*mcp.CallToolResult, localapi.TaskMutationResult, error) {
+	callContext, err := facade.authorize(request)
+	if err != nil {
+		return nil, localapi.TaskMutationResult{}, err
+	}
+	operationID := string(callContext.OperationID)
+	localInput := localapi.ReconcileTaskInput{TaskHandle: input.TaskHandle, Action: input.Action}
+	result, err := facade.client.ReconcileTask(ctx, operationID, localInput)
+	return nil, result, err
 }
 
 func (facade *Facade) cleanupTask(

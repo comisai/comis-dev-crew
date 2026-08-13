@@ -435,15 +435,25 @@ func preparedResult() localapi.PrepareTaskResult {
 }
 
 type fakeClient struct {
-	calls          []string
-	prepareResults []localapi.PrepareTaskResult
-	prepareErrors  []error
-	operation      application.OperationView
-	operationError error
-	handbackResult localapi.TaskMutationResult
-	cleanupResult  localapi.TaskMutationResult
-	handbackErrors []error
-	cleanupErrors  []error
+	calls           []string
+	prepareResults  []localapi.PrepareTaskResult
+	prepareErrors   []error
+	operation       application.OperationView
+	operationError  error
+	handbackResult  localapi.TaskMutationResult
+	reconcileResult localapi.TaskMutationResult
+	cleanupResult   localapi.TaskMutationResult
+	handbackErrors  []error
+	cleanupErrors   []error
+}
+
+func (client *fakeClient) ReconcileTask(
+	_ context.Context,
+	operationID string,
+	input localapi.ReconcileTaskInput,
+) (localapi.TaskMutationResult, error) {
+	client.calls = append(client.calls, "reconcile:"+operationID+":"+input.TaskHandle+":"+string(input.Action))
+	return client.reconcileResult, nil
 }
 
 func (client *fakeClient) CleanupTask(
