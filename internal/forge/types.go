@@ -3,9 +3,14 @@ package forge
 
 import (
 	"context"
+	"errors"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
+
+// ErrPullRequestTruthUnavailable marks a temporary remote failure that is safe
+// to retry without changing pull-request delivery authority.
+var ErrPullRequestTruthUnavailable = errors.New("pull-request truth is temporarily unavailable")
 
 // CredentialKind is the closed non-merge E0 forge authority vocabulary.
 type CredentialKind string

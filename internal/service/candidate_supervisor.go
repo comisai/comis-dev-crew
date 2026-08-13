@@ -266,7 +266,10 @@ func (supervisor *candidateSupervisor) attachDeliveryEvidence(
 			Title: "Task " + task.Handle, RequiredChecks: required,
 		})
 		if err != nil {
-			return nil, candidateDeliveryMaterial{}, errCandidatePullRequestTruthUnavailable
+			if errors.Is(err, forge.ErrPullRequestTruthUnavailable) {
+				return nil, candidateDeliveryMaterial{}, fmt.Errorf("%w: %w", errCandidatePullRequestTruthUnavailable, err)
+			}
+			return nil, candidateDeliveryMaterial{}, fmt.Errorf("validate task candidate: pull-request delivery failed: %w", err)
 		}
 		bundle.ForgeEvidence = &truth.Evidence
 		return required, candidateDeliveryMaterial{referenceURL: truth.URL}, nil

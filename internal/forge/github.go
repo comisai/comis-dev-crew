@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -311,15 +312,33 @@ func (adapter *GitHubAdapter) requestJSON(
 	}
 	response, err := adapter.config.HTTPClient.Do(request)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if retryableGitHubNetworkError(err) {
+			return fmt.Errorf("GitHub request failed: %w", ErrPullRequestTruthUnavailable)
+		}
 		return errors.New("GitHub request failed")
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode > 299 {
+		if retryableGitHubResponse(response) {
+			return fmt.Errorf("GitHub request returned a temporary status: %w", ErrPullRequestTruthUnavailable)
+		}
 		return errors.New("GitHub request returned a non-success status")
 	}
 	limited := io.LimitReader(response.Body, maximumForgeResponseBytes+1)
 	contents, err := io.ReadAll(limited)
-	if err != nil || len(contents) == 0 || len(contents) > maximumForgeResponseBytes {
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if retryableGitHubNetworkError(err) {
+			return fmt.Errorf("GitHub response could not be read: %w", ErrPullRequestTruthUnavailable)
+		}
+		return errors.New("GitHub response could not be read")
+	}
+	if len(contents) == 0 || len(contents) > maximumForgeResponseBytes {
 		return errors.New("GitHub response is invalid or exceeds its bound")
 	}
 	if destination == nil {
@@ -333,6 +352,26 @@ func (adapter *GitHubAdapter) requestJSON(
 		return errors.New("GitHub response has trailing content")
 	}
 	return nil
+}
+
+func retryableGitHubNetworkError(err error) bool {
+	var networkError net.Error
+	return errors.As(err, &networkError) && (networkError.Timeout() || networkError.Temporary())
+}
+
+func retryableGitHubResponse(response *http.Response) bool {
+	if response == nil {
+		return false
+	}
+	switch response.StatusCode {
+	case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests:
+		return true
+	case http.StatusForbidden:
+		return strings.TrimSpace(response.Header.Get("Retry-After")) != "" ||
+			strings.TrimSpace(response.Header.Get("X-RateLimit-Remaining")) == "0"
+	default:
+		return response.StatusCode >= 500 && response.StatusCode <= 599
+	}
 }
 
 func (adapter *GitHubAdapter) repositoryPath(parts ...string) string {
