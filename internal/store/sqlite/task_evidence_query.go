@@ -100,7 +100,7 @@ func readTaskEvidence(
 	if err := readDecisionDiagnostic(ctx, source, task.Handle, &evidence); err != nil {
 		return application.TaskEvidenceView{}, err
 	}
-	if err := readValidationDiagnostic(ctx, source, task.Handle, &evidence); err != nil {
+	if err := readValidationDiagnostic(ctx, source, task, &evidence); err != nil {
 		return application.TaskEvidenceView{}, err
 	}
 	if err := readDeliveryDiagnostic(ctx, source, task, &evidence); err != nil {
@@ -271,7 +271,7 @@ func readDecisionDiagnostic(
 func readValidationDiagnostic(
 	ctx context.Context,
 	source queryer,
-	taskHandle string,
+	task domain.Task,
 	evidence *application.TaskEvidenceView,
 ) error {
 	if evidence.Validation.Status != application.ValidationEvidenceNotStarted {
@@ -281,13 +281,16 @@ func readValidationDiagnostic(
 		WHERE task_handle = ? AND state NOT IN ('exited', 'absent')
 		ORDER BY observed_at DESC, operation_id LIMIT 1`
 	var operationID string
-	if err := source.QueryRowContext(ctx, query, taskHandle).Scan(&operationID); err == nil {
+	if err := source.QueryRowContext(ctx, query, task.Handle).Scan(&operationID); err == nil {
 		evidence.Validation = application.ValidationEvidenceView{
 			Status: application.ValidationEvidenceRunning, ProcessOperationID: operationID,
 		}
 		return nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("read task validation evidence: %w", err)
+	}
+	if task.State == domain.TaskValidating {
+		evidence.Validation.Status = application.ValidationEvidenceUnknown
 	}
 	return nil
 }

@@ -107,6 +107,10 @@ also leave the task `validating` and are retried without stopping the candidate
 supervisor. Other pull-request delivery errors still stop supervision so that
 permanent failures remain visible.
 
+Diagnostic reads report validation as `unknown` when a task is already
+`validating` but no durable judgment or active validation process can be found;
+they never turn that inconsistent posture into `not_started`.
+
 For a worker-reported candidate, the final authenticated candidate report closes
 delivery after both evidence publications are acknowledged. For a reconciled
 candidate, no worker report is invented: acknowledgement of both server-owned
