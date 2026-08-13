@@ -93,6 +93,36 @@ func TestStore_ReadTaskEvidenceDoesNotOverclaimPendingDelivery(t *testing.T) {
 	}
 }
 
+func TestStore_ReadTaskEvidencePreservesReconciliationOriginAfterJudgment(t *testing.T) {
+	store, task, _, now := openUnknownCandidateReconciliationFixture(t, "task-evidence-reconciled")
+	t.Cleanup(func() { _ = store.Close() })
+	authority, err := store.ReadTaskReconciliationAuthority(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("ReadTaskReconciliationAuthority() error = %v", err)
+	}
+	mutation := candidateReconciliationMutation(authority, now, "operation-reconcile-evidence")
+	result, err := store.CommitTaskCandidateReconciliation(context.Background(), mutation)
+	if err != nil {
+		t.Fatalf("CommitTaskCandidateReconciliation() error = %v", err)
+	}
+	sealed := candidateEvidence(t, result.Task, mutation.Snapshot.HeadRevision)
+	if _, judgment, err := store.CommitCandidateEvidence(
+		context.Background(), result.Task.Handle, sealed, []string{"unit"}, []string{"ci/unit"},
+		sealed.Bundle().ProducedAt, candidateEvidencePublications(t, result.Task, sealed),
+	); err != nil || judgment.Outcome != domain.CandidateAccepted {
+		t.Fatalf("CommitCandidateEvidence() = %#v, %v", judgment, err)
+	}
+	evidence, err := store.ReadTaskEvidence(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("ReadTaskEvidence() error = %v", err)
+	}
+	if evidence.Candidate.Status != application.CandidateEvidenceJudged ||
+		evidence.Candidate.EvidenceDigest != sealed.Digest() ||
+		evidence.Candidate.ReconciliationOperationID != mutation.OperationID {
+		t.Fatalf("candidate evidence = %#v, want judged evidence with reconciliation origin", evidence.Candidate)
+	}
+}
+
 func TestStore_TaskEvidenceSnapshotsShareOneDurableReadBoundary(t *testing.T) {
 	store, task, sealed := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "snapshot.db"))
 	observation, err := store.ReadTaskObservation(context.Background(), task.Handle)
