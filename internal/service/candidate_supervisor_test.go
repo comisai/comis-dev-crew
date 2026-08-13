@@ -329,6 +329,38 @@ func TestCandidateSupervisor_RunRetriesPendingForgeTruthWithoutStoppingService(t
 	}
 }
 
+func TestCandidateSupervisor_RunRetriesUnavailableForgeTruthWithoutStoppingService(t *testing.T) {
+	fixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	fixture.git.snapshots = []devgit.CandidateSnapshot{
+		fixture.snapshot, fixture.snapshot,
+		fixture.snapshot, fixture.snapshot,
+	}
+	fixture.pullRequests.err = errors.New("fixture remote unavailable")
+	ctx, cancel := context.WithCancel(context.Background())
+	attempts := 0
+	fixture.pullRequests.onDeliver = func() {
+		attempts++
+		if attempts == 1 {
+			fixture.pullRequests.err = nil
+			return
+		}
+		cancel()
+	}
+	supervisor, err := newCandidateSupervisor(fixture.config())
+	if err != nil {
+		t.Fatalf("newCandidateSupervisor() error = %v", err)
+	}
+	if err := supervisor.Run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context.Canceled after retry", err)
+	}
+	if attempts != 2 || fixture.pullRequests.calls != 2 {
+		t.Fatalf("unavailable forge attempts: callback=%d pull-request calls=%d, want two each", attempts, fixture.pullRequests.calls)
+	}
+	if fixture.store.task.State != domain.TaskCandidateComplete {
+		t.Fatalf("recovered forge task state = %q, want %q", fixture.store.task.State, domain.TaskCandidateComplete)
+	}
+}
+
 type candidateSupervisorFixture struct {
 	task         domain.Task
 	preparation  application.ManagedRunPreparation
@@ -526,10 +558,11 @@ func (runner *candidateSupervisorRunner) Run(_ context.Context, request validati
 }
 
 type candidateSupervisorPullRequests struct {
-	truth   forge.PullRequestTruth
-	request forge.PullRequestRequest
-	calls   int
-	err     error
+	truth     forge.PullRequestTruth
+	request   forge.PullRequestRequest
+	calls     int
+	err       error
+	onDeliver func()
 }
 
 func (pullRequests *candidateSupervisorPullRequests) DeliverPullRequest(
@@ -538,7 +571,11 @@ func (pullRequests *candidateSupervisorPullRequests) DeliverPullRequest(
 ) (forge.PullRequestTruth, error) {
 	pullRequests.calls++
 	pullRequests.request = request
-	return pullRequests.truth, pullRequests.err
+	currentError := pullRequests.err
+	if pullRequests.onDeliver != nil {
+		pullRequests.onDeliver()
+	}
+	return pullRequests.truth, currentError
 }
 
 type candidateSupervisorArtifact struct {
