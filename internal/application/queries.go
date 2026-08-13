@@ -89,6 +89,10 @@ func (queries *Queries) Fleet(ctx context.Context) (FleetSnapshot, error) {
 		return FleetSnapshot{}, err
 	}
 	now := queries.now()
+	projected, err := queries.projectTasks(ctx, tasks, now)
+	if err != nil {
+		return FleetSnapshot{}, err
+	}
 	completeness, serviceHealth, comisHealth, _ := queries.hostHealth()
 	return FleetSnapshot{
 		SchemaVersion: 1,
@@ -97,7 +101,7 @@ func (queries *Queries) Fleet(ctx context.Context) (FleetSnapshot, error) {
 		Completeness:  completeness,
 		ServiceHealth: serviceHealth,
 		ComisHealth:   comisHealth,
-		Tasks:         projectTasks(tasks, now),
+		Tasks:         projected,
 	}, nil
 }
 
@@ -126,12 +130,16 @@ func (queries *Queries) ListTasks(ctx context.Context) (TaskList, error) {
 		return TaskList{}, err
 	}
 	now := queries.now()
+	projected, err := queries.projectTasks(ctx, tasks, now)
+	if err != nil {
+		return TaskList{}, err
+	}
 	return TaskList{
 		SchemaVersion: 1,
 		CapturedAtMs:  now.UnixMilli(),
 		StateVersion:  stateVersion,
 		Completeness:  CompletenessPartial,
-		Tasks:         projectTasks(tasks, now),
+		Tasks:         projected,
 	}, nil
 }
 
@@ -145,11 +153,15 @@ func (queries *Queries) ShowTask(ctx context.Context, handle string) (TaskDetail
 		return TaskDetail{}, translateReadError(err, "task")
 	}
 	now := queries.now()
+	summary, err := queries.projectTask(ctx, task, now)
+	if err != nil {
+		return TaskDetail{}, err
+	}
 	return TaskDetail{
 		SchemaVersion:     1,
 		CapturedAtMs:      now.UnixMilli(),
 		Completeness:      CompletenessPartial,
-		Summary:           projectTask(task, now),
+		Summary:           summary,
 		Shape:             task.Shape,
 		BaseRevision:      task.BaseRevision,
 		BriefRevision:     task.BriefRevision,
@@ -172,6 +184,10 @@ func (queries *Queries) ExplainTask(ctx context.Context, handle string) (TaskExp
 		return TaskExplanation{}, translateReadError(err, "task")
 	}
 	now := queries.now()
+	summary, err := queries.projectTask(ctx, task, now)
+	if err != nil {
+		return TaskExplanation{}, err
+	}
 	reason, explanation, rootCause, actions := explainState(task.State)
 	if task.State == domain.TaskUnknown {
 		reason, explanation, rootCause, actions, err = queries.explainUnknownRecovery(ctx, task)
@@ -195,7 +211,7 @@ func (queries *Queries) ExplainTask(ctx context.Context, handle string) (TaskExp
 		SchemaVersion:   1,
 		CapturedAtMs:    now.UnixMilli(),
 		Completeness:    CompletenessPartial,
-		Summary:         projectTask(task, now),
+		Summary:         summary,
 		ReasonCode:      reason,
 		Explanation:     explanation,
 		LikelyRootCause: rootCause,
@@ -385,21 +401,25 @@ func (queries *Queries) now() time.Time {
 	return queries.clock().UTC()
 }
 
-func projectTasks(tasks []domain.Task, now time.Time) []TaskSummary {
+func (queries *Queries) projectTasks(ctx context.Context, tasks []domain.Task, now time.Time) ([]TaskSummary, error) {
 	projected := make([]TaskSummary, 0, len(tasks))
 	for _, task := range tasks {
-		projected = append(projected, projectTask(task, now))
+		summary, err := queries.projectTask(ctx, task, now)
+		if err != nil {
+			return nil, err
+		}
+		projected = append(projected, summary)
 	}
-	return projected
+	return projected, nil
 }
 
-func projectTask(task domain.Task, now time.Time) TaskSummary {
+func (queries *Queries) projectTask(ctx context.Context, task domain.Task, now time.Time) (TaskSummary, error) {
 	reason, _, _, actions := explainState(task.State)
 	elapsed := now.Sub(task.CreatedAt).Milliseconds()
 	if elapsed < 0 {
 		elapsed = 0
 	}
-	return TaskSummary{
+	summary := TaskSummary{
 		TaskHandle:       task.Handle,
 		State:            task.State,
 		StateReason:      reason,
@@ -410,16 +430,55 @@ func projectTask(task domain.Task, now time.Time) TaskSummary {
 		WorkerProfileID:  task.WorkerProfileID,
 		RepositoryID:     task.RepositoryID,
 		Head:             "unknown",
-		Activity:         "unknown",
+		Activity:         reportActivity(task),
 		Processes:        "unknown",
 		Validation:       "unknown",
-		BlockedBy:        "unknown",
-		Attention:        "unknown",
+		BlockedBy:        taskBlocker(task),
+		Attention:        taskAttention(task),
 		StateVersion:     task.StateVersion,
 		ElapsedMs:        elapsed,
 		LastActivityAtMs: task.UpdatedAt.UnixMilli(),
 		NextSafeActions:  actions,
 	}
+	reader, ok := queries.repository.(candidateEvidenceReader)
+	if !ok {
+		return summary, nil
+	}
+	evidence, judgment, err := reader.LatestCandidateEvidence(ctx, task.Handle)
+	if errors.Is(err, ErrNotFound) || (err == nil && evidence == nil) {
+		return summary, nil
+	}
+	if err != nil {
+		return TaskSummary{}, translateReadError(err, "candidate evidence")
+	}
+	bundle := evidence.Bundle()
+	if bundle.TaskHandle != task.Handle || bundle.RepositoryIdentity != task.RepositoryID || bundle.BaseRevision != task.BaseRevision {
+		return TaskSummary{}, translateReadError(ErrPrecondition, "candidate evidence identity")
+	}
+	summary.Head = bundle.HeadRevision
+	summary.Validation = string(judgment.Outcome)
+	return summary, nil
+}
+
+func reportActivity(task domain.Task) string {
+	if task.ReportCursor > 0 {
+		return "authenticated_report"
+	}
+	return "none"
+}
+
+func taskBlocker(task domain.Task) string {
+	if task.State == domain.TaskAwaitingDecision {
+		return "open_decision"
+	}
+	return "none"
+}
+
+func taskAttention(task domain.Task) string {
+	if task.State == domain.TaskCleanupHeld {
+		return "cleanup_hold"
+	}
+	return "none"
 }
 
 func translateReadError(err error, subject string) error {
