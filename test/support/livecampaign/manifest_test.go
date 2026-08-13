@@ -119,7 +119,7 @@ func TestManifestRequiresDistinctTwoLaneRecoveryAndHandbackEvidence(t *testing.T
 	}
 
 	manifest = validManifest()
-	manifest.Operations = manifest.Operations[2:]
+	manifest.Operations = manifest.Operations[1:]
 	if _, err := LoadManifest(writeManifest(t, manifest, "-operations")); err == nil || !strings.Contains(err.Error(), "ReconcileTask") {
 		t.Fatalf("expected recovery-operation refusal, got %v", err)
 	}
