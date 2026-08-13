@@ -254,6 +254,23 @@ func TestTaskCleanupStore_AcceptsDurablyAbsentValidationProcess(t *testing.T) {
 	}
 }
 
+func TestTaskCleanupStore_ClassifiesOpenHoldForOperatorDiagnosis(t *testing.T) {
+	store, task, _ := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.db.Exec(`INSERT INTO task_cleanup_holds(task_handle, hold_id, reason, opened_at)
+        VALUES (?, 'hold-diagnosis', 'review remains open', ?)`, task.Handle, formatTime(task.UpdatedAt)); err != nil {
+		t.Fatalf("seed open cleanup hold: %v", err)
+	}
+	_, err := store.BeginTaskCleanup(context.Background(), application.TaskCleanupMutation{
+		OperationID: "cleanup-diagnosis-0001", SubjectDigest: strings.Repeat("e", 64),
+		TaskHandle: task.Handle, ReleaseOperationID: "release-diagnosis-0001",
+		ReleasedAt: task.UpdatedAt.Add(time.Minute), At: task.UpdatedAt.Add(time.Minute),
+	})
+	if !errors.Is(err, application.ErrCleanupOpenHold) || !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("BeginTaskCleanup(open hold) error = %v, want classified cleanup hold precondition", err)
+	}
+}
+
 func TestTaskCleanupStore_AcceptsSettledFixtureWithoutTerminalBinding(t *testing.T) {
 	store, task, _ := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
 	t.Cleanup(func() { _ = store.Close() })

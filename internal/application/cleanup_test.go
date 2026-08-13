@@ -89,6 +89,32 @@ func TestCleanupCoordinator_RefusesDirtyWorkspaceBeforeHostRelease(t *testing.T)
 	}
 }
 
+func TestCleanupCoordinator_ReportsOpenHoldBeforeHostRelease(t *testing.T) {
+	record := cleanupFixtureRecord(strings.Repeat("b", 40))
+	store := &cleanupStoreFixture{record: record, beginErr: ErrCleanupOpenHold}
+	releaser := &cleanupReleaseFixture{}
+	remover := &cleanupRemovalFixture{}
+	coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
+		Store: store, Workspaces: &cleanupWorkspaceFixture{}, Forge: &cleanupForgeFixture{},
+		Releaser: releaser, Remover: remover, Clock: func() time.Time { return record.ReleasedAt },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, cleanupErr := coordinator.CleanupTask(context.Background(), CleanupTaskCommand{
+		OperationID: record.OperationID, TaskHandle: record.TaskHandle,
+	})
+	var failure *domain.Failure
+	if !errors.As(cleanupErr, &failure) || failure.Code != domain.ErrorPrecondition || !failure.Retryable ||
+		failure.Message != "cleanup is blocked by an open task hold" ||
+		failure.Hint != "close the exact task cleanup hold, then retry cleanup" {
+		t.Fatalf("CleanupTask(open hold) error = %v, want reason-coded precondition failure", cleanupErr)
+	}
+	if releaser.calls != 0 || remover.calls != 0 || store.releaseCalls != 0 {
+		t.Fatalf("unsafe side effects: release=%d remove=%d recorded=%d", releaser.calls, remover.calls, store.releaseCalls)
+	}
+}
+
 func TestCleanupCoordinator_ResumesHeldCleanupWithFreshCallerOperation(t *testing.T) {
 	now := time.Date(2026, time.August, 11, 20, 0, 0, 0, time.UTC)
 	head := strings.Repeat("b", 40)
