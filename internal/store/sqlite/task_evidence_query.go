@@ -173,26 +173,38 @@ func readDecisionDiagnostic(
 	taskHandle string,
 	evidence *application.TaskEvidenceView,
 ) error {
-	const query = `SELECT decision.local_report_id,
-		COALESCE((SELECT resolution.local_report_id FROM reports resolution
+	const openQuery = `SELECT decision.local_report_id FROM reports decision
+		WHERE decision.task_handle = ? AND decision.kind = 'decision'
+		AND NOT EXISTS (SELECT 1 FROM reports resolution
 			WHERE resolution.task_handle = decision.task_handle
 			AND resolution.kind = 'resolution'
-			AND resolution.external_key = decision.external_key
-			ORDER BY resolution.state_version DESC, resolution.local_report_id LIMIT 1), '')
-	FROM reports decision WHERE decision.task_handle = ? AND decision.kind = 'decision'
-	ORDER BY decision.state_version DESC, decision.local_report_id LIMIT 1`
-	var decisionID, resolutionID string
-	if err := source.QueryRowContext(ctx, query, taskHandle).Scan(&decisionID, &resolutionID); err == nil {
-		status := application.DecisionEvidenceOpen
-		if resolutionID != "" {
-			status = application.DecisionEvidenceResolved
-		}
+			AND resolution.external_key = decision.external_key)
+		ORDER BY decision.state_version DESC, decision.local_report_id LIMIT 1`
+	var decisionID string
+	if err := source.QueryRowContext(ctx, openQuery, taskHandle).Scan(&decisionID); err == nil {
 		evidence.Decision = application.DecisionEvidenceView{
-			Status: status, DecisionReportID: decisionID, ResolutionReportID: resolutionID,
+			Status: application.DecisionEvidenceOpen, DecisionReportID: decisionID,
 		}
 		return nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("read task decision evidence: %w", err)
+	}
+	const resolvedQuery = `SELECT decision.local_report_id, resolution.local_report_id
+		FROM reports decision JOIN reports resolution
+		ON resolution.task_handle = decision.task_handle
+		AND resolution.kind = 'resolution'
+		AND resolution.external_key = decision.external_key
+		WHERE decision.task_handle = ? AND decision.kind = 'decision'
+		ORDER BY resolution.state_version DESC, resolution.local_report_id LIMIT 1`
+	var resolutionID string
+	if err := source.QueryRowContext(ctx, resolvedQuery, taskHandle).Scan(&decisionID, &resolutionID); err == nil {
+		evidence.Decision = application.DecisionEvidenceView{
+			Status:           application.DecisionEvidenceResolved,
+			DecisionReportID: decisionID, ResolutionReportID: resolutionID,
+		}
+		return nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read task decision resolution evidence: %w", err)
 	}
 	return nil
 }

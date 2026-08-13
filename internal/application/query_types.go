@@ -150,6 +150,7 @@ type TaskDetail struct {
 	CapturedAtMs      int64               `json:"capturedAtMs"`
 	Completeness      Completeness        `json:"completeness"`
 	Summary           TaskSummary         `json:"summary"`
+	Evidence          TaskEvidenceView    `json:"evidence"`
 	Shape             domain.TaskShape    `json:"shape"`
 	BaseRevision      string              `json:"baseRevision"`
 	BriefRevision     int64               `json:"briefRevision"`
@@ -163,14 +164,15 @@ type TaskDetail struct {
 
 // TaskExplanation provides a content-free reason and next safe actions.
 type TaskExplanation struct {
-	SchemaVersion   int          `json:"schemaVersion"`
-	CapturedAtMs    int64        `json:"capturedAtMs"`
-	Completeness    Completeness `json:"completeness"`
-	Summary         TaskSummary  `json:"summary"`
-	ReasonCode      string       `json:"reasonCode"`
-	Explanation     string       `json:"explanation"`
-	LikelyRootCause string       `json:"likelyRootCause"`
-	NextSafeActions []NextAction `json:"nextSafeActions"`
+	SchemaVersion   int              `json:"schemaVersion"`
+	CapturedAtMs    int64            `json:"capturedAtMs"`
+	Completeness    Completeness     `json:"completeness"`
+	Summary         TaskSummary      `json:"summary"`
+	Evidence        TaskEvidenceView `json:"evidence"`
+	ReasonCode      string           `json:"reasonCode"`
+	Explanation     string           `json:"explanation"`
+	LikelyRootCause string           `json:"likelyRootCause"`
+	NextSafeActions []NextAction     `json:"nextSafeActions"`
 }
 
 // OperationView is the stable reconciliation projection for a durable operation.

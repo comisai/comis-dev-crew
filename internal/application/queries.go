@@ -22,6 +22,10 @@ type candidateEvidenceReader interface {
 	LatestCandidateEvidence(context.Context, string) (*domain.SealedDeliveryEvidence, domain.CandidateJudgment, error)
 }
 
+type taskEvidenceReader interface {
+	ReadTaskEvidence(context.Context, string) (TaskEvidenceView, error)
+}
+
 type taskRecoveryEvidenceReader interface {
 	ReadTaskRecoveryEvidence(context.Context, string) (TaskRecoveryEvidence, error)
 }
@@ -153,7 +157,7 @@ func (queries *Queries) ShowTask(ctx context.Context, handle string) (TaskDetail
 		return TaskDetail{}, translateReadError(err, "task")
 	}
 	now := queries.now()
-	summary, err := queries.projectTask(ctx, task, now)
+	summary, evidence, err := queries.projectTask(ctx, task, now)
 	if err != nil {
 		return TaskDetail{}, err
 	}
@@ -162,6 +166,7 @@ func (queries *Queries) ShowTask(ctx context.Context, handle string) (TaskDetail
 		CapturedAtMs:      now.UnixMilli(),
 		Completeness:      CompletenessPartial,
 		Summary:           summary,
+		Evidence:          evidence,
 		Shape:             task.Shape,
 		BaseRevision:      task.BaseRevision,
 		BriefRevision:     task.BriefRevision,
@@ -184,7 +189,7 @@ func (queries *Queries) ExplainTask(ctx context.Context, handle string) (TaskExp
 		return TaskExplanation{}, translateReadError(err, "task")
 	}
 	now := queries.now()
-	summary, err := queries.projectTask(ctx, task, now)
+	summary, evidence, err := queries.projectTask(ctx, task, now)
 	if err != nil {
 		return TaskExplanation{}, err
 	}
@@ -212,6 +217,7 @@ func (queries *Queries) ExplainTask(ctx context.Context, handle string) (TaskExp
 		CapturedAtMs:    now.UnixMilli(),
 		Completeness:    CompletenessPartial,
 		Summary:         summary,
+		Evidence:        evidence,
 		ReasonCode:      reason,
 		Explanation:     explanation,
 		LikelyRootCause: rootCause,
@@ -404,7 +410,7 @@ func (queries *Queries) now() time.Time {
 func (queries *Queries) projectTasks(ctx context.Context, tasks []domain.Task, now time.Time) ([]TaskSummary, error) {
 	projected := make([]TaskSummary, 0, len(tasks))
 	for _, task := range tasks {
-		summary, err := queries.projectTask(ctx, task, now)
+		summary, _, err := queries.projectTask(ctx, task, now)
 		if err != nil {
 			return nil, err
 		}
@@ -413,7 +419,11 @@ func (queries *Queries) projectTasks(ctx context.Context, tasks []domain.Task, n
 	return projected, nil
 }
 
-func (queries *Queries) projectTask(ctx context.Context, task domain.Task, now time.Time) (TaskSummary, error) {
+func (queries *Queries) projectTask(
+	ctx context.Context,
+	task domain.Task,
+	now time.Time,
+) (TaskSummary, TaskEvidenceView, error) {
 	reason, _, _, actions := explainState(task.State)
 	elapsed := now.Sub(task.CreatedAt).Milliseconds()
 	if elapsed < 0 {
@@ -441,23 +451,70 @@ func (queries *Queries) projectTask(ctx context.Context, task domain.Task, now t
 		NextSafeActions:  actions,
 	}
 	reader, ok := queries.repository.(candidateEvidenceReader)
-	if !ok {
-		return summary, nil
+	evidence, found, err := queries.readTaskEvidence(ctx, task.Handle)
+	if err != nil {
+		return TaskSummary{}, TaskEvidenceView{}, err
 	}
-	evidence, judgment, err := reader.LatestCandidateEvidence(ctx, task.Handle)
-	if errors.Is(err, ErrNotFound) || (err == nil && evidence == nil) {
-		return summary, nil
+	if found {
+		applyTaskEvidence(&summary, evidence)
+		return summary, evidence, nil
+	}
+	if !ok {
+		return summary, TaskEvidenceView{}, nil
+	}
+	sealed, judgment, err := reader.LatestCandidateEvidence(ctx, task.Handle)
+	if errors.Is(err, ErrNotFound) || (err == nil && sealed == nil) {
+		return summary, TaskEvidenceView{}, nil
 	}
 	if err != nil {
-		return TaskSummary{}, translateReadError(err, "candidate evidence")
+		return TaskSummary{}, TaskEvidenceView{}, translateReadError(err, "candidate evidence")
 	}
-	bundle := evidence.Bundle()
+	bundle := sealed.Bundle()
 	if bundle.TaskHandle != task.Handle || bundle.RepositoryIdentity != task.RepositoryID || bundle.BaseRevision != task.BaseRevision {
-		return TaskSummary{}, translateReadError(ErrPrecondition, "candidate evidence identity")
+		return TaskSummary{}, TaskEvidenceView{}, translateReadError(ErrPrecondition, "candidate evidence identity")
 	}
 	summary.Head = bundle.HeadRevision
 	summary.Validation = string(judgment.Outcome)
-	return summary, nil
+	return summary, TaskEvidenceView{}, nil
+}
+
+func (queries *Queries) readTaskEvidence(ctx context.Context, taskHandle string) (TaskEvidenceView, bool, error) {
+	reader, ok := queries.repository.(taskEvidenceReader)
+	if !ok {
+		return TaskEvidenceView{}, false, nil
+	}
+	evidence, err := reader.ReadTaskEvidence(ctx, taskHandle)
+	if errors.Is(err, ErrNotFound) {
+		return TaskEvidenceView{}, false, nil
+	}
+	if err != nil {
+		return TaskEvidenceView{}, false, translateReadError(err, "task evidence")
+	}
+	if evidence.Candidate.Status == "" {
+		return TaskEvidenceView{}, false, nil
+	}
+	return evidence, true, nil
+}
+
+func applyTaskEvidence(summary *TaskSummary, evidence TaskEvidenceView) {
+	if evidence.Candidate.HeadRevision != "" {
+		summary.Head = evidence.Candidate.HeadRevision
+	}
+	summary.Activity = string(evidence.Activity.Status)
+	if evidence.Activity.AcceptedAtMs > 0 {
+		summary.LastActivityAtMs = evidence.Activity.AcceptedAtMs
+	}
+	summary.Validation = string(evidence.Validation.Status)
+	if evidence.Decision.Status == DecisionEvidenceOpen {
+		summary.BlockedBy = "open_decision"
+	} else {
+		summary.BlockedBy = "none"
+	}
+	if evidence.Cleanup.Status == CleanupEvidenceHeld {
+		summary.Attention = "cleanup_hold"
+	} else {
+		summary.Attention = "none"
+	}
 }
 
 func reportActivity(task domain.Task) string {
