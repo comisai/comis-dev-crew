@@ -130,6 +130,13 @@ func (reconciler *TaskCandidateReconciler) ReconcileTask(
 	}
 	authority, err := reconciler.store.ReadTaskReconciliationAuthority(ctx, command.TaskHandle)
 	if err != nil {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrPrecondition) {
+			return MutationResult{}, reconciliationPreconditionFailure(
+				"task reconciliation authority is incomplete",
+				"inspect the exact task preparation and terminal binding before retrying",
+				err,
+			)
+		}
 		return MutationResult{}, reconciliationUnavailableFailure(
 			"task reconciliation authority is unavailable",
 			"inspect durable task, preparation, and terminal state before retrying the same operation",
