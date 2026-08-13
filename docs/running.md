@@ -160,7 +160,9 @@ repository, worktree, branch, base, and head authority; callers cannot supply or
 override those fields. An eligible unknown task must have a settled terminal and
 an exact clean non-base candidate. Recovery records fresh evidence and enters the
 existing validation pipeline without creating a worker candidate report or
-advancing the report cursor.
+advancing the report cursor. Task detail and explanation keep that reconciliation
+operation beside the judged candidate after validation and delivery, allowing a
+content-free closeout to prove whether the candidate came from recovery.
 
 Call `explain_task` before recovery. It distinguishes a settled terminal without
 candidate evidence, unresolved restart evidence, unavailable host integration, an

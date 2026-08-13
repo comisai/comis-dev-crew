@@ -107,7 +107,9 @@ progress, with reachable reason-specific next actions.
 
 Canonical task detail and explanation projections include content-free evidence
 references for candidate, report activity, decision posture, validation, forge
-delivery, cleanup, and opaque host authority. Fleet rows consume the same durable
+delivery, cleanup, and opaque host authority. A reconciled candidate retains its
+reconciliation operation reference after judgment, so final closeout can prove
+candidate origin without a direct database read. Fleet rows consume the same durable
 postures for head, activity, validation, blocking, and attention. Custody and
 process observations remain explicitly `unknown` until a process-evidence
 contract exists.

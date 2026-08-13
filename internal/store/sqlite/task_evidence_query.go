@@ -141,6 +141,9 @@ func readCandidateDiagnostic(
 			Status: application.CandidateEvidenceJudged, HeadRevision: bundle.HeadRevision,
 			EvidenceDigest: sealed.Digest(),
 		}
+		if err := readReconciliationCandidateOrigin(ctx, source, task.Handle, bundle.HeadRevision, &evidence.Candidate); err != nil {
+			return err
+		}
 		evidence.Validation.Status = validationDiagnosticStatus(row.judgment.Outcome)
 		evidence.Validation.EvidenceDigest = sealed.Digest()
 		if bundle.ForgeEvidence != nil {
@@ -151,14 +154,31 @@ func readCandidateDiagnostic(
 	if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("read task candidate evidence: %w", err)
 	}
+	return readReconciliationCandidateOrigin(ctx, source, task.Handle, "", &evidence.Candidate)
+}
+
+func readReconciliationCandidateOrigin(
+	ctx context.Context,
+	source queryer,
+	taskHandle string,
+	judgedHead string,
+	candidate *application.CandidateEvidenceView,
+) error {
 	const reconciliationQuery = `SELECT operation_id, head_revision
 		FROM task_candidate_reconciliations WHERE task_handle = ?
 		ORDER BY completed_state_version DESC, operation_id LIMIT 1`
 	var operationID, headRevision string
-	if err := source.QueryRowContext(ctx, reconciliationQuery, task.Handle).Scan(&operationID, &headRevision); err == nil {
-		evidence.Candidate = application.CandidateEvidenceView{
-			Status: application.CandidateEvidenceReconciled, HeadRevision: headRevision,
-			ReconciliationOperationID: operationID,
+	if err := source.QueryRowContext(ctx, reconciliationQuery, taskHandle).Scan(&operationID, &headRevision); err == nil {
+		if judgedHead != "" && judgedHead != headRevision {
+			return errors.New("read task reconciliation evidence: judged head differs")
+		}
+		if judgedHead == "" {
+			*candidate = application.CandidateEvidenceView{
+				Status: application.CandidateEvidenceReconciled, HeadRevision: headRevision,
+				ReconciliationOperationID: operationID,
+			}
+		} else {
+			candidate.ReconciliationOperationID = operationID
 		}
 		return nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
