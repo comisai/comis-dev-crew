@@ -166,6 +166,13 @@ func TestCleanupCoordinator_ClassifiesOperatorActionableDependencyFailures(t *te
 	}
 }
 
+func TestCleanupFailureClassifierFailsClosedForInvalidOperatorFields(t *testing.T) {
+	dependencyFailure := cleanupDependencyFailure("", "", errors.New("private dependency detail"))
+	if dependencyFailure == nil || dependencyFailure.Error() != "cleanup dependency failure classification failed" {
+		t.Fatalf("cleanupDependencyFailure(invalid fields) = %v", dependencyFailure)
+	}
+}
+
 func TestCleanupCoordinator_FailsClosedAcrossCleanupBoundaries(t *testing.T) {
 	now := time.Date(2026, time.August, 11, 20, 0, 0, 0, time.UTC)
 	head := strings.Repeat("b", 40)
