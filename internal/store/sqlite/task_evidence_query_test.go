@@ -3,8 +3,12 @@ package sqlite
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 func TestStore_ReadTaskEvidenceProjectsContentFreeDurableReferences(t *testing.T) {
@@ -43,5 +47,47 @@ func TestStore_ReadTaskEvidenceProjectsContentFreeDurableReferences(t *testing.T
 		evidence.Authority.ExecutionAttachmentID != task.ExecutionAttachmentID ||
 		evidence.Authority.PreparationOperationID != "prepare-cleanup-0001" {
 		t.Fatalf("authority references = %#v, want exact durable identities", evidence.Authority)
+	}
+}
+
+func TestStore_ReadTaskEvidenceDoesNotOverclaimPendingDelivery(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "pending.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	task := candidateEvidenceTask(t, "task-pending-delivery")
+	if err := store.CreateTask(context.Background(), task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	sealed := candidateEvidence(t, task, strings.Repeat("b", 40))
+	publications := candidateEvidencePublications(t, task, sealed)
+	if _, judgment, err := store.CommitCandidateEvidence(
+		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"},
+		sealed.Bundle().ProducedAt, publications,
+	); err != nil || judgment.Outcome != domain.CandidateAccepted {
+		t.Fatalf("CommitCandidateEvidence() = %#v, %v", judgment, err)
+	}
+	for index := range publications {
+		delivery, found, err := store.NextComisEvidence(context.Background())
+		if err != nil || !found {
+			t.Fatalf("NextComisEvidence(%d) = %#v, %t, %v", index, delivery, found, err)
+		}
+		deliveredAt := sealed.Bundle().ProducedAt.Add(time.Duration(index+1) * time.Minute)
+		retainedUntil := deliveredAt.Add(time.Hour)
+		if err := store.MarkComisEvidenceDelivered(context.Background(), delivery.OperationID, application.ComisEvidenceAcknowledgement{
+			ManagedRunID: delivery.ManagedRunID, EvidenceRef: delivery.EvidenceRef,
+			ContentHash: delivery.ContentHash, VerificationLevel: delivery.VerificationLevel,
+			RetainedUntil: &retainedUntil,
+		}, deliveredAt); err != nil {
+			t.Fatalf("MarkComisEvidenceDelivered(%d) error = %v", index, err)
+		}
+	}
+	evidence, err := store.ReadTaskEvidence(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("ReadTaskEvidence() error = %v", err)
+	}
+	if evidence.Delivery.Status != application.DeliveryEvidencePending {
+		t.Fatalf("delivery status = %q, want pending until final task delivery", evidence.Delivery.Status)
 	}
 }
