@@ -311,6 +311,16 @@ func (store *Store) MarkComisEvidenceDelivered(
 		if retainedUntil.String != wantRetention {
 			return fmt.Errorf("evidence acknowledgement replay: %w", application.ErrConflict)
 		}
+		priorDeliveryTime, parseErr := parseTime(priorDeliveredAt.String)
+		if parseErr != nil {
+			return errors.New("evidence acknowledgement replay: delivery time is invalid")
+		}
+		if err := completeReconciledCandidateDelivery(ctx, transaction, operationID, priorDeliveryTime); err != nil {
+			return err
+		}
+		if err := transaction.Commit(); err != nil {
+			return fmt.Errorf("commit Comis evidence acknowledgement replay: %w", err)
+		}
 		return nil
 	}
 	const update = `UPDATE comis_evidence_outbox SET retained_until = ?, delivered_at = ?
@@ -326,6 +336,9 @@ func (store *Store) MarkComisEvidenceDelivered(
 	rows, err := result.RowsAffected()
 	if err != nil || rows != 1 {
 		return errors.New("write Comis evidence acknowledgement: exact item was not updated")
+	}
+	if err := completeReconciledCandidateDelivery(ctx, transaction, operationID, deliveredAt); err != nil {
+		return err
 	}
 	if err := transaction.Commit(); err != nil {
 		return fmt.Errorf("commit Comis evidence acknowledgement: %w", err)
