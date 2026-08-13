@@ -7,7 +7,7 @@ It is maintained alongside the behavior it describes.
 ## Summary
 
 The service owns durable SQLite state and a strict owner-only local API. The
-operator CLI provides service, fleet, task, operation, handback, and cleanup
+operator CLI provides service, fleet, task, operation, reconciliation, handback, and cleanup
 views and commands. The
 protocol foundation pins the 30-artifact Comis capability-service contract at
 source commit `b0b8065c0b43a29840dcd21fcc15ef37e4b905d4` and bundle digest
@@ -15,9 +15,9 @@ source commit `b0b8065c0b43a29840dcd21fcc15ef37e4b905d4` and bundle digest
 a closed Go adapter.
 
 Installed composition supervises the Comis control lane, Codex and Claude Code
-launch descriptors, candidate validation, forge truth, delivery, handback, and
-safe cleanup. Public operator mutation transport, merge authority, and unattended
-worker settling are not claimed.
+launch descriptors, candidate validation, forge truth, delivery, unknown-task
+reconciliation, handback, and safe cleanup. Merge authority and unattended worker
+settling are not claimed.
 
 ## Foundation
 
@@ -78,6 +78,30 @@ evidence exists. Tasks whose runtime may have been active become `unknown`, as d
 operations left merely `accepted`. Stable terminal task evidence and completed or
 already-unknown operations are preserved, and a repeated restart is idempotent.
 
+## Unknown-task candidate recovery
+
+An owner-only `ReconcileTask` mutation recovers the narrow case where an exact
+worker terminal exited without a candidate report but the registered operation-
+bound worktree contains a clean non-base descendant of the pinned base. Its closed
+action is `validate-clean-candidate`; caller input contains no repository, path,
+branch, head, run, lease, terminal, or attachment authority.
+
+The service combines durable preparation and terminal bindings with a fresh Git
+inspection, then atomically records reconciliation evidence and advances
+`unknown` through `reconciling` into `validating`. It neither synthesizes a worker
+report nor increments the report cursor. Exact operation replay returns the
+original outcome, altered reuse conflicts, and dirty, missing, base-equal,
+divergent, ambiguous, active, or mismatched authority leaves the task unchanged.
+The normal candidate supervisor re-reads the exact head around fixed validation.
+Cleanup later accepts exactly one candidate origin: a delivered worker candidate
+report or one exact completed reconciliation record matching the sealed head.
+
+`ExplainTask` combines durable terminal posture, current host connectivity, and
+fresh registered-worktree inspection. Its closed recovery reasons distinguish a
+settled terminal without candidate evidence, unresolved restart evidence,
+unavailable host integration, an unrecoverable workspace, and reconciliation in
+progress, with reachable reason-specific next actions.
+
 ## Mutation boundary
 
 The first mutation boundary prepares a service-minted task and later activates it
@@ -109,8 +133,9 @@ redirect the protected attachment, or advance task state.
 
 ## Local client and MCP adapter
 
-The typed local client and strict handler expose `PrepareTask` as the first
-canonical mutation. Its public payload contains only task-contract fields: the
+The typed local client and strict handler expose `PrepareTask`, `ReconcileTask`,
+`HandbackTask`, and `CleanupTask` as canonical mutations. Preparation contains
+only task-contract fields: the
 stable operation ID comes from the request envelope and the configured service
 instance comes from endpoint composition. The result classifies the operation as
 `mutate` and carries the private durable registration for the MCP adapter.
@@ -132,7 +157,9 @@ normalized task, operation, state version, and `mutate` classification across al
 three paths. Repeated calls create one task, and an altered stable operation
 remains the same non-retryable `conflict`. List, get, explain, and launch plan
 return identical versioned projections through all adapters and retain their
-`read` classification.
+`read` classification. The official-SDK facade exposes eight tools;
+`reconcile_task` is non-read-only, idempotent, closed-world, and uses the same
+stable result and side-effect semantics as the CLI and typed local client.
 
 A tagged integration test builds and kills the real stdio `devcrew-mcp` process,
 replaces it, and proves the prepared task, completed operation, exact private

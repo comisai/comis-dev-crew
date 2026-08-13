@@ -57,8 +57,9 @@ curl -fsSL https://raw.githubusercontent.com/comisai/comis-dev-crew/main/docs/in
 Replace `v0.1.0` with the required tag. The installer exits without changing the
 system if it cannot find a release or verify its checksum.
 
-> No release is published yet. Until one is available, use the source build
-> below.
+The current published pre-release is `v0.1.0`. Recovery work on branches newer
+than that tag is available only from source until a subsequent pre-release is
+published.
 
 ### Build from source
 
@@ -88,6 +89,7 @@ In another terminal, inspect service and task state:
 ```sh
 devcrew --socket /absolute/private/run/devcrew.sock service status
 devcrew --socket /absolute/private/run/devcrew.sock tasks list --format json
+devcrew --socket /absolute/private/run/devcrew.sock task explain TASK --format json
 ```
 
 Without explicit path flags, the service and CLI derive matching locations from

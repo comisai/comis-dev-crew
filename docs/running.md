@@ -130,8 +130,8 @@ devcrew-mcp \
   --service-instance service-instance-devcrew
 ```
 
-The facade defines seven tools: `prepare_task`, `handback_task`, `cleanup_task`,
-`list_tasks`, `get_task`, `explain_task`, and `get_launch_plan`. Every call must carry a
+The facade defines eight tools: `prepare_task`, `reconcile_task`, `handback_task`,
+`cleanup_task`, `list_tasks`, `get_task`, `explain_task`, and `get_launch_plan`. Every call must carry a
 generated-schema-valid `comis.callContext`; the configured service identity must
 match, while optional managed-run references grant no task authority. Preparation
 returns its visible task outcome separately from the private schema-validated
@@ -139,6 +139,21 @@ returns its visible task outcome separately from the private schema-validated
 bounded operation reconciliation and, after a completed durable outcome, one exact
 idempotent replay. The command defaults to a separate `mcp.sock` and validates the
 out-of-band service instance against every private call context.
+
+`reconcile_task` accepts only an opaque task handle and
+`action: "validate-clean-candidate"`. It is a non-read-only, idempotent,
+closed-world mutation. The service derives the preparation, run, lease, terminal,
+repository, worktree, branch, base, and head authority; callers cannot supply or
+override those fields. An eligible unknown task must have a settled terminal and
+an exact clean non-base candidate. Recovery records fresh evidence and enters the
+existing validation pipeline without creating a worker candidate report or
+advancing the report cursor.
+
+Call `explain_task` before recovery. It distinguishes a settled terminal without
+candidate evidence, unresolved restart evidence, unavailable host integration, an
+unrecoverable workspace, and reconciliation already in progress. Only the settled
+clean-candidate reason recommends `reconcile_task`; an unrecoverable workspace
+remains preserved and requires an explicitly approved replacement task.
 
 `cleanup_task` may refuse after it has placed the task in a durable cleanup hold,
 for example when the exact worktree is dirty. Once that safety condition is
@@ -164,6 +179,9 @@ devcrew [--socket PATH] task explain TASK [--format text|json]
 devcrew [--socket PATH] task launch-plan TASK [--format json]
 devcrew [--socket PATH] task operation OPERATION [--format text|json]
 devcrew [--socket PATH] task prepare --input FILE|- [--operation OPERATION] [--format json]
+devcrew [--socket PATH] task reconcile TASK --action validate-clean-candidate [--operation OPERATION] [--format json]
+devcrew [--socket PATH] task handback TASK --action validate-developer-work [--operation OPERATION] [--format json]
+devcrew [--socket PATH] task cleanup TASK [--operation OPERATION] [--format json]
 ```
 
 JSON outputs are stable versioned projections. Human and YAML views are
