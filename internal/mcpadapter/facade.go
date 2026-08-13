@@ -76,6 +76,9 @@ func (facade *Facade) reconcileTask(
 	operationID := string(callContext.OperationID)
 	localInput := localapi.ReconcileTaskInput{TaskHandle: input.TaskHandle, Action: input.Action}
 	result, err := facade.client.ReconcileTask(ctx, operationID, localInput)
+	if err != nil && uncertainMutation(ctx, err) {
+		result, err = facade.reconcileTaskMutation(ctx, operationID, localInput, err)
+	}
 	return nil, result, err
 }
 
