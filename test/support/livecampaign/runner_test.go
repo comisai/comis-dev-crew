@@ -100,3 +100,37 @@ func TestCampaignRunnerRefusesCampaignWithoutObservedOverlap(t *testing.T) {
 		t.Fatalf("expected overlap refusal, got %v", err)
 	}
 }
+
+func TestCampaignRunnerRefusesHandbackCompletedBeforeHumanCheckpoint(t *testing.T) {
+	manifest := validManifest()
+	handbackOperationID := expectedOperationID(manifest, manifest.Tasks[1].TaskHandle, "HandbackTask")
+	fixture := &fixtureExecutor{
+		manifest: manifest,
+		operationUpdatedAt: map[string]int64{
+			handbackOperationID: manifest.StartedAtMs + 1000,
+		},
+	}
+	executor := &campaignExecutor{fixture: fixture}
+	times := []int64{
+		manifest.StartedAtMs + 2500,
+		manifest.StartedAtMs + 7500,
+		manifest.StartedAtMs + 9500,
+		manifest.EndedAtMs,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, err := (CampaignRunner{
+		Executor: executor, PollInterval: time.Millisecond,
+		NowMs: func() int64 {
+			if len(times) == 0 {
+				return manifest.EndedAtMs
+			}
+			value := times[0]
+			times = times[1:]
+			return value
+		},
+	}).Run(ctx, manifest, filepath.Join(t.TempDir(), "evidence"))
+	if err == nil || !strings.Contains(err.Error(), "handback operation after Telegram checkpoint") {
+		t.Fatalf("Run(early handback) error = %v", err)
+	}
+}

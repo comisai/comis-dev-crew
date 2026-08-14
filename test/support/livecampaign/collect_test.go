@@ -20,6 +20,7 @@ type fixtureExecutor struct {
 	currentBaseRevision string
 	systemHealth        []byte
 	explanation         []byte
+	operationUpdatedAt  map[string]int64
 	calls               []Command
 }
 
@@ -54,7 +55,11 @@ func (executor *fixtureExecutor) Run(_ context.Context, command Command) ([]byte
 		}
 		for _, operation := range manifest.Operations {
 			if args == "--socket "+manifest.DevCrew.SocketPath+" task operation "+operation.OperationID+" --format json" {
-				return encode(application.OperationView{SchemaVersion: 1, CapturedAtMs: manifest.EndedAtMs, OperationID: operation.OperationID, Command: operation.Command, SubjectDigest: strings.Repeat("f", 64), Status: domain.OperationCompleted, StateVersion: 20, CreatedAtMs: manifest.StartedAtMs, UpdatedAtMs: manifest.EndedAtMs})
+				updatedAt := manifest.EndedAtMs
+				if executor.operationUpdatedAt != nil && executor.operationUpdatedAt[operation.OperationID] != 0 {
+					updatedAt = executor.operationUpdatedAt[operation.OperationID]
+				}
+				return encode(application.OperationView{SchemaVersion: 1, CapturedAtMs: manifest.EndedAtMs, OperationID: operation.OperationID, Command: operation.Command, SubjectDigest: strings.Repeat("f", 64), Status: domain.OperationCompleted, StateVersion: 20, CreatedAtMs: manifest.StartedAtMs, UpdatedAtMs: updatedAt})
 			}
 		}
 	}
