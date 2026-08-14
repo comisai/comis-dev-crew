@@ -504,6 +504,7 @@ func TestCollectUsesOnlyFixedExecutableAndArgumentCatalog(t *testing.T) {
 		manifest.DevCrew.CLIPath: true, manifest.Comis.NodePath: true,
 		manifest.GitHub.CLIPath: true, manifest.GitHub.GitPath: true,
 	}
+	githubCalls := 0
 	for _, call := range executor.calls {
 		if !allowed[call.Path] {
 			t.Fatalf("unexpected executable %q", call.Path)
@@ -511,5 +512,16 @@ func TestCollectUsesOnlyFixedExecutableAndArgumentCatalog(t *testing.T) {
 		if reflect.DeepEqual(call.Args, []string{"-c"}) {
 			t.Fatalf("shell arguments are forbidden: %#v", call)
 		}
+		if call.Path == manifest.GitHub.CLIPath {
+			githubCalls++
+			if !call.UseGitHubToken {
+				t.Fatalf("GitHub CLI call lacks targeted credential injection: %#v", call)
+			}
+		} else if call.UseGitHubToken {
+			t.Fatalf("non-GitHub command requested the GitHub credential: %#v", call)
+		}
+	}
+	if githubCalls != len(manifest.Tasks)*2 {
+		t.Fatalf("GitHub CLI calls = %d, want %d", githubCalls, len(manifest.Tasks)*2)
 	}
 }

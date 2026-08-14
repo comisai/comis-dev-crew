@@ -35,12 +35,16 @@ func (RealExecutor) Run(ctx context.Context, command Command) ([]byte, error) {
 		}
 	}
 	for name, value := range command.Env {
-		if !validEnvironmentName(name) || strings.ContainsRune(value, 0) {
+		if !allowedCommandEnvironmentOverride(name) || strings.ContainsRune(value, 0) {
 			return nil, errors.New("execute protected command: environment override is invalid")
 		}
 	}
+	environment, err := protectedCommandEnvironment(command.Env, command.UseGitHubToken)
+	if err != nil {
+		return nil, err
+	}
 	process := exec.CommandContext(ctx, command.Path, command.Args...)
-	process.Env = mergedEnvironment(command.Env)
+	process.Env = environment
 	process.Stdin = nil
 	process.Stderr = io.Discard
 	stdout := &boundedBuffer{limit: maximumCommandOutputBytes}
@@ -337,30 +341,39 @@ func pathWithin(root, candidate string) bool {
 	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
-func validEnvironmentName(name string) bool {
-	if name == "" || !(name[0] == '_' || name[0] >= 'A' && name[0] <= 'Z' || name[0] >= 'a' && name[0] <= 'z') {
-		return false
-	}
-	for index := 1; index < len(name); index++ {
-		character := name[index]
-		if character != '_' && !(character >= 'A' && character <= 'Z') &&
-			!(character >= 'a' && character <= 'z') && !(character >= '0' && character <= '9') {
-			return false
-		}
-	}
-	return true
+var inheritedCommandEnvironment = []string{
+	"DBUS_SESSION_BUS_ADDRESS", "HOME", "LANG", "LC_ALL", "PATH", "SSL_CERT_DIR", "SSL_CERT_FILE",
+	"TMPDIR", "TZ", "XDG_RUNTIME_DIR",
 }
 
-func mergedEnvironment(overrides map[string]string) []string {
+var commandEnvironmentOverrides = map[string]struct{}{
+	"COMIS_CONFIG_PATHS": {}, "COMIS_DATA_DIR": {}, "COMIS_SRC": {},
+	"DEVCREW_INSTALL_DIR": {}, "DEVCREW_LINK_DIR": {}, "DEVCREW_VERSION": {},
+	"GO_WANT_LIVE_CAMPAIGN_HELPER": {}, "HOME": {}, "LIVE_CAMPAIGN_TEST_VALUE": {},
+	"NPM_CONFIG_PREFIX": {}, "PATH": {}, "RIG_MODE": {},
+}
+
+func allowedCommandEnvironmentOverride(name string) bool {
+	_, found := commandEnvironmentOverrides[name]
+	return found
+}
+
+func protectedCommandEnvironment(overrides map[string]string, useGitHubToken bool) ([]string, error) {
 	values := make(map[string]string)
-	for _, item := range os.Environ() {
-		name, value, found := strings.Cut(item, "=")
-		if found {
+	for _, name := range inheritedCommandEnvironment {
+		if value, found := os.LookupEnv(name); found {
 			values[name] = value
 		}
 	}
 	for name, value := range overrides {
 		values[name] = value
+	}
+	if useGitHubToken {
+		token := os.Getenv("GH_TOKEN")
+		if token == "" {
+			return nil, errors.New("execute protected command: GitHub credential is unavailable")
+		}
+		values["GH_TOKEN"] = token
 	}
 	names := make([]string, 0, len(values))
 	for name := range values {
@@ -371,5 +384,5 @@ func mergedEnvironment(overrides map[string]string) []string {
 	for _, name := range names {
 		result = append(result, name+"="+values[name])
 	}
-	return result
+	return result, nil
 }

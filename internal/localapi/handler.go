@@ -188,7 +188,9 @@ func (handler *Handler) taskMutationOutcome(
 		return outcomeFromError(operationID, err)
 	}
 	if mutation.Task.Handle == "" || mutation.Task.StateVersion <= 0 || mutation.Operation.ID != operationID ||
-		mutation.Operation.Status != domain.OperationCompleted || mutation.Operation.StateVersion != mutation.Task.StateVersion {
+		mutation.Operation.Command != string(method) || mutation.Operation.Status != domain.OperationCompleted ||
+		mutation.Operation.ResultRef != mutation.Task.Handle || mutation.Operation.StateVersion < 1 ||
+		mutation.Operation.StateVersion > mutation.Task.StateVersion {
 		return rejectedOutcome(operationID, domain.ErrorInternal, false, "mutation outcome is incomplete", "inspect durable service state", nil)
 	}
 	result := TaskMutationResult{

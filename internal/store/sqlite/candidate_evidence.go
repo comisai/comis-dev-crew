@@ -85,6 +85,9 @@ func (store *Store) CommitCandidateEvidence(
 		if readErr != nil {
 			return domain.Task{}, domain.CandidateJudgment{}, readErr
 		}
+		if err := validateReconciledCandidateEvidenceAuthority(ctx, transaction, task, evidence); err != nil {
+			return domain.Task{}, domain.CandidateJudgment{}, err
+		}
 		if existing.judgment.Outcome == domain.CandidateAccepted {
 			if err := validateCandidatePublications(task, evidence, publications); err != nil {
 				return domain.Task{}, domain.CandidateJudgment{}, fmt.Errorf("candidate publication altered replay: %w", application.ErrConflict)
@@ -105,6 +108,9 @@ func (store *Store) CommitCandidateEvidence(
 	}
 	if task.State != domain.TaskValidating {
 		return domain.Task{}, domain.CandidateJudgment{}, fmt.Errorf("commit candidate evidence: task is not validating: %w", application.ErrPrecondition)
+	}
+	if err := validateReconciledCandidateEvidenceAuthority(ctx, transaction, task, evidence); err != nil {
+		return domain.Task{}, domain.CandidateJudgment{}, err
 	}
 	judgment := domain.JudgeCandidate(domain.CandidateJudgeInput{
 		Task: task, Evidence: evidence, RequiredLocalChecks: append([]string(nil), requiredLocalChecks...),

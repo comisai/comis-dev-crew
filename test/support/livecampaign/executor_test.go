@@ -20,6 +20,7 @@ func (executor *fixedOutputExecutor) Run(_ context.Context, command Command) ([]
 }
 
 func TestRealExecutorUsesFixedArgvAndBoundedStdout(t *testing.T) {
+	t.Setenv("GH_TOKEN", "github-token-must-not-leak")
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -32,8 +33,24 @@ func TestRealExecutorUsesFixedArgvAndBoundedStdout(t *testing.T) {
 			"GO_WANT_LIVE_CAMPAIGN_HELPER": "1", "LIVE_CAMPAIGN_TEST_VALUE": "bounded",
 		},
 	})
-	if err != nil || string(output) != "argv=print env=bounded" {
+	if err != nil || string(output) != "argv=print env=bounded github=false" {
 		t.Fatalf("Run(print) = %q, %v", output, err)
+	}
+	output, err = executor.Run(context.Background(), Command{
+		Path: executable,
+		Args: []string{"-test.run=TestLiveCampaignExecutorHelperProcess", "--", "print"},
+		Env: map[string]string{
+			"GO_WANT_LIVE_CAMPAIGN_HELPER": "1", "LIVE_CAMPAIGN_TEST_VALUE": "bounded",
+		},
+		UseGitHubToken: true,
+	})
+	if err != nil || string(output) != "argv=print env=bounded github=true" {
+		t.Fatalf("Run(GitHub print) = %q, %v", output, err)
+	}
+	if _, err := executor.Run(context.Background(), Command{
+		Path: executable, Env: map[string]string{"GH_TOKEN": "forbidden-override"},
+	}); err == nil {
+		t.Fatal("Run(GH_TOKEN override) error = nil")
 	}
 	_, err = executor.Run(context.Background(), Command{
 		Path: executable,
@@ -77,7 +94,7 @@ func TestLiveCampaignExecutorHelperProcess(t *testing.T) {
 	}
 	switch args[separator+1] {
 	case "print":
-		fmt.Printf("argv=print env=%s", os.Getenv("LIVE_CAMPAIGN_TEST_VALUE"))
+		fmt.Printf("argv=print env=%s github=%t", os.Getenv("LIVE_CAMPAIGN_TEST_VALUE"), os.Getenv("GH_TOKEN") != "")
 	case "oversized":
 		fmt.Print(strings.Repeat("x", maximumCommandOutputBytes+1))
 	case "fail":

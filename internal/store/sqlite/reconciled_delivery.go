@@ -89,42 +89,11 @@ func exactDeliveryReconciliation(
 	transaction *sql.Tx,
 	task domain.Task,
 ) (string, bool, error) {
-	const query = `SELECT reconciliation.head_revision
-		FROM task_candidate_reconciliations reconciliation
-		JOIN operations operation ON operation.id = reconciliation.operation_id
-		WHERE reconciliation.task_handle = ? AND reconciliation.action = ?
-		AND reconciliation.repository_id = ? AND reconciliation.base_revision = ?
-		AND reconciliation.cleanliness = ?
-		AND operation.command = ? AND operation.status = ?
-		AND operation.result_ref = reconciliation.task_handle
-		AND operation.state_version = reconciliation.completed_state_version
-		AND reconciliation.started_state_version + 1 = reconciliation.completed_state_version
-		AND reconciliation.completed_state_version <= ?
-		ORDER BY reconciliation.completed_state_version DESC, reconciliation.operation_id`
-	rows, err := transaction.QueryContext(ctx, query,
-		task.Handle, application.ReconcileValidateCleanCandidate,
-		task.RepositoryID, task.BaseRevision, application.WorkspaceClean,
-		commandReconcileTask, domain.OperationCompleted, task.StateVersion,
-	)
-	if err != nil {
-		return "", false, fmt.Errorf("read reconciled candidate delivery origin: %w", err)
+	origin, found, err := readReconciledCandidateOrigin(ctx, transaction, task)
+	if err != nil || !found {
+		return "", found, err
 	}
-	defer func() { _ = rows.Close() }()
-	var head string
-	count := 0
-	for rows.Next() {
-		if err := rows.Scan(&head); err != nil {
-			return "", false, fmt.Errorf("scan reconciled candidate delivery origin: %w", err)
-		}
-		count++
-	}
-	if err := rows.Err(); err != nil {
-		return "", false, fmt.Errorf("read reconciled candidate delivery origin: %w", err)
-	}
-	if count > 1 {
-		return "", false, fmt.Errorf("reconciled candidate delivery origin is ambiguous: %w", application.ErrPrecondition)
-	}
-	return head, count == 1, nil
+	return origin.snapshot.HeadRevision, true, nil
 }
 
 func latestCandidateEvidenceFrom(

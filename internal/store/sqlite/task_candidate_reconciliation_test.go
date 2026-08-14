@@ -44,6 +44,10 @@ func TestTaskCandidateReconciliation_PersistsExactEvidenceWithoutWorkerReport(t 
 		result.Operation.Command != "ReconcileTask" || result.Operation.StateVersion != result.Task.StateVersion {
 		t.Fatalf("CommitTaskCandidateReconciliation() = %#v", result)
 	}
+	validationSnapshot, found, err := store.ReadReconciledCandidateSnapshot(context.Background(), task.Handle)
+	if err != nil || !found || validationSnapshot != mutation.Snapshot {
+		t.Fatalf("ReadReconciledCandidateSnapshot() = %#v, %t, %v", validationSnapshot, found, err)
+	}
 	var reportCount, candidateReportCount int
 	if err := store.db.QueryRow(`SELECT COUNT(*), COUNT(CASE WHEN kind = 'candidate_complete' THEN 1 END)
 		FROM reports WHERE task_handle = ?`, task.Handle).Scan(&reportCount, &candidateReportCount); err != nil {
@@ -71,6 +75,43 @@ func TestTaskCandidateReconciliation_PersistsExactEvidenceWithoutWorkerReport(t 
 	altered.SubjectDigest = strings.Repeat("e", 64)
 	if _, err := reconciliations.CommitTaskCandidateReconciliation(context.Background(), altered); !errors.Is(err, application.ErrConflict) {
 		t.Fatalf("CommitTaskCandidateReconciliation(altered replay) error = %v, want conflict", err)
+	}
+}
+
+func TestTaskCandidateReconciliation_BindsEvidenceAndRefusesDuplicateRecovery(t *testing.T) {
+	store, task, _, now := openUnknownCandidateReconciliationFixture(t, "task-reconcile-bound-evidence")
+	t.Cleanup(func() { _ = store.Close() })
+	authority, err := store.ReadTaskReconciliationAuthority(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutation := candidateReconciliationMutation(authority, now, "operation-reconcile-bound-evidence")
+	result, err := store.CommitTaskCandidateReconciliation(context.Background(), mutation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong := candidateEvidence(t, result.Task, strings.Repeat("c", 40))
+	if _, _, err := store.CommitCandidateEvidence(
+		context.Background(), task.Handle, wrong, []string{"unit"}, []string{"ci/unit"},
+		wrong.Bundle().ProducedAt, candidateEvidencePublications(t, result.Task, wrong),
+	); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("CommitCandidateEvidence(wrong reconciled head) error = %v, want precondition", err)
+	}
+	if _, err := store.db.Exec(`UPDATE tasks SET state = 'unknown', state_version = state_version + 1
+		WHERE handle = ?`, task.Handle); err != nil {
+		t.Fatal(err)
+	}
+	recovery, err := store.ReadTaskRecoveryEvidence(context.Background(), task.Handle)
+	if err != nil || recovery.Kind != application.RecoveryRestartEvidenceUnresolved {
+		t.Fatalf("ReadTaskRecoveryEvidence(existing reconciliation) = %#v, %v", recovery, err)
+	}
+	secondAuthority, err := store.ReadTaskReconciliationAuthority(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := candidateReconciliationMutation(secondAuthority, now.Add(time.Minute), "operation-reconcile-duplicate")
+	if _, err := store.CommitTaskCandidateReconciliation(context.Background(), second); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("CommitTaskCandidateReconciliation(duplicate) error = %v, want precondition", err)
 	}
 }
 

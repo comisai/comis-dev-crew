@@ -48,7 +48,6 @@ jobs:
       DEVCREW_LIVE_RESTORE_ROOT: ${{ inputs.restore_root }}
       DEVCREW_LIVE_FRESH_INSTALL_ROOT: ${{ inputs.fresh_install_root }}
       DEVCREW_LIVE_UPGRADE_ROOT: ${{ inputs.upgrade_root }}
-      GH_TOKEN: ${{ secrets.DEVCREW_LIVE_GH_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -64,7 +63,8 @@ jobs:
           test -n "${DEVCREW_LIVE_RESTORE_ROOT}"
           test -n "${DEVCREW_LIVE_FRESH_INSTALL_ROOT}"
           test -n "${DEVCREW_LIVE_UPGRADE_ROOT}"
-          test -n "${GH_TOKEN}"
       - run: go mod download
       - name: Run real Telegram campaign and closeout
+        env:
+          GH_TOKEN: ${{ secrets.DEVCREW_LIVE_GH_TOKEN }}
         run: make test-live

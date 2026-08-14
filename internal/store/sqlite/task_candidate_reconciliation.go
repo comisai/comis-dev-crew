@@ -95,6 +95,13 @@ func (store *Store) CommitTaskCandidateReconciliation(
 	if err := verifyTaskCandidateReconciliationAuthority(authority, mutation); err != nil {
 		return application.MutationResult{}, err
 	}
+	recoveryHistory, err := candidateRecoveryHistoryExists(ctx, transaction, mutation.TaskHandle)
+	if err != nil {
+		return application.MutationResult{}, err
+	}
+	if recoveryHistory {
+		return application.MutationResult{}, fmt.Errorf("task candidate reconciliation already exists: %w", application.ErrPrecondition)
+	}
 	var activeValidationProcesses int
 	if err := transaction.QueryRowContext(ctx,
 		"SELECT COUNT(*) FROM validation_processes WHERE task_handle = ? AND state NOT IN ('exited', 'absent')",

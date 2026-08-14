@@ -20,9 +20,10 @@ import (
 const maximumCommandOutputBytes = 4 << 20
 
 type Command struct {
-	Path string
-	Args []string
-	Env  map[string]string
+	Path           string
+	Args           []string
+	Env            map[string]string
+	UseGitHubToken bool
 }
 
 type Executor interface {
@@ -309,13 +310,13 @@ func (instance *collector) collectGitAndForge() error {
 		}
 		number := strings.TrimPrefix(detail.Evidence.Delivery.PullRequestID, "github-pr-")
 		var pull GitHubPull
-		if err := instance.runJSON(Command{Path: instance.manifest.GitHub.CLIPath, Args: []string{
+		if err := instance.runJSON(Command{Path: instance.manifest.GitHub.CLIPath, UseGitHubToken: true, Args: []string{
 			"api", "repos/" + instance.manifest.GitHub.Repository + "/pulls/" + number,
 		}}, &pull); err != nil {
 			return fmt.Errorf("collect live closeout: GitHub pull request %s unavailable: %w", number, err)
 		}
 		var checks GitHubChecks
-		if err := instance.runJSON(Command{Path: instance.manifest.GitHub.CLIPath, Args: []string{
+		if err := instance.runJSON(Command{Path: instance.manifest.GitHub.CLIPath, UseGitHubToken: true, Args: []string{
 			"api", "-H", "Accept: application/vnd.github+json",
 			"repos/" + instance.manifest.GitHub.Repository + "/commits/" + detail.Evidence.Candidate.HeadRevision + "/check-runs",
 		}}, &checks); err != nil {

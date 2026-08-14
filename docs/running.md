@@ -114,8 +114,12 @@ they never turn that inconsistent posture into `not_started`.
 For a worker-reported candidate, the final authenticated candidate report closes
 delivery after both evidence publications are acknowledged. For a reconciled
 candidate, no worker report is invented: acknowledgement of both server-owned
-publications atomically closes the task as `delivered`. Cleanup accepts exactly
-one of those origins and refuses missing or ambiguous evidence.
+publications atomically closes the task as `delivered`. A restart preserves that
+candidate in `candidate_complete` only when the completed reconciliation, accepted
+sealed evidence, and exact pending outbox remain consistent, then resumes the same
+publications. Incomplete recovery history becomes unresolved and cannot authorize a
+second reconciliation. Cleanup accepts exactly one origin and refuses missing or
+ambiguous evidence.
 
 `task explain` reads the latest durable candidate judgment for a failed task and
 distinguishes a required local-validation failure from a required forge-check
@@ -154,8 +158,10 @@ match, while optional managed-run references grant no task authority. Preparatio
 returns its visible task outcome separately from the private schema-validated
 `comis.managedRun` result metadata. Only retryable uncertain mutations trigger one
 bounded operation reconciliation and, after a completed durable outcome, one exact
-idempotent replay. The command defaults to a separate `mcp.sock` and validates the
-out-of-band service instance against every private call context.
+idempotent replay. A replay may project a monotonically newer task state only when
+the completed operation's durable result reference still names that task. The
+command defaults to a separate `mcp.sock` and validates the out-of-band service
+instance against every private call context.
 
 `reconcile_task` accepts only an opaque task handle and
 `action: "validate-clean-candidate"`. It is a non-read-only, idempotent,
@@ -164,9 +170,11 @@ repository, worktree, branch, base, and head authority; callers cannot supply or
 override those fields. An eligible unknown task must have a settled terminal and
 an exact clean non-base candidate. Recovery records fresh evidence and enters the
 existing validation pipeline without creating a worker candidate report or
-advancing the report cursor. Task detail and explanation keep that reconciliation
-operation beside the judged candidate after validation and delivery, allowing a
-content-free closeout to prove whether the candidate came from recovery.
+advancing the report cursor. Validation and pull-request delivery must match the
+persisted recovery branch and head; a changed worktree is refused before validation
+or forge mutation. Task detail and explanation keep that reconciliation operation
+beside the judged candidate after validation and delivery, allowing a content-free
+closeout to prove whether the candidate came from recovery.
 
 Call `explain_task` before recovery. It distinguishes a settled terminal without
 candidate evidence, unresolved restart evidence, unavailable host integration, an
@@ -226,6 +234,9 @@ an isolated Comis/DevCrew deployment, one real human Telegram sender, repository
 scoped GitHub read/push authority without merge permission, and permission to
 restart only the three isolated systemd units named in the manifest. The Telegram
 bot credential remains in Comis secret management; it is never a workflow input.
+The live helper starts children with a small environment allowlist. `GH_TOKEN` is
+injected only into the two fixed GitHub CLI truth reads and is absent from Git,
+workers, installers, systemd commands, service probes, and local CLIs.
 
 Copy `test/live/manifest.example.json` outside the repository, replace every
 placeholder with current content-free identities, set mode `0600`, and keep the
