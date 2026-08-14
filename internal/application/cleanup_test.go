@@ -22,10 +22,11 @@ func TestCleanupCoordinator_ReleasesHostThenRemovesExactDeliveredWorkspace(t *te
 		HeadRevision: head, Checks: []ForgeCheckTruth{{Name: "ci/unit", Conclusion: domain.CheckPassed}},
 	}}
 	releaser := &cleanupReleaseFixture{}
+	attachments := &cleanupAttachmentReleaseFixture{}
 	remover := &cleanupRemovalFixture{}
 	coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
 		Store: store, Workspaces: workspace, Forge: forge, Releaser: releaser,
-		Remover: remover, Clock: func() time.Time { return now },
+		Attachments: attachments, Remover: remover, Clock: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatalf("NewCleanupCoordinator() error = %v", err)
@@ -38,9 +39,9 @@ func TestCleanupCoordinator_ReleasesHostThenRemovesExactDeliveredWorkspace(t *te
 	}
 	if result.Task.State != domain.TaskCleaned || store.beginCalls != 1 || store.releaseCalls != 1 ||
 		store.authorizeCalls != 1 || store.completeCalls != 1 || workspace.calls != 2 || forge.calls != 2 ||
-		releaser.calls != 1 || remover.calls != 1 {
-		t.Fatalf("cleanup flow = result %#v store %#v workspace=%d forge=%d release=%d remove=%d",
-			result, store, workspace.calls, forge.calls, releaser.calls, remover.calls)
+		releaser.calls != 1 || attachments.calls != 1 || remover.calls != 1 {
+		t.Fatalf("cleanup flow = result %#v store %#v workspace=%d forge=%d release=%d attachments=%d remove=%d",
+			result, store, workspace.calls, forge.calls, releaser.calls, attachments.calls, remover.calls)
 	}
 	wantRelease := ManagedRunReleaseRequest{
 		OperationID: record.ReleaseOperationID, ManagedRunID: record.ManagedRunID,
@@ -50,9 +51,43 @@ func TestCleanupCoordinator_ReleasesHostThenRemovesExactDeliveredWorkspace(t *te
 	if !reflect.DeepEqual(releaser.request, wantRelease) {
 		t.Fatalf("release request = %#v, want %#v", releaser.request, wantRelease)
 	}
+	if attachments.taskHandle != record.TaskHandle {
+		t.Fatalf("attachment release task = %q, want %q", attachments.taskHandle, record.TaskHandle)
+	}
 	if remover.request.HeadRevision != head || remover.request.WorktreePath != record.WorktreePath ||
 		remover.request.PreparationOperationID != record.PreparationOperationID {
 		t.Fatalf("removal request = %#v", remover.request)
+	}
+}
+
+func TestCleanupCoordinator_StopsBeforeHostReleaseRecordWhenAttachmentReleaseFails(t *testing.T) {
+	record := cleanupFixtureRecord(strings.Repeat("b", 40))
+	store := &cleanupStoreFixture{record: record}
+	attachments := &cleanupAttachmentReleaseFixture{err: errors.New("attachment unavailable")}
+	coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
+		Store: store,
+		Workspaces: &cleanupWorkspaceFixture{snapshot: cleanupFixtureSnapshot(record, record.HeadRevision)},
+		Forge: &cleanupForgeFixture{truth: PullRequestDeliveryTruth{
+			RepositoryID: record.RepositoryID, PullRequestID: record.PullRequestID,
+			HeadRevision: record.HeadRevision, Checks: []ForgeCheckTruth{{Name: "ci/unit", Conclusion: domain.CheckPassed}},
+		}},
+		Releaser: &cleanupReleaseFixture{}, Attachments: attachments, Remover: &cleanupRemovalFixture{},
+		Clock: func() time.Time { return record.ReleasedAt },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, cleanupErr := coordinator.CleanupTask(context.Background(), CleanupTaskCommand{
+		OperationID: record.OperationID, TaskHandle: record.TaskHandle,
+	})
+	var failure *domain.Failure
+	if !errors.As(cleanupErr, &failure) || failure.Code != domain.ErrorUnavailable || !failure.Retryable ||
+		failure.Message != "runtime attachment release failed" ||
+		failure.Hint != "inspect the exact task runtime attachment before retrying cleanup" {
+		t.Fatalf("CleanupTask(attachment release) error = %#v", cleanupErr)
+	}
+	if attachments.calls != 1 || store.releaseCalls != 0 || store.authorizeCalls != 0 || store.completeCalls != 0 {
+		t.Fatalf("attachment failure advanced cleanup: attachments=%d store=%#v", attachments.calls, store)
 	}
 }
 
@@ -552,6 +587,18 @@ type cleanupReleaseFixture struct {
 	calls   int
 	receipt *ManagedRunReleaseReceipt
 	err     error
+}
+
+type cleanupAttachmentReleaseFixture struct {
+	taskHandle string
+	calls      int
+	err        error
+}
+
+func (release *cleanupAttachmentReleaseFixture) ReleaseRuntimeAttachment(_ context.Context, taskHandle string) error {
+	release.calls++
+	release.taskHandle = taskHandle
+	return release.err
 }
 
 func (release *cleanupReleaseFixture) ReleaseManagedRun(_ context.Context, request ManagedRunReleaseRequest) (ManagedRunReleaseReceipt, error) {

@@ -341,6 +341,77 @@ func TestRuntimeAttachmentCoordinator_SkipsCleanedTaskAfterWorkspaceRemoval(t *t
 	}
 }
 
+func TestRuntimeAttachmentCoordinator_ReleasesOneLiveSocketWithoutStoppingSupervisor(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := sqlite.Open(context.Background(), filepath.Join(root, "state", "devcrew.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+		RuntimeRoot: runtimeRoot, Store: store, Clock: time.Now,
+		NewCredential:           func() (string, error) { return "release-credential-0123456789abcdef", nil },
+		NewAttentionOperationID: runtimeAttentionOperationID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	consumed := false
+	go func() { done <- coordinator.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		if !consumed {
+			if err := <-done; err != nil {
+				t.Errorf("runtime coordinator stop error = %v", err)
+			}
+		}
+	})
+	firstRequest := runtimeAttachmentRequest(t, workspace, "task-runtime-release-0001")
+	first, err := coordinator.PrepareRuntimeAttachment(context.Background(), firstRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondRequest := runtimeAttachmentRequest(t, workspace, "task-runtime-release-0002")
+	secondRequest.OperationID = "operation-runtime-release-0002"
+	second, err := coordinator.PrepareRuntimeAttachment(context.Background(), secondRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinator.ReleaseRuntimeAttachment(context.Background(), firstRequest.TaskHandle); err != nil {
+		t.Fatalf("ReleaseRuntimeAttachment() error = %v", err)
+	}
+	if err := coordinator.ReleaseRuntimeAttachment(context.Background(), firstRequest.TaskHandle); err != nil {
+		t.Fatalf("ReleaseRuntimeAttachment(replay) error = %v", err)
+	}
+	if _, err := os.Lstat(first.SourcePath); !os.IsNotExist(err) {
+		t.Fatalf("released socket error = %v, want not exist", err)
+	}
+	if _, err := os.Lstat(filepath.Dir(first.SourcePath)); !os.IsNotExist(err) {
+		t.Fatalf("released runtime directory error = %v, want not exist", err)
+	}
+	client, err := reporter.NewRuntimeClient(second.SourcePath, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Brief(context.Background()); err != nil {
+		t.Fatalf("retained sibling brief error = %v", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	select {
+	case runErr := <-done:
+		consumed = true
+		t.Fatalf("runtime coordinator stopped after exact release: %v", runErr)
+	default:
+	}
+}
+
 func TestRuntimeAttachmentCoordinator_RejectsIntermediateSymlinkWithoutCreatingOutside(t *testing.T) {
 	root := shortTempDir(t)
 	outside := filepath.Join(root, "outside")
