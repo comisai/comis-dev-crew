@@ -33,7 +33,8 @@ The owner-private manifest records exact Comis and DevCrew commits, requires the
 compiled protocol identity, and pins the Comis CLI plus all four DevCrew product
 artifacts by canonical path, SHA-256, and version. Runtime validation re-hashes
 those installed files and checks their fixed `--version` output before any
-protected action.
+protected action. It also pins the complete `systemctl cat` output for each of
+the three isolated units, including active drop-ins.
 Comis system-health and session-explanation artifacts are structurally validated
 before they can contribute a passing verdict: source coverage, campaign activity,
 hard-degraded posture, agent identity, and the exact origin Telegram conversation

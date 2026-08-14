@@ -229,7 +229,9 @@ protocol ID and digest, and the SHA-256 plus reported version of the Comis CLI
 and all four DevCrew executables. Artifact paths must select canonical installed
 files rather than `PATH` symlinks. Runtime validation re-hashes each file and
 executes its fixed `--version` command; it refuses digest, version, or protocol
-drift before the campaign starts. The manifest must describe
+drift before the campaign starts. The three isolated systemd units are likewise
+pinned to the SHA-256 of `systemctl cat <unit>` so drop-ins and unit-definition
+changes cannot enter an accepted run unnoticed. The manifest must describe
 exactly two ship lanes:
 one Codex/Claude profile per lane, exactly one recovered candidate, one handback,
 and one cleanup operation per task. Its eleven opaque `e0cp-*` markers are sent by

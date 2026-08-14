@@ -118,6 +118,18 @@ func validateRuntime(ctx context.Context, manifest Manifest, executor Executor) 
 			return fmt.Errorf("validate protected runtime: %s: %w", name, err)
 		}
 	}
+	for _, unit := range []struct {
+		name   string
+		digest string
+	}{
+		{name: manifest.Services.MCPUnit, digest: manifest.Services.MCPUnitSHA256},
+		{name: manifest.Services.DevCrewUnit, digest: manifest.Services.DevCrewUnitSHA256},
+		{name: manifest.Services.ComisUnit, digest: manifest.Services.ComisUnitSHA256},
+	} {
+		if err := validatePinnedServiceUnit(ctx, manifest.Services.SystemctlPath, unit.name, unit.digest, executor); err != nil {
+			return fmt.Errorf("validate protected runtime: service unit %s: %w", unit.name, err)
+		}
+	}
 	for name, path := range map[string]string{
 		"Comis CLI script":        manifest.Comis.CLIScriptPath,
 		"secret residency script": manifest.Comis.SecretResidencyScript,
@@ -151,6 +163,23 @@ func validateRuntime(ctx context.Context, manifest Manifest, executor Executor) 
 	}
 	if os.Getenv("GH_TOKEN") == "" {
 		return errors.New("validate protected runtime: GH_TOKEN credential prerequisite is unavailable")
+	}
+	return nil
+}
+
+func validatePinnedServiceUnit(
+	ctx context.Context,
+	systemctlPath string,
+	unit string,
+	digest string,
+	executor Executor,
+) error {
+	output, err := executor.Run(ctx, Command{Path: systemctlPath, Args: []string{"cat", unit}})
+	if err != nil || len(output) == 0 || len(output) > maximumCommandOutputBytes {
+		return errors.New("read pinned service unit definition")
+	}
+	if sha256Hex(output) != digest {
+		return errors.New("service unit definition SHA-256 differs from the protected manifest")
 	}
 	return nil
 }

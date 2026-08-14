@@ -63,8 +63,11 @@
     "systemctlPath": "/usr/bin/systemctl",
     "isolationLabel": "e0-live",
     "mcpUnit": "devcrew-e0-live-mcp.service",
+    "mcpUnitSha256": "0000000000000000000000000000000000000000000000000000000000000000",
     "devcrewUnit": "devcrew-e0-live.service",
-    "comisUnit": "comis-e0-live.service"
+    "devcrewUnitSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "comisUnit": "comis-e0-live.service",
+    "comisUnitSha256": "0000000000000000000000000000000000000000000000000000000000000000"
   },
   "tasks": [
     {"taskHandle": "replace-recovered-task", "workerProfileId": "codex-reviewed", "managedRunId": "replace-recovered-run", "expectReconciliation": true},

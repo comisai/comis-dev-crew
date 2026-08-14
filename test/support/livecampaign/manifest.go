@@ -123,11 +123,14 @@ type GitHubTarget struct {
 }
 
 type ServiceTargets struct {
-	SystemctlPath  string `json:"systemctlPath"`
-	IsolationLabel string `json:"isolationLabel"`
-	MCPUnit        string `json:"mcpUnit"`
-	DevCrewUnit    string `json:"devcrewUnit"`
-	ComisUnit      string `json:"comisUnit"`
+	SystemctlPath     string `json:"systemctlPath"`
+	IsolationLabel    string `json:"isolationLabel"`
+	MCPUnit           string `json:"mcpUnit"`
+	MCPUnitSHA256     string `json:"mcpUnitSha256"`
+	DevCrewUnit       string `json:"devcrewUnit"`
+	DevCrewUnitSHA256 string `json:"devcrewUnitSha256"`
+	ComisUnit         string `json:"comisUnit"`
+	ComisUnitSHA256   string `json:"comisUnitSha256"`
 }
 
 type TaskExpectation struct {
@@ -394,6 +397,15 @@ func (manifest Manifest) validateServices() error {
 			return errors.New("campaign service units must be distinct")
 		}
 		seen[unit] = struct{}{}
+	}
+	for _, digest := range []string{
+		manifest.Services.MCPUnitSHA256,
+		manifest.Services.DevCrewUnitSHA256,
+		manifest.Services.ComisUnitSHA256,
+	} {
+		if !lowerHexDigestPattern.MatchString(digest) {
+			return errors.New("service unit definition SHA-256 pins must be lowercase 64-character digests")
+		}
 	}
 	return nil
 }

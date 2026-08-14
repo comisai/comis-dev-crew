@@ -132,19 +132,30 @@ func TestValidateRuntimeRejectsNonSocketAndNonPrivateDataRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := validateRuntime(context.Background(), manifest, versionFixtureExecutor{
-		comis: "1.0.61\n",
+		manifest: manifest, comis: "1.0.61\n",
 	}); err == nil || !strings.Contains(err.Error(), "Unix socket") {
 		t.Fatalf("expected non-socket refusal, got %v", err)
 	}
 }
 
 type versionFixtureExecutor struct {
-	comis string
+	manifest Manifest
+	comis    string
 }
 
 func (executor versionFixtureExecutor) Run(ctx context.Context, command Command) ([]byte, error) {
 	if len(command.Args) == 2 && command.Args[1] == "--version" {
 		return []byte(executor.comis), nil
+	}
+	if len(command.Args) == 2 && command.Args[0] == "cat" {
+		switch command.Args[1] {
+		case executor.manifest.Services.MCPUnit:
+			return []byte("mcp unit\n"), nil
+		case executor.manifest.Services.DevCrewUnit:
+			return []byte("devcrew unit\n"), nil
+		case executor.manifest.Services.ComisUnit:
+			return []byte("comis unit\n"), nil
+		}
 	}
 	name := filepath.Base(command.Path)
 	return []byte(name + " dev\n"), nil
