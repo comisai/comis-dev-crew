@@ -272,6 +272,11 @@ are complete. Each session explanation must resolve to the manifest agent and
 origin Telegram conversation, carry a non-failed outcome, bounded tool evidence,
 and prove either trajectory or lossless-context coverage. The original validated
 JSON is retained so richer additive report fields are not discarded.
+Across the explanation set, closeout also requires the complete eight-tool E0
+workflow: two preparations and launch-plan reads, diagnostic list/get/explain
+reads, reconciliation, handback, two completed cleanups, and at least two
+precondition-classified cleanup refusals. Missing tool evidence cannot be replaced
+by a final clean task projection.
 
 ## Worker reporter contract
 

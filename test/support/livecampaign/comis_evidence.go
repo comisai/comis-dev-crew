@@ -93,10 +93,11 @@ type comisIncidentReport struct {
 	} `json:"timing"`
 	ToolStats map[string]comisToolCount `json:"toolStats"`
 	Failures  []struct {
-		Seq         int    `json:"seq"`
-		ToolName    string `json:"toolName"`
-		ErrorKind   string `json:"errorKind"`
-		FailureCode string `json:"failureCode"`
+		Seq          int    `json:"seq"`
+		ToolName     string `json:"toolName"`
+		ErrorKind    string `json:"errorKind"`
+		FailureCode  string `json:"failureCode"`
+		ErrorPreview string `json:"errorPreview"`
 	} `json:"failures"`
 	BreakerTimeline    []json.RawMessage `json:"breakerTimeline"`
 	Offloads           []json.RawMessage `json:"offloads"`
@@ -121,6 +122,17 @@ type comisIncidentReport struct {
 			ToolResults int  `json:"toolResults"`
 		} `json:"losslessContext"`
 	} `json:"coverage"`
+}
+
+var requiredCampaignToolCounts = map[string]comisToolCount{
+	"prepare_task":    {OK: 2},
+	"list_tasks":      {OK: 1},
+	"get_task":        {OK: 2},
+	"explain_task":    {OK: 1},
+	"get_launch_plan": {OK: 2},
+	"reconcile_task":  {OK: 1},
+	"handback_task":   {OK: 1},
+	"cleanup_task":    {OK: 2, Failed: 2},
 }
 
 func verifyComisSystemHealth(manifest Manifest, report comisSystemHealthReport) error {
@@ -182,6 +194,37 @@ func verifyComisIncident(manifest Manifest, report comisIncidentReport) error {
 		report.Coverage.LosslessContext.ToolResults > 0
 	if !trajectoryCovered && !losslessCovered {
 		return errors.New("session explanation has no authoritative trajectory or lossless tool evidence")
+	}
+	return nil
+}
+
+func verifyComisCampaignTools(reports []comisIncidentReport) error {
+	observed := make(map[string]comisToolCount, len(requiredCampaignToolCounts))
+	cleanupPreconditions := 0
+	for _, report := range reports {
+		for name, counts := range report.ToolStats {
+			if counts.OK < 0 || counts.Failed < 0 {
+				return errors.New("required Comis tool evidence contains a negative count")
+			}
+			total := observed[name]
+			total.OK += counts.OK
+			total.Failed += counts.Failed
+			observed[name] = total
+		}
+		for _, failure := range report.Failures {
+			if failure.ToolName == "cleanup_task" && failure.FailureCode == "precondition" {
+				cleanupPreconditions++
+			}
+		}
+	}
+	for name, minimum := range requiredCampaignToolCounts {
+		counts := observed[name]
+		if counts.OK < minimum.OK || counts.Failed < minimum.Failed {
+			return errors.New("required Comis tool evidence is incomplete")
+		}
+	}
+	if cleanupPreconditions < 2 {
+		return errors.New("required Comis cleanup refusal evidence is incomplete")
 	}
 	return nil
 }

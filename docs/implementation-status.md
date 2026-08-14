@@ -29,6 +29,10 @@ Comis system-health and session-explanation artifacts are structurally validated
 before they can contribute a passing verdict: source coverage, campaign activity,
 hard-degraded posture, agent identity, and the exact origin Telegram conversation
 must be present rather than inferred from an arbitrary JSON object.
+The explanation set must also account for the closed eight-tool campaign catalog,
+including two successful task preparations and cleanups, the reconciliation and
+handback mutations, diagnostic reads, and two precondition-classified cleanup
+refusals.
 
 ## Foundation
 

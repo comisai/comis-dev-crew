@@ -168,13 +168,22 @@ func validSystemHealth(manifest Manifest) comisSystemHealthReport {
 func validIncident(manifest Manifest) comisIncidentReport {
 	report := comisIncidentReport{
 		SchemaVersion: 1, SessionKey: manifest.Comis.ExplainRefs[0], TraceID: "trace-live-0001",
-		AgentID: manifest.Comis.AgentID, ToolStats: map[string]comisToolCount{"reconcile_task": {OK: 1}},
+		AgentID: manifest.Comis.AgentID,
+		ToolStats: map[string]comisToolCount{
+			"prepare_task": {OK: 2}, "list_tasks": {OK: 1}, "get_task": {OK: 2},
+			"explain_task": {OK: 1}, "get_launch_plan": {OK: 2}, "reconcile_task": {OK: 1},
+			"handback_task": {OK: 1}, "cleanup_task": {OK: 2, Failed: 2},
+		},
 		Failures: []struct {
-			Seq         int    `json:"seq"`
-			ToolName    string `json:"toolName"`
-			ErrorKind   string `json:"errorKind"`
-			FailureCode string `json:"failureCode"`
-		}{},
+			Seq          int    `json:"seq"`
+			ToolName     string `json:"toolName"`
+			ErrorKind    string `json:"errorKind"`
+			FailureCode  string `json:"failureCode"`
+			ErrorPreview string `json:"errorPreview"`
+		}{
+			{Seq: 1, ToolName: "cleanup_task", ErrorKind: "precondition", FailureCode: "precondition", ErrorPreview: "cleanup refused"},
+			{Seq: 2, ToolName: "cleanup_task", ErrorKind: "precondition", FailureCode: "precondition", ErrorPreview: "cleanup refused"},
+		},
 		BreakerTimeline: []json.RawMessage{}, Offloads: []json.RawMessage{}, Summary: "Campaign completed.",
 		LikelyRootCause: json.RawMessage("null"), SuggestedNextSteps: []string{}, Truncations: []json.RawMessage{},
 	}
@@ -350,6 +359,23 @@ func TestCollectRefusesComisReportsWithoutRequiredCampaignToolOutcomes(t *testin
 	)
 	if collectErr == nil || !strings.Contains(collectErr.Error(), "required Comis tool evidence is incomplete") {
 		t.Fatalf("Collect() error = %v, want incomplete campaign tool evidence", collectErr)
+	}
+}
+
+func TestCollectRefusesCleanupCountsWithoutPreconditionFailureEvidence(t *testing.T) {
+	manifest := validManifest()
+	explanation := validIncident(manifest)
+	explanation.Failures = explanation.Failures[:0]
+	encoded, err := json.Marshal(explanation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := &fixtureExecutor{manifest: manifest, explanation: encoded}
+	_, collectErr := Collect(
+		context.Background(), manifest, filepath.Join(t.TempDir(), "evidence"), executor, manifest.EndedAtMs,
+	)
+	if collectErr == nil || !strings.Contains(collectErr.Error(), "cleanup refusal evidence is incomplete") {
+		t.Fatalf("Collect() error = %v, want cleanup refusal evidence", collectErr)
 	}
 }
 

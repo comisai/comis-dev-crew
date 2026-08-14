@@ -217,6 +217,7 @@ func (instance *collector) collectTelegramAndComis() error {
 	if err := instance.writeRawJSON("comis-system-health.json", healthJSON); err != nil {
 		return err
 	}
+	explanations := make([]comisIncidentReport, 0, len(instance.manifest.Comis.ExplainRefs))
 	for index, reference := range instance.manifest.Comis.ExplainRefs {
 		var explanationJSON json.RawMessage
 		if err := instance.runJSON(Command{Path: instance.manifest.Comis.NodePath, Args: []string{
@@ -234,9 +235,14 @@ func (instance *collector) collectTelegramAndComis() error {
 		if err := instance.writeRawJSON(fmt.Sprintf("comis-explain-%02d.json", index+1), explanationJSON); err != nil {
 			return err
 		}
+		explanations = append(explanations, explanation)
+	}
+	if err := verifyComisCampaignTools(explanations); err != nil {
+		return fmt.Errorf("collect live closeout: %w", err)
 	}
 	instance.pass("real_human_telegram_checkpoints")
 	instance.pass("comis_observability")
+	instance.pass("comis_campaign_tool_outcomes")
 	return nil
 }
 
