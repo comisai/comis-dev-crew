@@ -57,6 +57,35 @@ func TestCandidateSupervisor_BuildsShipEvidenceFromChecksAndRereadForgeTruth(t *
 	}
 }
 
+func TestCandidateSupervisor_PreservesDirtyBaseCandidateWithoutForgeMutation(t *testing.T) {
+	fixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	fixture.snapshot.HeadRevision = fixture.task.BaseRevision
+	fixture.snapshot.Cleanliness = devgit.CandidateDirty
+	fixture.git.snapshots = []devgit.CandidateSnapshot{fixture.snapshot, fixture.snapshot}
+	fixture.runner.receipt.HeadRevision = fixture.task.BaseRevision
+	fixture.pullRequests.err = errors.New("forge must not receive an invalid candidate")
+	supervisor, err := newCandidateSupervisor(fixture.config())
+	if err != nil {
+		t.Fatalf("newCandidateSupervisor() error = %v", err)
+	}
+	updated, judgment, err := supervisor.ValidateTask(context.Background(), fixture.task.Handle)
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if judgment.Outcome != domain.CandidateUnknown || judgment.Reason != domain.CandidateWorktreeUnverified ||
+		updated.State != domain.TaskValidating {
+		t.Fatalf("ValidateTask() = %#v, %#v", updated, judgment)
+	}
+	if fixture.runner.calls != 1 || fixture.pullRequests.calls != 0 || fixture.store.evidence == nil {
+		t.Fatalf("invalid candidate effects: validation=%d forge=%d evidence=%t",
+			fixture.runner.calls, fixture.pullRequests.calls, fixture.store.evidence != nil)
+	}
+	if bundle := fixture.store.evidence.Bundle(); bundle.WorktreeCleanliness != domain.WorktreeDirty ||
+		bundle.HeadRevision != fixture.task.BaseRevision || bundle.ForgeEvidence != nil {
+		t.Fatalf("invalid candidate evidence = %#v", bundle)
+	}
+}
+
 func TestCandidateSupervisor_BuildsScoutEvidenceOnlyFromReviewedArtifactPath(t *testing.T) {
 	fixture := newCandidateSupervisorFixture(t, domain.ShapeScout)
 	supervisor, err := newCandidateSupervisor(fixture.config())
