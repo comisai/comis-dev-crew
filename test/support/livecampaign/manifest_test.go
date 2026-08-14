@@ -33,6 +33,7 @@ func validManifest() Manifest {
 		},
 		DevCrew: DevCrewTarget{
 			CLIPath: "/opt/devcrew/bin/devcrew", CodeRoot: "/opt/devcrew", SocketPath: "/run/devcrew-e0/service.sock",
+			DatabasePath: "/var/lib/devcrew-e0/state.db", WorktreeRoot: "/var/lib/devcrew-e0/worktrees",
 			RepositoryID: "comis-repository",
 		},
 		Comis: ComisTarget{
