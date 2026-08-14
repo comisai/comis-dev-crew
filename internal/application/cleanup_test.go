@@ -218,6 +218,35 @@ func TestCleanupCoordinator_ReportsStaleForgeTruthBeforeHostRelease(t *testing.T
 	}
 }
 
+func TestCleanupCoordinator_ClassifiesForgeIdentityDriftBeforeHostRelease(t *testing.T) {
+	record := cleanupFixtureRecord(strings.Repeat("b", 40))
+	releaser := &cleanupReleaseFixture{}
+	remover := &cleanupRemovalFixture{}
+	coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
+		Store:      &cleanupStoreFixture{record: record},
+		Workspaces: &cleanupWorkspaceFixture{snapshot: cleanupFixtureSnapshot(record, record.HeadRevision)},
+		Forge:      &cleanupForgeFixture{err: ErrCleanupStaleForgeTruth},
+		Releaser:   releaser,
+		Remover:    remover,
+		Clock:      func() time.Time { return record.ReleasedAt },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, cleanupErr := coordinator.CleanupTask(context.Background(), CleanupTaskCommand{
+		OperationID: record.OperationID, TaskHandle: record.TaskHandle,
+	})
+	var failure *domain.Failure
+	if !errors.As(cleanupErr, &failure) || failure.Code != domain.ErrorPrecondition || !failure.Retryable ||
+		failure.Message != CleanupStaleForgeTruthMessage ||
+		failure.Hint != "refresh the exact pull request head and required checks, then retry cleanup" {
+		t.Fatalf("CleanupTask(forge identity drift) error = %v, want stale-forge precondition", cleanupErr)
+	}
+	if releaser.calls != 0 || remover.calls != 0 {
+		t.Fatalf("unsafe side effects: release=%d remove=%d", releaser.calls, remover.calls)
+	}
+}
+
 func TestCleanupCoordinator_ResumesHeldCleanupWithFreshCallerOperation(t *testing.T) {
 	now := time.Date(2026, time.August, 11, 20, 0, 0, 0, time.UTC)
 	head := strings.Repeat("b", 40)
