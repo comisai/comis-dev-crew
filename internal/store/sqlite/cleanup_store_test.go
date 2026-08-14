@@ -215,9 +215,9 @@ func TestTaskCleanupStore_RefusesOpenHoldUnsettledRuntimeAndUndeliveredEvidence(
                     task_handle, local_report_id, subject_digest, schema_version, brief_revision,
                     brief_revision_hash, kind, external_key, summary, details, state_version, accepted_at)
                 VALUES (?, 'decision-cleanup-open', ?, 1, ?, ?, 'decision', 'decision-open',
-                    'A bounded decision is required.', '', 999, ?)`, task.Handle, strings.Repeat("f", 64),
+					'A bounded decision is required.', '', 999, ?)`, task.Handle, strings.Repeat("f", 64),
 				task.BriefRevision, task.BriefRevisionHash, formatTime(task.UpdatedAt))
-		}},
+		}, want: application.ErrCleanupOpenDecision},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store, task, _ := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
