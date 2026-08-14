@@ -388,7 +388,8 @@ report lifecycle. Fixture composition requires explicit command flags and is use
 only with deterministic reviewed inputs. Candidate
 completion advances only to `validating`; it never claims validation, delivery, or
 terminal success. Dirty or base-equal candidate snapshots retain an unknown
-judgment and never reach forge or artifact delivery.
+judgment and never reach forge or artifact delivery. An unchanged dirty snapshot
+reuses that judgment without spawning another validation process.
 
 ## Design record
 

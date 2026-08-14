@@ -110,6 +110,8 @@ permanent failures remain visible.
 A dirty worktree or a head that still equals the pinned base is not eligible for
 delivery. The supervisor records its local evidence as unknown without calling
 the forge or artifact delivery adapter, and remains available for other tasks.
+While that head and cleanliness are unchanged, later polls reuse the sealed
+unknown judgment instead of rerunning validation processes.
 
 Diagnostic reads report validation as `unknown` when a task is already
 `validating` but no durable judgment or active validation process can be found;

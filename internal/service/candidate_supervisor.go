@@ -22,6 +22,7 @@ type candidateEvidenceStore interface {
 	GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error)
 	ListAcceptedReports(context.Context, string) ([]domain.AcceptedReport, error)
 	ReadReconciledCandidateSnapshot(context.Context, string) (application.WorkspaceSnapshot, bool, error)
+	LatestCandidateEvidence(context.Context, string) (*domain.SealedDeliveryEvidence, domain.CandidateJudgment, error)
 	CommitCandidateEvidence(context.Context, string, *domain.SealedDeliveryEvidence, []string, []string, time.Time, []application.ComisEvidencePublication) (domain.Task, domain.CandidateJudgment, error)
 }
 
@@ -171,6 +172,13 @@ func (supervisor *candidateSupervisor) ValidateTask(
 	if err != nil {
 		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: Git evidence is unavailable")
 	}
+	latestEvidence, latestJudgment, latestErr := supervisor.config.Store.LatestCandidateEvidence(ctx, taskHandle)
+	if latestErr == nil && unchangedInvalidCandidate(task, snapshot, latestEvidence, latestJudgment) {
+		return task, latestJudgment, nil
+	}
+	if latestErr != nil && !errors.Is(latestErr, application.ErrNotFound) {
+		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: prior evidence is unavailable")
+	}
 	if reconciled && !candidateMatchesReconciledSnapshot(task, snapshot, reconciledSnapshot) {
 		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: Git evidence differs from reconciliation authority")
 	}
@@ -219,6 +227,21 @@ func (supervisor *candidateSupervisor) ValidateTask(
 	return supervisor.config.Store.CommitCandidateEvidence(
 		ctx, taskHandle, sealed, requiredLocal, requiredForge, producedAt, publications,
 	)
+}
+
+func unchangedInvalidCandidate(
+	task domain.Task,
+	snapshot devgit.CandidateSnapshot,
+	evidence *domain.SealedDeliveryEvidence,
+	judgment domain.CandidateJudgment,
+) bool {
+	if evidence == nil || judgment.Outcome != domain.CandidateUnknown || judgment.Reason != domain.CandidateWorktreeUnverified {
+		return false
+	}
+	bundle := evidence.Bundle()
+	return bundle.TaskHandle == task.Handle && bundle.RepositoryIdentity == task.RepositoryID &&
+		bundle.BaseRevision == task.BaseRevision && bundle.HeadRevision == snapshot.HeadRevision &&
+		bundle.WorktreeCleanliness == candidateCleanliness(snapshot.Cleanliness)
 }
 
 func (supervisor *candidateSupervisor) runLocalChecks(

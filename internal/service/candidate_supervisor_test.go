@@ -637,6 +637,9 @@ type candidateSupervisorStore struct {
 	preparation           application.ManagedRunPreparation
 	reports               []domain.AcceptedReport
 	evidence              *domain.SealedDeliveryEvidence
+	requiredLocalChecks   []string
+	requiredForgeChecks   []string
+	judgedAt              time.Time
 	publicationKinds      []string
 	publicationDeliveries []string
 	publicationBodies     [][]byte
@@ -675,6 +678,21 @@ func (store *candidateSupervisorStore) ReadReconciledCandidateSnapshot(
 	return store.reconciledSnapshot, store.reconciled, store.reconciledErr
 }
 
+func (store *candidateSupervisorStore) LatestCandidateEvidence(
+	context.Context,
+	string,
+) (*domain.SealedDeliveryEvidence, domain.CandidateJudgment, error) {
+	if store.evidence == nil {
+		return nil, domain.CandidateJudgment{}, fmt.Errorf("latest candidate evidence: %w", application.ErrNotFound)
+	}
+	judgment := domain.JudgeCandidate(domain.CandidateJudgeInput{
+		Task: store.task, Evidence: store.evidence,
+		RequiredLocalChecks: store.requiredLocalChecks, RequiredForgeChecks: store.requiredForgeChecks,
+		Now: store.judgedAt,
+	})
+	return store.evidence, judgment, nil
+}
+
 func (store *candidateSupervisorStore) CommitCandidateEvidence(
 	_ context.Context,
 	_ string,
@@ -685,6 +703,9 @@ func (store *candidateSupervisorStore) CommitCandidateEvidence(
 	publications []application.ComisEvidencePublication,
 ) (domain.Task, domain.CandidateJudgment, error) {
 	store.evidence = evidence
+	store.requiredLocalChecks = append([]string(nil), requiredLocalChecks...)
+	store.requiredForgeChecks = append([]string(nil), requiredForgeChecks...)
+	store.judgedAt = judgedAt
 	for _, publication := range publications {
 		store.publicationKinds = append(store.publicationKinds, publication.Kind)
 		if publication.Delivery == nil {
