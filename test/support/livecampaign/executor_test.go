@@ -9,6 +9,16 @@ import (
 	"testing"
 )
 
+type fixedOutputExecutor struct {
+	output []byte
+	seen   []Command
+}
+
+func (executor *fixedOutputExecutor) Run(_ context.Context, command Command) ([]byte, error) {
+	executor.seen = append(executor.seen, command)
+	return append([]byte(nil), executor.output...), nil
+}
+
 func TestRealExecutorUsesFixedArgvAndBoundedStdout(t *testing.T) {
 	executable, err := os.Executable()
 	if err != nil {
@@ -144,5 +154,32 @@ func TestValidatePinnedArtifactRejectsChangedBytes(t *testing.T) {
 	}
 	if err := validatePinnedArtifact(pin); err == nil || !strings.Contains(err.Error(), "SHA-256") {
 		t.Fatalf("expected changed-artifact refusal, got %v", err)
+	}
+}
+
+func TestValidatePinnedArtifactVersionRejectsDifferentExecutable(t *testing.T) {
+	manifest := validManifest()
+	pin := manifest.Artifacts[1]
+	executor := &fixedOutputExecutor{output: []byte("devcrew unexpected\n")}
+	if err := validatePinnedArtifactVersion(context.Background(), manifest, pin, executor); err == nil ||
+		!strings.Contains(err.Error(), "version") {
+		t.Fatalf("expected artifact-version refusal, got %v", err)
+	}
+	executor.output = []byte("devcrew dev\n")
+	if err := validatePinnedArtifactVersion(context.Background(), manifest, pin, executor); err != nil {
+		t.Fatalf("validate exact DevCrew version: %v", err)
+	}
+	if len(executor.seen) != 2 || len(executor.seen[1].Args) != 1 || executor.seen[1].Args[0] != "--version" {
+		t.Fatalf("unexpected DevCrew version command: %#v", executor.seen)
+	}
+
+	comisPin := manifest.Artifacts[0]
+	executor.output = []byte("1.0.61\n")
+	if err := validatePinnedArtifactVersion(context.Background(), manifest, comisPin, executor); err != nil {
+		t.Fatalf("validate exact Comis version: %v", err)
+	}
+	last := executor.seen[len(executor.seen)-1]
+	if last.Path != manifest.Comis.NodePath || len(last.Args) != 2 || last.Args[0] != comisPin.Path || last.Args[1] != "--version" {
+		t.Fatalf("unexpected Comis version command: %#v", last)
 	}
 }
