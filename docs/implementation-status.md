@@ -39,9 +39,11 @@ the three isolated units, including active drop-ins, and binds exact hashed Code
 and Claude Code installations to the two campaign task profiles.
 The manifest binds the canonical DevCrew database and worktree root. The live
 support package can capture content-free start and finish metrics for the three
-isolated service processes, Comis data, DevCrew SQLite state, and task worktrees,
-then reject a sample pair that spans less than one hour, exceeds bounded growth,
-or leaves a worktree behind.
+isolated service processes, including `/proc` RSS, file descriptors, and
+descendant bubblewrap jails; both pinned database sizes; Comis data; active
+DevCrew terminal bindings; task worktrees; and both durable delivery backlogs.
+It rejects a sample pair that spans less than one hour, exceeds bounded growth,
+or leaves a terminal, jail, worktree, or delivery behind.
 The campaign runner makes that pair mandatory: it captures after simultaneous
 worker overlap, waits out the one-hour floor, samples again after cleanup, and
 writes the observation into the hashed evidence directory. Evidence-only

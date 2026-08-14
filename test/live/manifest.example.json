@@ -35,6 +35,7 @@
     "cliScriptPath": "/opt/comis/packages/cli/dist/cli.js",
     "codeRoot": "/opt/comis",
     "dataDir": "/var/lib/comis-e0-live",
+    "databasePath": "/var/lib/comis-e0-live/memory.db",
     "agentId": "devcrew-liaison",
     "secretResidencyScript": "/opt/comis/test/live/self-driving/scripts/secret-residency.mjs",
     "secretNames": ["TELEGRAM_BOT_TOKEN", "GITHUB_TOKEN"],

@@ -4,9 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -14,8 +11,11 @@ import (
 const (
 	minimumResourceObservationMs      = int64(60 * 60 * 1000)
 	maximumServiceMemoryGrowthBytes   = int64(512 * 1024 * 1024)
+	maximumServiceRSSGrowthBytes      = int64(256 * 1024 * 1024)
 	maximumServiceOpenFDGrowth        = 256
 	maximumComisDataGrowthBytes       = int64(1024 * 1024 * 1024)
+	maximumComisDatabaseGrowthBytes   = int64(256 * 1024 * 1024)
+	maximumComisDatabaseBytes         = int64(1024 * 1024 * 1024)
 	maximumDevCrewDatabaseGrowthBytes = int64(128 * 1024 * 1024)
 	maximumDevCrewDatabaseBytes       = int64(256 * 1024 * 1024)
 )
@@ -25,8 +25,10 @@ type ServiceResourceSnapshot struct {
 	Unit                string `json:"unit"`
 	MainPID             uint64 `json:"mainPid"`
 	MemoryBytes         int64  `json:"memoryBytes"`
+	RSSBytes            int64  `json:"rssBytes"`
 	Tasks               int    `json:"tasks"`
 	OpenFileDescriptors int    `json:"openFileDescriptors"`
+	JailProcesses       int    `json:"jailProcesses"`
 }
 
 // DataResourceSnapshot records regular-file counts and total bytes under one root.
@@ -37,11 +39,15 @@ type DataResourceSnapshot struct {
 
 // ResourceSnapshot is one resource observation tied to the campaign clock.
 type ResourceSnapshot struct {
-	CapturedAtMs         int64                     `json:"capturedAtMs"`
-	Services             []ServiceResourceSnapshot `json:"services"`
-	ComisData            DataResourceSnapshot      `json:"comisData"`
-	DevCrewDatabaseBytes int64                     `json:"devcrewDatabaseBytes"`
-	WorktreeDirectories  int                       `json:"worktreeDirectories"`
+	CapturedAtMs             int64                     `json:"capturedAtMs"`
+	Services                 []ServiceResourceSnapshot `json:"services"`
+	ComisData                DataResourceSnapshot      `json:"comisData"`
+	ComisDatabaseBytes       int64                     `json:"comisDatabaseBytes"`
+	DevCrewDatabaseBytes     int64                     `json:"devcrewDatabaseBytes"`
+	WorktreeDirectories      int                       `json:"worktreeDirectories"`
+	ActiveTerminalBindings   int                       `json:"activeTerminalBindings"`
+	PendingDevCrewDeliveries int                       `json:"pendingDevcrewDeliveries"`
+	UnsettledComisDeliveries int                       `json:"unsettledComisDeliveries"`
 }
 
 // ResourceObservation binds the start and finish samples for one campaign.
@@ -56,6 +62,11 @@ type resourceReader interface {
 	TreeTotals(string) (int, int64, error)
 	DirectoryCount(string) (int, error)
 	OpenFDCount(uint64) (int, error)
+	ProcessRSSBytes(uint64) (int64, error)
+	JailProcessCount(uint64) (int, error)
+	ActiveTerminalCount(string) (int, error)
+	PendingDevCrewDeliveryCount(string) (int, error)
+	UnsettledComisDeliveryCount(string) (int, error)
 }
 
 type realResourceReader struct{}
@@ -100,9 +111,25 @@ func captureResourceSnapshot(
 	if err != nil {
 		return ResourceSnapshot{}, fmt.Errorf("capture resources: inspect DevCrew database: %w", err)
 	}
+	snapshot.ComisDatabaseBytes, err = reader.RegularFileBytes(manifest.Comis.DatabasePath)
+	if err != nil {
+		return ResourceSnapshot{}, fmt.Errorf("capture resources: inspect Comis database: %w", err)
+	}
 	snapshot.WorktreeDirectories, err = reader.DirectoryCount(manifest.DevCrew.WorktreeRoot)
 	if err != nil {
 		return ResourceSnapshot{}, fmt.Errorf("capture resources: inspect DevCrew worktree root: %w", err)
+	}
+	snapshot.ActiveTerminalBindings, err = reader.ActiveTerminalCount(manifest.DevCrew.DatabasePath)
+	if err != nil {
+		return ResourceSnapshot{}, fmt.Errorf("capture resources: inspect active terminal bindings: %w", err)
+	}
+	snapshot.PendingDevCrewDeliveries, err = reader.PendingDevCrewDeliveryCount(manifest.DevCrew.DatabasePath)
+	if err != nil {
+		return ResourceSnapshot{}, fmt.Errorf("capture resources: inspect DevCrew delivery backlog: %w", err)
+	}
+	snapshot.UnsettledComisDeliveries, err = reader.UnsettledComisDeliveryCount(manifest.Comis.DatabasePath)
+	if err != nil {
+		return ResourceSnapshot{}, fmt.Errorf("capture resources: inspect Comis delivery backlog: %w", err)
 	}
 	return snapshot, nil
 }
@@ -135,9 +162,18 @@ func captureServiceResources(
 	if err != nil || openFDs <= 0 {
 		return ServiceResourceSnapshot{}, fmt.Errorf("capture resources: inspect open file descriptors for service %s", unit)
 	}
+	rssBytes, err := reader.ProcessRSSBytes(values["MainPID"])
+	if err != nil || rssBytes <= 0 {
+		return ServiceResourceSnapshot{}, fmt.Errorf("capture resources: inspect RSS for service %s", unit)
+	}
+	jails, err := reader.JailProcessCount(values["MainPID"])
+	if err != nil || jails < 0 {
+		return ServiceResourceSnapshot{}, fmt.Errorf("capture resources: inspect jail processes for service %s", unit)
+	}
 	return ServiceResourceSnapshot{
 		Unit: unit, MainPID: values["MainPID"], MemoryBytes: int64(values["MemoryCurrent"]),
-		Tasks: int(values["TasksCurrent"]), OpenFileDescriptors: openFDs,
+		RSSBytes: rssBytes, Tasks: int(values["TasksCurrent"]), OpenFileDescriptors: openFDs,
+		JailProcesses: jails,
 	}, nil
 }
 
@@ -166,12 +202,26 @@ func VerifyResourceObservation(manifest Manifest, observation ResourceObservatio
 		if growth := finished[unit].MemoryBytes - started[unit].MemoryBytes; growth > maximumServiceMemoryGrowthBytes {
 			return fmt.Errorf("verify resource observation: service %s memory growth exceeds the bounded allowance", unit)
 		}
+		if growth := finished[unit].RSSBytes - started[unit].RSSBytes; growth > maximumServiceRSSGrowthBytes {
+			return fmt.Errorf("verify resource observation: service %s RSS growth exceeds the bounded allowance", unit)
+		}
 		if growth := finished[unit].OpenFileDescriptors - started[unit].OpenFileDescriptors; growth > maximumServiceOpenFDGrowth {
 			return fmt.Errorf("verify resource observation: service %s file descriptor growth exceeds the bounded allowance", unit)
 		}
 	}
 	if observation.Started.WorktreeDirectories != len(manifest.Tasks) || observation.Finished.WorktreeDirectories != 0 {
 		return errors.New("verify resource observation: worktree counts do not prove two active lanes followed by complete cleanup")
+	}
+	if totalJailProcesses(observation.Started.Services) < len(manifest.Tasks) ||
+		totalJailProcesses(observation.Finished.Services) != 0 {
+		return errors.New("verify resource observation: jail process counts do not prove two active lanes followed by complete cleanup")
+	}
+	if observation.Started.ActiveTerminalBindings != len(manifest.Tasks) || observation.Finished.ActiveTerminalBindings != 0 {
+		return errors.New("verify resource observation: terminal binding counts do not prove two active lanes followed by complete cleanup")
+	}
+	if observation.Started.PendingDevCrewDeliveries < 0 || observation.Started.UnsettledComisDeliveries < 0 ||
+		observation.Finished.PendingDevCrewDeliveries != 0 || observation.Finished.UnsettledComisDeliveries != 0 {
+		return errors.New("verify resource observation: delivery queues did not drain completely")
 	}
 	if err := verifyDataResourceBounds(observation); err != nil {
 		return err
@@ -187,7 +237,7 @@ func indexedResourceServices(manifest Manifest, snapshot ResourceSnapshot) (map[
 	indexed := make(map[string]ServiceResourceSnapshot, len(expected))
 	for _, service := range snapshot.Services {
 		if !contains(expected, service.Unit) || service.MainPID == 0 || service.MemoryBytes <= 0 ||
-			service.Tasks <= 0 || service.OpenFileDescriptors <= 0 {
+			service.RSSBytes <= 0 || service.Tasks <= 0 || service.OpenFileDescriptors <= 0 || service.JailProcesses < 0 {
 			return nil, errors.New("verify resource observation: service sample is invalid")
 		}
 		if _, exists := indexed[service.Unit]; exists {
@@ -206,6 +256,11 @@ func verifyDataResourceBounds(observation ResourceObservation) error {
 	if observation.Finished.ComisData.Bytes-observation.Started.ComisData.Bytes > maximumComisDataGrowthBytes {
 		return errors.New("verify resource observation: Comis data growth exceeds the bounded allowance")
 	}
+	if observation.Started.ComisDatabaseBytes <= 0 || observation.Finished.ComisDatabaseBytes <= 0 ||
+		observation.Finished.ComisDatabaseBytes > maximumComisDatabaseBytes ||
+		observation.Finished.ComisDatabaseBytes-observation.Started.ComisDatabaseBytes > maximumComisDatabaseGrowthBytes {
+		return errors.New("verify resource observation: Comis database size or growth exceeds the bounded allowance")
+	}
 	if observation.Started.DevCrewDatabaseBytes <= 0 || observation.Finished.DevCrewDatabaseBytes <= 0 ||
 		observation.Finished.DevCrewDatabaseBytes > maximumDevCrewDatabaseBytes ||
 		observation.Finished.DevCrewDatabaseBytes-observation.Started.DevCrewDatabaseBytes > maximumDevCrewDatabaseGrowthBytes {
@@ -218,60 +273,10 @@ func expectedResourceUnits(manifest Manifest) []string {
 	return []string{manifest.Services.MCPUnit, manifest.Services.DevCrewUnit, manifest.Services.ComisUnit}
 }
 
-func (realResourceReader) RegularFileBytes(path string) (int64, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return 0, err
+func totalJailProcesses(services []ServiceResourceSnapshot) int {
+	total := 0
+	for _, service := range services {
+		total += service.JailProcesses
 	}
-	if !info.Mode().IsRegular() {
-		return 0, errors.New("path is not one regular file")
-	}
-	return info.Size(), nil
-}
-
-func (realResourceReader) TreeTotals(root string) (int, int64, error) {
-	files := 0
-	var bytes int64
-	err := filepath.WalkDir(root, func(_ string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			return errors.New("resource tree contains an unexpected symbolic link")
-		}
-		if !entry.Type().IsRegular() {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		files++
-		bytes += info.Size()
-		return nil
-	})
-	return files, bytes, err
-}
-
-func (realResourceReader) DirectoryCount(root string) (int, error) {
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return 0, err
-	}
-	count := 0
-	for _, entry := range entries {
-		if entry.Type()&os.ModeSymlink != 0 || !entry.IsDir() {
-			return 0, errors.New("worktree root contains an unexpected non-directory entry")
-		}
-		count++
-	}
-	return count, nil
-}
-
-func (realResourceReader) OpenFDCount(pid uint64) (int, error) {
-	entries, err := os.ReadDir(filepath.Join("/proc", strconv.FormatUint(pid, 10), "fd"))
-	if err != nil {
-		return 0, err
-	}
-	return len(entries), nil
+	return total
 }

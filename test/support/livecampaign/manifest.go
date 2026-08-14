@@ -71,6 +71,7 @@ type ComisTarget struct {
 	CLIScriptPath         string   `json:"cliScriptPath"`
 	CodeRoot              string   `json:"codeRoot"`
 	DataDir               string   `json:"dataDir"`
+	DatabasePath          string   `json:"databasePath"`
 	AgentID               string   `json:"agentId"`
 	SecretResidencyScript string   `json:"secretResidencyScript"`
 	SecretNames           []string `json:"secretNames"`
@@ -200,6 +201,7 @@ func (manifest Manifest) validate() error {
 		"comis.cliScriptPath":         manifest.Comis.CLIScriptPath,
 		"comis.codeRoot":              manifest.Comis.CodeRoot,
 		"comis.dataDir":               manifest.Comis.DataDir,
+		"comis.databasePath":          manifest.Comis.DatabasePath,
 		"comis.secretResidencyScript": manifest.Comis.SecretResidencyScript,
 		"github.cliPath":              manifest.GitHub.CLIPath,
 		"github.gitPath":              manifest.GitHub.GitPath,

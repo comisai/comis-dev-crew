@@ -135,16 +135,21 @@ func validateRuntime(ctx context.Context, manifest Manifest, executor Executor) 
 			return fmt.Errorf("validate protected runtime: service unit %s: %w", unit.name, err)
 		}
 	}
-	for name, path := range map[string]string{
-		"Comis CLI script":        manifest.Comis.CLIScriptPath,
-		"secret residency script": manifest.Comis.SecretResidencyScript,
-		"DevCrew database":        manifest.DevCrew.DatabasePath,
+	for _, target := range []struct {
+		name string
+		path string
+		root string
+	}{
+		{name: "Comis CLI script", path: manifest.Comis.CLIScriptPath, root: manifest.Comis.CodeRoot},
+		{name: "secret residency script", path: manifest.Comis.SecretResidencyScript, root: manifest.Comis.CodeRoot},
+		{name: "DevCrew database", path: manifest.DevCrew.DatabasePath},
+		{name: "Comis database", path: manifest.Comis.DatabasePath, root: manifest.Comis.DataDir},
 	} {
-		if err := validateCanonicalRegularFile(path); err != nil {
-			return fmt.Errorf("validate protected runtime: %s: %w", name, err)
+		if err := validateCanonicalRegularFile(target.path); err != nil {
+			return fmt.Errorf("validate protected runtime: %s: %w", target.name, err)
 		}
-		if name != "DevCrew database" && !pathWithin(manifest.Comis.CodeRoot, path) {
-			return fmt.Errorf("validate protected runtime: %s is outside the pinned Comis code root", name)
+		if target.root != "" && !pathWithin(target.root, target.path) {
+			return fmt.Errorf("validate protected runtime: %s is outside its pinned root", target.name)
 		}
 	}
 	for name, path := range map[string]string{

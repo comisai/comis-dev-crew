@@ -53,8 +53,16 @@ func VerifyResourceBaseline(manifest Manifest, baseline ResourceBaseline) error 
 	if baseline.Snapshot.WorktreeDirectories != len(manifest.Tasks) {
 		return errors.New("verify resource baseline: starting worktree count does not prove both task lanes")
 	}
+	if totalJailProcesses(baseline.Snapshot.Services) < len(manifest.Tasks) ||
+		baseline.Snapshot.ActiveTerminalBindings != len(manifest.Tasks) {
+		return errors.New("verify resource baseline: terminal and jail counts do not prove both task lanes")
+	}
+	if baseline.Snapshot.PendingDevCrewDeliveries < 0 || baseline.Snapshot.UnsettledComisDeliveries < 0 {
+		return errors.New("verify resource baseline: delivery queue counts are invalid")
+	}
 	if baseline.Snapshot.ComisData.RegularFiles <= 0 || baseline.Snapshot.ComisData.Bytes <= 0 ||
-		baseline.Snapshot.DevCrewDatabaseBytes <= 0 ||
+		baseline.Snapshot.ComisDatabaseBytes <= 0 || baseline.Snapshot.DevCrewDatabaseBytes <= 0 ||
+		baseline.Snapshot.ComisDatabaseBytes > maximumComisDatabaseBytes ||
 		baseline.Snapshot.DevCrewDatabaseBytes > maximumDevCrewDatabaseBytes {
 		return errors.New("verify resource baseline: data metrics are incomplete or exceed the bounded allowance")
 	}
