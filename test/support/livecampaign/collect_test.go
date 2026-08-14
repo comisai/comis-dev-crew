@@ -177,7 +177,7 @@ func validIncident(manifest Manifest) comisIncidentReport {
 		ToolStats: map[string]comisToolCount{
 			"prepare_task": {OK: 2}, "list_tasks": {OK: 1}, "get_task": {OK: 2},
 			"explain_task": {OK: 1}, "get_launch_plan": {OK: 2}, "reconcile_task": {OK: 1},
-			"handback_task": {OK: 1}, "cleanup_task": {OK: 2, Failed: 2},
+			"handback_task": {OK: 1}, "cleanup_task": {OK: 2, Failed: 6},
 		},
 		Failures: []struct {
 			Seq          int    `json:"seq"`
@@ -187,7 +187,11 @@ func validIncident(manifest Manifest) comisIncidentReport {
 			ErrorPreview string `json:"errorPreview"`
 		}{
 			{Seq: 1, ToolName: "cleanup_task", ErrorKind: "precondition", FailureCode: "precondition", ErrorPreview: application.CleanupOpenDecisionMessage},
-			{Seq: 2, ToolName: "cleanup_task", ErrorKind: "precondition", FailureCode: "precondition", ErrorPreview: application.CleanupDirtyWorkspaceMessage},
+			{Seq: 2, ToolName: "cleanup_task", ErrorKind: "precondition", FailureCode: "precondition", ErrorPreview: application.CleanupOpenHoldMessage},
+			{Seq: 3, ToolName: "cleanup_task", ErrorKind: "precondition", FailureCode: "precondition", ErrorPreview: application.CleanupActiveExecutionMessage},
+			{Seq: 4, ToolName: "cleanup_task", ErrorKind: "precondition", FailureCode: "precondition", ErrorPreview: application.CleanupUnknownExecutionMessage},
+			{Seq: 5, ToolName: "cleanup_task", ErrorKind: "precondition", FailureCode: "precondition", ErrorPreview: application.CleanupDirtyWorkspaceMessage},
+			{Seq: 6, ToolName: "cleanup_task", ErrorKind: "precondition", FailureCode: "precondition", ErrorPreview: application.CleanupStaleForgeTruthMessage},
 		},
 		BreakerTimeline: []json.RawMessage{}, Offloads: []json.RawMessage{}, Summary: "Campaign completed.",
 		LikelyRootCause: json.RawMessage("null"), SuggestedNextSteps: []string{}, Truncations: []json.RawMessage{},
@@ -434,6 +438,40 @@ func TestCollectRefusesCleanupFailuresWithoutBothRequiredReasons(t *testing.T) {
 	)
 	if collectErr == nil || !strings.Contains(collectErr.Error(), "cleanup refusal reasons are incomplete") {
 		t.Fatalf("Collect() error = %v, want distinct cleanup refusal reasons", collectErr)
+	}
+}
+
+func TestCollectRefusesEachMissingCleanupFailureClass(t *testing.T) {
+	manifest := validManifest()
+	required := []string{
+		application.CleanupOpenDecisionMessage,
+		application.CleanupOpenHoldMessage,
+		application.CleanupActiveExecutionMessage,
+		application.CleanupUnknownExecutionMessage,
+		application.CleanupDirtyWorkspaceMessage,
+		application.CleanupStaleForgeTruthMessage,
+	}
+	for _, missing := range required {
+		t.Run(missing, func(t *testing.T) {
+			explanation := validIncident(manifest)
+			for index := range explanation.Failures {
+				if explanation.Failures[index].ErrorPreview == missing {
+					explanation.Failures[index].ErrorPreview = "cleanup refused"
+				}
+			}
+			encoded, err := json.Marshal(explanation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, collectErr := Collect(
+				context.Background(), manifest, filepath.Join(t.TempDir(), "evidence"),
+				&fixtureExecutor{manifest: manifest, explanation: encoded}, manifest.EndedAtMs,
+				validResourceObservation(manifest), validRecoveryEvidence(manifest),
+			)
+			if collectErr == nil || !strings.Contains(collectErr.Error(), "cleanup refusal reasons are incomplete") {
+				t.Fatalf("Collect(missing %q) error = %v", missing, collectErr)
+			}
+		})
 	}
 }
 
