@@ -3,6 +3,7 @@ package livecampaign
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -148,6 +149,30 @@ func TestRecoveryEvidenceRoundTripRequiresEveryPassingStage(t *testing.T) {
 	failed.Rollback.Passed = false
 	if err := VerifyRecoveryEvidence(manifest, failed); err == nil || !strings.Contains(err.Error(), "rollback") {
 		t.Fatalf("expected rollback refusal, got %v", err)
+	}
+}
+
+func TestRecoveryEvidenceRefusesMissingFreshInstallAndUpgradeProof(t *testing.T) {
+	manifest := validManifest()
+	contents, err := json.Marshal(validRecoveryEvidence(manifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(contents, &payload); err != nil {
+		t.Fatal(err)
+	}
+	delete(payload, "installation")
+	contents, err = json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence RecoveryEvidence
+	if err := json.Unmarshal(contents, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyRecoveryEvidence(manifest, evidence); err == nil || !strings.Contains(err.Error(), "installation") {
+		t.Fatalf("expected installation-evidence refusal, got %v", err)
 	}
 }
 
