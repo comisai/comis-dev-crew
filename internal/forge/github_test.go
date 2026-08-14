@@ -151,6 +151,31 @@ func TestGitHubAdapter_VerifiesRecordedPullRequestWithReadAuthorityOnly(t *testi
 	}
 }
 
+func TestGitHubAdapter_ClassifiesClosedPullRequestAsStaleDeliveryTruth(t *testing.T) {
+	head := strings.Repeat("e", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path != "/repos/comisai/fixture/pulls/23" {
+			http.NotFound(response, request)
+			return
+		}
+		_, _ = response.Write([]byte(`{"number":23,"state":"closed","html_url":"https://example.com/comisai/fixture/pull/23","head":{"sha":"` + head + `","ref":"devcrew/task-recorded"},"base":{"ref":"main"}}`))
+	}))
+	defer server.Close()
+	configuration := validGitHubConfig(server)
+	adapter, err := NewGitHubAdapter(configuration)
+	if err != nil {
+		t.Fatalf("NewGitHubAdapter() error = %v", err)
+	}
+	_, err = adapter.VerifyPullRequestDelivery(context.Background(), application.PullRequestDeliveryVerification{
+		RepositoryID: "fixture-repository", PullRequestID: "github-pr-23",
+		Branch: "devcrew/task-recorded", HeadRevision: head, RequiredChecks: []string{"ci/unit"},
+	})
+	if !errors.Is(err, application.ErrCleanupStaleForgeTruth) {
+		t.Fatalf("VerifyPullRequestDelivery(closed pull request) error = %v, want stale forge truth", err)
+	}
+}
+
 func TestGitHubAdapter_RefusesSharedCredentialsChangedHeadAndUnboundedResponses(t *testing.T) {
 	head := strings.Repeat("b", 40)
 	changedHead := strings.Repeat("c", 40)
