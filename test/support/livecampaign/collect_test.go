@@ -379,6 +379,25 @@ func TestCollectRefusesCleanupCountsWithoutPreconditionFailureEvidence(t *testin
 	}
 }
 
+func TestCollectRefusesCleanupFailuresWithoutBothRequiredReasons(t *testing.T) {
+	manifest := validManifest()
+	explanation := validIncident(manifest)
+	for index := range explanation.Failures {
+		explanation.Failures[index].ErrorPreview = "cleanup refused"
+	}
+	encoded, err := json.Marshal(explanation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := &fixtureExecutor{manifest: manifest, explanation: encoded}
+	_, collectErr := Collect(
+		context.Background(), manifest, filepath.Join(t.TempDir(), "evidence"), executor, manifest.EndedAtMs,
+	)
+	if collectErr == nil || !strings.Contains(collectErr.Error(), "cleanup refusal reasons are incomplete") {
+		t.Fatalf("Collect() error = %v, want distinct cleanup refusal reasons", collectErr)
+	}
+}
+
 func TestCollectRefusesExistingCampaignEvidenceDirectory(t *testing.T) {
 	manifest := validManifest()
 	root := filepath.Join(t.TempDir(), "evidence")
