@@ -134,3 +134,13 @@ func TestCampaignRunnerRefusesHandbackCompletedBeforeHumanCheckpoint(t *testing.
 		t.Fatalf("Run(early handback) error = %v", err)
 	}
 }
+
+func TestRequireHandbackSiblingWorkingRejectsStoppedSibling(t *testing.T) {
+	manifest := validManifest()
+	executor := &fixtureExecutor{manifest: manifest}
+	runner := CampaignRunner{Executor: executor}
+	if err := runner.requireHandbackSiblingWorking(context.Background(), manifest); err == nil ||
+		!strings.Contains(err.Error(), "sibling") {
+		t.Fatalf("expected stopped-sibling refusal, got %v", err)
+	}
+}
