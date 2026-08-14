@@ -18,6 +18,8 @@ Installed composition supervises the Comis control lane, Codex and Claude Code
 launch descriptors, candidate validation, forge truth, delivery, unknown-task
 reconciliation, handback, and safe cleanup. Merge authority and unattended worker
 settling are not claimed.
+Tagged release builds inject the exact tag into all four executables, while
+untagged source builds identify themselves as `dev`.
 
 The protected live gate is implemented for a dedicated Linux runner and a real
 human Telegram sender. It observes two working lanes, restarts only manifest-bound

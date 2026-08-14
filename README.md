@@ -110,6 +110,8 @@ coding-worker configuration, see [Running comis-dev-crew](docs/running.md).
 | `devcrew-report` | Restricted, task-scoped worker reporter |
 
 Every command supports `--help` and `--version`.
+Published release artifacts report their exact tag from `--version`; untagged
+source builds report `dev`.
 
 ## Architecture
 
