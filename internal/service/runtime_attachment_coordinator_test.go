@@ -523,6 +523,16 @@ func TestRuntimeAttachmentCoordinator_RejectsInvalidLifecycleAndFilesystemBounda
 	if err := coordinator.BindRuntimeAttachment(cancelled, application.RuntimeAttachmentBindingRequest{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("BindRuntimeAttachment(cancelled) error = %v", err)
 	}
+	//lint:ignore SA1012 Boundary tests require explicit nil-context rejection.
+	if err := coordinator.ReleaseRuntimeAttachment(nil, "task-boundary-release"); err == nil {
+		t.Fatal("ReleaseRuntimeAttachment(nil) error = nil")
+	}
+	if err := coordinator.ReleaseRuntimeAttachment(cancelled, "task-boundary-release"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ReleaseRuntimeAttachment(cancelled) error = %v", err)
+	}
+	if err := coordinator.ReleaseRuntimeAttachment(context.Background(), "invalid task"); err == nil {
+		t.Fatal("ReleaseRuntimeAttachment(invalid task) error = nil")
+	}
 	waitingBinding := application.RuntimeAttachmentBindingRequest{
 		TaskHandle: "task-boundary-waiting", ManagedRunID: "managed-run.boundary",
 		WorkspaceLeaseID: "workspace-lease.boundary", ExecutionAttachmentID: "execution-attachment.boundary",
@@ -533,6 +543,11 @@ func TestRuntimeAttachmentCoordinator_RejectsInvalidLifecycleAndFilesystemBounda
 	defer stopWaiting()
 	if err := coordinator.BindRuntimeAttachment(waitContext, waitingBinding); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("BindRuntimeAttachment(waiting recovery) error = %v", err)
+	}
+	releaseWaitContext, stopReleaseWaiting := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer stopReleaseWaiting()
+	if err := coordinator.ReleaseRuntimeAttachment(releaseWaitContext, "task-boundary-release"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ReleaseRuntimeAttachment(waiting recovery) error = %v", err)
 	}
 	linkedWorkspace := filepath.Join(root, "linked-workspace")
 	if err := os.Symlink(workspace, linkedWorkspace); err != nil {
@@ -548,12 +563,48 @@ func TestRuntimeAttachmentCoordinator_RejectsInvalidLifecycleAndFilesystemBounda
 	if _, err := coordinator.PrepareRuntimeAttachment(context.Background(), runtimeAttachmentRequest(t, workspace, "task-boundary-recovery")); err == nil {
 		t.Fatal("PrepareRuntimeAttachment(recovery failure) error = nil")
 	}
+	if err := coordinator.ReleaseRuntimeAttachment(context.Background(), "task-boundary-release"); err == nil {
+		t.Fatal("ReleaseRuntimeAttachment(recovery failure) error = nil")
+	}
 	coordinator.entries["task-boundary-populated"] = &runtimeAttachmentEntry{}
 	if _, err := coordinator.recoverRuntimeAttachments(context.Background()); err == nil {
 		t.Fatal("recoverRuntimeAttachments(populated) error = nil")
 	}
 	if err := closeRuntimeServers(nil); err != nil {
 		t.Fatalf("closeRuntimeServers(nil) error = %v", err)
+	}
+}
+
+func TestRuntimeAttachmentCoordinator_PreservesNonEmptyReleasedTaskRoot(t *testing.T) {
+	root := shortTempDir(t)
+	store, err := sqlite.Open(context.Background(), filepath.Join(root, "state", "devcrew.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+		RuntimeRoot: filepath.Join(root, "runtime"), Store: store, Clock: time.Now,
+		NewCredential:           func() (string, error) { return "release-boundary-credential-0123456789", nil },
+		NewAttentionOperationID: runtimeAttentionOperationID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	close(coordinator.recoveryReady)
+	taskHandle := "task-release-non-empty-root"
+	taskRoot := filepath.Join(coordinator.runtimeRoot, taskHandle)
+	if err := os.Mkdir(taskRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(taskRoot, "unexpected")
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinator.ReleaseRuntimeAttachment(context.Background(), taskHandle); err == nil {
+		t.Fatal("ReleaseRuntimeAttachment(non-empty root) error = nil")
+	}
+	if _, err := os.Lstat(marker); err != nil {
+		t.Fatalf("non-empty task root marker was removed: %v", err)
 	}
 }
 
