@@ -18,6 +18,8 @@ import (
 type fixtureExecutor struct {
 	manifest            Manifest
 	currentBaseRevision string
+	systemHealth        []byte
+	explanation         []byte
 	calls               []Command
 }
 
@@ -61,8 +63,14 @@ func (executor *fixtureExecutor) Run(_ context.Context, command Command) ([]byte
 		case "messages":
 			return encode(completeMessages(manifest))
 		case "system-health":
+			if executor.systemHealth != nil {
+				return executor.systemHealth, nil
+			}
 			return []byte(`{"schemaVersion":1,"windowHours":24,"sessions":{"total":2,"degraded":0}}`), nil
 		case "explain":
+			if executor.explanation != nil {
+				return executor.explanation, nil
+			}
 			return []byte(`{"schemaVersion":1,"session":{"outcome":"completed"}}`), nil
 		case "secrets":
 			return []byte("[]"), nil
@@ -168,6 +176,31 @@ func TestCollectWritesPrivateBoundedEvidenceAndPassingVerdict(t *testing.T) {
 		if strings.Contains(string(checkpointContents), checkpoint.Marker) {
 			t.Fatalf("checkpoint artifact retained message marker %s", checkpoint.Marker)
 		}
+	}
+}
+
+func TestCollectRefusesStructurallyEmptyComisObservabilityReports(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		health        []byte
+		explanation   []byte
+		wantErrorPart string
+	}{
+		{name: "system health", health: []byte(`{}`), wantErrorPart: "system health evidence refused"},
+		{name: "session explanation", explanation: []byte(`{}`), wantErrorPart: "Comis explanation 1 evidence refused"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manifest := validManifest()
+			executor := &fixtureExecutor{
+				manifest: manifest, systemHealth: test.health, explanation: test.explanation,
+			}
+			_, err := Collect(
+				context.Background(), manifest, filepath.Join(t.TempDir(), "evidence"), executor, manifest.EndedAtMs,
+			)
+			if err == nil || !strings.Contains(err.Error(), test.wantErrorPart) {
+				t.Fatalf("Collect() error = %v, want %q", err, test.wantErrorPart)
+			}
+		})
 	}
 }
 
