@@ -70,6 +70,18 @@ func validManifest() Manifest {
 			ComisUnit: "comis-e0-live.service", MCPUnitSHA256: sha256Hex([]byte("mcp unit\n")),
 			DevCrewUnitSHA256: sha256Hex([]byte("devcrew unit\n")), ComisUnitSHA256: sha256Hex([]byte("comis unit\n")),
 		},
+		Recovery: RecoveryTarget{
+			CandidateConfigPath:          "/var/lib/devcrew-e0/candidate.json",
+			SyntheticComisDataDir:        "/var/lib/devcrew-e0/synthetic/comis",
+			SyntheticDevCrewDatabasePath: "/var/lib/devcrew-e0/synthetic/devcrew.db",
+			PreviousArtifacts: []ArtifactPin{
+				{Kind: "comis-cli", Path: "/opt/previous/comis/cli.js", SHA256: strings.Repeat("8", 64), Version: "1.0.60"},
+				{Kind: "devcrew", Path: "/opt/previous/devcrew/devcrew", SHA256: strings.Repeat("9", 64), Version: "0.0.9"},
+				{Kind: "devcrew-mcp", Path: "/opt/previous/devcrew/devcrew-mcp", SHA256: strings.Repeat("a", 64), Version: "0.0.9"},
+				{Kind: "devcrew-report", Path: "/opt/previous/devcrew/devcrew-report", SHA256: strings.Repeat("b", 64), Version: "0.0.9"},
+				{Kind: "devcrew-service", Path: "/opt/previous/devcrew/devcrew-service", SHA256: strings.Repeat("c", 64), Version: "0.0.9"},
+			},
+		},
 		Tasks: []TaskExpectation{
 			{TaskHandle: "task-codex-e0", WorkerProfileID: "codex-reviewed", ManagedRunID: "managed-run-codex", ExpectReconciliation: true},
 			{TaskHandle: "task-claude-e0", WorkerProfileID: "claude-reviewed", ManagedRunID: "managed-run-claude"},
