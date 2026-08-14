@@ -123,6 +123,55 @@ func TestCreateAndRestoreRecoveryBackupPreservesStateWithoutPlaintextEnvironment
 	}
 }
 
+func TestRecoveryEvidenceRoundTripRequiresEveryPassingStage(t *testing.T) {
+	manifest := validManifest()
+	evidence := validRecoveryEvidence(manifest)
+	if err := VerifyRecoveryEvidence(manifest, evidence); err != nil {
+		t.Fatalf("VerifyRecoveryEvidence() error = %v", err)
+	}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "recovery-evidence.json")
+	if err := WriteRecoveryEvidence(path, evidence); err != nil {
+		t.Fatalf("WriteRecoveryEvidence() error = %v", err)
+	}
+	loaded, err := LoadRecoveryEvidence(path)
+	if err != nil {
+		t.Fatalf("LoadRecoveryEvidence() error = %v", err)
+	}
+	if err := VerifyRecoveryEvidence(manifest, loaded); err != nil {
+		t.Fatalf("VerifyRecoveryEvidence(loaded) error = %v", err)
+	}
+	failed := evidence
+	failed.Rollback.Passed = false
+	if err := VerifyRecoveryEvidence(manifest, failed); err == nil || !strings.Contains(err.Error(), "rollback") {
+		t.Fatalf("expected rollback refusal, got %v", err)
+	}
+}
+
+func validRecoveryEvidence(manifest Manifest) RecoveryEvidence {
+	return RecoveryEvidence{
+		SchemaVersion: 1,
+		Backup: BackupEvidence{
+			SchemaVersion: 1, CapturedAtMs: manifest.EndedAtMs, Passed: true,
+			Files: 8, Bytes: 4096, SHA256: strings.Repeat("a", 64),
+			PlaintextEnvironmentExcluded: true, SecretResidencyPassed: true,
+		},
+		Restore: RestoreEvidence{
+			SchemaVersion: 1, CapturedAtMs: manifest.EndedAtMs, Passed: true,
+			Files: 8, Bytes: 4096, SHA256: strings.Repeat("a", 64), SQLiteFiles: 3,
+			ConfigValidated: true, RepositoryRegistryRestored: true,
+		},
+		Rollback: RollbackEvidence{
+			SchemaVersion: 1, CapturedAtMs: manifest.EndedAtMs, Passed: true,
+			PreviousArtifactsVerified: true, ComisConfigValidated: true,
+			DevCrewServiceOpened: true, SQLiteFiles: 3,
+		},
+	}
+}
+
 func recoveryManifestFixture(t *testing.T) Manifest {
 	t.Helper()
 	manifest := validManifest()

@@ -82,6 +82,7 @@ func TestCampaignRunnerRestartsOnlyIsolatedUnitsAndClosesEvidence(t *testing.T) 
 	runner := CampaignRunner{
 		Executor: executor, PollInterval: time.Millisecond,
 		CaptureResources: resourceCaptureFixture(manifest),
+		VerifyRecovery:   recoveryEvidenceFixture(manifest),
 		NowMs: func() int64 {
 			if len(times) == 0 {
 				return manifest.EndedAtMs
@@ -113,6 +114,7 @@ func TestCampaignRunnerRefusesCampaignWithoutObservedOverlap(t *testing.T) {
 	_, err := (CampaignRunner{
 		Executor: executor, PollInterval: time.Millisecond, NowMs: func() int64 { return manifest.EndedAtMs },
 		CaptureResources: resourceCaptureFixture(manifest),
+		VerifyRecovery:   recoveryEvidenceFixture(manifest),
 	}).Run(ctx, manifest, filepath.Join(t.TempDir(), "evidence"))
 	if err == nil || (!errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "overlap")) {
 		t.Fatalf("expected overlap refusal, got %v", err)
@@ -141,6 +143,7 @@ func TestCampaignRunnerRefusesHandbackCompletedBeforeHumanCheckpoint(t *testing.
 	_, err := (CampaignRunner{
 		Executor: executor, PollInterval: time.Millisecond,
 		CaptureResources: resourceCaptureFixture(manifest),
+		VerifyRecovery:   recoveryEvidenceFixture(manifest),
 		NowMs: func() int64 {
 			if len(times) == 0 {
 				return manifest.EndedAtMs
@@ -152,6 +155,12 @@ func TestCampaignRunnerRefusesHandbackCompletedBeforeHumanCheckpoint(t *testing.
 	}).Run(ctx, manifest, filepath.Join(t.TempDir(), "evidence"))
 	if err == nil || !strings.Contains(err.Error(), "handback operation after Telegram checkpoint") {
 		t.Fatalf("Run(early handback) error = %v", err)
+	}
+}
+
+func recoveryEvidenceFixture(manifest Manifest) func(context.Context, Manifest, Executor, int64) (RecoveryEvidence, error) {
+	return func(context.Context, Manifest, Executor, int64) (RecoveryEvidence, error) {
+		return validRecoveryEvidence(manifest), nil
 	}
 }
 
