@@ -2,6 +2,7 @@ package livecampaign
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,8 +11,10 @@ import (
 )
 
 type installationExecutorFixture struct {
-	manifest         Manifest
-	omitChecksumLine bool
+	manifest                 Manifest
+	omitChecksumLine         bool
+	devCrewReportedVersions  map[string]string
+	devCrewInstalledReleases []string
 }
 
 func (executor *installationExecutorFixture) Run(_ context.Context, command Command) ([]byte, error) {
@@ -24,8 +27,13 @@ func (executor *installationExecutorFixture) Run(_ context.Context, command Comm
 		return nil, writeInstalledFixture(path, "comis-cli", version, 0o600)
 	case devCrewInstaller:
 		version := command.Env["DEVCREW_VERSION"]
+		executor.devCrewInstalledReleases = append(executor.devCrewInstalledReleases, version)
+		reportedVersion := version
+		if mapped, exists := executor.devCrewReportedVersions[version]; exists {
+			reportedVersion = mapped
+		}
 		for _, kind := range requiredArtifactKinds[1:] {
-			if err := writeInstalledFixture(filepath.Join(command.Env["DEVCREW_INSTALL_DIR"], kind), kind, version, 0o700); err != nil {
+			if err := writeInstalledFixture(filepath.Join(command.Env["DEVCREW_INSTALL_DIR"], kind), kind, reportedVersion, 0o700); err != nil {
 				return nil, err
 			}
 		}
@@ -43,6 +51,58 @@ func (executor *installationExecutorFixture) Run(_ context.Context, command Comm
 		}
 	}
 	return nil, errors.New("unexpected installation command")
+}
+
+func TestVerifyReleaseInstallationUsesPreviousReleaseCoordinateWhenReportedVersionDiffers(t *testing.T) {
+	manifest := installationManifestFixture(t)
+	for index := range manifest.Recovery.PreviousArtifacts {
+		pin := &manifest.Recovery.PreviousArtifacts[index]
+		if pin.Kind == "comis-cli" {
+			continue
+		}
+		pin.Version = "dev"
+		if err := writeInstalledFixture(pin.Path, pin.Kind, pin.Version, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		pin.SHA256 = sha256Hex([]byte(pin.Kind + "|" + pin.Version + "\n"))
+	}
+	contents, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents = []byte(strings.Replace(
+		string(contents),
+		`"previousArtifacts":`,
+		`"previousDevcrewRelease":"v0.1.0","previousArtifacts":`,
+		1,
+	))
+	manifestPath := filepath.Join(t.TempDir(), "campaign.json")
+	if err := os.WriteFile(manifestPath, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadManifest(manifestPath)
+	if err != nil {
+		t.Fatalf("LoadManifest() error = %v", err)
+	}
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := &installationExecutorFixture{
+		manifest:                loaded,
+		devCrewReportedVersions: map[string]string{"v0.1.0": "dev"},
+	}
+	evidence, err := VerifyReleaseInstallation(
+		context.Background(), loaded, filepath.Join(parent, "fresh"), filepath.Join(parent, "upgrade"),
+		executor, loaded.EndedAtMs,
+	)
+	if err != nil {
+		t.Fatalf("VerifyReleaseInstallation() error = %v", err)
+	}
+	if got := strings.Join(executor.devCrewInstalledReleases, ","); got != "v0.2.0,v0.1.0,v0.2.0" ||
+		evidence.PreviousDevCrewVersion != "dev" {
+		t.Fatalf("release coordinates = %q, evidence = %#v", got, evidence)
+	}
 }
 
 func argumentAfter(arguments []string, name string) string {
