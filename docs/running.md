@@ -265,6 +265,14 @@ current base-branch tip, current open/unmerged GitHub pull-request and required-
 plaintext-secret audit plus count-only residency results, artifact hashes, and a
 single verdict. Raw Telegram message bodies and command stderr are never retained.
 
+The Comis reports are acceptance oracles, not opaque attachments. Closeout rejects
+a system-health report unless its campaign window, session totals, hard-degraded
+posture, Telegram/agent activity, and session-index, summary, and billing coverage
+are complete. Each session explanation must resolve to the manifest agent and
+origin Telegram conversation, carry a non-failed outcome, bounded tool evidence,
+and prove either trajectory or lossless-context coverage. The original validated
+JSON is retained so richer additive report fields are not discarded.
+
 ## Worker reporter contract
 
 Workers receive `devcrew-report` with `COMIS_EXECUTION_ATTACHMENT` and

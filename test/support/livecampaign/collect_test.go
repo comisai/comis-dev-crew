@@ -66,12 +66,12 @@ func (executor *fixtureExecutor) Run(_ context.Context, command Command) ([]byte
 			if executor.systemHealth != nil {
 				return executor.systemHealth, nil
 			}
-			return []byte(`{"schemaVersion":1,"windowHours":24,"sessions":{"total":2,"degraded":0}}`), nil
+			return encode(validSystemHealth(manifest))
 		case "explain":
 			if executor.explanation != nil {
 				return executor.explanation, nil
 			}
-			return []byte(`{"schemaVersion":1,"session":{"outcome":"completed"}}`), nil
+			return encode(validIncident(manifest))
 		case "secrets":
 			return []byte("[]"), nil
 		}
@@ -113,6 +113,98 @@ func (executor *fixtureExecutor) Run(_ context.Context, command Command) ([]byte
 		}
 	}
 	return nil, errors.New("unexpected command: " + command.Path + " " + args)
+}
+
+func validSystemHealth(manifest Manifest) comisSystemHealthReport {
+	zero := 0
+	zeroRate := 0.0
+	report := comisSystemHealthReport{
+		SchemaVersion: 1, WindowHours: 24, DegradedByCause: map[string]int{},
+		ToolStats: map[string]comisToolCount{"reconcile_task": {OK: 1}},
+		Findings: []struct {
+			Code   string `json:"code"`
+			Detail string `json:"detail"`
+			Count  int    `json:"count"`
+			Hint   string `json:"hint"`
+		}{},
+		LikelyRootCause: json.RawMessage("null"), SuggestedNextSteps: []string{},
+		Truncations: []struct {
+			Field  string `json:"field"`
+			Reason string `json:"reason"`
+		}{},
+	}
+	report.Sessions.Total = 2
+	report.Sessions.DeliveredWithToolErrors = &zero
+	report.Sessions.HardDegraded = &zero
+	report.Sessions.HardDegradedRate = &zeroRate
+	report.TopErrorKinds = []struct {
+		Kind  string `json:"kind"`
+		Count int    `json:"count"`
+	}{}
+	report.Activity.ActiveAgents = []string{manifest.Comis.AgentID}
+	report.Activity.ActiveChannels = []string{"telegram"}
+	report.Activity.ExitReasons = map[string]int{"completed": 2}
+	report.Activity.TurnTotal = 2
+	report.Coverage = &struct {
+		SessionSummary struct {
+			Found bool `json:"found"`
+			Rows  int  `json:"rows"`
+		} `json:"sessionSummary"`
+		SessionIndex struct {
+			DaysRead    int `json:"daysRead"`
+			DaysMissing int `json:"daysMissing"`
+		} `json:"sessionIndex"`
+		Billing struct {
+			Present bool `json:"present"`
+		} `json:"billing"`
+	}{}
+	report.Coverage.SessionSummary.Found = true
+	report.Coverage.SessionSummary.Rows = 2
+	report.Coverage.SessionIndex.DaysRead = 1
+	report.Coverage.Billing.Present = true
+	return report
+}
+
+func validIncident(manifest Manifest) comisIncidentReport {
+	report := comisIncidentReport{
+		SchemaVersion: 1, SessionKey: manifest.Comis.ExplainRefs[0], TraceID: "trace-live-0001",
+		AgentID: manifest.Comis.AgentID, ToolStats: map[string]comisToolCount{"reconcile_task": {OK: 1}},
+		Failures: []struct {
+			Seq         int    `json:"seq"`
+			ToolName    string `json:"toolName"`
+			ErrorKind   string `json:"errorKind"`
+			FailureCode string `json:"failureCode"`
+		}{},
+		BreakerTimeline: []json.RawMessage{}, Offloads: []json.RawMessage{}, Summary: "Campaign completed.",
+		LikelyRootCause: json.RawMessage("null"), SuggestedNextSteps: []string{}, Truncations: []json.RawMessage{},
+	}
+	report.Channel.Type = "telegram"
+	report.Channel.ID = manifest.Telegram.OriginChatID
+	report.Outcome.EndReason = "completed"
+	report.Outcome.Severity = "ok"
+	report.Timing.DurationMs = 1000
+	report.Timing.TurnCount = 1
+	report.Coverage = &struct {
+		Trajectory struct {
+			Found   bool `json:"found"`
+			Records int  `json:"records"`
+		} `json:"trajectory"`
+		Rollup struct {
+			Present bool `json:"present"`
+		} `json:"rollup"`
+		Offloads struct {
+			PointersResolved int `json:"pointersResolved"`
+			PointersTotal    int `json:"pointersTotal"`
+		} `json:"offloads"`
+		LosslessContext *struct {
+			Found       bool `json:"found"`
+			ToolResults int  `json:"toolResults"`
+		} `json:"losslessContext"`
+	}{}
+	report.Coverage.Trajectory.Found = true
+	report.Coverage.Trajectory.Records = 1
+	report.Coverage.Rollup.Present = true
+	return report
 }
 
 func TestCollectAcceptsSharedPinnedTaskBaseWhenCanonicalBranchAdvances(t *testing.T) {
@@ -199,6 +291,45 @@ func TestCollectRefusesStructurallyEmptyComisObservabilityReports(t *testing.T) 
 			)
 			if err == nil || !strings.Contains(err.Error(), test.wantErrorPart) {
 				t.Fatalf("Collect() error = %v, want %q", err, test.wantErrorPart)
+			}
+		})
+	}
+}
+
+func TestCollectRefusesIncompleteComisCoverageAndTelegramAuthority(t *testing.T) {
+	manifest := validManifest()
+	healthWithoutCoverage := validSystemHealth(manifest)
+	healthWithoutCoverage.Coverage = nil
+	incidentFromNewerConversation := validIncident(manifest)
+	incidentFromNewerConversation.Channel.ID = manifest.Telegram.NewerChatID
+	incidentWithoutCoverage := validIncident(manifest)
+	incidentWithoutCoverage.Coverage = nil
+	for _, test := range []struct {
+		name          string
+		health        *comisSystemHealthReport
+		explanation   *comisIncidentReport
+		wantErrorPart string
+	}{
+		{name: "system source coverage", health: &healthWithoutCoverage, wantErrorPart: "system health source coverage is incomplete"},
+		{name: "wrong Telegram origin", explanation: &incidentFromNewerConversation, wantErrorPart: "Telegram origin is invalid"},
+		{name: "session source coverage", explanation: &incidentWithoutCoverage, wantErrorPart: "session explanation source coverage is incomplete"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			executor := &fixtureExecutor{manifest: manifest}
+			var err error
+			if test.health != nil {
+				executor.systemHealth, err = json.Marshal(test.health)
+			} else {
+				executor.explanation, err = json.Marshal(test.explanation)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, collectErr := Collect(
+				context.Background(), manifest, filepath.Join(t.TempDir(), "evidence"), executor, manifest.EndedAtMs,
+			)
+			if collectErr == nil || !strings.Contains(collectErr.Error(), test.wantErrorPart) {
+				t.Fatalf("Collect() error = %v, want %q", collectErr, test.wantErrorPart)
 			}
 		})
 	}

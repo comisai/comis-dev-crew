@@ -25,6 +25,10 @@ isolated MCP, DevCrew, and Comis units, waits for post-restart Telegram evidence
 then verifies cleaned task, operation, Comis, Git, GitHub, and count-only secret
 residency truth. This is an executable gate, not a claim that the external campaign
 has run; release readiness still requires a passing protected invocation.
+Comis system-health and session-explanation artifacts are structurally validated
+before they can contribute a passing verdict: source coverage, campaign activity,
+hard-degraded posture, agent identity, and the exact origin Telegram conversation
+must be present rather than inferred from an arbitrary JSON object.
 
 ## Foundation
 

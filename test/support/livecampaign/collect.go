@@ -200,24 +200,38 @@ func (instance *collector) collectTelegramAndComis() error {
 	if durationHours < 1 {
 		durationHours = 1
 	}
-	var health json.RawMessage
+	var healthJSON json.RawMessage
 	if err := instance.runJSON(Command{Path: instance.manifest.Comis.NodePath, Args: []string{
 		instance.manifest.Comis.CLIScriptPath, "system-health", "--since", strconv.FormatInt(durationHours, 10),
 		"--format", "json", "--offline",
-	}, Env: comisEnv}, &health); err != nil {
+	}, Env: comisEnv}, &healthJSON); err != nil {
 		return fmt.Errorf("collect live closeout: Comis system health unavailable: %w", err)
 	}
-	if err := instance.writeRawJSON("comis-system-health.json", health); err != nil {
+	var health comisSystemHealthReport
+	if err := json.Unmarshal(healthJSON, &health); err != nil {
+		return errors.New("collect live closeout: Comis system health is malformed")
+	}
+	if err := verifyComisSystemHealth(instance.manifest, health); err != nil {
+		return fmt.Errorf("collect live closeout: system health evidence refused: %w", err)
+	}
+	if err := instance.writeRawJSON("comis-system-health.json", healthJSON); err != nil {
 		return err
 	}
 	for index, reference := range instance.manifest.Comis.ExplainRefs {
-		var explanation json.RawMessage
+		var explanationJSON json.RawMessage
 		if err := instance.runJSON(Command{Path: instance.manifest.Comis.NodePath, Args: []string{
 			instance.manifest.Comis.CLIScriptPath, "explain", reference, "--format", "json", "--depth", "full", "--offline",
-		}, Env: comisEnv}, &explanation); err != nil {
+		}, Env: comisEnv}, &explanationJSON); err != nil {
 			return fmt.Errorf("collect live closeout: Comis explanation %d unavailable: %w", index+1, err)
 		}
-		if err := instance.writeRawJSON(fmt.Sprintf("comis-explain-%02d.json", index+1), explanation); err != nil {
+		var explanation comisIncidentReport
+		if err := json.Unmarshal(explanationJSON, &explanation); err != nil {
+			return fmt.Errorf("collect live closeout: Comis explanation %d is malformed", index+1)
+		}
+		if err := verifyComisIncident(instance.manifest, explanation); err != nil {
+			return fmt.Errorf("collect live closeout: Comis explanation %d evidence refused: %w", index+1, err)
+		}
+		if err := instance.writeRawJSON(fmt.Sprintf("comis-explain-%02d.json", index+1), explanationJSON); err != nil {
 			return err
 		}
 	}
