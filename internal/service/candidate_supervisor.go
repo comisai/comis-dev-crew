@@ -190,9 +190,14 @@ func (supervisor *candidateSupervisor) ValidateTask(
 		WorktreeCleanliness: candidateCleanliness(snapshot.Cleanliness), ValidationReceipts: receipts,
 		UnresolvedDecisionCount: openDecisions,
 	}
-	requiredForge, material, err := supervisor.attachDeliveryEvidence(ctx, task, profile, snapshot, &bundle)
-	if err != nil {
-		return domain.Task{}, domain.CandidateJudgment{}, err
+	deliveryEligible := snapshot.Cleanliness == devgit.CandidateClean && snapshot.HeadRevision != task.BaseRevision
+	requiredForge := requiredForgeCheckNames(profile.ForgeChecks)
+	material := candidateDeliveryMaterial{}
+	if deliveryEligible {
+		requiredForge, material, err = supervisor.attachDeliveryEvidence(ctx, task, profile, snapshot, &bundle)
+		if err != nil {
+			return domain.Task{}, domain.CandidateJudgment{}, err
+		}
 	}
 	producedAt := supervisor.config.Clock()
 	if producedAt.IsZero() || producedAt.Location() != time.UTC {
@@ -204,9 +209,12 @@ func (supervisor *candidateSupervisor) ValidateTask(
 	if err != nil {
 		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: evidence could not be sealed")
 	}
-	publications, err := candidateEvidencePublications(task, sealed, material)
-	if err != nil {
-		return domain.Task{}, domain.CandidateJudgment{}, err
+	var publications []application.ComisEvidencePublication
+	if deliveryEligible {
+		publications, err = candidateEvidencePublications(task, sealed, material)
+		if err != nil {
+			return domain.Task{}, domain.CandidateJudgment{}, err
+		}
 	}
 	return supervisor.config.Store.CommitCandidateEvidence(
 		ctx, taskHandle, sealed, requiredLocal, requiredForge, producedAt, publications,

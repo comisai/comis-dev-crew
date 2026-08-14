@@ -107,6 +107,10 @@ also leave the task `validating` and are retried without stopping the candidate
 supervisor. Other pull-request delivery errors still stop supervision so that
 permanent failures remain visible.
 
+A dirty worktree or a head that still equals the pinned base is not eligible for
+delivery. The supervisor records its local evidence as unknown without calling
+the forge or artifact delivery adapter, and remains available for other tasks.
+
 Diagnostic reads report validation as `unknown` when a task is already
 `validating` but no durable judgment or active validation process can be found;
 they never turn that inconsistent posture into `not_started`.

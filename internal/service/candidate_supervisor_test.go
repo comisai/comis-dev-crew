@@ -68,13 +68,18 @@ func TestCandidateSupervisor_PreservesDirtyBaseCandidateWithoutForgeMutation(t *
 	if err != nil {
 		t.Fatalf("newCandidateSupervisor() error = %v", err)
 	}
-	updated, judgment, err := supervisor.ValidateTask(context.Background(), fixture.task.Handle)
-	if err != nil {
-		t.Fatalf("ValidateTask() error = %v", err)
+	ctx, cancel := context.WithCancel(context.Background())
+	fixture.store.onCommit = cancel
+	if err := supervisor.Run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context.Canceled", err)
 	}
+	judgment := domain.JudgeCandidate(domain.CandidateJudgeInput{
+		Task: fixture.task, Evidence: fixture.store.evidence,
+		RequiredLocalChecks: []string{"unit"}, RequiredForgeChecks: []string{"ci/unit"}, Now: fixture.now,
+	})
 	if judgment.Outcome != domain.CandidateUnknown || judgment.Reason != domain.CandidateWorktreeUnverified ||
-		updated.State != domain.TaskValidating {
-		t.Fatalf("ValidateTask() = %#v, %#v", updated, judgment)
+		fixture.store.task.State != domain.TaskValidating {
+		t.Fatalf("Run() task = %#v, judgment = %#v", fixture.store.task, judgment)
 	}
 	if fixture.runner.calls != 1 || fixture.pullRequests.calls != 0 || fixture.store.evidence == nil {
 		t.Fatalf("invalid candidate effects: validation=%d forge=%d evidence=%t",

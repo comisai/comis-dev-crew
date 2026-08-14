@@ -387,7 +387,8 @@ The fixture launches no subprocess and exists to prove these properties around t
 report lifecycle. Fixture composition requires explicit command flags and is used
 only with deterministic reviewed inputs. Candidate
 completion advances only to `validating`; it never claims validation, delivery, or
-terminal success.
+terminal success. Dirty or base-equal candidate snapshots retain an unknown
+judgment and never reach forge or artifact delivery.
 
 ## Design record
 
