@@ -11,6 +11,14 @@ on:
         description: Owner-private evidence root on the dedicated Linux runner
         required: true
         type: string
+      backup_root:
+        description: New owner-private backup root reserved for this campaign
+        required: true
+        type: string
+      restore_root:
+        description: New owner-private isolated restore root reserved for this campaign
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -28,6 +36,8 @@ jobs:
     env:
       DEVCREW_LIVE_MANIFEST: ${{ inputs.manifest_path }}
       DEVCREW_LIVE_EVIDENCE_ROOT: ${{ inputs.evidence_root }}
+      DEVCREW_LIVE_BACKUP_ROOT: ${{ inputs.backup_root }}
+      DEVCREW_LIVE_RESTORE_ROOT: ${{ inputs.restore_root }}
       GH_TOKEN: ${{ secrets.DEVCREW_LIVE_GH_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -40,6 +50,8 @@ jobs:
           test "${RUNNER_OS}" = Linux
           test -n "${DEVCREW_LIVE_MANIFEST}"
           test -n "${DEVCREW_LIVE_EVIDENCE_ROOT}"
+          test -n "${DEVCREW_LIVE_BACKUP_ROOT}"
+          test -n "${DEVCREW_LIVE_RESTORE_ROOT}"
           test -n "${GH_TOKEN}"
       - run: go mod download
       - name: Run real Telegram campaign and closeout
