@@ -257,6 +257,15 @@ task must still be observed in `working`; an earlier overlap snapshot cannot
 substitute for that causal sibling-continuation proof. Final cleanup must leave
 both tasks `cleaned`.
 
+The manifest also pins the canonical DevCrew SQLite database and task-worktree
+root. Resource snapshots read `MainPID`, `MemoryCurrent`, and `TasksCurrent` for
+the exact three isolated systemd units, count each main process's open file
+descriptors, total the Comis data tree and DevCrew database bytes, and count the
+task worktrees. Verification requires start and finish samples inside the
+campaign window separated by at least one hour. It refuses excessive memory,
+file-descriptor, or disk growth and requires exactly two starting worktrees and
+no worktree after cleanup.
+
 Run the protected campaign:
 
 ```sh

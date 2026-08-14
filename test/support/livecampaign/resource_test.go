@@ -41,8 +41,9 @@ type resourceExecutorFixture struct {
 }
 
 func (executor resourceExecutorFixture) Run(_ context.Context, command Command) ([]byte, error) {
-	if command.Path != executor.manifest.Services.SystemctlPath || len(command.Args) != 4 ||
-		command.Args[0] != "show" || command.Args[2] != "--property" || command.Args[3] == "" {
+	if command.Path != executor.manifest.Services.SystemctlPath || len(command.Args) != 5 ||
+		command.Args[0] != "show" || command.Args[2] != "--property" || command.Args[3] == "" ||
+		command.Args[4] != "--value" {
 		return nil, errors.New("unexpected command")
 	}
 	unit := command.Args[1]

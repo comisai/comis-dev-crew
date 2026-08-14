@@ -61,6 +61,8 @@ type DevCrewTarget struct {
 	CLIPath      string `json:"cliPath"`
 	CodeRoot     string `json:"codeRoot"`
 	SocketPath   string `json:"socketPath"`
+	DatabasePath string `json:"databasePath"`
+	WorktreeRoot string `json:"worktreeRoot"`
 	RepositoryID string `json:"repositoryId"`
 }
 
@@ -192,6 +194,8 @@ func (manifest Manifest) validate() error {
 		"devcrew.cliPath":             manifest.DevCrew.CLIPath,
 		"devcrew.codeRoot":            manifest.DevCrew.CodeRoot,
 		"devcrew.socketPath":          manifest.DevCrew.SocketPath,
+		"devcrew.databasePath":        manifest.DevCrew.DatabasePath,
+		"devcrew.worktreeRoot":        manifest.DevCrew.WorktreeRoot,
 		"comis.nodePath":              manifest.Comis.NodePath,
 		"comis.cliScriptPath":         manifest.Comis.CLIScriptPath,
 		"comis.codeRoot":              manifest.Comis.CodeRoot,

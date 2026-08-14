@@ -138,19 +138,21 @@ func validateRuntime(ctx context.Context, manifest Manifest, executor Executor) 
 	for name, path := range map[string]string{
 		"Comis CLI script":        manifest.Comis.CLIScriptPath,
 		"secret residency script": manifest.Comis.SecretResidencyScript,
+		"DevCrew database":        manifest.DevCrew.DatabasePath,
 	} {
 		if err := validateCanonicalRegularFile(path); err != nil {
 			return fmt.Errorf("validate protected runtime: %s: %w", name, err)
 		}
-		if !pathWithin(manifest.Comis.CodeRoot, path) {
+		if name != "DevCrew database" && !pathWithin(manifest.Comis.CodeRoot, path) {
 			return fmt.Errorf("validate protected runtime: %s is outside the pinned Comis code root", name)
 		}
 	}
 	for name, path := range map[string]string{
-		"DevCrew code root":    manifest.DevCrew.CodeRoot,
-		"Comis code root":      manifest.Comis.CodeRoot,
-		"Comis data root":      manifest.Comis.DataDir,
-		"Git primary checkout": manifest.GitHub.PrimaryCheckout,
+		"DevCrew code root":     manifest.DevCrew.CodeRoot,
+		"DevCrew worktree root": manifest.DevCrew.WorktreeRoot,
+		"Comis code root":       manifest.Comis.CodeRoot,
+		"Comis data root":       manifest.Comis.DataDir,
+		"Git primary checkout":  manifest.GitHub.PrimaryCheckout,
 	} {
 		if err := validateCanonicalDirectory(path); err != nil {
 			return fmt.Errorf("validate protected runtime: %s: %w", name, err)

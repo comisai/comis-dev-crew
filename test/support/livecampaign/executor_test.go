@@ -114,6 +114,14 @@ func TestValidateRuntimeRejectsNonSocketAndNonPrivateDataRoot(t *testing.T) {
 	if err := os.Mkdir(manifest.DevCrew.CodeRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	manifest.DevCrew.DatabasePath = filepath.Join(root, "devcrew.db")
+	if err := os.WriteFile(manifest.DevCrew.DatabasePath, []byte("database-fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest.DevCrew.WorktreeRoot = filepath.Join(root, "worktrees")
+	if err := os.Mkdir(manifest.DevCrew.WorktreeRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	manifest.Comis.DataDir = root
 	manifest.GitHub.PrimaryCheckout = root
 	manifest.DevCrew.SocketPath = filepath.Join(root, "not-a-socket")

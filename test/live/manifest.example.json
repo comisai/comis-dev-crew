@@ -26,6 +26,8 @@
     "cliPath": "/opt/comis-dev-crew/bin/devcrew",
     "codeRoot": "/opt/comis-dev-crew/source",
     "socketPath": "/run/devcrew-e0-live/service.sock",
+    "databasePath": "/var/lib/devcrew-e0-live/state.db",
+    "worktreeRoot": "/srv/comis-e0-live/worktrees",
     "repositoryId": "comis-repository"
   },
   "comis": {
