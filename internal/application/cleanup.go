@@ -347,6 +347,9 @@ func (coordinator *CleanupCoordinator) verifyCurrentSafety(
 		HeadRevision: record.HeadRevision, RequiredChecks: append([]string(nil), record.RequiredForgeChecks...),
 	})
 	if err != nil {
+		if errors.Is(err, ErrCleanupStaleForgeTruth) {
+			return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, err
+		}
 		return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, cleanupDependencyFailure(
 			"cleanup pull request verification failed",
 			"inspect the recorded pull request, head, and required checks before retrying",

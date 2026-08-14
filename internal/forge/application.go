@@ -21,6 +21,9 @@ func (adapter *GitHubAdapter) VerifyPullRequestDelivery(
 		PullRequestID: request.PullRequestID, RequiredChecks: request.RequiredChecks,
 	})
 	if err != nil {
+		if errors.Is(err, errPullRequestTruthDiffers) {
+			return application.PullRequestDeliveryTruth{}, application.ErrCleanupStaleForgeTruth
+		}
 		return application.PullRequestDeliveryTruth{}, err
 	}
 	checks := make([]application.ForgeCheckTruth, len(truth.Evidence.CheckConclusions))

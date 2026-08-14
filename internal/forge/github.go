@@ -21,12 +21,13 @@ import (
 const maximumForgeResponseBytes = 1 << 20
 
 var (
-	githubNamePattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$`)
-	forgeIDPattern     = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,63}$`)
-	operationIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,127}$`)
-	branchPattern      = regexp.MustCompile(`^devcrew/[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$`)
-	revisionPattern    = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
-	pullRequestPattern = regexp.MustCompile(`^github-pr-[1-9][0-9]{0,9}$`)
+	githubNamePattern          = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$`)
+	forgeIDPattern             = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,63}$`)
+	operationIDPattern         = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,127}$`)
+	branchPattern              = regexp.MustCompile(`^devcrew/[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$`)
+	revisionPattern            = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
+	pullRequestPattern         = regexp.MustCompile(`^github-pr-[1-9][0-9]{0,9}$`)
+	errPullRequestTruthDiffers = errors.New("pull-request truth differs")
 )
 
 // GitHubConfig supplies one fixed repository and separate non-merge identities.
@@ -151,7 +152,7 @@ func (adapter *GitHubAdapter) VerifyPullRequest(
 	}
 	if pull.State != "open" || pull.Head.SHA != request.HeadRevision || pull.Head.Ref != request.Branch ||
 		pull.Base.Ref != adapter.config.BaseBranch {
-		return PullRequestTruth{}, errors.New("verify GitHub pull request: re-read identity differs")
+		return PullRequestTruth{}, fmt.Errorf("verify GitHub pull request: %w", errPullRequestTruthDiffers)
 	}
 	if err := validatePullRequestURL(pull.HTMLURL); err != nil {
 		return PullRequestTruth{}, err
