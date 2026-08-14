@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -155,7 +156,7 @@ func captureServiceResources(
 		}
 		values[property] = value
 	}
-	if values["MemoryCurrent"] > uint64(^uint64(0)>>1) || values["TasksCurrent"] > uint64(^uint(0)>>1) {
+	if values["MemoryCurrent"] > uint64(math.MaxInt64) || values["TasksCurrent"] > uint64(math.MaxInt) {
 		return ServiceResourceSnapshot{}, fmt.Errorf("capture resources: service %s resource value exceeds local bounds", unit)
 	}
 	openFDs, err := reader.OpenFDCount(values["MainPID"])
