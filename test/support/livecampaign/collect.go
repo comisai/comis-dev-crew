@@ -85,7 +85,7 @@ func Collect(
 	if err := instance.writeJSON("recovery-evidence.json", recovery); err != nil {
 		return Verdict{}, err
 	}
-	instance.pass("backup_restore_and_rollback")
+	instance.pass("installation_upgrade_backup_restore_and_rollback")
 	if err := instance.collectDevCrew(); err != nil {
 		return instance.failureVerdict(capturedAtMs, err)
 	}

@@ -14,10 +14,27 @@ import (
 const maximumRecoveryEvidenceBytes = 64 * 1024
 
 type RecoveryEvidence struct {
-	SchemaVersion int              `json:"schemaVersion"`
-	Backup        BackupEvidence   `json:"backup"`
-	Restore       RestoreEvidence  `json:"restore"`
-	Rollback      RollbackEvidence `json:"rollback"`
+	SchemaVersion int                  `json:"schemaVersion"`
+	Installation  InstallationEvidence `json:"installation"`
+	Backup        BackupEvidence       `json:"backup"`
+	Restore       RestoreEvidence      `json:"restore"`
+	Rollback      RollbackEvidence     `json:"rollback"`
+}
+
+// InstallationEvidence proves fresh installs and an in-place prior-release upgrade.
+type InstallationEvidence struct {
+	SchemaVersion             int    `json:"schemaVersion"`
+	CapturedAtMs              int64  `json:"capturedAtMs"`
+	Passed                    bool   `json:"passed"`
+	DevCrewChecksumVerified   bool   `json:"devcrewChecksumVerified"`
+	ComisPackageVerified      bool   `json:"comisPackageVerified"`
+	FreshArtifactsVerified    int    `json:"freshArtifactsVerified"`
+	PreviousArtifactsVerified int    `json:"previousArtifactsVerified"`
+	UpgradedArtifactsVerified int    `json:"upgradedArtifactsVerified"`
+	CurrentComisVersion       string `json:"currentComisVersion"`
+	PreviousComisVersion      string `json:"previousComisVersion"`
+	CurrentDevCrewVersion     string `json:"currentDevcrewVersion"`
+	PreviousDevCrewVersion    string `json:"previousDevcrewVersion"`
 }
 
 // RunRecoveryVerification executes backup, isolated restore, and previous-binary rollback.
@@ -26,10 +43,18 @@ func RunRecoveryVerification(
 	manifest Manifest,
 	backupRoot string,
 	restoreRoot string,
+	freshInstallRoot string,
+	upgradeRoot string,
 	executor Executor,
 	probe RollbackServiceProbe,
 	capturedAtMs int64,
 ) (RecoveryEvidence, error) {
+	installation, err := VerifyReleaseInstallation(
+		ctx, manifest, freshInstallRoot, upgradeRoot, executor, capturedAtMs,
+	)
+	if err != nil {
+		return RecoveryEvidence{}, err
+	}
 	backup, err := CreateRecoveryBackup(ctx, manifest, backupRoot, executor, capturedAtMs)
 	if err != nil {
 		return RecoveryEvidence{}, err
@@ -42,7 +67,9 @@ func RunRecoveryVerification(
 	if err != nil {
 		return RecoveryEvidence{}, err
 	}
-	evidence := RecoveryEvidence{SchemaVersion: 1, Backup: backup, Restore: restore, Rollback: rollback}
+	evidence := RecoveryEvidence{
+		SchemaVersion: 1, Installation: installation, Backup: backup, Restore: restore, Rollback: rollback,
+	}
 	if err := VerifyRecoveryEvidence(manifest, evidence); err != nil {
 		return RecoveryEvidence{}, err
 	}
@@ -54,17 +81,34 @@ func VerifyRecoveryEvidence(manifest Manifest, evidence RecoveryEvidence) error 
 	if err := manifest.validate(); err != nil {
 		return fmt.Errorf("verify recovery evidence: %w", err)
 	}
+	if evidence.Installation.SchemaVersion != 1 {
+		return errors.New("verify recovery evidence: installation schemaVersion must equal 1")
+	}
 	if evidence.SchemaVersion != 1 || evidence.Backup.SchemaVersion != 1 ||
 		evidence.Restore.SchemaVersion != 1 || evidence.Rollback.SchemaVersion != 1 {
 		return errors.New("verify recovery evidence: every schemaVersion must equal 1")
 	}
 	for name, capturedAtMs := range map[string]int64{
-		"backup": evidence.Backup.CapturedAtMs, "restore": evidence.Restore.CapturedAtMs,
+		"installation": evidence.Installation.CapturedAtMs,
+		"backup":       evidence.Backup.CapturedAtMs, "restore": evidence.Restore.CapturedAtMs,
 		"rollback": evidence.Rollback.CapturedAtMs,
 	} {
 		if capturedAtMs < manifest.StartedAtMs || capturedAtMs > manifest.EndedAtMs {
 			return fmt.Errorf("verify recovery evidence: %s capture time is outside the campaign", name)
 		}
+	}
+	installation := evidence.Installation
+	current := artifactPinsByKind(manifest.Artifacts)
+	previous := artifactPinsByKind(manifest.Recovery.PreviousArtifacts)
+	if !installation.Passed || !installation.DevCrewChecksumVerified ||
+		!installation.ComisPackageVerified || installation.FreshArtifactsVerified != len(requiredArtifactKinds) ||
+		installation.PreviousArtifactsVerified != len(requiredArtifactKinds) ||
+		installation.UpgradedArtifactsVerified != len(requiredArtifactKinds) ||
+		installation.CurrentComisVersion != current["comis-cli"].Version ||
+		installation.PreviousComisVersion != previous["comis-cli"].Version ||
+		installation.CurrentDevCrewVersion != current["devcrew"].Version ||
+		installation.PreviousDevCrewVersion != previous["devcrew"].Version {
+		return errors.New("verify recovery evidence: installation did not prove fresh artifacts and the prior-release upgrade")
 	}
 	if !evidence.Backup.Passed || evidence.Backup.Files <= 0 || evidence.Backup.Bytes <= 0 ||
 		!lowerHexDigestPattern.MatchString(evidence.Backup.SHA256) ||

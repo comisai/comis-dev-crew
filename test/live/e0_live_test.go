@@ -20,8 +20,11 @@ func TestE0LiveCampaign_RealTelegramProtectedLinuxCloseout(t *testing.T) {
 	evidenceRoot := os.Getenv("DEVCREW_LIVE_EVIDENCE_ROOT")
 	backupRoot := os.Getenv("DEVCREW_LIVE_BACKUP_ROOT")
 	restoreRoot := os.Getenv("DEVCREW_LIVE_RESTORE_ROOT")
-	if manifestPath == "" || evidenceRoot == "" || backupRoot == "" || restoreRoot == "" {
-		t.Fatal("protected E0 campaign requires manifest, evidence, backup, and restore roots")
+	freshInstallRoot := os.Getenv("DEVCREW_LIVE_FRESH_INSTALL_ROOT")
+	upgradeRoot := os.Getenv("DEVCREW_LIVE_UPGRADE_ROOT")
+	if manifestPath == "" || evidenceRoot == "" || backupRoot == "" || restoreRoot == "" ||
+		freshInstallRoot == "" || upgradeRoot == "" {
+		t.Fatal("protected E0 campaign requires manifest, evidence, backup, restore, fresh-install, and upgrade roots")
 	}
 	manifest, err := livecampaign.LoadManifest(manifestPath)
 	if err != nil {
@@ -37,7 +40,7 @@ func TestE0LiveCampaign_RealTelegramProtectedLinuxCloseout(t *testing.T) {
 			ctx context.Context, manifest livecampaign.Manifest, executor livecampaign.Executor, capturedAtMs int64,
 		) (livecampaign.RecoveryEvidence, error) {
 			return livecampaign.RunRecoveryVerification(
-				ctx, manifest, backupRoot, restoreRoot, executor,
+				ctx, manifest, backupRoot, restoreRoot, freshInstallRoot, upgradeRoot, executor,
 				livecampaign.RealRollbackServiceProbe, capturedAtMs,
 			)
 		},

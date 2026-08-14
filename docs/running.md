@@ -276,6 +276,12 @@ jails followed by zero residual terminals, jails, worktrees, or deliveries.
 Recovery fields bind the owner-private candidate configuration, non-overlapping
 synthetic rollback roots, and the exact previous Comis CLI plus four DevCrew
 executables by path, SHA-256, and reported version. The live recovery support
+first runs the repository-shipped installers in two new owner-private prefixes.
+The fresh prefix must contain exact candidate Comis and DevCrew artifacts. The
+upgrade prefix is verified first at every previous artifact hash and version,
+then after an in-place candidate install at every current hash and version. All
+three DevCrew installer invocations must report that the downloaded release
+archive matched its published checksum. The support then
 stops only the three isolated units, copies the Comis data tree without `.env`,
 adds the DevCrew database, candidate configuration, and full unit definitions,
 then restarts every stopped unit in reverse order even when backup construction
@@ -293,6 +299,8 @@ DEVCREW_LIVE_MANIFEST=/absolute/private/e0-campaign.json \
 DEVCREW_LIVE_EVIDENCE_ROOT=/absolute/private/evidence \
 DEVCREW_LIVE_BACKUP_ROOT=/absolute/private/recovery-backup \
 DEVCREW_LIVE_RESTORE_ROOT=/absolute/private/recovery-restore \
+DEVCREW_LIVE_FRESH_INSTALL_ROOT=/absolute/private/fresh-install \
+DEVCREW_LIVE_UPGRADE_ROOT=/absolute/private/prior-release-upgrade \
 make test-live
 ```
 
@@ -317,14 +325,16 @@ make live-baseline
 ```
 
 After at least one hour and only after campaign cleanup is terminal, exercise
-backup, isolated restore, and previous-binary rollback. The backup and restore
-roots must not exist and must be separate from every live or synthetic data root
-bound by the manifest:
+fresh installation, prior-release upgrade, backup, isolated restore, and
+previous-binary rollback. All four output roots must not exist and must be
+separate from every live or synthetic data root bound by the manifest:
 
 ```sh
 DEVCREW_LIVE_MANIFEST=/absolute/private/e0-campaign.json \
 DEVCREW_LIVE_BACKUP_ROOT=/absolute/private/recovery-backup \
 DEVCREW_LIVE_RESTORE_ROOT=/absolute/private/recovery-restore \
+DEVCREW_LIVE_FRESH_INSTALL_ROOT=/absolute/private/fresh-install \
+DEVCREW_LIVE_UPGRADE_ROOT=/absolute/private/prior-release-upgrade \
 DEVCREW_LIVE_RECOVERY_EVIDENCE=/absolute/private/recovery-evidence.json \
 make live-recovery
 ```
@@ -346,8 +356,8 @@ Telegram checkpoint rows, Comis explanation and system-health reports, clean Git
 truth proving both tasks share one pinned base that remains an ancestor of the
 current base-branch tip, current open/unmerged GitHub pull-request and required-check truth,
 plaintext-secret audit plus count-only residency results, the verified one-hour
-resource observation, the verified backup/restore/rollback report, artifact
-hashes, and a single verdict. Raw Telegram message bodies and command stderr are
+resource observation, the verified fresh-install/upgrade/backup/restore/rollback
+report, artifact hashes, and a single verdict. Raw Telegram message bodies and command stderr are
 never retained.
 
 The Comis reports are acceptance oracles, not opaque attachments. Closeout rejects

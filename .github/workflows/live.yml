@@ -19,6 +19,14 @@ on:
         description: New owner-private isolated restore root reserved for this campaign
         required: true
         type: string
+      fresh_install_root:
+        description: New owner-private prefix for release fresh-install proof
+        required: true
+        type: string
+      upgrade_root:
+        description: New owner-private prefix for prior-release upgrade proof
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -38,6 +46,8 @@ jobs:
       DEVCREW_LIVE_EVIDENCE_ROOT: ${{ inputs.evidence_root }}
       DEVCREW_LIVE_BACKUP_ROOT: ${{ inputs.backup_root }}
       DEVCREW_LIVE_RESTORE_ROOT: ${{ inputs.restore_root }}
+      DEVCREW_LIVE_FRESH_INSTALL_ROOT: ${{ inputs.fresh_install_root }}
+      DEVCREW_LIVE_UPGRADE_ROOT: ${{ inputs.upgrade_root }}
       GH_TOKEN: ${{ secrets.DEVCREW_LIVE_GH_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -52,6 +62,8 @@ jobs:
           test -n "${DEVCREW_LIVE_EVIDENCE_ROOT}"
           test -n "${DEVCREW_LIVE_BACKUP_ROOT}"
           test -n "${DEVCREW_LIVE_RESTORE_ROOT}"
+          test -n "${DEVCREW_LIVE_FRESH_INSTALL_ROOT}"
+          test -n "${DEVCREW_LIVE_UPGRADE_ROOT}"
           test -n "${GH_TOKEN}"
       - run: go mod download
       - name: Run real Telegram campaign and closeout

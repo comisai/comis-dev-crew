@@ -179,6 +179,15 @@ func TestRecoveryEvidenceRefusesMissingFreshInstallAndUpgradeProof(t *testing.T)
 func validRecoveryEvidence(manifest Manifest) RecoveryEvidence {
 	return RecoveryEvidence{
 		SchemaVersion: 1,
+		Installation: InstallationEvidence{
+			SchemaVersion: 1, CapturedAtMs: manifest.EndedAtMs, Passed: true,
+			DevCrewChecksumVerified: true, ComisPackageVerified: true,
+			FreshArtifactsVerified: 5, PreviousArtifactsVerified: 5, UpgradedArtifactsVerified: 5,
+			CurrentComisVersion:    manifest.Artifacts[0].Version,
+			PreviousComisVersion:   manifest.Recovery.PreviousArtifacts[0].Version,
+			CurrentDevCrewVersion:  manifest.Artifacts[1].Version,
+			PreviousDevCrewVersion: manifest.Recovery.PreviousArtifacts[1].Version,
+		},
 		Backup: BackupEvidence{
 			SchemaVersion: 1, CapturedAtMs: manifest.EndedAtMs, Passed: true,
 			Files: 8, Bytes: 4096, SHA256: strings.Repeat("a", 64),

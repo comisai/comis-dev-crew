@@ -62,6 +62,12 @@ func TestRepositoryPolicy_ProtectedWorkflowSuppliesEveryLiveRecoveryRoot(t *test
 		"DEVCREW_LIVE_RESTORE_ROOT: ${{ inputs.restore_root }}",
 		`test -n "${DEVCREW_LIVE_BACKUP_ROOT}"`,
 		`test -n "${DEVCREW_LIVE_RESTORE_ROOT}"`,
+		"fresh_install_root:",
+		"upgrade_root:",
+		"DEVCREW_LIVE_FRESH_INSTALL_ROOT: ${{ inputs.fresh_install_root }}",
+		"DEVCREW_LIVE_UPGRADE_ROOT: ${{ inputs.upgrade_root }}",
+		`test -n "${DEVCREW_LIVE_FRESH_INSTALL_ROOT}"`,
+		`test -n "${DEVCREW_LIVE_UPGRADE_ROOT}"`,
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Errorf("protected live workflow is missing recovery contract %q", required)
