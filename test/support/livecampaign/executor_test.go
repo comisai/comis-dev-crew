@@ -273,3 +273,24 @@ func TestValidatePinnedWorkerRejectsVersionAndDigestDrift(t *testing.T) {
 		t.Fatalf("expected worker-digest refusal, got %v", err)
 	}
 }
+
+func TestValidatePinnedSourceRejectsDifferentCheckoutHead(t *testing.T) {
+	manifest := validManifest()
+	executor := &fixedOutputExecutor{output: []byte(strings.Repeat("a", 40) + "\n")}
+	if err := validatePinnedSource(
+		context.Background(), manifest.GitHub.GitPath, manifest.Comis.CodeRoot,
+		manifest.Source.ComisCommit, executor,
+	); err == nil || !strings.Contains(err.Error(), "source HEAD") {
+		t.Fatalf("expected source-head refusal, got %v", err)
+	}
+	executor.output = []byte(manifest.Source.ComisCommit + "\n")
+	if err := validatePinnedSource(
+		context.Background(), manifest.GitHub.GitPath, manifest.Comis.CodeRoot,
+		manifest.Source.ComisCommit, executor,
+	); err != nil {
+		t.Fatalf("validate exact source HEAD: %v", err)
+	}
+	if len(executor.seen) != 2 || strings.Join(executor.seen[1].Args, " ") != "-C "+manifest.Comis.CodeRoot+" rev-parse HEAD" {
+		t.Fatalf("unexpected source command: %#v", executor.seen)
+	}
+}

@@ -32,7 +32,7 @@ func validManifest() Manifest {
 			{Kind: "claude", ProfileID: "claude-reviewed", Path: "/opt/claude/bin/claude", SHA256: strings.Repeat("7", 64), Version: "2.1.224 (Claude Code)"},
 		},
 		DevCrew: DevCrewTarget{
-			CLIPath: "/opt/devcrew/bin/devcrew", SocketPath: "/run/devcrew-e0/service.sock",
+			CLIPath: "/opt/devcrew/bin/devcrew", CodeRoot: "/opt/devcrew", SocketPath: "/run/devcrew-e0/service.sock",
 			RepositoryID: "comis-repository",
 		},
 		Comis: ComisTarget{
@@ -98,6 +98,14 @@ func TestManifestRejectsSourceProtocolAndArtifactIdentityDrift(t *testing.T) {
 	manifest.Artifacts = manifest.Artifacts[:len(manifest.Artifacts)-1]
 	if _, err := LoadManifest(writeManifest(t, manifest, "-artifact")); err == nil || !strings.Contains(err.Error(), "artifact catalog") {
 		t.Fatalf("expected incomplete-artifact refusal, got %v", err)
+	}
+}
+
+func TestManifestRejectsPlaceholderSourceCommits(t *testing.T) {
+	manifest := validManifest()
+	manifest.Source.DevCrewCommit = strings.Repeat("0", 40)
+	if _, err := LoadManifest(writeManifest(t, manifest, "-placeholder-source")); err == nil || !strings.Contains(err.Error(), "source commits") {
+		t.Fatalf("expected placeholder-source refusal, got %v", err)
 	}
 }
 
