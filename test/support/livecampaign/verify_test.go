@@ -128,6 +128,23 @@ func TestTelegramEvidenceRequiresCompleteHumanCheckpointSequence(t *testing.T) {
 	}
 }
 
+func TestTelegramEvidenceRejectsOutOfOrderCampaignMilestones(t *testing.T) {
+	manifest := validManifest()
+	report := completeMessages(manifest)
+	indexes := make(map[string]int, len(manifest.Telegram.Checkpoints))
+	for index, checkpoint := range manifest.Telegram.Checkpoints {
+		indexes[checkpoint.Kind] = index
+	}
+	mcp := indexes["mcp_restarted_ack"]
+	decision := indexes["decision_reply"]
+	report.Messages[mcp].EpochMs, report.Messages[decision].EpochMs =
+		report.Messages[decision].EpochMs, report.Messages[mcp].EpochMs
+	if _, err := VerifyMessages(manifest, report); err == nil ||
+		!strings.Contains(err.Error(), "mcp_restarted_ack must precede decision_reply") {
+		t.Fatalf("VerifyMessages(out of order) error = %v", err)
+	}
+}
+
 func TestGitHubEvidenceRequiresCurrentOpenUnmergedHeadAndChecks(t *testing.T) {
 	manifest := validManifest()
 	detail := acceptedTask(manifest.Tasks[0])
