@@ -5,6 +5,8 @@ import (
 	"errors"
 	"math"
 	"strings"
+
+	"github.com/comisai/comis-dev-crew/internal/application"
 )
 
 type comisToolCount struct {
@@ -201,6 +203,8 @@ func verifyComisIncident(manifest Manifest, report comisIncidentReport) error {
 func verifyComisCampaignTools(reports []comisIncidentReport) error {
 	observed := make(map[string]comisToolCount, len(requiredCampaignToolCounts))
 	cleanupPreconditions := 0
+	openDecisionRefused := false
+	dirtyWorkspaceRefused := false
 	for _, report := range reports {
 		for name, counts := range report.ToolStats {
 			if counts.OK < 0 || counts.Failed < 0 {
@@ -214,6 +218,12 @@ func verifyComisCampaignTools(reports []comisIncidentReport) error {
 		for _, failure := range report.Failures {
 			if failure.ToolName == "cleanup_task" && failure.FailureCode == "precondition" {
 				cleanupPreconditions++
+				openDecisionRefused = openDecisionRefused || strings.Contains(
+					failure.ErrorPreview, application.CleanupOpenDecisionMessage,
+				)
+				dirtyWorkspaceRefused = dirtyWorkspaceRefused || strings.Contains(
+					failure.ErrorPreview, application.CleanupDirtyWorkspaceMessage,
+				)
 			}
 		}
 	}
@@ -225,6 +235,9 @@ func verifyComisCampaignTools(reports []comisIncidentReport) error {
 	}
 	if cleanupPreconditions < 2 {
 		return errors.New("required Comis cleanup refusal evidence is incomplete")
+	}
+	if !openDecisionRefused || !dirtyWorkspaceRefused {
+		return errors.New("required Comis cleanup refusal reasons are incomplete")
 	}
 	return nil
 }

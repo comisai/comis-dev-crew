@@ -278,7 +278,9 @@ Across the explanation set, closeout also requires the complete eight-tool E0
 workflow: two preparations and launch-plan reads, diagnostic list/get/explain
 reads, reconciliation, handback, two completed cleanups, and at least two
 precondition-classified cleanup refusals. Missing tool evidence cannot be replaced
-by a final clean task projection.
+by a final clean task projection. The failure previews must independently contain
+the closed unresolved-decision and dirty-worktree messages; two generic
+precondition counts do not prove both safety rows.
 
 ## Worker reporter contract
 

@@ -21,6 +21,15 @@ const (
 	CleanupCompleted         TaskCleanupStage = "completed"
 )
 
+const (
+	// CleanupOpenDecisionMessage is the content-free operator-visible blocker
+	// consumed by the protected campaign oracle.
+	CleanupOpenDecisionMessage = "cleanup is blocked by an unresolved task decision"
+	// CleanupDirtyWorkspaceMessage is the content-free operator-visible blocker
+	// consumed by the protected campaign oracle.
+	CleanupDirtyWorkspaceMessage = "cleanup requires a clean task worktree"
+)
+
 // ManagedRunReleaseDisposition is the closed host release behavior.
 type ManagedRunReleaseDisposition string
 
@@ -358,7 +367,7 @@ func cleanupCommitFailure(cause error) error {
 		message = "cleanup is blocked by an open task hold"
 		hint = "close the exact task cleanup hold, then retry cleanup"
 	case errors.Is(cause, ErrCleanupOpenDecision):
-		message = "cleanup is blocked by an unresolved task decision"
+		message = CleanupOpenDecisionMessage
 		hint = "resolve the exact open task decision, then retry cleanup"
 	default:
 		return mutationCommitFailure(cause)
@@ -380,7 +389,7 @@ func cleanupDirtyWorkspaceFailure() error {
 	failure, err := domain.NewFailure(
 		domain.ErrorPrecondition,
 		true,
-		"cleanup requires a clean task worktree",
+		CleanupDirtyWorkspaceMessage,
 		"remove uncommitted changes from the exact task worktree, then retry cleanup",
 		ErrPrecondition,
 	)

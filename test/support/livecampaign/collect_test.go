@@ -181,8 +181,8 @@ func validIncident(manifest Manifest) comisIncidentReport {
 			FailureCode  string `json:"failureCode"`
 			ErrorPreview string `json:"errorPreview"`
 		}{
-			{Seq: 1, ToolName: "cleanup_task", ErrorKind: "precondition", FailureCode: "precondition", ErrorPreview: "cleanup refused"},
-			{Seq: 2, ToolName: "cleanup_task", ErrorKind: "precondition", FailureCode: "precondition", ErrorPreview: "cleanup refused"},
+			{Seq: 1, ToolName: "cleanup_task", ErrorKind: "precondition", FailureCode: "precondition", ErrorPreview: application.CleanupOpenDecisionMessage},
+			{Seq: 2, ToolName: "cleanup_task", ErrorKind: "precondition", FailureCode: "precondition", ErrorPreview: application.CleanupDirtyWorkspaceMessage},
 		},
 		BreakerTimeline: []json.RawMessage{}, Offloads: []json.RawMessage{}, Summary: "Campaign completed.",
 		LikelyRootCause: json.RawMessage("null"), SuggestedNextSteps: []string{}, Truncations: []json.RawMessage{},

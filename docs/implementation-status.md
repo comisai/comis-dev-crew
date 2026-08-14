@@ -32,7 +32,8 @@ must be present rather than inferred from an arbitrary JSON object.
 The explanation set must also account for the closed eight-tool campaign catalog,
 including two successful task preparations and cleanups, the reconciliation and
 handback mutations, diagnostic reads, and two precondition-classified cleanup
-refusals.
+refusals. Those refusals must retain the distinct unresolved-decision and
+dirty-worktree safe messages in the bounded Comis failure evidence.
 
 ## Foundation
 
