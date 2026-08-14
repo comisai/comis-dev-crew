@@ -62,6 +62,9 @@ func (runner CampaignRunner) Run(ctx context.Context, manifest Manifest, evidenc
 	if err := runner.waitOperationAfterCheckpoint(ctx, manifest, "HandbackTask", handbackCheckpoint.EpochMs); err != nil {
 		return Verdict{}, err
 	}
+	if err := runner.requireHandbackSiblingWorking(ctx, manifest); err != nil {
+		return Verdict{}, err
+	}
 	runner.log("waiting for Telegram checkpoint reconcile_approval")
 	reconcileCheckpoint, err := runner.waitCheckpoint(ctx, manifest, "reconcile_approval", manifest.StartedAtMs)
 	if err != nil {
@@ -110,6 +113,32 @@ func (runner CampaignRunner) Run(ctx context.Context, manifest Manifest, evidenc
 	}
 	runner.log("campaign state is terminal; collecting bounded closeout evidence")
 	return Collect(ctx, manifest, evidenceRoot, runner.Executor, runner.NowMs())
+}
+
+func (runner CampaignRunner) requireHandbackSiblingWorking(ctx context.Context, manifest Manifest) error {
+	handback, found := operationForCommand(manifest, "HandbackTask")
+	if !found {
+		return errors.New("run protected live campaign: handback operation is absent from the manifest")
+	}
+	fleet, err := runner.readFleet(ctx, manifest)
+	if err != nil {
+		return fmt.Errorf("run protected live campaign: observe sibling during handback: %w", err)
+	}
+	if len(fleet.Tasks) != len(manifest.Tasks) {
+		return errors.New("run protected live campaign: sibling task is not exactly observable during handback")
+	}
+	for _, expectation := range manifest.Tasks {
+		if expectation.TaskHandle == handback.TaskHandle {
+			continue
+		}
+		for _, task := range fleet.Tasks {
+			if task.TaskHandle == expectation.TaskHandle && task.RepositoryID == manifest.DevCrew.RepositoryID &&
+				task.WorkerProfileID == expectation.WorkerProfileID && task.State == domain.TaskWorking {
+				return nil
+			}
+		}
+	}
+	return errors.New("run protected live campaign: sibling task was not working after handback")
 }
 
 func (runner CampaignRunner) restartUnit(ctx context.Context, manifest Manifest, unit string) error {

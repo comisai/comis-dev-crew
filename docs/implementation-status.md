@@ -27,6 +27,8 @@ isolated MCP, DevCrew, and Comis units, waits for post-restart Telegram evidence
 then verifies cleaned task, operation, Comis, Git, GitHub, and count-only secret
 residency truth. This is an executable gate, not a claim that the external campaign
 has run; release readiness still requires a passing protected invocation.
+The gate observes the sibling still working immediately after the human-approved
+handback; initial worker overlap alone does not satisfy that continuation claim.
 The owner-private manifest records exact Comis and DevCrew commits, requires the
 compiled protocol identity, and pins the Comis CLI plus all four DevCrew product
 artifacts by canonical path, SHA-256, and version. Runtime validation re-hashes

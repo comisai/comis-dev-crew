@@ -246,7 +246,10 @@ separate ready markers. An acknowledgement recorded before its corresponding
 restart does not satisfy the gate. The durable handback and reconciliation
 operations must complete at or after their respective human Telegram checkpoints;
 an operation completed before approval is refused even if the final task state is
-otherwise clean. Final cleanup must leave both tasks `cleaned`.
+otherwise clean. Immediately after the handback operation, the other manifest
+task must still be observed in `working`; an earlier overlap snapshot cannot
+substitute for that causal sibling-continuation proof. Final cleanup must leave
+both tasks `cleaned`.
 
 Run the protected campaign:
 

@@ -18,6 +18,7 @@ type campaignExecutor struct {
 	restartedUnits []string
 	mcpRestarted   bool
 	comisRestarted bool
+	handbackRead   bool
 }
 
 func (executor *campaignExecutor) Run(ctx context.Context, command Command) ([]byte, error) {
@@ -49,6 +50,20 @@ func (executor *campaignExecutor) Run(ctx context.Context, command Command) ([]b
 			SchemaVersion: 1, CapturedAtMs: manifest.StartedAtMs + 2000, StateVersion: 10,
 			Completeness: application.CompletenessComplete, ServiceHealth: application.HealthHealthy,
 			ComisHealth: application.HealthHealthy, Tasks: tasks,
+		})
+	}
+	if command.Path == manifest.DevCrew.CLIPath && strings.Contains(args, "task operation "+expectedOperationID(manifest, manifest.Tasks[1].TaskHandle, "HandbackTask")) {
+		executor.handbackRead = true
+	}
+	if command.Path == manifest.DevCrew.CLIPath && strings.HasSuffix(args, "status --format json") && executor.handbackRead {
+		executor.handbackRead = false
+		working := acceptedTask(manifest.Tasks[0]).Summary
+		working.State = domain.TaskWorking
+		handback := acceptedTask(manifest.Tasks[1]).Summary
+		return json.Marshal(application.FleetSnapshot{
+			SchemaVersion: 1, CapturedAtMs: manifest.StartedAtMs + 8000, StateVersion: 15,
+			Completeness: application.CompletenessComplete, ServiceHealth: application.HealthHealthy,
+			ComisHealth: application.HealthHealthy, Tasks: []application.TaskSummary{working, handback},
 		})
 	}
 	return executor.fixture.Run(ctx, command)
