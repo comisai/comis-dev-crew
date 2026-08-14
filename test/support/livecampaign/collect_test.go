@@ -335,6 +335,24 @@ func TestCollectRefusesIncompleteComisCoverageAndTelegramAuthority(t *testing.T)
 	}
 }
 
+func TestCollectRefusesComisReportsWithoutRequiredCampaignToolOutcomes(t *testing.T) {
+	manifest := validManifest()
+	explanation := validIncident(manifest)
+	explanation.ToolStats = map[string]comisToolCount{"reconcile_task": {OK: 1}}
+	explanation.Failures = explanation.Failures[:0]
+	encoded, err := json.Marshal(explanation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := &fixtureExecutor{manifest: manifest, explanation: encoded}
+	_, collectErr := Collect(
+		context.Background(), manifest, filepath.Join(t.TempDir(), "evidence"), executor, manifest.EndedAtMs,
+	)
+	if collectErr == nil || !strings.Contains(collectErr.Error(), "required Comis tool evidence is incomplete") {
+		t.Fatalf("Collect() error = %v, want incomplete campaign tool evidence", collectErr)
+	}
+}
+
 func TestCollectRefusesExistingCampaignEvidenceDirectory(t *testing.T) {
 	manifest := validManifest()
 	root := filepath.Join(t.TempDir(), "evidence")
