@@ -324,6 +324,11 @@ its head, base, state, URL, and check conclusions. Scout delivery reads only the
 reviewed bounded artifact. Both use durable outbox identities for exactly-once
 host delivery across restart.
 
+Task explanation reads the latest durable candidate judgment while validation is
+in progress as well as after failure. An unverified worktree is reported as a
+content-free Git-truth diagnosis, including whether the worktree is not clean,
+the candidate head still equals the pinned base, or both.
+
 Forge API and pull-request truth and branch push use distinct credentials. HTTPS
 token push is supported, and an SSH route allows a repository-scoped deploy key
 to be the push identity. The latter decodes the owner-private key only into a

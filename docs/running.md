@@ -127,9 +127,11 @@ publications. Incomplete recovery history becomes unresolved and cannot authoriz
 second reconciliation. Cleanup accepts exactly one origin and refuses missing or
 ambiguous evidence.
 
-`task explain` reads the latest durable candidate judgment for a failed task and
-distinguishes a required local-validation failure from a required forge-check
-failure. Other terminal failures retain the generic failed-task explanation.
+`task explain` reads the latest durable candidate judgment for failed and
+validating tasks. It distinguishes required local-validation and forge-check
+failures, and identifies an unverified worktree when current Git truth is dirty,
+base-equal, or otherwise not a clean non-base candidate. Other terminal failures
+retain the generic failed-task explanation.
 `task show` and JSON `explain_task` output also include a content-free `evidence`
 projection. It joins the candidate head and digest, latest authenticated report,
 decision and resolution references, validation status, forge and outbox delivery

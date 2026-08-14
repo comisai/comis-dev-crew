@@ -29,8 +29,8 @@ func (queries *Queries) ExplainTask(ctx context.Context, handle string) (TaskExp
 			return TaskExplanation{}, err
 		}
 	}
-	if task.State == domain.TaskFailed {
-		candidateReason, candidateExplanation, candidateRootCause, found, candidateErr := queries.explainCandidateFailure(ctx, task.Handle)
+	if task.State == domain.TaskFailed || task.State == domain.TaskValidating {
+		candidateReason, candidateExplanation, candidateRootCause, found, candidateErr := queries.explainCandidatePosture(ctx, task)
 		if candidateErr != nil {
 			return TaskExplanation{}, translateReadError(candidateErr, "candidate evidence")
 		}
@@ -116,20 +116,25 @@ func workspaceNotRecoverableExplanation() (string, string, string, []NextAction,
 		[]NextAction{ActionInspectTask, ActionPrepareTask}, nil
 }
 
-func (queries *Queries) explainCandidateFailure(
+func (queries *Queries) explainCandidatePosture(
 	ctx context.Context,
-	taskHandle string,
+	task domain.Task,
 ) (string, string, string, bool, error) {
 	reader, ok := queries.repository.(candidateEvidenceReader)
 	if !ok {
 		return "", "", "", false, nil
 	}
-	_, judgment, err := reader.LatestCandidateEvidence(ctx, taskHandle)
+	sealed, judgment, err := reader.LatestCandidateEvidence(ctx, task.Handle)
 	if errors.Is(err, ErrNotFound) {
 		return "", "", "", false, nil
 	}
 	if err != nil {
 		return "", "", "", false, err
+	}
+	if judgment.Outcome == domain.CandidateUnknown && judgment.Reason == domain.CandidateWorktreeUnverified && sealed != nil {
+		return "candidate_worktree_unverified",
+			"Candidate validation is waiting because current Git truth is unverified.",
+			unverifiedCandidateRootCause(task, sealed.Bundle()), true, nil
 	}
 	if judgment.Outcome != domain.CandidateRejected {
 		return "", "", "", false, nil
@@ -143,5 +148,20 @@ func (queries *Queries) explainCandidateFailure(
 			"At least one required forge check failed.", true, nil
 	default:
 		return "", "", "", false, nil
+	}
+}
+
+func unverifiedCandidateRootCause(task domain.Task, bundle domain.DeliveryEvidenceBundle) string {
+	dirty := bundle.WorktreeCleanliness != domain.WorktreeClean
+	baseEqual := bundle.HeadRevision == task.BaseRevision
+	switch {
+	case dirty && baseEqual:
+		return "The exact registered worktree is not clean and its candidate head still equals the pinned base revision."
+	case dirty:
+		return "The exact registered worktree is not clean."
+	case baseEqual:
+		return "The candidate head still equals the pinned base revision."
+	default:
+		return "The exact registered worktree does not satisfy clean non-base candidate authority."
 	}
 }
