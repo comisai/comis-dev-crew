@@ -225,7 +225,7 @@ func TestCollectAcceptsSharedPinnedTaskBaseWhenCanonicalBranchAdvances(t *testin
 	manifest := validManifest()
 	executor := &fixtureExecutor{manifest: manifest, currentBaseRevision: strings.Repeat("f", 40)}
 	root := filepath.Join(t.TempDir(), "evidence")
-	verdict, err := Collect(context.Background(), manifest, root, executor, manifest.EndedAtMs)
+	verdict, err := Collect(context.Background(), manifest, root, executor, manifest.EndedAtMs, validResourceObservation(manifest))
 	if err != nil || !verdict.Passed {
 		t.Fatalf("Collect(advanced canonical base) = %#v, %v", verdict, err)
 	}
@@ -257,7 +257,7 @@ func TestCollectWritesPrivateBoundedEvidenceAndPassingVerdict(t *testing.T) {
 	manifest := validManifest()
 	executor := &fixtureExecutor{manifest: manifest}
 	root := filepath.Join(t.TempDir(), "evidence")
-	verdict, err := Collect(context.Background(), manifest, root, executor, manifest.EndedAtMs)
+	verdict, err := Collect(context.Background(), manifest, root, executor, manifest.EndedAtMs, validResourceObservation(manifest))
 	if err != nil {
 		t.Fatalf("Collect() error = %v", err)
 	}
@@ -313,6 +313,7 @@ func TestCollectRefusesStructurallyEmptyComisObservabilityReports(t *testing.T) 
 			}
 			_, err := Collect(
 				context.Background(), manifest, filepath.Join(t.TempDir(), "evidence"), executor, manifest.EndedAtMs,
+				validResourceObservation(manifest),
 			)
 			if err == nil || !strings.Contains(err.Error(), test.wantErrorPart) {
 				t.Fatalf("Collect() error = %v, want %q", err, test.wantErrorPart)
@@ -352,6 +353,7 @@ func TestCollectRefusesIncompleteComisCoverageAndTelegramAuthority(t *testing.T)
 			}
 			_, collectErr := Collect(
 				context.Background(), manifest, filepath.Join(t.TempDir(), "evidence"), executor, manifest.EndedAtMs,
+				validResourceObservation(manifest),
 			)
 			if collectErr == nil || !strings.Contains(collectErr.Error(), test.wantErrorPart) {
 				t.Fatalf("Collect() error = %v, want %q", collectErr, test.wantErrorPart)
@@ -372,6 +374,7 @@ func TestCollectRefusesComisReportsWithoutRequiredCampaignToolOutcomes(t *testin
 	executor := &fixtureExecutor{manifest: manifest, explanation: encoded}
 	_, collectErr := Collect(
 		context.Background(), manifest, filepath.Join(t.TempDir(), "evidence"), executor, manifest.EndedAtMs,
+		validResourceObservation(manifest),
 	)
 	if collectErr == nil || !strings.Contains(collectErr.Error(), "required Comis tool evidence is incomplete") {
 		t.Fatalf("Collect() error = %v, want incomplete campaign tool evidence", collectErr)
@@ -389,6 +392,7 @@ func TestCollectRefusesCleanupCountsWithoutPreconditionFailureEvidence(t *testin
 	executor := &fixtureExecutor{manifest: manifest, explanation: encoded}
 	_, collectErr := Collect(
 		context.Background(), manifest, filepath.Join(t.TempDir(), "evidence"), executor, manifest.EndedAtMs,
+		validResourceObservation(manifest),
 	)
 	if collectErr == nil || !strings.Contains(collectErr.Error(), "cleanup refusal evidence is incomplete") {
 		t.Fatalf("Collect() error = %v, want cleanup refusal evidence", collectErr)
@@ -408,6 +412,7 @@ func TestCollectRefusesCleanupFailuresWithoutBothRequiredReasons(t *testing.T) {
 	executor := &fixtureExecutor{manifest: manifest, explanation: encoded}
 	_, collectErr := Collect(
 		context.Background(), manifest, filepath.Join(t.TempDir(), "evidence"), executor, manifest.EndedAtMs,
+		validResourceObservation(manifest),
 	)
 	if collectErr == nil || !strings.Contains(collectErr.Error(), "cleanup refusal reasons are incomplete") {
 		t.Fatalf("Collect() error = %v, want distinct cleanup refusal reasons", collectErr)
@@ -420,7 +425,10 @@ func TestCollectRefusesExistingCampaignEvidenceDirectory(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, manifest.CampaignID), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Collect(context.Background(), manifest, root, &fixtureExecutor{manifest: manifest}, manifest.EndedAtMs)
+	_, err := Collect(
+		context.Background(), manifest, root, &fixtureExecutor{manifest: manifest}, manifest.EndedAtMs,
+		validResourceObservation(manifest),
+	)
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("expected existing-directory refusal, got %v", err)
 	}
@@ -430,7 +438,9 @@ func TestCollectUsesOnlyFixedExecutableAndArgumentCatalog(t *testing.T) {
 	manifest := validManifest()
 	executor := &fixtureExecutor{manifest: manifest}
 	root := filepath.Join(t.TempDir(), "evidence")
-	if _, err := Collect(context.Background(), manifest, root, executor, manifest.EndedAtMs); err != nil {
+	if _, err := Collect(
+		context.Background(), manifest, root, executor, manifest.EndedAtMs, validResourceObservation(manifest),
+	); err != nil {
 		t.Fatal(err)
 	}
 	allowed := map[string]bool{

@@ -14,7 +14,11 @@ func TestResourceBaselineRoundTripBindsCampaignAndRefusesOverwrite(t *testing.T)
 	if err != nil {
 		t.Fatalf("NewResourceBaseline() error = %v", err)
 	}
-	path := filepath.Join(t.TempDir(), "resource-baseline.json")
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "resource-baseline.json")
 	if err := WriteResourceBaseline(path, want); err != nil {
 		t.Fatalf("WriteResourceBaseline() error = %v", err)
 	}
@@ -39,7 +43,11 @@ func TestLoadResourceBaselineRequiresOwnerPrivateRegularFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(t.TempDir(), "resource-baseline.json")
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "resource-baseline.json")
 	if err := WriteResourceBaseline(path, baseline); err != nil {
 		t.Fatal(err)
 	}

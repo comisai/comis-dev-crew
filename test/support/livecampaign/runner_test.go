@@ -73,6 +73,7 @@ func TestCampaignRunnerRestartsOnlyIsolatedUnitsAndClosesEvidence(t *testing.T) 
 	manifest := validManifest()
 	executor := &campaignExecutor{fixture: &fixtureExecutor{manifest: manifest}}
 	times := []int64{
+		manifest.StartedAtMs + 2000,
 		manifest.StartedAtMs + 2500,
 		manifest.StartedAtMs + 7500,
 		manifest.StartedAtMs + 9500,
@@ -129,6 +130,7 @@ func TestCampaignRunnerRefusesHandbackCompletedBeforeHumanCheckpoint(t *testing.
 	}
 	executor := &campaignExecutor{fixture: fixture}
 	times := []int64{
+		manifest.StartedAtMs + 2000,
 		manifest.StartedAtMs + 2500,
 		manifest.StartedAtMs + 7500,
 		manifest.StartedAtMs + 9500,

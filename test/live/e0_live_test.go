@@ -30,7 +30,8 @@ func TestE0LiveCampaign_RealTelegramProtectedLinuxCloseout(t *testing.T) {
 	}
 	runner := livecampaign.CampaignRunner{
 		Executor: livecampaign.RealExecutor{}, PollInterval: 5 * time.Second,
-		NowMs: func() int64 { return time.Now().UnixMilli() }, Logf: t.Logf,
+		CaptureResources: livecampaign.CaptureResourceSnapshot,
+		NowMs:            func() int64 { return time.Now().UnixMilli() }, Logf: t.Logf,
 	}
 	verdict, err := runner.Run(context.Background(), manifest, evidenceRoot)
 	if err != nil {

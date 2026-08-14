@@ -15,14 +15,15 @@ import (
 )
 
 type CampaignRunner struct {
-	Executor     Executor
-	PollInterval time.Duration
-	NowMs        func() int64
-	Logf         func(string, ...any)
+	Executor         Executor
+	CaptureResources func(context.Context, Manifest, Executor, int64) (ResourceSnapshot, error)
+	PollInterval     time.Duration
+	NowMs            func() int64
+	Logf             func(string, ...any)
 }
 
 func (runner CampaignRunner) Run(ctx context.Context, manifest Manifest, evidenceRoot string) (Verdict, error) {
-	if ctx == nil || runner.Executor == nil || runner.NowMs == nil || runner.PollInterval <= 0 {
+	if ctx == nil || runner.Executor == nil || runner.CaptureResources == nil || runner.NowMs == nil || runner.PollInterval <= 0 {
 		return Verdict{}, errors.New("run protected live campaign: runner dependencies are required")
 	}
 	if err := manifest.validate(); err != nil {
@@ -41,6 +42,10 @@ func (runner CampaignRunner) Run(ctx context.Context, manifest Manifest, evidenc
 		return fleetHasExactTaskState(manifest, fleet, domain.TaskWorking), nil
 	}); err != nil {
 		return Verdict{}, err
+	}
+	resourceStarted, err := runner.CaptureResources(ctx, manifest, runner.Executor, runner.NowMs())
+	if err != nil {
+		return Verdict{}, fmt.Errorf("run protected live campaign: capture starting resources: %w", err)
 	}
 	mcpRestartedAt := runner.NowMs()
 	if err := runner.restartUnit(ctx, manifest, manifest.Services.MCPUnit); err != nil {
@@ -111,8 +116,19 @@ func (runner CampaignRunner) Run(ctx context.Context, manifest Manifest, evidenc
 	}); err != nil {
 		return Verdict{}, err
 	}
+	if err := runner.wait(ctx, "one-hour resource observation", func() (bool, error) {
+		return runner.NowMs()-resourceStarted.CapturedAtMs >= minimumResourceObservationMs, nil
+	}); err != nil {
+		return Verdict{}, err
+	}
+	resourceFinished, err := runner.CaptureResources(ctx, manifest, runner.Executor, runner.NowMs())
+	if err != nil {
+		return Verdict{}, fmt.Errorf("run protected live campaign: capture finishing resources: %w", err)
+	}
 	runner.log("campaign state is terminal; collecting bounded closeout evidence")
-	return Collect(ctx, manifest, evidenceRoot, runner.Executor, runner.NowMs())
+	return Collect(ctx, manifest, evidenceRoot, runner.Executor, runner.NowMs(), ResourceObservation{
+		SchemaVersion: 1, Started: resourceStarted, Finished: resourceFinished,
+	})
 }
 
 func (runner CampaignRunner) requireHandbackSiblingWorking(ctx context.Context, manifest Manifest) error {

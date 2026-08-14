@@ -38,12 +38,22 @@ type collector struct {
 	checks    []EvidenceCheck
 }
 
-func Collect(ctx context.Context, manifest Manifest, outputRoot string, executor Executor, capturedAtMs int64) (Verdict, error) {
+func Collect(
+	ctx context.Context,
+	manifest Manifest,
+	outputRoot string,
+	executor Executor,
+	capturedAtMs int64,
+	resources ResourceObservation,
+) (Verdict, error) {
 	if ctx == nil || executor == nil || capturedAtMs <= 0 {
 		return Verdict{}, errors.New("collect live closeout: context, executor, and capture time are required")
 	}
 	if err := manifest.validate(); err != nil {
 		return Verdict{}, fmt.Errorf("collect live closeout: %w", err)
+	}
+	if err := VerifyResourceObservation(manifest, resources); err != nil {
+		return Verdict{}, fmt.Errorf("collect live closeout: resource observation refused: %w", err)
 	}
 	if !filepath.IsAbs(outputRoot) || filepath.Clean(outputRoot) != outputRoot {
 		return Verdict{}, errors.New("collect live closeout: evidence root must be one clean absolute path")
@@ -64,6 +74,10 @@ func Collect(ctx context.Context, manifest Manifest, outputRoot string, executor
 	if err := instance.writeJSON("manifest.json", manifest); err != nil {
 		return Verdict{}, err
 	}
+	if err := instance.writeJSON("resource-observation.json", resources); err != nil {
+		return Verdict{}, err
+	}
+	instance.pass("one_hour_resource_observation")
 	if err := instance.collectDevCrew(); err != nil {
 		return instance.failureVerdict(capturedAtMs, err)
 	}
@@ -466,27 +480,4 @@ func (instance *collector) writeHashes() error {
 		hashes = append(hashes, artifactHash{File: name, SHA256: hex.EncodeToString(digest[:]), Bytes: len(contents)})
 	}
 	return instance.writeJSON("hashes.json", hashes)
-}
-
-func ensurePrivateDirectory(path string) error {
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		if err := os.MkdirAll(path, 0o700); err != nil {
-			return fmt.Errorf("collect live closeout: create evidence root: %w", err)
-		}
-		info, err = os.Lstat(path)
-	}
-	if err != nil {
-		return fmt.Errorf("collect live closeout: inspect evidence root: %w", err)
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
-		return errors.New("collect live closeout: evidence root must be one owner-private directory")
-	}
-	return nil
-}
-
-func appendArgs(prefix []string, suffix ...string) []string {
-	result := make([]string, 0, len(prefix)+len(suffix))
-	result = append(result, prefix...)
-	return append(result, suffix...)
 }

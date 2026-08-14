@@ -274,17 +274,33 @@ DEVCREW_LIVE_EVIDENCE_ROOT=/absolute/private/evidence \
 make test-live
 ```
 
+The full runner captures the start sample only after both task lanes are
+simultaneously `working`, waits until that sample is at least one hour old, and
+captures the finish sample only after both cleanups. A long manifest window by
+itself cannot satisfy the resource gate.
+
 `GH_TOKEN` must already be injected by the protected runner environment; never
 place its literal in the manifest or shell history. The GitHub Actions workflow
 uses the protected `devcrew-live` environment and `DEVCREW_LIVE_GH_TOKEN` secret.
 It is manual-only because a scheduled job cannot supply the required real human
 checkpoints honestly.
 
-For evidence-only closeout after the campaign state is already terminal:
+For evidence-only closeout, capture the non-overwriting baseline while both task
+worktrees are present:
+
+```sh
+DEVCREW_LIVE_MANIFEST=/absolute/private/e0-campaign.json \
+DEVCREW_LIVE_RESOURCE_BASELINE=/absolute/private/resource-baseline.json \
+make live-baseline
+```
+
+After at least one hour and only after campaign cleanup is terminal, close out
+with that exact campaign- and source-bound baseline:
 
 ```sh
 DEVCREW_LIVE_MANIFEST=/absolute/private/e0-campaign.json \
 DEVCREW_LIVE_EVIDENCE_ROOT=/absolute/private/evidence \
+DEVCREW_LIVE_RESOURCE_BASELINE=/absolute/private/resource-baseline.json \
 make live-closeout
 ```
 
@@ -293,8 +309,9 @@ artifacts. It contains service/fleet/task/operation projections, content-free
 Telegram checkpoint rows, Comis explanation and system-health reports, clean Git
 truth proving both tasks share one pinned base that remains an ancestor of the
 current base-branch tip, current open/unmerged GitHub pull-request and required-check truth,
-plaintext-secret audit plus count-only residency results, artifact hashes, and a
-single verdict. Raw Telegram message bodies and command stderr are never retained.
+plaintext-secret audit plus count-only residency results, the verified one-hour
+resource observation, artifact hashes, and a single verdict. Raw Telegram message
+bodies and command stderr are never retained.
 
 The Comis reports are acceptance oracles, not opaque attachments. Closeout rejects
 a system-health report unless its campaign window, session totals, hard-degraded

@@ -42,6 +42,12 @@ support package can capture content-free start and finish metrics for the three
 isolated service processes, Comis data, DevCrew SQLite state, and task worktrees,
 then reject a sample pair that spans less than one hour, exceeds bounded growth,
 or leaves a worktree behind.
+The campaign runner makes that pair mandatory: it captures after simultaneous
+worker overlap, waits out the one-hour floor, samples again after cleanup, and
+writes the observation into the hashed evidence directory. Evidence-only
+closeout likewise requires a non-overwriting owner-private baseline bound to the
+same campaign and exact source commits; a manifest duration cannot substitute
+for two live samples.
 Comis system-health and session-explanation artifacts are structurally validated
 before they can contribute a passing verdict: source coverage, campaign activity,
 hard-degraded posture, agent identity, and the exact origin Telegram conversation
