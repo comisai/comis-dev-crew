@@ -22,12 +22,24 @@ const (
 )
 
 const (
+	// CleanupOpenHoldMessage is the content-free operator-visible blocker
+	// consumed by the protected campaign oracle.
+	CleanupOpenHoldMessage = "cleanup is blocked by an open task hold"
 	// CleanupOpenDecisionMessage is the content-free operator-visible blocker
 	// consumed by the protected campaign oracle.
 	CleanupOpenDecisionMessage = "cleanup is blocked by an unresolved task decision"
+	// CleanupActiveExecutionMessage is the content-free operator-visible blocker
+	// consumed by the protected campaign oracle.
+	CleanupActiveExecutionMessage = "cleanup is blocked by active task execution"
+	// CleanupUnknownExecutionMessage is the content-free operator-visible blocker
+	// consumed by the protected campaign oracle.
+	CleanupUnknownExecutionMessage = "cleanup requires settled task execution evidence"
 	// CleanupDirtyWorkspaceMessage is the content-free operator-visible blocker
 	// consumed by the protected campaign oracle.
 	CleanupDirtyWorkspaceMessage = "cleanup requires a clean task worktree"
+	// CleanupStaleForgeTruthMessage is the content-free operator-visible blocker
+	// consumed by the protected campaign oracle.
+	CleanupStaleForgeTruthMessage = "cleanup requires current matching pull request truth"
 )
 
 // ManagedRunReleaseDisposition is the closed host release behavior.
@@ -347,7 +359,9 @@ func (coordinator *CleanupCoordinator) verifyCurrentSafety(
 	}
 	if truth.RepositoryID != record.RepositoryID || truth.PullRequestID != record.PullRequestID ||
 		truth.HeadRevision != record.HeadRevision || !reflect.DeepEqual(truth.Checks, wantChecks) {
-		return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, fmt.Errorf("cleanup pull request truth differs: %w", ErrPrecondition)
+		return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, fmt.Errorf(
+			"cleanup pull request truth differs: %w", ErrCleanupStaleForgeTruth,
+		)
 	}
 	return snapshot, truth, nil
 }
@@ -357,18 +371,27 @@ func cleanupVerificationFailure(cause error) error {
 	if errors.As(cause, &failure) {
 		return cause
 	}
-	return mutationCommitFailure(cause)
+	return cleanupCommitFailure(cause)
 }
 
 func cleanupCommitFailure(cause error) error {
 	var message, hint string
 	switch {
 	case errors.Is(cause, ErrCleanupOpenHold):
-		message = "cleanup is blocked by an open task hold"
+		message = CleanupOpenHoldMessage
 		hint = "close the exact task cleanup hold, then retry cleanup"
 	case errors.Is(cause, ErrCleanupOpenDecision):
 		message = CleanupOpenDecisionMessage
 		hint = "resolve the exact open task decision, then retry cleanup"
+	case errors.Is(cause, ErrCleanupActiveExecution):
+		message = CleanupActiveExecutionMessage
+		hint = "wait for the exact task execution and validation processes to settle, then retry cleanup"
+	case errors.Is(cause, ErrCleanupUnknownExecution):
+		message = CleanupUnknownExecutionMessage
+		hint = "reconcile the exact terminal, managed run, and workspace lease before retrying cleanup"
+	case errors.Is(cause, ErrCleanupStaleForgeTruth):
+		message = CleanupStaleForgeTruthMessage
+		hint = "refresh the exact pull request head and required checks, then retry cleanup"
 	default:
 		return mutationCommitFailure(cause)
 	}

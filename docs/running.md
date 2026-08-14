@@ -187,6 +187,11 @@ that exact hold; it never includes the operator-authored hold reason. Dirty-work
 refusals likewise name the clean-worktree action required before a safe retry. An
 unresolved decision is a distinct retryable precondition: the error directs the
 operator to resolve that exact task decision without exposing its prompt or answer.
+Positive active execution or validation evidence instructs the operator to wait
+for settlement. Missing, lost, or mismatched terminal/run/lease authority instead
+requires reconciliation and is never treated as idle. Current pull-request truth
+that differs from the delivered head or required checks is a separate stale-forge
+precondition and blocks host release.
 
 ## Operator CLI surface
 
@@ -354,11 +359,12 @@ and prove either trajectory or lossless-context coverage. The original validated
 JSON is retained so richer additive report fields are not discarded.
 Across the explanation set, closeout also requires the complete eight-tool E0
 workflow: two preparations and launch-plan reads, diagnostic list/get/explain
-reads, reconciliation, handback, two completed cleanups, and at least two
+reads, reconciliation, handback, two completed cleanups, and at least six
 precondition-classified cleanup refusals. Missing tool evidence cannot be replaced
 by a final clean task projection. The failure previews must independently contain
-the closed unresolved-decision and dirty-worktree messages; two generic
-precondition counts do not prove both safety rows.
+the open-decision, open-hold, active-execution, unknown-execution,
+dirty-worktree, and stale-forge-truth messages; six generic precondition counts do
+not prove the safety rows.
 
 ## Worker reporter contract
 

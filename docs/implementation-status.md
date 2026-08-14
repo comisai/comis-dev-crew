@@ -66,9 +66,10 @@ hard-degraded posture, agent identity, and the exact origin Telegram conversatio
 must be present rather than inferred from an arbitrary JSON object.
 The explanation set must also account for the closed eight-tool campaign catalog,
 including two successful task preparations and cleanups, the reconciliation and
-handback mutations, diagnostic reads, and two precondition-classified cleanup
-refusals. Those refusals must retain the distinct unresolved-decision and
-dirty-worktree safe messages in the bounded Comis failure evidence.
+handback mutations, diagnostic reads, and six precondition-classified cleanup
+refusals. Those refusals must retain the distinct open-decision, open-hold,
+active-execution, unknown-execution, dirty-worktree, and stale-forge-truth safe
+messages in the bounded Comis failure evidence.
 
 ## Foundation
 
@@ -263,7 +264,9 @@ host release and again before removal authorization. Open cleanup holds remain a
 fail-closed pre-release blocker; the operator surface identifies only that closed
 category and never exposes the hold's free-text reason. Unresolved decisions have
 their own closed retryable precondition and operator hint, without exposing
-decision content.
+decision content. Active execution, unknown execution authority, dirty worktrees,
+and stale pull-request truth likewise retain separate content-free messages and
+condition-specific retry guidance.
 
 ## Reporter seam
 

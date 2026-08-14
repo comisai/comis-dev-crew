@@ -19,25 +19,31 @@ var (
 	ErrInvalidInput = errors.New("mutation input is invalid")
 )
 
-type cleanupOpenHoldError struct{}
+type cleanupBlockerError string
 
-func (cleanupOpenHoldError) Error() string { return "cleanup hold remains open" }
+func (blocker cleanupBlockerError) Error() string { return string(blocker) }
 
-func (cleanupOpenHoldError) Is(target error) bool { return target == ErrPrecondition }
+func (cleanupBlockerError) Is(target error) bool { return target == ErrPrecondition }
 
 // ErrCleanupOpenHold identifies the closed cleanup blocker without exposing
 // the operator-authored hold reason across a transport boundary.
-var ErrCleanupOpenHold error = cleanupOpenHoldError{}
-
-type cleanupOpenDecisionError struct{}
-
-func (cleanupOpenDecisionError) Error() string { return "cleanup decision remains unresolved" }
-
-func (cleanupOpenDecisionError) Is(target error) bool { return target == ErrPrecondition }
+var ErrCleanupOpenHold error = cleanupBlockerError("cleanup hold remains open")
 
 // ErrCleanupOpenDecision identifies an unresolved decision without exposing
 // the decision prompt or response across an operator transport.
-var ErrCleanupOpenDecision error = cleanupOpenDecisionError{}
+var ErrCleanupOpenDecision error = cleanupBlockerError("cleanup decision remains unresolved")
+
+// ErrCleanupActiveExecution identifies positively active task execution or
+// validation authority that must settle before cleanup.
+var ErrCleanupActiveExecution error = cleanupBlockerError("cleanup execution remains active")
+
+// ErrCleanupUnknownExecution identifies missing, lost, or mismatched terminal
+// authority that cannot authorize destructive cleanup.
+var ErrCleanupUnknownExecution error = cleanupBlockerError("cleanup execution authority is unknown")
+
+// ErrCleanupStaleForgeTruth identifies current pull-request truth that no longer
+// matches the exact delivered head and required checks.
+var ErrCleanupStaleForgeTruth error = cleanupBlockerError("cleanup forge truth is stale")
 
 // Repository is the consumer-owned durable port used by canonical handlers.
 // Its mutations are wired only into the service-owned mutation path.

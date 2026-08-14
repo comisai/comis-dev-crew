@@ -134,7 +134,7 @@ var requiredCampaignToolCounts = map[string]comisToolCount{
 	"get_launch_plan": {OK: 2},
 	"reconcile_task":  {OK: 1},
 	"handback_task":   {OK: 1},
-	"cleanup_task":    {OK: 2, Failed: 2},
+	"cleanup_task":    {OK: 2, Failed: 6},
 }
 
 func verifyComisSystemHealth(manifest Manifest, report comisSystemHealthReport) error {
@@ -203,8 +203,15 @@ func verifyComisIncident(manifest Manifest, report comisIncidentReport) error {
 func verifyComisCampaignTools(reports []comisIncidentReport) error {
 	observed := make(map[string]comisToolCount, len(requiredCampaignToolCounts))
 	cleanupPreconditions := 0
-	openDecisionRefused := false
-	dirtyWorkspaceRefused := false
+	requiredCleanupReasons := []string{
+		application.CleanupOpenDecisionMessage,
+		application.CleanupOpenHoldMessage,
+		application.CleanupActiveExecutionMessage,
+		application.CleanupUnknownExecutionMessage,
+		application.CleanupDirtyWorkspaceMessage,
+		application.CleanupStaleForgeTruthMessage,
+	}
+	observedCleanupReasons := make(map[string]bool, len(requiredCleanupReasons))
 	for _, report := range reports {
 		for name, counts := range report.ToolStats {
 			if counts.OK < 0 || counts.Failed < 0 {
@@ -218,12 +225,11 @@ func verifyComisCampaignTools(reports []comisIncidentReport) error {
 		for _, failure := range report.Failures {
 			if failure.ToolName == "cleanup_task" && failure.FailureCode == "precondition" {
 				cleanupPreconditions++
-				openDecisionRefused = openDecisionRefused || strings.Contains(
-					failure.ErrorPreview, application.CleanupOpenDecisionMessage,
-				)
-				dirtyWorkspaceRefused = dirtyWorkspaceRefused || strings.Contains(
-					failure.ErrorPreview, application.CleanupDirtyWorkspaceMessage,
-				)
+				for _, reason := range requiredCleanupReasons {
+					if strings.Contains(failure.ErrorPreview, reason) {
+						observedCleanupReasons[reason] = true
+					}
+				}
 			}
 		}
 	}
@@ -233,11 +239,13 @@ func verifyComisCampaignTools(reports []comisIncidentReport) error {
 			return errors.New("required Comis tool evidence is incomplete")
 		}
 	}
-	if cleanupPreconditions < 2 {
+	if cleanupPreconditions < len(requiredCleanupReasons) {
 		return errors.New("required Comis cleanup refusal evidence is incomplete")
 	}
-	if !openDecisionRefused || !dirtyWorkspaceRefused {
-		return errors.New("required Comis cleanup refusal reasons are incomplete")
+	for _, reason := range requiredCleanupReasons {
+		if !observedCleanupReasons[reason] {
+			return errors.New("required Comis cleanup refusal reasons are incomplete")
+		}
 	}
 	return nil
 }

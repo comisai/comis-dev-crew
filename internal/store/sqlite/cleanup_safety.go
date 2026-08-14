@@ -33,7 +33,7 @@ func proveCleanupDatabaseSafety(ctx context.Context, transaction *sql.Tx, task d
 		{name: "open hold", query: `SELECT COUNT(*) FROM task_cleanup_holds
             WHERE task_handle = ? AND closed_at IS NULL`, args: []any{task.Handle}, blocker: application.ErrCleanupOpenHold},
 		{name: "active validation", query: `SELECT COUNT(*) FROM validation_processes
-		    WHERE task_handle = ? AND state NOT IN ('exited', 'absent')`, args: []any{task.Handle}, blocker: application.ErrPrecondition},
+		    WHERE task_handle = ? AND state NOT IN ('exited', 'absent')`, args: []any{task.Handle}, blocker: application.ErrCleanupActiveExecution},
 		{name: "unresolved decision", query: `SELECT COUNT(*) FROM reports d
             WHERE d.task_handle = ? AND d.kind = 'decision' AND NOT EXISTS (
                 SELECT 1 FROM reports r WHERE r.task_handle = d.task_handle
@@ -59,11 +59,23 @@ func proveCleanupDatabaseSafety(ctx context.Context, transaction *sql.Tx, task d
 		// The deterministic in-process fixture never acquires terminal custody.
 		// Delivery, evidence, decision, validation, hold, and workspace checks
 		// below remain mandatory before its managed run can be released.
+	} else if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("task cleanup terminal is unavailable: %w", application.ErrCleanupUnknownExecution)
 	} else if err != nil {
-		return fmt.Errorf("inspect task cleanup terminal: %w", application.ErrPrecondition)
-	} else if managedRunID != task.ManagedRunID || workspaceLeaseID != task.WorkspaceLeaseID ||
-		(transition != application.TerminalExited && transition != application.TerminalReleased) {
-		return fmt.Errorf("task cleanup terminal is unsettled: %w", application.ErrPrecondition)
+		return fmt.Errorf("inspect task cleanup terminal: %w", err)
+	} else if managedRunID != task.ManagedRunID || workspaceLeaseID != task.WorkspaceLeaseID {
+		return fmt.Errorf("task cleanup terminal authority differs: %w", application.ErrCleanupUnknownExecution)
+	} else {
+		switch transition {
+		case application.TerminalExited, application.TerminalReleased:
+		case application.TerminalLost:
+			return fmt.Errorf("task cleanup terminal is lost: %w", application.ErrCleanupUnknownExecution)
+		case application.TerminalCreated, application.TerminalRunning, application.TerminalInputNeeded,
+			application.TerminalStuck, application.TerminalRecovered:
+			return fmt.Errorf("task cleanup terminal remains active: %w", application.ErrCleanupActiveExecution)
+		default:
+			return fmt.Errorf("task cleanup terminal state is unknown: %w", application.ErrCleanupUnknownExecution)
+		}
 	}
 	var evidenceTotal, evidenceDelivered int
 	if err := transaction.QueryRowContext(ctx, `SELECT COUNT(*), COUNT(delivered_at)

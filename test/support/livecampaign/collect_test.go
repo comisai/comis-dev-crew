@@ -421,7 +421,7 @@ func TestCollectRefusesCleanupCountsWithoutPreconditionFailureEvidence(t *testin
 	}
 }
 
-func TestCollectRefusesCleanupFailuresWithoutBothRequiredReasons(t *testing.T) {
+func TestCollectRefusesCleanupFailuresWithoutRequiredReasons(t *testing.T) {
 	manifest := validManifest()
 	explanation := validIncident(manifest)
 	for index := range explanation.Failures {
