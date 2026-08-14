@@ -360,6 +360,35 @@ func TestGitHubCheckConclusion_MapsEveryExternalPostureFailClosed(t *testing.T) 
 	}
 }
 
+func TestGitHubAdapter_SelectsNewestCheckRunForRepeatedName(t *testing.T) {
+	head := strings.Repeat("f", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path != "/repos/comisai/fixture/commits/"+head+"/check-runs" {
+			http.NotFound(response, request)
+			return
+		}
+		_, _ = response.Write([]byte(`{"check_runs":[` +
+			`{"id":12,"name":"ci/unit","status":"in_progress","conclusion":null,"started_at":"2026-08-14T20:05:00Z"},` +
+			`{"id":11,"name":"ci/unit","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"}` +
+			`]}`))
+	}))
+	defer server.Close()
+	configuration := validGitHubConfig(server)
+	adapter, err := NewGitHubAdapter(configuration)
+	if err != nil {
+		t.Fatalf("NewGitHubAdapter() error = %v", err)
+	}
+	checks, err := adapter.readChecks(context.Background(), "read-token", head, []string{"ci/unit"})
+	if err != nil {
+		t.Fatalf("readChecks(repeated name) error = %v", err)
+	}
+	want := []domain.ForgeCheckEvidence{{Name: "ci/unit", Conclusion: domain.CheckPending}}
+	if !reflect.DeepEqual(checks, want) {
+		t.Fatalf("readChecks(repeated name) = %#v, want %#v", checks, want)
+	}
+}
+
 type staticCredentialSource struct{ credential Credential }
 
 func (source staticCredentialSource) Resolve(context.Context) (Credential, error) {
