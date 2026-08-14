@@ -34,7 +34,39 @@ func (executor *recoveryExecutorFixture) Run(_ context.Context, command Command)
 		command.Args[0] == manifest.Comis.CLIScriptPath && command.Args[1] == "config" && command.Args[2] == "validate" {
 		return []byte("Configuration valid\n"), nil
 	}
+	for _, artifact := range manifest.Recovery.PreviousArtifacts {
+		if artifact.Kind == "comis-cli" && command.Path == manifest.Comis.NodePath &&
+			len(command.Args) == 2 && command.Args[0] == artifact.Path && command.Args[1] == "--version" {
+			return []byte(artifact.Version + "\n"), nil
+		}
+		if artifact.Kind != "comis-cli" && command.Path == artifact.Path &&
+			len(command.Args) == 1 && command.Args[0] == "--version" {
+			return []byte(artifact.Kind + " " + artifact.Version + "\n"), nil
+		}
+		if artifact.Kind == "comis-cli" && command.Path == manifest.Comis.NodePath && len(command.Args) >= 3 &&
+			command.Args[0] == artifact.Path && command.Args[1] == "config" && command.Args[2] == "validate" {
+			return []byte("Configuration valid\n"), nil
+		}
+	}
 	return nil, errors.New("unexpected recovery command")
+}
+
+type rollbackProbeFixture struct {
+	called bool
+}
+
+func (probe *rollbackProbeFixture) Run(
+	_ context.Context,
+	servicePath string,
+	cliPath string,
+	databasePath string,
+	_ string,
+) error {
+	if servicePath == "" || cliPath == "" || databasePath == "" {
+		return errors.New("incomplete rollback probe")
+	}
+	probe.called = true
+	return nil
 }
 
 func TestCreateAndRestoreRecoveryBackupPreservesStateWithoutPlaintextEnvironment(t *testing.T) {
@@ -78,6 +110,17 @@ func TestCreateAndRestoreRecoveryBackupPreservesStateWithoutPlaintextEnvironment
 	if strings.Join(lifecycle, ",") != wantLifecycle {
 		t.Fatalf("service lifecycle = %q, want %q", strings.Join(lifecycle, ","), wantLifecycle)
 	}
+	probe := &rollbackProbeFixture{}
+	rollback, err := VerifyRollback(
+		context.Background(), manifest, backupRoot, executor, probe.Run, manifest.EndedAtMs,
+	)
+	if err != nil {
+		t.Fatalf("VerifyRollback() error = %v", err)
+	}
+	if !rollback.Passed || !rollback.PreviousArtifactsVerified || !rollback.ComisConfigValidated ||
+		!rollback.DevCrewServiceOpened || rollback.SQLiteFiles < 3 || !probe.called {
+		t.Fatalf("rollback evidence = %#v, probe=%#v", rollback, probe)
+	}
 }
 
 func recoveryManifestFixture(t *testing.T) Manifest {
@@ -111,6 +154,15 @@ func recoveryManifestFixture(t *testing.T) Manifest {
 	}
 	manifest.Recovery.SyntheticComisDataDir = filepath.Join(root, "synthetic-comis")
 	manifest.Recovery.SyntheticDevCrewDatabasePath = filepath.Join(root, "synthetic-devcrew.db")
+	for index := range manifest.Recovery.PreviousArtifacts {
+		artifact := &manifest.Recovery.PreviousArtifacts[index]
+		artifact.Path = filepath.Join(root, "previous-"+artifact.Kind)
+		contents := []byte("previous-" + artifact.Kind + "\n")
+		if err := os.WriteFile(artifact.Path, contents, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		artifact.SHA256 = sha256Hex(contents)
+	}
 	return manifest
 }
 
