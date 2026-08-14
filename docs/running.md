@@ -207,7 +207,9 @@ Positive active execution or validation evidence instructs the operator to wait
 for settlement. Missing, lost, or mismatched terminal/run/lease authority instead
 requires reconciliation and is never treated as idle. Current pull-request truth
 that differs from the delivered head or required checks is a separate stale-forge
-precondition and blocks host release.
+precondition and blocks host release. When GitHub retains repeated runs for one
+required check name, the most recently started run is authoritative so an older
+green run cannot mask a newer pending or failed rerun.
 
 ## Operator CLI surface
 

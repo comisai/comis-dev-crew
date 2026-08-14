@@ -42,7 +42,7 @@ func TestGitHubAdapter_UsesSeparateAuthoritiesAndRereadsExactPullRequestTruth(t 
 		case "GET /repos/comisai/fixture/pulls/17":
 			_, _ = response.Write([]byte(`{"number":17,"state":"open","html_url":"https://example.com/comisai/fixture/pull/17","head":{"sha":"` + head + `","ref":"devcrew/task-fixture"},"base":{"ref":"main"}}`))
 		case "GET /repos/comisai/fixture/commits/" + head + "/check-runs":
-			_, _ = response.Write([]byte(`{"check_runs":[{"name":"ci/unit","status":"completed","conclusion":"success"}]}`))
+			_, _ = response.Write([]byte(`{"check_runs":[{"id":17,"name":"ci/unit","status":"completed","conclusion":"success","started_at":"2026-08-14T19:00:00Z"}]}`))
 		default:
 			http.NotFound(response, request)
 		}
@@ -105,7 +105,7 @@ func TestGitHubAdapter_VerifiesRecordedPullRequestWithReadAuthorityOnly(t *testi
 		case "/repos/comisai/fixture/pulls/23":
 			_, _ = response.Write([]byte(`{"number":23,"state":"open","html_url":"https://example.com/comisai/fixture/pull/23","head":{"sha":"` + head + `","ref":"devcrew/task-recorded"},"base":{"ref":"main"}}`))
 		case "/repos/comisai/fixture/commits/" + head + "/check-runs":
-			_, _ = response.Write([]byte(`{"check_runs":[{"name":"ci/unit","status":"completed","conclusion":"success"}]}`))
+			_, _ = response.Write([]byte(`{"check_runs":[{"id":23,"name":"ci/unit","status":"completed","conclusion":"success","started_at":"2026-08-14T19:00:00Z"}]}`))
 		default:
 			http.NotFound(response, request)
 		}

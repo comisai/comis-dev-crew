@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
@@ -189,9 +190,11 @@ type githubPull struct {
 
 type githubChecks struct {
 	Runs []struct {
+		ID         int64   `json:"id"`
 		Name       string  `json:"name"`
 		Status     string  `json:"status"`
 		Conclusion *string `json:"conclusion"`
+		StartedAt  string  `json:"started_at"`
 	} `json:"check_runs"`
 }
 
@@ -242,19 +245,36 @@ func (adapter *GitHubAdapter) readChecks(
 	if err := adapter.requestJSON(ctx, secret, http.MethodGet, adapter.repositoryPath("commits", head, "check-runs"), nil, nil, &response); err != nil {
 		return nil, err
 	}
-	observed := make(map[string]domain.CheckConclusion, len(response.Runs))
+	type observedCheck struct {
+		id         int64
+		startedAt  time.Time
+		conclusion domain.CheckConclusion
+	}
+	observed := make(map[string]observedCheck, len(response.Runs))
 	for _, run := range response.Runs {
 		if run.Name == "" || len(run.Name) > 128 || strings.TrimSpace(run.Name) != run.Name {
 			return nil, errors.New("deliver GitHub pull request: check identity is invalid")
 		}
-		if _, exists := observed[run.Name]; exists {
+		startedAt, err := time.Parse(time.RFC3339, run.StartedAt)
+		if run.ID < 1 || err != nil || startedAt.IsZero() {
+			return nil, errors.New("deliver GitHub pull request: check recency is invalid")
+		}
+		current, exists := observed[run.Name]
+		if exists && run.ID == current.id {
 			return nil, errors.New("deliver GitHub pull request: check identity is duplicated")
 		}
-		observed[run.Name] = githubCheckConclusion(run.Status, run.Conclusion)
+		if exists && (startedAt.Before(current.startedAt) || startedAt.Equal(current.startedAt) && run.ID < current.id) {
+			continue
+		}
+		observed[run.Name] = observedCheck{
+			id: run.ID, startedAt: startedAt,
+			conclusion: githubCheckConclusion(run.Status, run.Conclusion),
+		}
 	}
 	evidence := make([]domain.ForgeCheckEvidence, 0, len(required))
 	for _, name := range required {
-		conclusion, exists := observed[name]
+		check, exists := observed[name]
+		conclusion := check.conclusion
 		if !exists {
 			conclusion = domain.CheckUnknown
 		}
