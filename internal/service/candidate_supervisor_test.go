@@ -413,7 +413,10 @@ func TestCandidateSupervisor_RunRecoversFromTemporaryGitHubStatusEndToEnd(t *tes
 				`{"number":17,"state":"open","html_url":"https://example.com/pull/17","head":{"sha":%q,"ref":%q},"base":{"ref":"main"}}`,
 				fixture.snapshot.HeadRevision, fixture.snapshot.Branch)
 		case "/repos/comisai/fixture/commits/" + fixture.snapshot.HeadRevision + "/check-runs":
-			_, _ = response.Write([]byte(`{"check_runs":[{"name":"ci/unit","status":"completed","conclusion":"success"}]}`))
+			_, _ = fmt.Fprintf(response,
+				`{"check_runs":[{"id":17,"name":"ci/unit","status":"completed","conclusion":"success","started_at":%q}]}`,
+				fixture.now.Add(-time.Minute).Format(time.RFC3339),
+			)
 		default:
 			response.WriteHeader(http.StatusNotFound)
 		}
