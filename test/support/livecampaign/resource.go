@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 )
@@ -142,7 +141,7 @@ func captureServiceResources(
 	executor Executor,
 	reader resourceReader,
 ) (ServiceResourceSnapshot, error) {
-	values := make(map[string]uint64, 3)
+	values := make(map[string]string, 3)
 	for _, property := range []string{"MainPID", "MemoryCurrent", "TasksCurrent"} {
 		output, err := executor.Run(ctx, Command{
 			Path: systemctlPath, Args: []string{"show", unit, "--property", property, "--value"},
@@ -150,30 +149,39 @@ func captureServiceResources(
 		if err != nil {
 			return ServiceResourceSnapshot{}, fmt.Errorf("capture resources: read %s for service %s", property, unit)
 		}
-		value, err := strconv.ParseUint(strings.TrimSpace(string(output)), 10, 64)
-		if err != nil || value == 0 {
+		value := strings.TrimSpace(string(output))
+		if value == "" {
 			return ServiceResourceSnapshot{}, fmt.Errorf("capture resources: service %s property %s is invalid", unit, property)
 		}
 		values[property] = value
 	}
-	if values["MemoryCurrent"] > uint64(math.MaxInt64) || values["TasksCurrent"] > uint64(math.MaxInt) {
-		return ServiceResourceSnapshot{}, fmt.Errorf("capture resources: service %s resource value exceeds local bounds", unit)
+	mainPID, err := strconv.ParseUint(values["MainPID"], 10, 64)
+	if err != nil || mainPID == 0 {
+		return ServiceResourceSnapshot{}, fmt.Errorf("capture resources: service %s property MainPID is invalid", unit)
 	}
-	openFDs, err := reader.OpenFDCount(values["MainPID"])
+	memoryBytes, err := strconv.ParseInt(values["MemoryCurrent"], 10, 64)
+	if err != nil || memoryBytes <= 0 {
+		return ServiceResourceSnapshot{}, fmt.Errorf("capture resources: service %s property MemoryCurrent is invalid", unit)
+	}
+	tasks, err := strconv.Atoi(values["TasksCurrent"])
+	if err != nil || tasks <= 0 {
+		return ServiceResourceSnapshot{}, fmt.Errorf("capture resources: service %s property TasksCurrent is invalid", unit)
+	}
+	openFDs, err := reader.OpenFDCount(mainPID)
 	if err != nil || openFDs <= 0 {
 		return ServiceResourceSnapshot{}, fmt.Errorf("capture resources: inspect open file descriptors for service %s", unit)
 	}
-	rssBytes, err := reader.ProcessRSSBytes(values["MainPID"])
+	rssBytes, err := reader.ProcessRSSBytes(mainPID)
 	if err != nil || rssBytes <= 0 {
 		return ServiceResourceSnapshot{}, fmt.Errorf("capture resources: inspect RSS for service %s", unit)
 	}
-	jails, err := reader.JailProcessCount(values["MainPID"])
+	jails, err := reader.JailProcessCount(mainPID)
 	if err != nil || jails < 0 {
 		return ServiceResourceSnapshot{}, fmt.Errorf("capture resources: inspect jail processes for service %s", unit)
 	}
 	return ServiceResourceSnapshot{
-		Unit: unit, MainPID: values["MainPID"], MemoryBytes: int64(values["MemoryCurrent"]),
-		RSSBytes: rssBytes, Tasks: int(values["TasksCurrent"]), OpenFileDescriptors: openFDs,
+		Unit: unit, MainPID: mainPID, MemoryBytes: memoryBytes,
+		RSSBytes: rssBytes, Tasks: tasks, OpenFileDescriptors: openFDs,
 		JailProcesses: jails,
 	}, nil
 }
