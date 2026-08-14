@@ -119,7 +119,8 @@ func TestCaptureResourceSnapshotReadsExactServicesAndRoots(t *testing.T) {
 	if len(snapshot.Services) != 3 || snapshot.Services[1].MainPID != 300 ||
 		snapshot.Services[2].OpenFileDescriptors != 30 || snapshot.Services[2].RSSBytes != 4096 ||
 		snapshot.Services[2].JailProcesses != 2 || snapshot.ComisData.RegularFiles != 12 ||
-		snapshot.DevCrewDatabaseBytes != 4096 || snapshot.WorktreeDirectories != 2 ||
+		snapshot.DevCrewDatabaseBytes != 4096 || snapshot.ComisDatabaseBytes != 4096 ||
+		snapshot.WorktreeDirectories != 2 ||
 		snapshot.ActiveTerminalBindings != 2 || snapshot.PendingDevCrewDeliveries != 1 ||
 		snapshot.UnsettledComisDeliveries != 1 {
 		t.Fatalf("resource snapshot = %#v", snapshot)
@@ -177,7 +178,8 @@ func validResourceObservation(manifest Manifest) ResourceObservation {
 			service(manifest.Services.ComisUnit, 400),
 		},
 		ComisData:            DataResourceSnapshot{RegularFiles: 10, Bytes: 8192},
-		DevCrewDatabaseBytes: 4096, WorktreeDirectories: len(manifest.Tasks),
+		DevCrewDatabaseBytes: 4096, ComisDatabaseBytes: 4096,
+		WorktreeDirectories:    len(manifest.Tasks),
 		ActiveTerminalBindings: len(manifest.Tasks),
 	}
 	started.Services[2].JailProcesses = len(manifest.Tasks)
@@ -186,6 +188,7 @@ func validResourceObservation(manifest Manifest) ResourceObservation {
 	finished.Services = append([]ServiceResourceSnapshot(nil), started.Services...)
 	finished.ComisData.Bytes += 4096
 	finished.DevCrewDatabaseBytes += 4096
+	finished.ComisDatabaseBytes += 4096
 	finished.WorktreeDirectories = 0
 	finished.ActiveTerminalBindings = 0
 	finished.Services[2].JailProcesses = 0
