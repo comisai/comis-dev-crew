@@ -229,7 +229,9 @@ one Codex/Claude profile per lane, exactly one recovered candidate, one handback
 and one cleanup operation per task. Its eleven opaque `e0cp-*` markers are sent by
 the human from the Telegram app at the named checkpoints. The unrelated marker
 must use a newer distinct conversation; all other markers remain in the original
-preparation conversation.
+preparation conversation. Their timestamps must follow the documented manifest
+order exactly, from task request through both restart acknowledgements to cleanup;
+partial or reordered milestone evidence is refused.
 
 The runner first observes both tasks simultaneously in `working`. It then replaces
 the stateless MCP facade, waits for the human acknowledgement, waits for decision,

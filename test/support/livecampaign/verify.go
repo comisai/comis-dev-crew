@@ -233,19 +233,11 @@ func verifyCheckpointOrder(evidence map[string]CheckpointEvidence) error {
 	before := func(first, second string) bool {
 		return evidence[first].EpochMs < evidence[second].EpochMs
 	}
-	for _, pair := range [][2]string{
-		{"task_request", "unrelated_conversation"},
-		{"task_request", "mcp_restarted_ack"},
-		{"unrelated_conversation", "decision_reply"},
-		{"unrelated_conversation", "pause_handback"},
-		{"unrelated_conversation", "reconcile_approval"},
-		{"devcrew_restart_ready", "devcrew_restarted_ack"},
-		{"comis_restart_ready", "comis_restarted_ack"},
-		{"devcrew_restarted_ack", "cleanup_confirmation"},
-		{"comis_restarted_ack", "cleanup_confirmation"},
-	} {
-		if !before(pair[0], pair[1]) {
-			return fmt.Errorf("telegram checkpoint %s must precede %s", pair[0], pair[1])
+	for index := 0; index+1 < len(requiredCheckpointKinds); index++ {
+		first := requiredCheckpointKinds[index]
+		second := requiredCheckpointKinds[index+1]
+		if !before(first, second) {
+			return fmt.Errorf("telegram checkpoint %s must precede %s", first, second)
 		}
 	}
 	return nil
