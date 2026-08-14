@@ -517,6 +517,10 @@ func (configuredRuntimeAttachments) PrepareRuntimeAttachment(
 	}, nil
 }
 
+func (configuredRuntimeAttachments) ReleaseRuntimeAttachment(context.Context, string) error {
+	return nil
+}
+
 func (configuredRuntimeAttachments) BindRuntimeAttachment(
 	context.Context,
 	application.RuntimeAttachmentBindingRequest,

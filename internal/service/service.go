@@ -284,7 +284,8 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		}
 		cleanup, err = application.NewCleanupCoordinator(application.CleanupCoordinatorConfig{
 			Store: store, Workspaces: config.workspaceInspector, Forge: config.cleanupForge,
-			Releaser: control, Remover: config.cleanupRemover, Clock: clock,
+			Releaser: control, Attachments: config.RuntimeAttachments,
+			Remover: config.cleanupRemover, Clock: clock,
 		})
 		if err != nil {
 			return fmt.Errorf("run service cleanup coordinator: %w", err)

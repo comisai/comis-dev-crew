@@ -24,6 +24,10 @@ func (integrationRuntimeAttachments) PrepareRuntimeAttachment(
 	}, nil
 }
 
+func (integrationRuntimeAttachments) ReleaseRuntimeAttachment(context.Context, string) error {
+	return nil
+}
+
 func (integrationRuntimeAttachments) BindRuntimeAttachment(
 	context.Context,
 	application.RuntimeAttachmentBindingRequest,

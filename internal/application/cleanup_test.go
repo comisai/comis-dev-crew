@@ -65,7 +65,7 @@ func TestCleanupCoordinator_StopsBeforeHostReleaseRecordWhenAttachmentReleaseFai
 	store := &cleanupStoreFixture{record: record}
 	attachments := &cleanupAttachmentReleaseFixture{err: errors.New("attachment unavailable")}
 	coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
-		Store: store,
+		Store:      store,
 		Workspaces: &cleanupWorkspaceFixture{snapshot: cleanupFixtureSnapshot(record, record.HeadRevision)},
 		Forge: &cleanupForgeFixture{truth: PullRequestDeliveryTruth{
 			RepositoryID: record.RepositoryID, PullRequestID: record.PullRequestID,
@@ -102,7 +102,8 @@ func TestCleanupCoordinator_RefusesDirtyWorkspaceBeforeHostRelease(t *testing.T)
 	remover := &cleanupRemovalFixture{}
 	coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
 		Store: store, Workspaces: workspace, Forge: &cleanupForgeFixture{}, Releaser: releaser,
-		Remover: remover, Clock: func() time.Time { return record.ReleasedAt },
+		Attachments: &cleanupAttachmentReleaseFixture{}, Remover: remover,
+		Clock: func() time.Time { return record.ReleasedAt },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +132,8 @@ func TestCleanupCoordinator_ReportsOpenHoldBeforeHostRelease(t *testing.T) {
 	remover := &cleanupRemovalFixture{}
 	coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
 		Store: store, Workspaces: &cleanupWorkspaceFixture{}, Forge: &cleanupForgeFixture{},
-		Releaser: releaser, Remover: remover, Clock: func() time.Time { return record.ReleasedAt },
+		Releaser: releaser, Attachments: &cleanupAttachmentReleaseFixture{}, Remover: remover,
+		Clock: func() time.Time { return record.ReleasedAt },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +159,8 @@ func TestCleanupCoordinator_ReportsUnresolvedDecisionBeforeHostRelease(t *testin
 	remover := &cleanupRemovalFixture{}
 	coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
 		Store: store, Workspaces: &cleanupWorkspaceFixture{}, Forge: &cleanupForgeFixture{},
-		Releaser: releaser, Remover: remover, Clock: func() time.Time { return record.ReleasedAt },
+		Releaser: releaser, Attachments: &cleanupAttachmentReleaseFixture{}, Remover: remover,
+		Clock: func() time.Time { return record.ReleasedAt },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -202,7 +205,8 @@ func TestCleanupCoordinator_ReportsExecutionBlockersBeforeHostRelease(t *testing
 			remover := &cleanupRemovalFixture{}
 			coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
 				Store: store, Workspaces: &cleanupWorkspaceFixture{}, Forge: &cleanupForgeFixture{},
-				Releaser: releaser, Remover: remover, Clock: func() time.Time { return record.ReleasedAt },
+				Releaser: releaser, Attachments: &cleanupAttachmentReleaseFixture{}, Remover: remover,
+				Clock: func() time.Time { return record.ReleasedAt },
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -234,7 +238,8 @@ func TestCleanupCoordinator_ReportsStaleForgeTruthBeforeHostRelease(t *testing.T
 	coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
 		Store:      &cleanupStoreFixture{record: record},
 		Workspaces: &cleanupWorkspaceFixture{snapshot: cleanupFixtureSnapshot(record, record.HeadRevision)},
-		Forge:      forge, Releaser: releaser, Remover: remover, Clock: func() time.Time { return record.ReleasedAt },
+		Forge:      forge, Releaser: releaser, Attachments: &cleanupAttachmentReleaseFixture{},
+		Remover: remover, Clock: func() time.Time { return record.ReleasedAt },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -258,12 +263,13 @@ func TestCleanupCoordinator_ClassifiesForgeIdentityDriftBeforeHostRelease(t *tes
 	releaser := &cleanupReleaseFixture{}
 	remover := &cleanupRemovalFixture{}
 	coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
-		Store:      &cleanupStoreFixture{record: record},
-		Workspaces: &cleanupWorkspaceFixture{snapshot: cleanupFixtureSnapshot(record, record.HeadRevision)},
-		Forge:      &cleanupForgeFixture{err: ErrCleanupStaleForgeTruth},
-		Releaser:   releaser,
-		Remover:    remover,
-		Clock:      func() time.Time { return record.ReleasedAt },
+		Store:       &cleanupStoreFixture{record: record},
+		Workspaces:  &cleanupWorkspaceFixture{snapshot: cleanupFixtureSnapshot(record, record.HeadRevision)},
+		Forge:       &cleanupForgeFixture{err: ErrCleanupStaleForgeTruth},
+		Releaser:    releaser,
+		Attachments: &cleanupAttachmentReleaseFixture{},
+		Remover:     remover,
+		Clock:       func() time.Time { return record.ReleasedAt },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -294,7 +300,8 @@ func TestCleanupCoordinator_ResumesHeldCleanupWithFreshCallerOperation(t *testin
 	}}
 	coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
 		Store: store, Workspaces: workspace, Forge: forge, Releaser: &cleanupReleaseFixture{},
-		Remover: &cleanupRemovalFixture{}, Clock: func() time.Time { return now },
+		Attachments: &cleanupAttachmentReleaseFixture{}, Remover: &cleanupRemovalFixture{},
+		Clock: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -341,8 +348,9 @@ func TestCleanupCoordinator_ClassifiesOperatorActionableDependencyFailures(t *te
 			}, err: test.forgeErr}
 			coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
 				Store: &cleanupStoreFixture{record: record}, Workspaces: workspace, Forge: forge,
-				Releaser: &cleanupReleaseFixture{}, Remover: &cleanupRemovalFixture{},
-				Clock: func() time.Time { return now },
+				Releaser: &cleanupReleaseFixture{}, Attachments: &cleanupAttachmentReleaseFixture{},
+				Remover: &cleanupRemovalFixture{},
+				Clock:   func() time.Time { return now },
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -380,7 +388,8 @@ func TestCleanupCoordinator_FailsClosedAcrossCleanupBoundaries(t *testing.T) {
 		remover := &cleanupRemovalFixture{}
 		coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
 			Store: store, Workspaces: workspace, Forge: forge, Releaser: releaser,
-			Remover: remover, Clock: func() time.Time { return now },
+			Attachments: &cleanupAttachmentReleaseFixture{}, Remover: remover,
+			Clock: func() time.Time { return now },
 		})
 		if err != nil {
 			t.Fatal(err)

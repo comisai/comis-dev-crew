@@ -388,6 +388,10 @@ func (acceptingRuntimeAttachments) PrepareRuntimeAttachment(
 	}, nil
 }
 
+func (acceptingRuntimeAttachments) ReleaseRuntimeAttachment(context.Context, string) error {
+	return nil
+}
+
 func (acceptingRuntimeAttachments) BindRuntimeAttachment(context.Context, application.RuntimeAttachmentBindingRequest) error {
 	return nil
 }

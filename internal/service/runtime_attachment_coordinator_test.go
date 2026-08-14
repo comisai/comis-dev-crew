@@ -309,6 +309,7 @@ func TestRuntimeAttachmentCoordinator_RecoversPreparedTaskSocketAfterRestart(t *
 
 func TestRuntimeAttachmentCoordinator_SkipsCleanedTaskAfterWorkspaceRemoval(t *testing.T) {
 	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
 	now := time.Date(2026, time.August, 10, 16, 45, 0, 0, time.UTC)
 	task := domain.Task{
 		SchemaVersion: 1, Handle: "task-runtime-cleaned-0001", State: domain.TaskCleaned,
@@ -323,9 +324,13 @@ func TestRuntimeAttachmentCoordinator_SkipsCleanedTaskAfterWorkspaceRemoval(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
+	cleanedRuntimeRoot := filepath.Join(runtimeRoot, task.Handle)
+	if err := os.MkdirAll(cleanedRuntimeRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	store := &runtimeAttachmentRecoveryStore{tasks: []domain.Task{task}}
 	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
-		RuntimeRoot: filepath.Join(root, "runtime"), Store: store, Clock: func() time.Time { return now },
+		RuntimeRoot: runtimeRoot, Store: store, Clock: func() time.Time { return now },
 		NewCredential:           func() (string, error) { return "unused-cleaned-credential-0123456789", nil },
 		NewAttentionOperationID: runtimeAttentionOperationID,
 	})
@@ -338,6 +343,9 @@ func TestRuntimeAttachmentCoordinator_SkipsCleanedTaskAfterWorkspaceRemoval(t *t
 	}
 	if store.preparationReads != 0 {
 		t.Fatalf("cleaned task preparation reads = %d, want 0", store.preparationReads)
+	}
+	if _, err := os.Lstat(cleanedRuntimeRoot); !os.IsNotExist(err) {
+		t.Fatalf("cleaned task runtime root error = %v, want not exist", err)
 	}
 }
 

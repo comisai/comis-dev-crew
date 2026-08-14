@@ -258,6 +258,7 @@ type RuntimeAttachmentBindingRequest struct {
 // RuntimeAttachmentCoordinator owns per-task reporter listeners and binds the
 // activation identity to the same protected socket without replacing it.
 type RuntimeAttachmentCoordinator interface {
+	RuntimeAttachmentReleaser
 	PrepareRuntimeAttachment(context.Context, RuntimeAttachmentPreparationRequest) (PreparedRuntimeAttachment, error)
 	BindRuntimeAttachment(context.Context, RuntimeAttachmentBindingRequest) error
 }

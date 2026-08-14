@@ -149,6 +149,10 @@ func (serviceRuntimeAttachments) PrepareRuntimeAttachment(
 	}, nil
 }
 
+func (serviceRuntimeAttachments) ReleaseRuntimeAttachment(context.Context, string) error {
+	return nil
+}
+
 func (serviceRuntimeAttachments) BindRuntimeAttachment(context.Context, application.RuntimeAttachmentBindingRequest) error {
 	return nil
 }

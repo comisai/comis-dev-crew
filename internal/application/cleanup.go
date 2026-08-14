@@ -188,6 +188,11 @@ type ManagedRunReleaser interface {
 	ReleaseManagedRun(context.Context, ManagedRunReleaseRequest) (ManagedRunReleaseReceipt, error)
 }
 
+// RuntimeAttachmentReleaser revokes the service-owned task reporter endpoint.
+type RuntimeAttachmentReleaser interface {
+	ReleaseRuntimeAttachment(context.Context, string) error
+}
+
 // DeliveredWorkspaceRemover removes one previously authorized exact workspace.
 type DeliveredWorkspaceRemover interface {
 	RemoveDeliveredWorkspace(context.Context, DeliveredWorkspaceRemoval) error
@@ -195,12 +200,13 @@ type DeliveredWorkspaceRemover interface {
 
 // CleanupCoordinatorConfig supplies the complete E0 cleanup authority set.
 type CleanupCoordinatorConfig struct {
-	Store      TaskCleanupStore
-	Workspaces WorkspaceInspector
-	Forge      PullRequestDeliveryVerifier
-	Releaser   ManagedRunReleaser
-	Remover    DeliveredWorkspaceRemover
-	Clock      Clock
+	Store       TaskCleanupStore
+	Workspaces  WorkspaceInspector
+	Forge       PullRequestDeliveryVerifier
+	Releaser    ManagedRunReleaser
+	Attachments RuntimeAttachmentReleaser
+	Remover     DeliveredWorkspaceRemover
+	Clock       Clock
 }
 
 // CleanupCoordinator executes the durable release-before-remove sequence.
@@ -211,7 +217,7 @@ type CleanupCoordinator struct {
 // NewCleanupCoordinator rejects partial cleanup authority.
 func NewCleanupCoordinator(config CleanupCoordinatorConfig) (*CleanupCoordinator, error) {
 	if config.Store == nil || config.Workspaces == nil || config.Forge == nil || config.Releaser == nil ||
-		config.Remover == nil || config.Clock == nil {
+		config.Attachments == nil || config.Remover == nil || config.Clock == nil {
 		return nil, errors.New("create cleanup coordinator: complete cleanup authority is required")
 	}
 	return &CleanupCoordinator{config: config}, nil
@@ -269,6 +275,13 @@ func (coordinator *CleanupCoordinator) CleanupTask(ctx context.Context, command 
 				receipt.Disposition != ManagedRunReleaseReapSafe || !receipt.ReleasedAt.Equal(record.ReleasedAt) ||
 				receipt.State != ManagedRunReleased {
 				return MutationResult{}, errors.New("cleanup task: host release acknowledgement differs")
+			}
+			if releaseErr := coordinator.config.Attachments.ReleaseRuntimeAttachment(ctx, record.TaskHandle); releaseErr != nil {
+				return MutationResult{}, cleanupDependencyFailure(
+					"runtime attachment release failed",
+					"inspect the exact task runtime attachment before retrying cleanup",
+					releaseErr,
+				)
 			}
 			record, err = coordinator.config.Store.RecordTaskCleanupHostRelease(ctx, TaskCleanupHostReleaseMutation{
 				OperationID: record.OperationID, SubjectDigest: record.SubjectDigest, Snapshot: snapshot,

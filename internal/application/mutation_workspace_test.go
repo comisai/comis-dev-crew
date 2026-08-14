@@ -173,6 +173,10 @@ func (coordinator *runtimeAttachmentCoordinator) BindRuntimeAttachment(
 	return coordinator.err
 }
 
+func (*runtimeAttachmentCoordinator) ReleaseRuntimeAttachment(context.Context, string) error {
+	return nil
+}
+
 type workspacePreparer struct {
 	request  WorkspacePreparationRequest
 	prepared PreparedWorkspace

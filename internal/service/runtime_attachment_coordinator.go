@@ -217,6 +217,49 @@ func (coordinator *runtimeAttachmentCoordinator) BindRuntimeAttachment(
 	return bindRuntimeAttachmentEntry(entry, request)
 }
 
+func (coordinator *runtimeAttachmentCoordinator) ReleaseRuntimeAttachment(ctx context.Context, taskHandle string) error {
+	if ctx == nil {
+		return errors.New("release runtime attachment: context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if domain.ValidateTaskHandle(taskHandle) != nil {
+		return errors.New("release runtime attachment: task handle is invalid")
+	}
+	select {
+	case <-coordinator.recoveryReady:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	coordinator.mu.Lock()
+	if coordinator.recoveryErr != nil {
+		recoveryErr := coordinator.recoveryErr
+		coordinator.mu.Unlock()
+		return recoveryErr
+	}
+	entry := coordinator.entries[taskHandle]
+	delete(coordinator.entries, taskHandle)
+	coordinator.mu.Unlock()
+	if entry != nil {
+		if err := entry.server.Close(); err != nil {
+			return err
+		}
+	}
+	if err := coordinator.removeTaskRuntimeDirectory(taskHandle); err != nil {
+		return errors.New("release runtime attachment: task runtime directory is not empty or unavailable")
+	}
+	return nil
+}
+
+func (coordinator *runtimeAttachmentCoordinator) removeTaskRuntimeDirectory(taskHandle string) error {
+	taskRoot := filepath.Join(coordinator.runtimeRoot, taskHandle)
+	if err := os.Remove(taskRoot); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func bindRuntimeAttachmentEntry(entry *runtimeAttachmentEntry, request application.RuntimeAttachmentBindingRequest) error {
 	if entry.binding != nil {
 		prior := *entry.binding
@@ -268,6 +311,9 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeAttachments(ctx c
 	servers := make([]*reporter.RuntimeServer, 0, len(tasks))
 	for _, task := range tasks {
 		if task.State == domain.TaskCleaned {
+			if err := coordinator.removeTaskRuntimeDirectory(task.Handle); err != nil {
+				return nil, errors.Join(errors.New("recover runtime attachments: cleaned task runtime directory remains"), err)
+			}
 			continue
 		}
 		if err := ctx.Err(); err != nil {
@@ -361,7 +407,10 @@ func (coordinator *runtimeAttachmentCoordinator) Run(ctx context.Context) error 
 		case result := <-results:
 			delete(active, result.server)
 			if ctx.Err() == nil {
-				return coordinator.stopServers(active, results, errors.Join(errors.New("runtime attachment server stopped"), result.err))
+				if coordinator.hasRuntimeServer(result.server) {
+					return coordinator.stopServers(active, results, errors.Join(errors.New("runtime attachment server stopped"), result.err))
+				}
+				continue
 			}
 			if len(active) == 0 {
 				return nil
@@ -370,6 +419,17 @@ func (coordinator *runtimeAttachmentCoordinator) Run(ctx context.Context) error 
 			return coordinator.stopServers(active, results, nil)
 		}
 	}
+}
+
+func (coordinator *runtimeAttachmentCoordinator) hasRuntimeServer(server *reporter.RuntimeServer) bool {
+	coordinator.mu.Lock()
+	defer coordinator.mu.Unlock()
+	for _, entry := range coordinator.entries {
+		if entry.server == server {
+			return true
+		}
+	}
+	return false
 }
 
 func (coordinator *runtimeAttachmentCoordinator) stopServers(
