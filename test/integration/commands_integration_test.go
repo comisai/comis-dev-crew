@@ -37,3 +37,34 @@ func TestPackagedCommands_ExposeHonestHelpAndVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestPackagedCommands_ExposeInjectedReleaseVersion(t *testing.T) {
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve integration test path")
+	}
+	repositoryRoot := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", ".."))
+	const version = "v9.8.7-test"
+	for _, name := range []string{"devcrew-service", "devcrew", "devcrew-mcp", "devcrew-report"} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			binary := filepath.Join(t.TempDir(), name)
+			build := exec.Command(
+				"go", "build", "-trimpath",
+				"-ldflags", "-X github.com/comisai/comis-dev-crew/internal/command.Version="+version,
+				"-o", binary, "./cmd/"+name,
+			)
+			build.Dir = repositoryRoot
+			if output, err := build.CombinedOutput(); err != nil {
+				t.Fatalf("build versioned %s: %v\n%s", name, err, output)
+			}
+			output, err := exec.Command(binary, "--version").CombinedOutput()
+			if err != nil {
+				t.Fatalf("run versioned %s: %v\n%s", name, err, output)
+			}
+			if got, want := string(output), name+" "+version+"\n"; got != want {
+				t.Fatalf("versioned %s output = %q, want %q", name, got, want)
+			}
+		})
+	}
+}
