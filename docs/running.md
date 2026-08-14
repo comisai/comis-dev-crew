@@ -231,7 +231,9 @@ files rather than `PATH` symlinks. Runtime validation re-hashes each file and
 executes its fixed `--version` command; it refuses digest, version, or protocol
 drift before the campaign starts. The three isolated systemd units are likewise
 pinned to the SHA-256 of `systemctl cat <unit>` so drop-ins and unit-definition
-changes cannot enter an accepted run unnoticed. The manifest must describe
+changes cannot enter an accepted run unnoticed. The exact Codex and Claude Code
+executables are bound to the two task profiles by canonical path, SHA-256, and
+their native `--version` output. The manifest must describe
 exactly two ship lanes:
 one Codex/Claude profile per lane, exactly one recovered candidate, one handback,
 and one cleanup operation per task. Its eleven opaque `e0cp-*` markers are sent by

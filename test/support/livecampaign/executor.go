@@ -107,6 +107,11 @@ func validateRuntime(ctx context.Context, manifest Manifest, executor Executor) 
 			return fmt.Errorf("validate protected runtime: %s artifact: %w", artifact.Kind, err)
 		}
 	}
+	for _, worker := range manifest.Workers {
+		if err := validatePinnedWorker(ctx, worker, executor); err != nil {
+			return fmt.Errorf("validate protected runtime: %s worker: %w", worker.Kind, err)
+		}
+	}
 	for name, path := range map[string]string{
 		"DevCrew CLI": manifest.DevCrew.CLIPath,
 		"Node":        manifest.Comis.NodePath,
@@ -163,6 +168,27 @@ func validateRuntime(ctx context.Context, manifest Manifest, executor Executor) 
 	}
 	if os.Getenv("GH_TOKEN") == "" {
 		return errors.New("validate protected runtime: GH_TOKEN credential prerequisite is unavailable")
+	}
+	return nil
+}
+
+func validatePinnedWorker(ctx context.Context, pin WorkerPin, executor Executor) error {
+	if err := validateExecutable(pin.Path); err != nil {
+		return err
+	}
+	if err := validateCanonicalRegularFile(pin.Path); err != nil {
+		return err
+	}
+	contents, err := os.ReadFile(pin.Path)
+	if err != nil {
+		return errors.New("read pinned worker executable")
+	}
+	if sha256Hex(contents) != pin.SHA256 {
+		return errors.New("worker executable SHA-256 differs from the protected manifest")
+	}
+	output, err := executor.Run(ctx, Command{Path: pin.Path, Args: []string{"--version"}})
+	if err != nil || strings.TrimSpace(string(output)) != pin.Version {
+		return errors.New("reported worker version differs from the protected manifest")
 	}
 	return nil
 }

@@ -18,6 +18,10 @@
     {"kind": "devcrew-report", "path": "/opt/comis-dev-crew/bin/devcrew-report", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-devcrew-version"},
     {"kind": "devcrew-service", "path": "/opt/comis-dev-crew/bin/devcrew-service", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-devcrew-version"}
   ],
+  "workers": [
+    {"kind": "codex", "profileId": "codex-reviewed", "path": "/opt/codex/bin/codex", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-codex-version"},
+    {"kind": "claude", "profileId": "claude-reviewed", "path": "/opt/claude/bin/claude", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-claude-version"}
+  ],
   "devcrew": {
     "cliPath": "/opt/comis-dev-crew/bin/devcrew",
     "socketPath": "/run/devcrew-e0-live/service.sock",

@@ -128,6 +128,15 @@ func TestValidateRuntimeRejectsNonSocketAndNonPrivateDataRoot(t *testing.T) {
 			manifest.DevCrew.CLIPath = path
 		}
 	}
+	for index := range manifest.Workers {
+		path := filepath.Join(root, manifest.Workers[index].Kind)
+		contents := []byte("worker-" + manifest.Workers[index].Kind)
+		if err := os.WriteFile(path, contents, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		manifest.Workers[index].Path = path
+		manifest.Workers[index].SHA256 = sha256Hex(contents)
+	}
 	if err := os.WriteFile(manifest.DevCrew.SocketPath, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -155,6 +164,14 @@ func (executor versionFixtureExecutor) Run(ctx context.Context, command Command)
 			return []byte("devcrew unit\n"), nil
 		case executor.manifest.Services.ComisUnit:
 			return []byte("comis unit\n"), nil
+		}
+	}
+	if len(command.Args) == 1 && command.Args[0] == "--version" {
+		switch filepath.Base(command.Path) {
+		case "codex":
+			return []byte("codex-cli 0.147.0\n"), nil
+		case "claude":
+			return []byte("2.1.224 (Claude Code)\n"), nil
 		}
 	}
 	name := filepath.Base(command.Path)

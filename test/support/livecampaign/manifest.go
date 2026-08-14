@@ -34,6 +34,8 @@ var requiredArtifactKinds = []string{
 	"devcrew-service",
 }
 
+var requiredWorkerKinds = []string{"codex", "claude"}
+
 var requiredCheckpointKinds = []string{
 	"task_request",
 	"unrelated_conversation",
@@ -57,6 +59,7 @@ type Manifest struct {
 	Source        SourcePins             `json:"source"`
 	Protocol      ProtocolPin            `json:"protocol"`
 	Artifacts     []ArtifactPin          `json:"artifacts"`
+	Workers       []WorkerPin            `json:"workers"`
 	DevCrew       DevCrewTarget          `json:"devcrew"`
 	Comis         ComisTarget            `json:"comis"`
 	Telegram      TelegramTarget         `json:"telegram"`
@@ -81,6 +84,14 @@ type ArtifactPin struct {
 	Path    string `json:"path"`
 	SHA256  string `json:"sha256"`
 	Version string `json:"version"`
+}
+
+type WorkerPin struct {
+	Kind      string `json:"kind"`
+	ProfileID string `json:"profileId"`
+	Path      string `json:"path"`
+	SHA256    string `json:"sha256"`
+	Version   string `json:"version"`
 }
 
 type DevCrewTarget struct {
@@ -208,6 +219,9 @@ func (manifest Manifest) validate() error {
 	if err := manifest.validateArtifacts(); err != nil {
 		return err
 	}
+	if err := manifest.validateWorkers(); err != nil {
+		return err
+	}
 	for name, path := range map[string]string{
 		"devcrew.cliPath":             manifest.DevCrew.CLIPath,
 		"devcrew.socketPath":          manifest.DevCrew.SocketPath,
@@ -259,6 +273,52 @@ func (manifest Manifest) validate() error {
 		return err
 	}
 	return manifest.validateTasksAndOperations()
+}
+
+func (manifest Manifest) validateWorkers() error {
+	if len(manifest.Workers) != len(requiredWorkerKinds) {
+		return errors.New("worker pin catalog must contain exactly Codex and Claude Code")
+	}
+	byKind := make(map[string]WorkerPin, len(manifest.Workers))
+	profiles := make(map[string]struct{}, len(manifest.Workers))
+	paths := make(map[string]struct{}, len(manifest.Workers))
+	for _, worker := range manifest.Workers {
+		if !contains(requiredWorkerKinds, worker.Kind) {
+			return errors.New("worker pin kind is outside the closed catalog")
+		}
+		if _, exists := byKind[worker.Kind]; exists {
+			return errors.New("worker pin kinds must be unique")
+		}
+		if !safeReferencePattern.MatchString(worker.ProfileID) {
+			return errors.New("worker pin profile must be one bounded identifier")
+		}
+		if _, exists := profiles[worker.ProfileID]; exists {
+			return errors.New("worker pin profiles must be unique")
+		}
+		if !filepath.IsAbs(worker.Path) || filepath.Clean(worker.Path) != worker.Path {
+			return errors.New("worker pin paths must be clean and absolute")
+		}
+		if _, exists := paths[worker.Path]; exists {
+			return errors.New("worker pin paths must be unique")
+		}
+		if !lowerHexDigestPattern.MatchString(worker.SHA256) || !validDisplayName(worker.Version) {
+			return errors.New("worker pin digest or version is invalid")
+		}
+		byKind[worker.Kind] = worker
+		profiles[worker.ProfileID] = struct{}{}
+		paths[worker.Path] = struct{}{}
+	}
+	for _, kind := range requiredWorkerKinds {
+		if _, exists := byKind[kind]; !exists {
+			return fmt.Errorf("worker pin catalog is missing %s", kind)
+		}
+	}
+	for _, task := range manifest.Tasks {
+		if _, exists := profiles[task.WorkerProfileID]; !exists {
+			return errors.New("worker pin profiles must exactly cover the task profiles")
+		}
+	}
+	return nil
 }
 
 func (manifest Manifest) validateArtifacts() error {
