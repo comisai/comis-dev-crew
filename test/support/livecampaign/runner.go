@@ -50,11 +50,25 @@ func (runner CampaignRunner) Run(ctx context.Context, manifest Manifest, evidenc
 	if _, err := runner.waitCheckpoint(ctx, manifest, "mcp_restarted_ack", mcpRestartedAt); err != nil {
 		return Verdict{}, err
 	}
-	for _, kind := range []string{"decision_reply", "pause_handback", "reconcile_approval"} {
-		runner.log("waiting for Telegram checkpoint %s", kind)
-		if _, err := runner.waitCheckpoint(ctx, manifest, kind, manifest.StartedAtMs); err != nil {
-			return Verdict{}, err
-		}
+	runner.log("waiting for Telegram checkpoint decision_reply")
+	if _, err := runner.waitCheckpoint(ctx, manifest, "decision_reply", manifest.StartedAtMs); err != nil {
+		return Verdict{}, err
+	}
+	runner.log("waiting for Telegram checkpoint pause_handback")
+	handbackCheckpoint, err := runner.waitCheckpoint(ctx, manifest, "pause_handback", manifest.StartedAtMs)
+	if err != nil {
+		return Verdict{}, err
+	}
+	if err := runner.waitOperationAfterCheckpoint(ctx, manifest, "HandbackTask", handbackCheckpoint.EpochMs); err != nil {
+		return Verdict{}, err
+	}
+	runner.log("waiting for Telegram checkpoint reconcile_approval")
+	reconcileCheckpoint, err := runner.waitCheckpoint(ctx, manifest, "reconcile_approval", manifest.StartedAtMs)
+	if err != nil {
+		return Verdict{}, err
+	}
+	if err := runner.waitOperationAfterCheckpoint(ctx, manifest, "ReconcileTask", reconcileCheckpoint.EpochMs); err != nil {
+		return Verdict{}, err
 	}
 	if _, err := runner.waitCheckpoint(ctx, manifest, "devcrew_restart_ready", manifest.StartedAtMs); err != nil {
 		return Verdict{}, err
@@ -126,6 +140,50 @@ func (runner CampaignRunner) waitDevCrewHealthy(ctx context.Context, manifest Ma
 		return report.SchemaVersion == 1 && report.Completeness == application.CompletenessComplete &&
 			report.ServiceHealth == application.HealthHealthy && report.ComisHealth == application.HealthHealthy, nil
 	})
+}
+
+func (runner CampaignRunner) waitOperationAfterCheckpoint(
+	ctx context.Context,
+	manifest Manifest,
+	command string,
+	minimumEpochMs int64,
+) error {
+	operation, found := operationForCommand(manifest, command)
+	if !found {
+		return fmt.Errorf("run protected live campaign: %s operation is absent from the manifest", command)
+	}
+	stage := strings.TrimSuffix(strings.ToLower(command), "task") + " operation after Telegram checkpoint"
+	return runner.wait(ctx, stage, func() (bool, error) {
+		view, err := runner.readOperation(ctx, manifest, operation.OperationID)
+		if err != nil {
+			return false, nil
+		}
+		if err := VerifyOperation(operation, view); err != nil {
+			return false, nil
+		}
+		return view.UpdatedAtMs >= minimumEpochMs, nil
+	})
+}
+
+func (runner CampaignRunner) readOperation(
+	ctx context.Context,
+	manifest Manifest,
+	operationID string,
+) (application.OperationView, error) {
+	output, err := runner.Executor.Run(ctx, Command{
+		Path: manifest.DevCrew.CLIPath,
+		Args: []string{
+			"--socket", manifest.DevCrew.SocketPath, "task", "operation", operationID, "--format", "json",
+		},
+	})
+	if err != nil || len(output) == 0 || len(output) > maximumCommandOutputBytes {
+		return application.OperationView{}, errors.New("read DevCrew operation: report unavailable")
+	}
+	var view application.OperationView
+	if err := json.Unmarshal(output, &view); err != nil {
+		return application.OperationView{}, errors.New("read DevCrew operation: report is malformed")
+	}
+	return view, nil
 }
 
 func (runner CampaignRunner) waitCheckpoint(
@@ -293,4 +351,13 @@ func fleetHasExactTaskState(manifest Manifest, fleet application.FleetSnapshot, 
 		}
 	}
 	return true
+}
+
+func operationForCommand(manifest Manifest, command string) (OperationExpectation, bool) {
+	for _, operation := range manifest.Operations {
+		if operation.Command == command {
+			return operation, true
+		}
+	}
+	return OperationExpectation{}, false
 }

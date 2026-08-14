@@ -237,7 +237,10 @@ The runner first observes both tasks simultaneously in `working`. It then replac
 the stateless MCP facade, waits for the human acknowledgement, waits for decision,
 handback, and reconciliation checkpoints, and restarts DevCrew and Comis at their
 separate ready markers. An acknowledgement recorded before its corresponding
-restart does not satisfy the gate. Final cleanup must leave both tasks `cleaned`.
+restart does not satisfy the gate. The durable handback and reconciliation
+operations must complete at or after their respective human Telegram checkpoints;
+an operation completed before approval is refused even if the final task state is
+otherwise clean. Final cleanup must leave both tasks `cleaned`.
 
 Run the protected campaign:
 
