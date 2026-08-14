@@ -17,6 +17,7 @@ const unknownRequestID = "request-unknown"
 type Handler struct {
 	queries           ReadQueries
 	mutations         TaskMutations
+	reconciliation    TaskReconciliation
 	interventions     TaskInterventions
 	cleanup           TaskCleanup
 	serviceInstanceID string
@@ -37,7 +38,8 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 		return nil, errors.New("create local API handler: service instance identity is required for mutations")
 	}
 	return &Handler{
-		queries: config.Queries, mutations: config.Mutations, interventions: config.Interventions, cleanup: config.Cleanup,
+		queries: config.Queries, mutations: config.Mutations, reconciliation: config.Reconciliation,
+		interventions: config.Interventions, cleanup: config.Cleanup,
 		serviceInstanceID: config.ServiceInstanceID, clock: config.Clock,
 	}, nil
 }
@@ -135,6 +137,18 @@ func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 			WorkerProfileID: input.WorkerProfileID,
 		})
 		return handler.prepareOutcome(request.OperationID, result, err)
+	case MethodReconcileTask:
+		var input ReconcileTaskInput
+		if err := decodeObject(request.Payload, &input); err != nil {
+			return invalidPayload(request.OperationID, err)
+		}
+		if handler.reconciliation == nil {
+			return rejectedOutcome(request.OperationID, domain.ErrorUnavailable, true, "task reconciliation is unavailable", "inspect service configuration", nil)
+		}
+		result, err := handler.reconciliation.ReconcileTask(ctx, application.ReconcileTaskCommand{
+			OperationID: request.OperationID, TaskHandle: input.TaskHandle, Action: input.Action,
+		})
+		return handler.taskMutationOutcome(request.OperationID, MethodReconcileTask, result, err)
 	case MethodHandbackTask:
 		var input HandbackTaskInput
 		if err := decodeObject(request.Payload, &input); err != nil {
@@ -248,6 +262,19 @@ func outcomeFromError(operationID string, err error) Outcome {
 				Retryable: failure.Retryable,
 				Hint:      failure.Hint,
 			},
+		}
+	}
+	type safeDependency interface {
+		SafeDependencyMessage() string
+	}
+	var dependency safeDependency
+	if errors.As(err, &dependency) {
+		classified, classifyErr := domain.NewFailure(
+			domain.ErrorUnavailable, true, dependency.SafeDependencyMessage(),
+			"inspect service dependency health and exact configuration", err,
+		)
+		if classifyErr == nil {
+			return outcomeFromError(operationID, classified)
 		}
 	}
 	return rejectedOutcome(operationID, domain.ErrorInternal, false, "query failed", "inspect service health", err)

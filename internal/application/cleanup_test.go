@@ -77,7 +77,7 @@ func TestCleanupCoordinator_RefusesDirtyWorkspaceBeforeHostRelease(t *testing.T)
 	})
 	var failure *domain.Failure
 	if !errors.As(cleanupErr, &failure) || failure.Code != domain.ErrorPrecondition || !failure.Retryable ||
-		failure.Message != "cleanup requires a clean task worktree" ||
+		failure.Message != CleanupDirtyWorkspaceMessage ||
 		failure.Hint != "remove uncommitted changes from the exact task worktree, then retry cleanup" {
 		t.Fatalf("CleanupTask(dirty workspace) error = %v, want precondition failure", cleanupErr)
 	}
@@ -106,12 +106,115 @@ func TestCleanupCoordinator_ReportsOpenHoldBeforeHostRelease(t *testing.T) {
 	})
 	var failure *domain.Failure
 	if !errors.As(cleanupErr, &failure) || failure.Code != domain.ErrorPrecondition || !failure.Retryable ||
-		failure.Message != "cleanup is blocked by an open task hold" ||
+		failure.Message != CleanupOpenHoldMessage ||
 		failure.Hint != "close the exact task cleanup hold, then retry cleanup" {
 		t.Fatalf("CleanupTask(open hold) error = %v, want reason-coded precondition failure", cleanupErr)
 	}
 	if releaser.calls != 0 || remover.calls != 0 || store.releaseCalls != 0 {
 		t.Fatalf("unsafe side effects: release=%d remove=%d recorded=%d", releaser.calls, remover.calls, store.releaseCalls)
+	}
+}
+
+func TestCleanupCoordinator_ReportsUnresolvedDecisionBeforeHostRelease(t *testing.T) {
+	record := cleanupFixtureRecord(strings.Repeat("b", 40))
+	store := &cleanupStoreFixture{record: record, beginErr: ErrCleanupOpenDecision}
+	releaser := &cleanupReleaseFixture{}
+	remover := &cleanupRemovalFixture{}
+	coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
+		Store: store, Workspaces: &cleanupWorkspaceFixture{}, Forge: &cleanupForgeFixture{},
+		Releaser: releaser, Remover: remover, Clock: func() time.Time { return record.ReleasedAt },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, cleanupErr := coordinator.CleanupTask(context.Background(), CleanupTaskCommand{
+		OperationID: record.OperationID, TaskHandle: record.TaskHandle,
+	})
+	var failure *domain.Failure
+	if !errors.As(cleanupErr, &failure) || failure.Code != domain.ErrorPrecondition || !failure.Retryable ||
+		failure.Message != CleanupOpenDecisionMessage ||
+		failure.Hint != "resolve the exact open task decision, then retry cleanup" {
+		t.Fatalf("CleanupTask(unresolved decision) error = %v, want reason-coded precondition failure", cleanupErr)
+	}
+	if releaser.calls != 0 || remover.calls != 0 || store.releaseCalls != 0 {
+		t.Fatalf("unsafe side effects: release=%d remove=%d recorded=%d", releaser.calls, remover.calls, store.releaseCalls)
+	}
+}
+
+func TestCleanupCoordinator_ReportsExecutionBlockersBeforeHostRelease(t *testing.T) {
+	tests := []struct {
+		name        string
+		cause       error
+		wantMessage string
+		wantHint    string
+	}{
+		{
+			name: "active execution", cause: ErrCleanupActiveExecution,
+			wantMessage: CleanupActiveExecutionMessage,
+			wantHint:    "wait for the exact task execution and validation processes to settle, then retry cleanup",
+		},
+		{
+			name: "unknown execution", cause: ErrCleanupUnknownExecution,
+			wantMessage: CleanupUnknownExecutionMessage,
+			wantHint:    "reconcile the exact terminal, managed run, and workspace lease before retrying cleanup",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			record := cleanupFixtureRecord(strings.Repeat("b", 40))
+			store := &cleanupStoreFixture{record: record, beginErr: test.cause}
+			releaser := &cleanupReleaseFixture{}
+			remover := &cleanupRemovalFixture{}
+			coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
+				Store: store, Workspaces: &cleanupWorkspaceFixture{}, Forge: &cleanupForgeFixture{},
+				Releaser: releaser, Remover: remover, Clock: func() time.Time { return record.ReleasedAt },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, cleanupErr := coordinator.CleanupTask(context.Background(), CleanupTaskCommand{
+				OperationID: record.OperationID, TaskHandle: record.TaskHandle,
+			})
+			var failure *domain.Failure
+			if !errors.As(cleanupErr, &failure) || failure.Code != domain.ErrorPrecondition || !failure.Retryable ||
+				failure.Message != test.wantMessage || failure.Hint != test.wantHint {
+				t.Fatalf("CleanupTask(%s) error = %v, want reason-coded precondition failure", test.name, cleanupErr)
+			}
+			if releaser.calls != 0 || remover.calls != 0 || store.releaseCalls != 0 {
+				t.Fatalf("unsafe side effects: release=%d remove=%d recorded=%d", releaser.calls, remover.calls, store.releaseCalls)
+			}
+		})
+	}
+}
+
+func TestCleanupCoordinator_ReportsStaleForgeTruthBeforeHostRelease(t *testing.T) {
+	record := cleanupFixtureRecord(strings.Repeat("b", 40))
+	forge := &cleanupForgeFixture{truth: PullRequestDeliveryTruth{
+		RepositoryID: record.RepositoryID, PullRequestID: record.PullRequestID,
+		HeadRevision: strings.Repeat("d", 40),
+		Checks:       []ForgeCheckTruth{{Name: "ci/unit", Conclusion: domain.CheckPassed}},
+	}}
+	releaser := &cleanupReleaseFixture{}
+	remover := &cleanupRemovalFixture{}
+	coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
+		Store:      &cleanupStoreFixture{record: record},
+		Workspaces: &cleanupWorkspaceFixture{snapshot: cleanupFixtureSnapshot(record, record.HeadRevision)},
+		Forge:      forge, Releaser: releaser, Remover: remover, Clock: func() time.Time { return record.ReleasedAt },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, cleanupErr := coordinator.CleanupTask(context.Background(), CleanupTaskCommand{
+		OperationID: record.OperationID, TaskHandle: record.TaskHandle,
+	})
+	var failure *domain.Failure
+	if !errors.As(cleanupErr, &failure) || failure.Code != domain.ErrorPrecondition || !failure.Retryable ||
+		failure.Message != CleanupStaleForgeTruthMessage ||
+		failure.Hint != "refresh the exact pull request head and required checks, then retry cleanup" {
+		t.Fatalf("CleanupTask(stale forge truth) error = %v, want reason-coded precondition failure", cleanupErr)
+	}
+	if releaser.calls != 0 || remover.calls != 0 {
+		t.Fatalf("unsafe side effects: release=%d remove=%d", releaser.calls, remover.calls)
 	}
 }
 

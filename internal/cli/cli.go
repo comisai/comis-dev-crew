@@ -32,6 +32,7 @@ Commands:
   task launch-plan TASK [--format json]
   task operation OPERATION [--format text|json]
   task prepare --input FILE|- [--operation OPERATION] [--format json]
+  task reconcile TASK --action validate-clean-candidate [--operation OPERATION] [--format json]
   task handback TASK --action validate-developer-work [--operation OPERATION] [--format json]
   task cleanup TASK [--operation OPERATION] [--format json]
 
@@ -51,6 +52,7 @@ type ReadClient interface {
 	GetLaunchPlan(context.Context, string, string) (application.LaunchPlan, error)
 	Operation(context.Context, string, string) (application.OperationView, error)
 	PrepareTask(context.Context, string, localapi.PrepareTaskInput) (localapi.PrepareTaskResult, error)
+	ReconcileTask(context.Context, string, localapi.ReconcileTaskInput) (localapi.TaskMutationResult, error)
 	HandbackTask(context.Context, string, localapi.HandbackTaskInput) (localapi.TaskMutationResult, error)
 	CleanupTask(context.Context, string, localapi.CleanupTaskInput) (localapi.TaskMutationResult, error)
 }
@@ -77,19 +79,21 @@ const (
 	commandGetLaunchPlan
 	commandOperation
 	commandPrepareTask
+	commandReconcileTask
 	commandHandbackTask
 	commandCleanupTask
 )
 
 type parsedCommand struct {
-	kind           commandKind
-	socketPath     string
-	format         string
-	reference      string
-	inputPath      string
-	operationID    string
-	prepareInput   *localapi.PrepareTaskInput
-	handbackAction application.HandbackAction
+	kind            commandKind
+	socketPath      string
+	format          string
+	reference       string
+	inputPath       string
+	operationID     string
+	prepareInput    *localapi.PrepareTaskInput
+	reconcileAction application.ReconcileTaskAction
+	handbackAction  application.HandbackAction
 }
 
 // Run parses one canonical command, calls the local client, and
@@ -192,6 +196,9 @@ func parseTaskCommand(command parsedCommand, args []string) (parsedCommand, erro
 	if len(args) > 0 && args[0] == "prepare" {
 		return parsePrepareTaskCommand(command, args[1:])
 	}
+	if len(args) > 0 && args[0] == "reconcile" {
+		return parseReconcileTaskCommand(command, args[1:])
+	}
 	if len(args) > 0 && args[0] == "handback" {
 		return parseHandbackTaskCommand(command, args[1:])
 	}
@@ -233,80 +240,6 @@ func parseTaskCommand(command parsedCommand, args []string) (parsedCommand, erro
 		return parsedCommand{}, err
 	}
 	command.format = format
-	return command, nil
-}
-
-func parseCleanupTaskCommand(command parsedCommand, args []string) (parsedCommand, error) {
-	if len(args) < 1 || domain.ValidateTaskHandle(args[0]) != nil {
-		return parsedCommand{}, errors.New("cleanup task reference is required")
-	}
-	command.kind = commandCleanupTask
-	command.reference = args[0]
-	command.format = "json"
-	args = args[1:]
-	seen := make(map[string]bool)
-	for len(args) > 0 {
-		if len(args) < 2 || seen[args[0]] {
-			return parsedCommand{}, errors.New("invalid cleanup arguments")
-		}
-		name, value := args[0], args[1]
-		seen[name] = true
-		switch name {
-		case "--operation":
-			if domain.ValidateOperationID(value) != nil {
-				return parsedCommand{}, errors.New("invalid cleanup operation")
-			}
-			command.operationID = value
-		case "--format":
-			if value != "json" {
-				return parsedCommand{}, errors.New("cleanup format must be JSON")
-			}
-		default:
-			return parsedCommand{}, errors.New("unknown cleanup option")
-		}
-		args = args[2:]
-	}
-	return command, nil
-}
-
-func parseHandbackTaskCommand(command parsedCommand, args []string) (parsedCommand, error) {
-	if len(args) < 1 || domain.ValidateTaskHandle(args[0]) != nil {
-		return parsedCommand{}, errors.New("handback task reference is required")
-	}
-	command.kind = commandHandbackTask
-	command.reference = args[0]
-	command.format = "json"
-	args = args[1:]
-	seen := make(map[string]bool)
-	for len(args) > 0 {
-		if len(args) < 2 || seen[args[0]] {
-			return parsedCommand{}, errors.New("invalid handback arguments")
-		}
-		name, value := args[0], args[1]
-		seen[name] = true
-		switch name {
-		case "--action":
-			if value != string(application.HandbackValidateDeveloperWork) {
-				return parsedCommand{}, errors.New("unsupported handback action")
-			}
-			command.handbackAction = application.HandbackAction(value)
-		case "--operation":
-			if domain.ValidateOperationID(value) != nil {
-				return parsedCommand{}, errors.New("invalid handback operation")
-			}
-			command.operationID = value
-		case "--format":
-			if value != "json" {
-				return parsedCommand{}, errors.New("handback format must be JSON")
-			}
-		default:
-			return parsedCommand{}, errors.New("unknown handback option")
-		}
-		args = args[2:]
-	}
-	if command.handbackAction == "" {
-		return parsedCommand{}, errors.New("handback action is required")
-	}
 	return command, nil
 }
 
@@ -410,6 +343,10 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 			return nil, errors.New("prepare input is unavailable")
 		}
 		return client.PrepareTask(ctx, operationID, *command.prepareInput)
+	case commandReconcileTask:
+		return client.ReconcileTask(ctx, operationID, localapi.ReconcileTaskInput{
+			TaskHandle: command.reference, Action: command.reconcileAction,
+		})
 	case commandHandbackTask:
 		return client.HandbackTask(ctx, operationID, localapi.HandbackTaskInput{
 			TaskHandle: command.reference, Action: command.handbackAction,

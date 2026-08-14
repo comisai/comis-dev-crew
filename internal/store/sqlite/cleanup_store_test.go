@@ -194,17 +194,23 @@ func TestTaskCleanupStore_RefusesOpenHoldUnsettledRuntimeAndUndeliveredEvidence(
 		}, want: application.ErrCleanupOpenHold},
 		{name: "running terminal", mutate: func(store *Store, task domain.Task) {
 			_, _ = store.db.Exec("UPDATE task_terminal_bindings SET latest_transition = 'running' WHERE task_handle = ?", task.Handle)
-		}},
+		}, want: application.ErrCleanupActiveExecution},
+		{name: "lost terminal", mutate: func(store *Store, task domain.Task) {
+			_, _ = store.db.Exec("UPDATE task_terminal_bindings SET latest_transition = 'lost' WHERE task_handle = ?", task.Handle)
+		}, want: application.ErrCleanupUnknownExecution},
 		{name: "missing production terminal", mutate: func(store *Store, task domain.Task) {
 			_, _ = store.db.Exec("DELETE FROM task_terminal_bindings WHERE task_handle = ?", task.Handle)
-		}},
+		}, want: application.ErrCleanupUnknownExecution},
+		{name: "mismatched terminal authority", mutate: func(store *Store, task domain.Task) {
+			_, _ = store.db.Exec("UPDATE task_terminal_bindings SET managed_run_id = 'managed-run-other' WHERE task_handle = ?", task.Handle)
+		}, want: application.ErrCleanupUnknownExecution},
 		{name: "active validation", mutate: func(store *Store, task domain.Task) {
 			_, _ = store.db.Exec(`INSERT INTO validation_processes(
                     operation_id, task_handle, program_id, executable_label, pid,
                     start_identity, process_group_identity, state, started_at, observed_at)
                 VALUES ('validate-cleanup-active', ?, 'go-test', 'go', 123, 'start-123', 'group-123', 'running', ?, ?)`,
 				task.Handle, formatTime(task.UpdatedAt), formatTime(task.UpdatedAt))
-		}},
+		}, want: application.ErrCleanupActiveExecution},
 		{name: "undelivered evidence", mutate: func(store *Store, task domain.Task) {
 			_, _ = store.db.Exec(`UPDATE comis_evidence_outbox SET delivered_at = NULL
                 WHERE operation_id = (SELECT operation_id FROM comis_evidence_outbox
@@ -215,9 +221,9 @@ func TestTaskCleanupStore_RefusesOpenHoldUnsettledRuntimeAndUndeliveredEvidence(
                     task_handle, local_report_id, subject_digest, schema_version, brief_revision,
                     brief_revision_hash, kind, external_key, summary, details, state_version, accepted_at)
                 VALUES (?, 'decision-cleanup-open', ?, 1, ?, ?, 'decision', 'decision-open',
-                    'A bounded decision is required.', '', 999, ?)`, task.Handle, strings.Repeat("f", 64),
+					'A bounded decision is required.', '', 999, ?)`, task.Handle, strings.Repeat("f", 64),
 				task.BriefRevision, task.BriefRevisionHash, formatTime(task.UpdatedAt))
-		}},
+		}, want: application.ErrCleanupOpenDecision},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store, task, _ := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))

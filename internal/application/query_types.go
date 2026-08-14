@@ -61,8 +61,26 @@ const (
 	ActionResolveBlock  NextAction = "resolve_block"
 	ActionInspectHealth NextAction = "inspect_service_health"
 	ActionReconcileTask NextAction = "reconcile_task"
+	ActionPrepareTask   NextAction = "prepare_task"
 	ActionNone          NextAction = "none"
 )
+
+// TaskRecoveryEvidenceKind is the closed durable explanation of why an
+// unknown task can or cannot enter clean-candidate reconciliation.
+type TaskRecoveryEvidenceKind string
+
+const (
+	RecoveryTerminalSettledWithoutCandidate TaskRecoveryEvidenceKind = "terminal_settled_without_candidate"
+	RecoveryRestartEvidenceUnresolved       TaskRecoveryEvidenceKind = "restart_evidence_unresolved"
+)
+
+// TaskRecoveryEvidence carries server-owned recovery authority to the query
+// layer. Authority is populated only for a settled terminal without a worker
+// candidate report.
+type TaskRecoveryEvidence struct {
+	Kind      TaskRecoveryEvidenceKind
+	Authority TaskReconciliationAuthority
+}
 
 // DiagnosticCheck is one bounded readiness observation.
 type DiagnosticCheck struct {
@@ -132,6 +150,7 @@ type TaskDetail struct {
 	CapturedAtMs      int64               `json:"capturedAtMs"`
 	Completeness      Completeness        `json:"completeness"`
 	Summary           TaskSummary         `json:"summary"`
+	Evidence          TaskEvidenceView    `json:"evidence"`
 	Shape             domain.TaskShape    `json:"shape"`
 	BaseRevision      string              `json:"baseRevision"`
 	BriefRevision     int64               `json:"briefRevision"`
@@ -145,14 +164,15 @@ type TaskDetail struct {
 
 // TaskExplanation provides a content-free reason and next safe actions.
 type TaskExplanation struct {
-	SchemaVersion   int          `json:"schemaVersion"`
-	CapturedAtMs    int64        `json:"capturedAtMs"`
-	Completeness    Completeness `json:"completeness"`
-	Summary         TaskSummary  `json:"summary"`
-	ReasonCode      string       `json:"reasonCode"`
-	Explanation     string       `json:"explanation"`
-	LikelyRootCause string       `json:"likelyRootCause"`
-	NextSafeActions []NextAction `json:"nextSafeActions"`
+	SchemaVersion   int              `json:"schemaVersion"`
+	CapturedAtMs    int64            `json:"capturedAtMs"`
+	Completeness    Completeness     `json:"completeness"`
+	Summary         TaskSummary      `json:"summary"`
+	Evidence        TaskEvidenceView `json:"evidence"`
+	ReasonCode      string           `json:"reasonCode"`
+	Explanation     string           `json:"explanation"`
+	LikelyRootCause string           `json:"likelyRootCause"`
+	NextSafeActions []NextAction     `json:"nextSafeActions"`
 }
 
 // OperationView is the stable reconciliation projection for a durable operation.

@@ -63,6 +63,7 @@ type Config struct {
 	Ready                    func()
 	candidateGit             candidateGitInspector
 	workspaceInspector       application.WorkspaceInspector
+	reconciliationInspector  application.ReconciliationWorkspaceInspector
 	validationCatalog        *validation.Catalog
 	validationMaxOutputBytes int64
 	validationPollInterval   time.Duration
@@ -236,6 +237,15 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 			return fmt.Errorf("run service intervention coordinator: %w", err)
 		}
 	}
+	var reconciliation *application.TaskCandidateReconciler
+	if config.reconciliationInspector != nil {
+		reconciliation, err = application.NewTaskCandidateReconciler(application.TaskCandidateReconcilerConfig{
+			Store: store, Workspaces: config.reconciliationInspector, Clock: clock,
+		})
+		if err != nil {
+			return fmt.Errorf("run service task reconciliation coordinator: %w", err)
+		}
+	}
 	var controlMutations comiswire.DurableControlMutations
 	if mutations != nil {
 		controlMutations = mutations
@@ -259,7 +269,8 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		}
 	}
 	queries, err := application.NewQueries(application.QueryConfig{
-		Repository: store, Harnesses: config.WorkerHarnesses, Host: control, Clock: clock,
+		Repository: store, Harnesses: config.WorkerHarnesses, Host: control,
+		ReconciliationWorkspaces: config.reconciliationInspector, Clock: clock,
 	})
 	if err != nil {
 		return fmt.Errorf("run service queries: %w", err)
@@ -297,6 +308,9 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	}
 	if interventions != nil {
 		handlerConfig.Interventions = interventions
+	}
+	if reconciliation != nil {
+		handlerConfig.Reconciliation = reconciliation
 	}
 	if cleanup != nil {
 		handlerConfig.Cleanup = cleanup

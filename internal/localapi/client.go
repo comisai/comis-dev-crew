@@ -92,6 +92,13 @@ func (client *Client) PrepareTask(ctx context.Context, operationID string, input
 	return result, err
 }
 
+// ReconcileTask executes one canonical idempotent unknown-task recovery.
+func (client *Client) ReconcileTask(ctx context.Context, operationID string, input ReconcileTaskInput) (TaskMutationResult, error) {
+	var result TaskMutationResult
+	err := client.call(ctx, operationID, MethodReconcileTask, input, &result)
+	return result, err
+}
+
 // HandbackTask executes one canonical idempotent paused-worktree handback.
 func (client *Client) HandbackTask(ctx context.Context, operationID string, input HandbackTaskInput) (TaskMutationResult, error) {
 	var result TaskMutationResult

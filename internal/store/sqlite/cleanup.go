@@ -101,6 +101,13 @@ func (store *Store) BeginTaskCleanup(
 	if err != nil {
 		return application.TaskCleanupRecord{}, err
 	}
+	switch task.State {
+	case domain.TaskUnknown:
+		return application.TaskCleanupRecord{}, fmt.Errorf("task cleanup posture: %w", application.ErrCleanupUnknownExecution)
+	case domain.TaskReady, domain.TaskLaunching, domain.TaskWorking, domain.TaskAwaitingDecision,
+		domain.TaskBlocked, domain.TaskPaused, domain.TaskReconciling, domain.TaskValidating:
+		return application.TaskCleanupRecord{}, fmt.Errorf("task cleanup posture: %w", application.ErrCleanupActiveExecution)
+	}
 	if task.State != domain.TaskDelivered || mutation.At.Before(task.UpdatedAt) ||
 		task.ManagedRunID == "" || task.WorkspaceLeaseID == "" {
 		return application.TaskCleanupRecord{}, fmt.Errorf("task cleanup posture: %w", application.ErrPrecondition)
@@ -117,6 +124,11 @@ func (store *Store) BeginTaskCleanup(
 		return application.TaskCleanupRecord{}, err
 	}
 	bundle := sealed.Bundle()
+	if err := proveCleanupCandidateOrigin(
+		ctx, transaction, task, preparationOperationID, worktreePath, bundle.HeadRevision,
+	); err != nil {
+		return application.TaskCleanupRecord{}, err
+	}
 	record := application.TaskCleanupRecord{
 		OperationID: mutation.OperationID, SubjectDigest: mutation.SubjectDigest,
 		TaskHandle: task.Handle, PreparationOperationID: preparationOperationID,

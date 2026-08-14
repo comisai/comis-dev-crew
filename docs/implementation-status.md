@@ -7,7 +7,7 @@ It is maintained alongside the behavior it describes.
 ## Summary
 
 The service owns durable SQLite state and a strict owner-only local API. The
-operator CLI provides service, fleet, task, operation, handback, and cleanup
+operator CLI provides service, fleet, task, operation, reconciliation, handback, and cleanup
 views and commands. The
 protocol foundation pins the 30-artifact Comis capability-service contract at
 source commit `b0b8065c0b43a29840dcd21fcc15ef37e4b905d4` and bundle digest
@@ -15,9 +15,68 @@ source commit `b0b8065c0b43a29840dcd21fcc15ef37e4b905d4` and bundle digest
 a closed Go adapter.
 
 Installed composition supervises the Comis control lane, Codex and Claude Code
-launch descriptors, candidate validation, forge truth, delivery, handback, and
-safe cleanup. Public operator mutation transport, merge authority, and unattended
-worker settling are not claimed.
+launch descriptors, candidate validation, forge truth, delivery, unknown-task
+reconciliation, handback, and safe cleanup. Merge authority and unattended worker
+settling are not claimed.
+Tagged release builds inject the exact tag into all four executables, while
+untagged source builds identify themselves as `dev`.
+
+The protected live gate is implemented for a dedicated Linux runner and a real
+human Telegram sender. It observes two working lanes, restarts only manifest-bound
+isolated MCP, DevCrew, and Comis units, waits for post-restart Telegram evidence,
+then verifies cleaned task, operation, Comis, Git, GitHub, and count-only secret
+residency truth. This is an executable gate, not a claim that the external campaign
+has run; release readiness still requires a passing protected invocation.
+The gate observes the sibling still working immediately after the human-approved
+handback; initial worker overlap alone does not satisfy that continuation claim.
+The owner-private manifest records exact Comis and DevCrew commits, requires the
+compiled protocol identity, and pins the Comis CLI plus all four DevCrew product
+artifacts by canonical path, SHA-256, and version. Runtime validation re-hashes
+those installed files and checks their fixed `--version` output before any
+protected action. It requires both canonical source checkouts to resolve `HEAD`
+to their corresponding recorded commits. It also pins the complete `systemctl cat` output for each of
+the three isolated units, including active drop-ins, and binds exact hashed Codex
+and Claude Code installations to the two campaign task profiles.
+The manifest binds the canonical DevCrew database and worktree root. The live
+support package can capture content-free start and finish metrics for the three
+isolated service processes, including `/proc` RSS, file descriptors, and
+descendant bubblewrap jails; both pinned database sizes; Comis data; active
+DevCrew terminal bindings; task worktrees; and both durable delivery backlogs.
+It rejects a sample pair that spans less than one hour, exceeds bounded growth,
+or leaves a terminal, jail, worktree, or delivery behind.
+The campaign runner makes that pair mandatory: it captures after simultaneous
+worker overlap, waits out the one-hour floor, samples again after cleanup, and
+writes the observation into the hashed evidence directory. Evidence-only
+closeout likewise requires a non-overwriting owner-private baseline bound to the
+same campaign and exact source commits; a manifest duration cannot substitute
+for two live samples.
+The protected recovery library also implements non-overwriting, hash-inventoried
+backup and isolated restore of Comis data, DevCrew SQLite state, candidate
+configuration, and repository-bearing unit definitions. It excludes plaintext
+`.env`, runs the count-only secret-residency oracle over the full retained tree,
+checks every restored SQLite database and the restored Comis configuration, and
+probes exact previous binaries only against separately copied synthetic state.
+Before those recovery probes, it runs the repository-shipped Comis and DevCrew
+installers into a new private prefix, verifies all five installed artifacts by
+the manifest hashes and versions, installs the five previous artifacts into a
+second prefix using the separately pinned DevCrew release tag, upgrades that
+prefix to the candidate versions, and re-verifies
+all five bytes and versions. Every DevCrew install must retain the installer's
+successful release-checksum proof.
+The full campaign runner and evidence-only closeout both require the resulting
+strict owner-private recovery artifact before a passing verdict can be written.
+These are executable acceptance mechanisms; the external protected run remains
+required before their evidence can be credited.
+Comis system-health and session-explanation artifacts are structurally validated
+before they can contribute a passing verdict: source coverage, campaign activity,
+hard-degraded posture, agent identity, and the exact origin Telegram conversation
+must be present rather than inferred from an arbitrary JSON object.
+The explanation set must also account for the closed eight-tool campaign catalog,
+including two successful task preparations and cleanups, the reconciliation and
+handback mutations, diagnostic reads, and six precondition-classified cleanup
+refusals. Those refusals must retain the distinct open-decision, open-hold,
+active-execution, unknown-execution, dirty-worktree, and stale-forge-truth safe
+messages in the bounded Comis failure evidence.
 
 ## Foundation
 
@@ -78,6 +137,42 @@ evidence exists. Tasks whose runtime may have been active become `unknown`, as d
 operations left merely `accepted`. Stable terminal task evidence and completed or
 already-unknown operations are preserved, and a repeated restart is idempotent.
 
+## Unknown-task candidate recovery
+
+An owner-only `ReconcileTask` mutation recovers the narrow case where an exact
+worker terminal exited without a candidate report but the registered operation-
+bound worktree contains a clean non-base descendant of the pinned base. Its closed
+action is `validate-clean-candidate`; caller input contains no repository, path,
+branch, head, run, lease, terminal, or attachment authority.
+
+The service combines durable preparation and terminal bindings with a fresh Git
+inspection, then atomically records reconciliation evidence and advances
+`unknown` through `reconciling` into `validating`. It neither synthesizes a worker
+report nor increments the report cursor. Exact operation replay returns the
+original outcome, altered reuse conflicts, and dirty, missing, base-equal,
+divergent, ambiguous, active, or mismatched authority leaves the task unchanged.
+The normal candidate supervisor re-reads the exact head around fixed validation.
+Cleanup later accepts exactly one candidate origin: a delivered worker candidate
+report or one exact completed reconciliation record matching the sealed head.
+After successful recovery validation, the two exact server-owned evidence
+publications drive the task to `delivered`; the service does not create a worker
+report merely to close the state machine.
+
+`ExplainTask` combines durable terminal posture, current host connectivity, and
+fresh registered-worktree inspection. Its closed recovery reasons distinguish a
+settled terminal without candidate evidence, unresolved restart evidence,
+unavailable host integration, an unrecoverable workspace, and reconciliation in
+progress, with reachable reason-specific next actions.
+
+Canonical task detail and explanation projections include content-free evidence
+references for candidate, report activity, decision posture, validation, forge
+delivery, cleanup, and opaque host authority. A reconciled candidate retains its
+reconciliation operation reference after judgment, so final closeout can prove
+candidate origin without a direct database read. Fleet rows consume the same durable
+postures for head, activity, validation, blocking, and attention. Custody and
+process observations remain explicitly `unknown` until a process-evidence
+contract exists.
+
 ## Mutation boundary
 
 The first mutation boundary prepares a service-minted task and later activates it
@@ -109,8 +204,9 @@ redirect the protected attachment, or advance task state.
 
 ## Local client and MCP adapter
 
-The typed local client and strict handler expose `PrepareTask` as the first
-canonical mutation. Its public payload contains only task-contract fields: the
+The typed local client and strict handler expose `PrepareTask`, `ReconcileTask`,
+`HandbackTask`, and `CleanupTask` as canonical mutations. Preparation contains
+only task-contract fields: the
 stable operation ID comes from the request envelope and the configured service
 instance comes from endpoint composition. The result classifies the operation as
 `mutate` and carries the private durable registration for the MCP adapter.
@@ -132,7 +228,9 @@ normalized task, operation, state version, and `mutate` classification across al
 three paths. Repeated calls create one task, and an altered stable operation
 remains the same non-retryable `conflict`. List, get, explain, and launch plan
 return identical versioned projections through all adapters and retain their
-`read` classification.
+`read` classification. The official-SDK facade exposes eight tools;
+`reconcile_task` is non-read-only, idempotent, closed-world, and uses the same
+stable result and side-effect semantics as the CLI and typed local client.
 
 A tagged integration test builds and kills the real stdio `devcrew-mcp` process,
 replaces it, and proves the prepared task, completed operation, exact private
@@ -171,7 +269,11 @@ remains authoritative, an operation ID already owned by another command is rejec
 and the service re-proves the clean exact worktree and current forge truth before
 host release and again before removal authorization. Open cleanup holds remain a
 fail-closed pre-release blocker; the operator surface identifies only that closed
-category and never exposes the hold's free-text reason.
+category and never exposes the hold's free-text reason. Unresolved decisions have
+their own closed retryable precondition and operator hint, without exposing
+decision content. Active execution, unknown execution authority, dirty worktrees,
+and stale pull-request truth likewise retain separate content-free messages and
+condition-specific retry guidance.
 
 ## Reporter seam
 

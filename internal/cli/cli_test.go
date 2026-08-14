@@ -91,6 +91,31 @@ func TestRun_HandbackValidatesDeveloperWorkThroughCanonicalClient(t *testing.T) 
 	}
 }
 
+func TestRun_ReconcilesCleanUnknownCandidateThroughCanonicalClient(t *testing.T) {
+	client := fixtureClient()
+	client.taskMutation = localapi.TaskMutationResult{
+		SchemaVersion: 1, OperationID: "operation-reconcile-cli", TaskHandle: "task-0001",
+		State: domain.TaskValidating, StateVersion: 16, SideEffect: localapi.SideEffectMutate,
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := Run(context.Background(), []string{
+		"task", "reconcile", "task-0001", "--action", "validate-clean-candidate",
+		"--operation", "operation-reconcile-cli", "--format", "json",
+	}, &stdout, &stderr, testConfig(client))
+	if exitCode != ExitSuccess {
+		t.Fatalf("Run() exit = %d, stderr = %q", exitCode, stderr.String())
+	}
+	if len(client.calls) != 1 || client.calls[0] != "reconcile:task-0001:validate-clean-candidate" ||
+		client.operationID != "operation-reconcile-cli" {
+		t.Fatalf("client calls/operation = %v/%q", client.calls, client.operationID)
+	}
+	var result localapi.TaskMutationResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || result != client.taskMutation {
+		t.Fatalf("reconciliation JSON = %#v, %v", result, err)
+	}
+}
+
 func TestRun_CleanupUsesStableReleaseBeforeRemovalCommand(t *testing.T) {
 	client := fixtureClient()
 	client.taskMutation = localapi.TaskMutationResult{
@@ -191,7 +216,7 @@ func TestRun_HumanReadCommandsUseOneCanonicalClient(t *testing.T) {
 		{name: "doctor", args: []string{"doctor"}, wantCall: "diagnose", wantOutput: "CHECK"},
 		{name: "fleet status", args: []string{"status"}, wantCall: "fleet", wantOutput: "INIT/COMPONENT"},
 		{name: "task list", args: []string{"tasks", "list"}, wantCall: "list", wantOutput: "task-0001"},
-		{name: "task show", args: []string{"task", "show", "task-0001"}, wantCall: "show:task-0001", wantOutput: "taskHandle: \"task-0001\""},
+		{name: "task show", args: []string{"task", "show", "task-0001"}, wantCall: "show:task-0001", wantOutput: "preparationOperationId: \"prepare-view-0001\""},
 		{name: "task explain", args: []string{"task", "explain", "task-0001"}, wantCall: "explain:task-0001", wantOutput: "REASON"},
 		{name: "task operation", args: []string{"task", "operation", "op-0001"}, wantCall: "operation:op-0001", wantOutput: "OPERATION"},
 		{name: "task launch plan", args: []string{"task", "launch-plan", "task-0001"}, wantCall: "launch-plan:task-0001", wantOutput: `"terminalAllowEntryId"`},
@@ -261,6 +286,9 @@ func TestRun_RejectsInvalidSyntaxAndReferencesBeforeConnecting(t *testing.T) {
 		{"task", "show", "../escape"},
 		{"task", "explain", "bad id"},
 		{"task", "operation", "bad id"},
+		{"task", "reconcile", "task-0001"},
+		{"task", "reconcile", "task-0001", "--action", "validate-developer-work"},
+		{"task", "reconcile", "task-0001", "--action", "validate-clean-candidate", "--worktree", "/forged"},
 		{"initiative", "list"},
 	}
 	for _, args := range tests {
@@ -376,6 +404,15 @@ type fakeClient struct {
 	operationID  string
 }
 
+func (client *fakeClient) ReconcileTask(
+	_ context.Context,
+	operationID string,
+	input localapi.ReconcileTaskInput,
+) (localapi.TaskMutationResult, error) {
+	client.record(operationID, "reconcile:"+input.TaskHandle+":"+string(input.Action))
+	return client.taskMutation, client.err
+}
+
 func (client *fakeClient) CleanupTask(
 	_ context.Context,
 	operationID string,
@@ -477,6 +514,27 @@ func fixtureClient() *fakeClient {
 		detail: application.TaskDetail{
 			SchemaVersion: 1, CapturedAtMs: 1234, Completeness: application.CompletenessPartial,
 			Summary: summary, Shape: domain.ShapeShip, BaseRevision: strings.Repeat("a", 40),
+			Evidence: application.TaskEvidenceView{
+				Candidate: application.CandidateEvidenceView{
+					Status: application.CandidateEvidenceJudged, HeadRevision: strings.Repeat("b", 40),
+					EvidenceDigest: strings.Repeat("c", 64),
+				},
+				Activity: application.ActivityEvidenceView{
+					Status:   application.ActivityEvidenceAuthenticatedReport,
+					ReportID: "report-view-0001", ReportKind: domain.ReportCandidateComplete, AcceptedAtMs: 1234,
+				},
+				Decision:   application.DecisionEvidenceView{Status: application.DecisionEvidenceNone},
+				Validation: application.ValidationEvidenceView{Status: application.ValidationEvidenceAccepted, EvidenceDigest: strings.Repeat("c", 64)},
+				Delivery: application.DeliveryEvidenceView{
+					Status: application.DeliveryEvidenceDelivered, EvidenceOperationID: "delivery-view-0001",
+					EvidenceRef: "evidence-view-0001", PullRequestID: "github-pr-17",
+				},
+				Cleanup: application.CleanupEvidenceView{Status: application.CleanupEvidenceNotStarted},
+				Authority: application.TaskAuthorityView{
+					ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001",
+					ExecutionAttachmentID: "attachment-view-0001", PreparationOperationID: "prepare-view-0001",
+				},
+			},
 			BriefRevision: 1, ValidationProfile: "go-default", DeliveryMode: domain.DeliveryPullRequest,
 			StateVersion: 7, CreatedAtMs: 1, UpdatedAtMs: 2,
 		},

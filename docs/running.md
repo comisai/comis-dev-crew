@@ -107,9 +107,26 @@ also leave the task `validating` and are retried without stopping the candidate
 supervisor. Other pull-request delivery errors still stop supervision so that
 permanent failures remain visible.
 
+Diagnostic reads report validation as `unknown` when a task is already
+`validating` but no durable judgment or active validation process can be found;
+they never turn that inconsistent posture into `not_started`.
+
+For a worker-reported candidate, the final authenticated candidate report closes
+delivery after both evidence publications are acknowledged. For a reconciled
+candidate, no worker report is invented: acknowledgement of both server-owned
+publications atomically closes the task as `delivered`. Cleanup accepts exactly
+one of those origins and refuses missing or ambiguous evidence.
+
 `task explain` reads the latest durable candidate judgment for a failed task and
 distinguishes a required local-validation failure from a required forge-check
 failure. Other terminal failures retain the generic failed-task explanation.
+`task show` and JSON `explain_task` output also include a content-free `evidence`
+projection. It joins the candidate head and digest, latest authenticated report,
+decision and resolution references, validation status, forge and outbox delivery
+references, cleanup stage and open-hold count, and opaque run, lease, attachment,
+and preparation-operation identities. Missing authority remains `none`,
+`not_started`, or `unknown`; process and custody fields remain `unknown` because
+E0 has no durable process-observation contract.
 
 An SSH deploy-key push route uses
 `ssh://git@HOST/OWNER/REPOSITORY.git` and additionally requires the canonical
@@ -130,8 +147,8 @@ devcrew-mcp \
   --service-instance service-instance-devcrew
 ```
 
-The facade defines seven tools: `prepare_task`, `handback_task`, `cleanup_task`,
-`list_tasks`, `get_task`, `explain_task`, and `get_launch_plan`. Every call must carry a
+The facade defines eight tools: `prepare_task`, `reconcile_task`, `handback_task`,
+`cleanup_task`, `list_tasks`, `get_task`, `explain_task`, and `get_launch_plan`. Every call must carry a
 generated-schema-valid `comis.callContext`; the configured service identity must
 match, while optional managed-run references grant no task authority. Preparation
 returns its visible task outcome separately from the private schema-validated
@@ -139,6 +156,23 @@ returns its visible task outcome separately from the private schema-validated
 bounded operation reconciliation and, after a completed durable outcome, one exact
 idempotent replay. The command defaults to a separate `mcp.sock` and validates the
 out-of-band service instance against every private call context.
+
+`reconcile_task` accepts only an opaque task handle and
+`action: "validate-clean-candidate"`. It is a non-read-only, idempotent,
+closed-world mutation. The service derives the preparation, run, lease, terminal,
+repository, worktree, branch, base, and head authority; callers cannot supply or
+override those fields. An eligible unknown task must have a settled terminal and
+an exact clean non-base candidate. Recovery records fresh evidence and enters the
+existing validation pipeline without creating a worker candidate report or
+advancing the report cursor. Task detail and explanation keep that reconciliation
+operation beside the judged candidate after validation and delivery, allowing a
+content-free closeout to prove whether the candidate came from recovery.
+
+Call `explain_task` before recovery. It distinguishes a settled terminal without
+candidate evidence, unresolved restart evidence, unavailable host integration, an
+unrecoverable workspace, and reconciliation already in progress. Only the settled
+clean-candidate reason recommends `reconcile_task`; an unrecoverable workspace
+remains preserved and requires an explicitly approved replacement task.
 
 `cleanup_task` may refuse after it has placed the task in a durable cleanup hold,
 for example when the exact worktree is dirty. Once that safety condition is
@@ -150,7 +184,14 @@ cleanup effect.
 Cleanup refuses before release when an operator cleanup hold remains open. The
 error names the closed `open task hold` category and directs the operator to close
 that exact hold; it never includes the operator-authored hold reason. Dirty-worktree
-refusals likewise name the clean-worktree action required before a safe retry.
+refusals likewise name the clean-worktree action required before a safe retry. An
+unresolved decision is a distinct retryable precondition: the error directs the
+operator to resolve that exact task decision without exposing its prompt or answer.
+Positive active execution or validation evidence instructs the operator to wait
+for settlement. Missing, lost, or mismatched terminal/run/lease authority instead
+requires reconciliation and is never treated as idle. Current pull-request truth
+that differs from the delivered head or required checks is a separate stale-forge
+precondition and blocks host release.
 
 ## Operator CLI surface
 
@@ -164,6 +205,9 @@ devcrew [--socket PATH] task explain TASK [--format text|json]
 devcrew [--socket PATH] task launch-plan TASK [--format json]
 devcrew [--socket PATH] task operation OPERATION [--format text|json]
 devcrew [--socket PATH] task prepare --input FILE|- [--operation OPERATION] [--format json]
+devcrew [--socket PATH] task reconcile TASK --action validate-clean-candidate [--operation OPERATION] [--format json]
+devcrew [--socket PATH] task handback TASK --action validate-developer-work [--operation OPERATION] [--format json]
+devcrew [--socket PATH] task cleanup TASK [--operation OPERATION] [--format json]
 ```
 
 JSON outputs are stable versioned projections. Human and YAML views are
@@ -173,6 +217,166 @@ contract, rejects unknown authority fields, and uses either the explicit stable
 operation ID or one locally minted request ID.
 
 All four commands support `--help` and `--version`.
+
+## Protected real-Telegram campaign
+
+The real-channel E0 gate is intentionally separate from repository verification.
+It requires a dedicated self-hosted Linux runner operating as the service owner,
+an isolated Comis/DevCrew deployment, one real human Telegram sender, repository-
+scoped GitHub read/push authority without merge permission, and permission to
+restart only the three isolated systemd units named in the manifest. The Telegram
+bot credential remains in Comis secret management; it is never a workflow input.
+
+Copy `test/live/manifest.example.json` outside the repository, replace every
+placeholder with current content-free identities, set mode `0600`, and keep the
+evidence root owner-private. Record both exact source commits, the compiled
+protocol ID and digest, and the SHA-256 plus reported version of the Comis CLI
+and all four DevCrew executables. Artifact paths must select canonical installed
+files rather than `PATH` symlinks. The canonical `comis.codeRoot` and
+`devcrew.codeRoot` checkouts must have `HEAD` at their respective recorded source
+commit. Runtime validation re-hashes each file and
+executes its fixed `--version` command; it refuses digest, version, or protocol
+drift before the campaign starts. The three isolated systemd units are likewise
+pinned to the SHA-256 of `systemctl cat <unit>` so drop-ins and unit-definition
+changes cannot enter an accepted run unnoticed. The exact Codex and Claude Code
+executables are bound to the two task profiles by canonical path, SHA-256, and
+their native `--version` output. The manifest must describe
+exactly two ship lanes:
+one Codex/Claude profile per lane, exactly one recovered candidate, one handback,
+and one cleanup operation per task. Its eleven opaque `e0cp-*` markers are sent by
+the human from the Telegram app at the named checkpoints. The unrelated marker
+must use a newer distinct conversation; all other markers remain in the original
+preparation conversation. Their timestamps must follow the documented manifest
+order exactly, from task request through both restart acknowledgements to cleanup;
+partial or reordered milestone evidence is refused.
+
+The runner first observes both tasks simultaneously in `working`. It then replaces
+the stateless MCP facade, waits for the human acknowledgement, waits for decision,
+handback, and reconciliation checkpoints, and restarts DevCrew and Comis at their
+separate ready markers. An acknowledgement recorded before its corresponding
+restart does not satisfy the gate. The durable handback and reconciliation
+operations must complete at or after their respective human Telegram checkpoints;
+an operation completed before approval is refused even if the final task state is
+otherwise clean. Immediately after the handback operation, the other manifest
+task must still be observed in `working`; an earlier overlap snapshot cannot
+substitute for that causal sibling-continuation proof. Final cleanup must leave
+both tasks `cleaned`.
+
+The manifest also pins the canonical Comis and DevCrew SQLite databases and the
+task-worktree root. Resource snapshots read `MainPID`, `MemoryCurrent`, and
+`TasksCurrent` for the exact three isolated systemd units, read each main
+process's `/proc` RSS and open-file-descriptor count, count descendant bubblewrap
+jails, total the Comis data tree and both database files, count active DevCrew
+terminal bindings and task worktrees, and query both durable delivery backlogs.
+Verification requires start and finish samples inside the campaign window
+separated by at least one hour. It refuses excessive memory, RSS,
+file-descriptor, or disk growth and requires two starting terminals/worktrees and
+jails followed by zero residual terminals, jails, worktrees, or deliveries.
+
+Recovery fields bind the owner-private candidate configuration, non-overlapping
+synthetic rollback roots, and the exact previous Comis CLI plus four DevCrew
+executables by path, SHA-256, and reported version. The live recovery support
+also records the exact previous DevCrew release tag used by the installer; this
+package coordinate is independent of the executables' reported version. It first
+runs the repository-shipped installers in two new owner-private prefixes.
+The fresh prefix must contain exact candidate Comis and DevCrew artifacts. The
+upgrade prefix is verified first at every previous artifact hash and version,
+then after an in-place candidate install at every current hash and version. All
+three DevCrew installer invocations must report that the downloaded release
+archive matched its published checksum. The support then
+stops only the three isolated units, copies the Comis data tree without `.env`,
+adds the DevCrew database, candidate configuration, and full unit definitions,
+then restarts every stopped unit in reverse order even when backup construction
+fails. Its manifest hashes every retained file and mode. Restore rechecks that
+inventory, runs SQLite integrity checks, validates the copied Comis
+configuration, and requires the candidate configuration and all three unit
+definitions. Rollback uses only copied synthetic state: the previous Comis CLI
+must validate it and the previous DevCrew service must open its copied database
+and answer a healthy, complete status read through the previous CLI.
+
+Run the protected campaign:
+
+```sh
+DEVCREW_LIVE_MANIFEST=/absolute/private/e0-campaign.json \
+DEVCREW_LIVE_EVIDENCE_ROOT=/absolute/private/evidence \
+DEVCREW_LIVE_BACKUP_ROOT=/absolute/private/recovery-backup \
+DEVCREW_LIVE_RESTORE_ROOT=/absolute/private/recovery-restore \
+DEVCREW_LIVE_FRESH_INSTALL_ROOT=/absolute/private/fresh-install \
+DEVCREW_LIVE_UPGRADE_ROOT=/absolute/private/prior-release-upgrade \
+make test-live
+```
+
+The full runner captures the start sample only after both task lanes are
+simultaneously `working`, waits until that sample is at least one hour old, and
+captures the finish sample only after both cleanups. A long manifest window by
+itself cannot satisfy the resource gate.
+
+`GH_TOKEN` must already be injected by the protected runner environment; never
+place its literal in the manifest or shell history. The GitHub Actions workflow
+uses the protected `devcrew-live` environment and `DEVCREW_LIVE_GH_TOKEN` secret.
+It is manual-only because a scheduled job cannot supply the required real human
+checkpoints honestly.
+
+For evidence-only closeout, capture the non-overwriting baseline while both task
+worktrees are present:
+
+```sh
+DEVCREW_LIVE_MANIFEST=/absolute/private/e0-campaign.json \
+DEVCREW_LIVE_RESOURCE_BASELINE=/absolute/private/resource-baseline.json \
+make live-baseline
+```
+
+After at least one hour and only after campaign cleanup is terminal, exercise
+fresh installation, prior-release upgrade, backup, isolated restore, and
+previous-binary rollback. All four output roots must not exist and must be
+separate from every live or synthetic data root bound by the manifest:
+
+```sh
+DEVCREW_LIVE_MANIFEST=/absolute/private/e0-campaign.json \
+DEVCREW_LIVE_BACKUP_ROOT=/absolute/private/recovery-backup \
+DEVCREW_LIVE_RESTORE_ROOT=/absolute/private/recovery-restore \
+DEVCREW_LIVE_FRESH_INSTALL_ROOT=/absolute/private/fresh-install \
+DEVCREW_LIVE_UPGRADE_ROOT=/absolute/private/prior-release-upgrade \
+DEVCREW_LIVE_RECOVERY_EVIDENCE=/absolute/private/recovery-evidence.json \
+make live-recovery
+```
+
+Close out with that exact campaign- and source-bound resource baseline and
+recovery evidence:
+
+```sh
+DEVCREW_LIVE_MANIFEST=/absolute/private/e0-campaign.json \
+DEVCREW_LIVE_EVIDENCE_ROOT=/absolute/private/evidence \
+DEVCREW_LIVE_RESOURCE_BASELINE=/absolute/private/resource-baseline.json \
+DEVCREW_LIVE_RECOVERY_EVIDENCE=/absolute/private/recovery-evidence.json \
+make live-closeout
+```
+
+Each run creates one non-overwriting `0700` campaign directory with `0600`
+artifacts. It contains service/fleet/task/operation projections, content-free
+Telegram checkpoint rows, Comis explanation and system-health reports, clean Git
+truth proving both tasks share one pinned base that remains an ancestor of the
+current base-branch tip, current open/unmerged GitHub pull-request and required-check truth,
+plaintext-secret audit plus count-only residency results, the verified one-hour
+resource observation, the verified fresh-install/upgrade/backup/restore/rollback
+report, artifact hashes, and a single verdict. Raw Telegram message bodies and command stderr are
+never retained.
+
+The Comis reports are acceptance oracles, not opaque attachments. Closeout rejects
+a system-health report unless its campaign window, session totals, hard-degraded
+posture, Telegram/agent activity, and session-index, summary, and billing coverage
+are complete. Each session explanation must resolve to the manifest agent and
+origin Telegram conversation, carry a non-failed outcome, bounded tool evidence,
+and prove either trajectory or lossless-context coverage. The original validated
+JSON is retained so richer additive report fields are not discarded.
+Across the explanation set, closeout also requires the complete eight-tool E0
+workflow: two preparations and launch-plan reads, diagnostic list/get/explain
+reads, reconciliation, handback, two completed cleanups, and at least six
+precondition-classified cleanup refusals. Missing tool evidence cannot be replaced
+by a final clean task projection. The failure previews must independently contain
+the open-decision, open-hold, active-execution, unknown-execution,
+dirty-worktree, and stale-forge-truth messages; six generic precondition counts do
+not prove the safety rows.
 
 ## Worker reporter contract
 

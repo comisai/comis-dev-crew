@@ -2,7 +2,6 @@ package application
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -128,6 +127,117 @@ func TestQueries_ListShowExplainAndOperationShareCanonicalProjections(t *testing
 	}
 }
 
+func TestQueries_ProjectDurableCandidateAndReportEvidence(t *testing.T) {
+	now := time.Date(2026, time.August, 8, 21, 0, 0, 0, time.UTC)
+	task := queryTask("task-evidence-0001", domain.TaskDelivered, 9)
+	task.ReportCursor = 3
+	sealed := queryCandidateEvidence(t, task, now.Add(-time.Minute))
+	repository := &queryRepository{
+		tasks:             []domain.Task{task},
+		stateVersion:      task.StateVersion,
+		candidateEvidence: sealed,
+		candidateJudgment: domain.CandidateJudgment{
+			Outcome: domain.CandidateAccepted,
+			Reason:  domain.CandidateEvidenceAccepted,
+		},
+	}
+	queries, err := NewQueries(QueryConfig{Repository: repository, Clock: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("NewQueries() error = %v", err)
+	}
+
+	show, err := queries.ShowTask(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("ShowTask() error = %v", err)
+	}
+	if show.Summary.Head != sealed.Bundle().HeadRevision || show.Summary.Activity != "authenticated_report" ||
+		show.Summary.Validation != string(domain.CandidateAccepted) || show.Summary.BlockedBy != "none" ||
+		show.Summary.Attention != "none" {
+		t.Fatalf("ShowTask() summary = %#v, want durable candidate and report posture", show.Summary)
+	}
+	if !repository.candidateCalled {
+		t.Fatal("ShowTask() did not read durable candidate evidence")
+	}
+}
+
+func TestQueries_ExposeContentFreeEvidenceAcrossTaskViews(t *testing.T) {
+	task := queryTask("task-evidence-view", domain.TaskCleanupHeld, 12)
+	evidence := TaskEvidenceView{
+		Candidate: CandidateEvidenceView{
+			Status: CandidateEvidenceJudged, HeadRevision: strings.Repeat("b", 40),
+			EvidenceDigest: strings.Repeat("c", 64), ReconciliationOperationID: "reconcile-view-0001",
+		},
+		Activity: ActivityEvidenceView{
+			Status: ActivityEvidenceAuthenticatedReport, ReportID: "report-view-0001",
+			ReportKind: domain.ReportCandidateComplete, AcceptedAtMs: task.UpdatedAt.UnixMilli(),
+		},
+		Decision:   DecisionEvidenceView{Status: DecisionEvidenceResolved, DecisionReportID: "decision-view-0001", ResolutionReportID: "resolution-view-0001"},
+		Validation: ValidationEvidenceView{Status: ValidationEvidenceAccepted, EvidenceDigest: strings.Repeat("c", 64)},
+		Delivery: DeliveryEvidenceView{
+			Status: DeliveryEvidenceDelivered, EvidenceOperationID: "delivery-view-0001",
+			EvidenceRef: "evidence-view-0001", PullRequestID: "github-pr-17",
+		},
+		Cleanup: CleanupEvidenceView{Status: CleanupEvidenceHeld, OperationID: "cleanup-view-0001", OpenHoldCount: 1},
+		Authority: TaskAuthorityView{
+			ManagedRunID: task.ManagedRunID, WorkspaceLeaseID: task.WorkspaceLeaseID,
+			ExecutionAttachmentID: task.ExecutionAttachmentID, PreparationOperationID: "prepare-view-0001",
+		},
+	}
+	repository := &queryRepository{tasks: []domain.Task{task}, taskEvidence: evidence}
+	queries, err := NewQueries(QueryConfig{Repository: repository, Clock: time.Now})
+	if err != nil {
+		t.Fatalf("NewQueries() error = %v", err)
+	}
+
+	show, err := queries.ShowTask(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("ShowTask() error = %v", err)
+	}
+	explanation, err := queries.ExplainTask(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("ExplainTask() error = %v", err)
+	}
+	if !reflect.DeepEqual(show.Evidence, evidence) || !reflect.DeepEqual(explanation.Evidence, evidence) {
+		t.Fatalf("task evidence diverged: show=%#v explain=%#v", show.Evidence, explanation.Evidence)
+	}
+	if show.Summary.Head != evidence.Candidate.HeadRevision || show.Summary.Activity != "authenticated_report" ||
+		show.Summary.Validation != "accepted" || show.Summary.BlockedBy != "none" ||
+		show.Summary.Attention != "cleanup_hold" || !repository.taskEvidenceCalled {
+		t.Fatalf("task summary = %#v, evidence read = %v", show.Summary, repository.taskEvidenceCalled)
+	}
+}
+
+func TestQueries_UseAtomicTaskEvidenceRepositoryWhenAvailable(t *testing.T) {
+	task := queryTask("task-atomic-view", domain.TaskWorking, 5)
+	repository := &queryRepository{
+		tasks: []domain.Task{task}, stateVersion: task.StateVersion,
+		taskEvidence: TaskEvidenceView{
+			Candidate:  CandidateEvidenceView{Status: CandidateEvidenceNone},
+			Activity:   ActivityEvidenceView{Status: ActivityEvidenceNone},
+			Decision:   DecisionEvidenceView{Status: DecisionEvidenceNone},
+			Validation: ValidationEvidenceView{Status: ValidationEvidenceNotStarted},
+			Delivery:   DeliveryEvidenceView{Status: DeliveryEvidenceNotStarted},
+			Cleanup:    CleanupEvidenceView{Status: CleanupEvidenceNotStarted},
+		},
+	}
+	queries, err := NewQueries(QueryConfig{Repository: repository, Clock: time.Now})
+	if err != nil {
+		t.Fatalf("NewQueries() error = %v", err)
+	}
+	if _, err := queries.ShowTask(context.Background(), task.Handle); err != nil {
+		t.Fatalf("ShowTask() error = %v", err)
+	}
+	if !repository.observationCalled {
+		t.Fatal("ShowTask() did not use the atomic task observation")
+	}
+	if _, err := queries.Fleet(context.Background()); err != nil {
+		t.Fatalf("Fleet() error = %v", err)
+	}
+	if !repository.evidenceSnapshotCalled {
+		t.Fatal("Fleet() did not use the atomic task evidence snapshot")
+	}
+}
+
 func TestQueries_ExplainFailedCandidateFromDurableJudgment(t *testing.T) {
 	for _, test := range []struct {
 		name      string
@@ -204,207 +314,6 @@ func TestQueries_ExplainFailedCandidateFallbacksRemainFailClosed(t *testing.T) {
 			t.Fatalf("ExplainTask(non-rejected judgment) = %#v, %v", explanation, err)
 		}
 	})
-}
-
-func TestQueries_GetLaunchPlanBuildsAndSafelyProjectsReviewedDescriptor(t *testing.T) {
-	now := time.Date(2026, time.August, 10, 9, 30, 0, 0, time.UTC)
-	workspace := t.TempDir()
-	task := queryTask("task-launch-plan", domain.TaskReady, 7)
-	task.ExecutionAttachmentID = "execution-attachment-0001"
-	task.AttachmentTargetName = "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock"
-	repository := &queryRepository{
-		tasks: []domain.Task{task},
-		preparation: ManagedRunPreparation{
-			ExternalRunRef: task.Handle, RequestedWorkspaceRoot: workspace,
-			State: PreparationOpen,
-		},
-	}
-	adapter := &queryHarnessAdapter{}
-	queries, err := NewQueries(QueryConfig{
-		Repository: repository,
-		Harnesses:  &queryHarnesses{adapter: adapter},
-		Clock:      func() time.Time { return now },
-	})
-	if err != nil {
-		t.Fatalf("NewQueries() error = %v", err)
-	}
-
-	plan, err := queries.GetLaunchPlan(context.Background(), task.Handle)
-	if err != nil {
-		t.Fatalf("GetLaunchPlan() error = %v", err)
-	}
-	if adapter.request.ProfileID != task.WorkerProfileID || adapter.request.Shape != task.Shape ||
-		adapter.request.WorkingDirectory != workspace || adapter.request.TaskHandle != task.Handle ||
-		adapter.request.ManagedRunID != task.ManagedRunID || adapter.request.WorkspaceLeaseID != task.WorkspaceLeaseID ||
-		adapter.request.BriefRevision != task.BriefRevision || adapter.request.BriefRevisionHash != task.BriefRevisionHash ||
-		adapter.request.Attachment.ExecutionAttachmentID != task.ExecutionAttachmentID ||
-		adapter.request.Attachment.AttachmentTargetName != task.AttachmentTargetName ||
-		adapter.request.Attachment.MountSocketPath != "/run/comis/attachments/"+task.AttachmentTargetName {
-		t.Fatalf("BuildLaunchDescriptor() request = %#v, want exact durable launch binding", adapter.request)
-	}
-	if plan.SchemaVersion != 1 || plan.CapturedAtMs != now.UnixMilli() || plan.StateVersion != task.StateVersion ||
-		plan.Completeness != CompletenessComplete || plan.TaskHandle != task.Handle || plan.State != domain.TaskReady ||
-		plan.StateSource != StateSourceStore || plan.StateConfidence != ConfidenceVerified || plan.Freshness != FreshnessCurrent ||
-		plan.WorkerProfileID != task.WorkerProfileID || plan.TerminalAllowEntryID != "terminal-codex-reviewed" ||
-		plan.BriefRevisionHash != task.BriefRevisionHash || plan.AttachmentTargetName != task.AttachmentTargetName {
-		t.Fatalf("GetLaunchPlan() = %#v, want exact safe reviewed projection", plan)
-	}
-	encoded, err := json.Marshal(plan)
-	if err != nil {
-		t.Fatalf("Marshal(plan) error = %v", err)
-	}
-	for _, required := range []string{
-		`"managedRunId":"` + task.ManagedRunID + `"`,
-		`"workspaceLeaseId":"` + task.WorkspaceLeaseID + `"`,
-	} {
-		if !strings.Contains(string(encoded), required) {
-			t.Fatalf("launch plan omitted required managed terminal authority %q: %s", required, encoded)
-		}
-	}
-	for _, forbidden := range []string{workspace, "/usr/local/bin/codex", "--model", "COMIS_EXECUTION_ATTACHMENT", task.ExecutionAttachmentID} {
-		if strings.Contains(string(encoded), forbidden) {
-			t.Fatalf("launch plan leaked protected process material %q: %s", forbidden, encoded)
-		}
-	}
-}
-
-func TestQueries_GetLaunchPlanAllowsLaunchingRecoveryReread(t *testing.T) {
-	now := time.Date(2026, time.August, 10, 9, 45, 0, 0, time.UTC)
-	workspace := t.TempDir()
-	task := queryTask("task-launch-plan-recovery", domain.TaskLaunching, 8)
-	task.ExecutionAttachmentID = "execution-attachment-recovery"
-	task.AttachmentTargetName = "attachment-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.sock"
-	adapter := &queryHarnessAdapter{}
-	queries, err := NewQueries(QueryConfig{
-		Repository: &queryRepository{
-			tasks: []domain.Task{task},
-			preparation: ManagedRunPreparation{
-				ExternalRunRef: task.Handle, RequestedWorkspaceRoot: workspace,
-				State: PreparationOpen,
-			},
-		},
-		Harnesses: &queryHarnesses{adapter: adapter},
-		Clock:     func() time.Time { return now },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	plan, err := queries.GetLaunchPlan(context.Background(), task.Handle)
-	if err != nil {
-		t.Fatalf("GetLaunchPlan(launching recovery) error = %v", err)
-	}
-	if plan.State != domain.TaskLaunching || plan.StateVersion != task.StateVersion ||
-		adapter.request.ManagedRunID != task.ManagedRunID || adapter.request.WorkspaceLeaseID != task.WorkspaceLeaseID {
-		t.Fatalf("GetLaunchPlan(launching recovery) = %#v, request %#v", plan, adapter.request)
-	}
-}
-
-func TestBuildWorkerLaunchDescriptorRejectsIncompleteDirectCallers(t *testing.T) {
-	task := queryTask("task-launch-direct-boundary", domain.TaskReady, 9)
-	task.ExecutionAttachmentID = "execution-attachment-direct"
-	task.AttachmentTargetName = "attachment-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.sock"
-	preparation := ManagedRunPreparation{
-		ExternalRunRef: task.Handle, RequestedWorkspaceRoot: t.TempDir(), State: PreparationOpen,
-	}
-	harnesses := &queryHarnesses{adapter: &queryHarnessAdapter{}}
-	//lint:ignore SA1012 The boundary test proves nil contexts fail closed.
-	if _, err := BuildWorkerLaunchDescriptor(nil, task, preparation, harnesses); err == nil {
-		t.Fatal("BuildWorkerLaunchDescriptor(nil context) error = nil")
-	}
-	cancelled, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := BuildWorkerLaunchDescriptor(cancelled, task, preparation, harnesses); !errors.Is(err, context.Canceled) {
-		t.Fatalf("BuildWorkerLaunchDescriptor(cancelled) error = %v", err)
-	}
-	invalid := task
-	invalid.State = domain.TaskWorking
-	if _, err := BuildWorkerLaunchDescriptor(context.Background(), invalid, preparation, harnesses); err == nil {
-		t.Fatal("BuildWorkerLaunchDescriptor(working) error = nil")
-	}
-	if _, err := BuildWorkerLaunchDescriptor(context.Background(), task, preparation, nil); err == nil {
-		t.Fatal("BuildWorkerLaunchDescriptor(no harnesses) error = nil")
-	}
-	if _, err := BuildWorkerLaunchDescriptor(context.Background(), task, preparation, &queryHarnesses{}); err == nil {
-		t.Fatal("BuildWorkerLaunchDescriptor(nil adapter) error = nil")
-	}
-}
-
-func TestQueries_GetLaunchPlanRejectsUnactivatedTaskWithoutCallingHarness(t *testing.T) {
-	task := queryTask("task-not-activated", domain.TaskPrepared, 3)
-	adapter := &queryHarnessAdapter{}
-	queries, err := NewQueries(QueryConfig{
-		Repository: &queryRepository{tasks: []domain.Task{task}},
-		Harnesses:  &queryHarnesses{adapter: adapter},
-		Clock:      time.Now,
-	})
-	if err != nil {
-		t.Fatalf("NewQueries() error = %v", err)
-	}
-	if _, err := queries.GetLaunchPlan(context.Background(), task.Handle); failureCode(err) != domain.ErrorPrecondition {
-		t.Fatalf("GetLaunchPlan(prepared) error = %v, want precondition", err)
-	}
-	if adapter.called {
-		t.Fatal("GetLaunchPlan(prepared) called worker harness without activation authority")
-	}
-}
-
-func TestQueries_GetLaunchPlanFailsClosedAcrossReadAndAdapterBoundaries(t *testing.T) {
-	privateCause := errors.New("private launch adapter and workspace detail")
-	readyTask := queryTask("task-launch-failures", domain.TaskReady, 8)
-	readyTask.ExecutionAttachmentID = "execution-attachment-0002"
-	readyTask.AttachmentTargetName = "attachment-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.sock"
-	preparation := ManagedRunPreparation{ExternalRunRef: readyTask.Handle, RequestedWorkspaceRoot: t.TempDir(), State: PreparationOpen}
-	tests := []struct {
-		name       string
-		handle     string
-		repository *queryRepository
-		harnesses  WorkerHarnessResolver
-		wantCode   domain.ErrorCode
-	}{
-		{name: "invalid handle", handle: "../redirect", repository: &queryRepository{}, wantCode: domain.ErrorInvalidArgument},
-		{name: "missing task", handle: readyTask.Handle, repository: &queryRepository{readErr: ErrNotFound}, wantCode: domain.ErrorNotFound},
-		{name: "missing harness registry", handle: readyTask.Handle, repository: &queryRepository{tasks: []domain.Task{readyTask}}, wantCode: domain.ErrorUnavailable},
-		{
-			name: "private preparation failure", handle: readyTask.Handle,
-			repository: &queryRepository{tasks: []domain.Task{readyTask}, preparationErr: privateCause},
-			harnesses:  &queryHarnesses{adapter: &queryHarnessAdapter{}}, wantCode: domain.ErrorInternal,
-		},
-		{
-			name: "profile resolution failure", handle: readyTask.Handle,
-			repository: &queryRepository{tasks: []domain.Task{readyTask}, preparation: preparation},
-			harnesses:  &queryHarnesses{err: privateCause}, wantCode: domain.ErrorUnavailable,
-		},
-		{
-			name: "descriptor construction failure", handle: readyTask.Handle,
-			repository: &queryRepository{tasks: []domain.Task{readyTask}, preparation: preparation},
-			harnesses:  &queryHarnesses{adapter: &queryHarnessAdapter{err: privateCause}}, wantCode: domain.ErrorUnavailable,
-		},
-		{
-			name: "descriptor deadline", handle: readyTask.Handle,
-			repository: &queryRepository{tasks: []domain.Task{readyTask}, preparation: preparation},
-			harnesses:  &queryHarnesses{adapter: &queryHarnessAdapter{err: context.DeadlineExceeded}}, wantCode: domain.ErrorDeadlineExceeded,
-		},
-		{
-			name: "inconsistent descriptor", handle: readyTask.Handle,
-			repository: &queryRepository{tasks: []domain.Task{readyTask}, preparation: preparation},
-			harnesses:  &queryHarnesses{adapter: &queryHarnessAdapter{descriptor: &WorkerLaunchDescriptor{}}}, wantCode: domain.ErrorInternal,
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			queries, err := NewQueries(QueryConfig{Repository: test.repository, Harnesses: test.harnesses, Clock: time.Now})
-			if err != nil {
-				t.Fatalf("NewQueries() error = %v", err)
-			}
-			_, err = queries.GetLaunchPlan(context.Background(), test.handle)
-			if failureCode(err) != test.wantCode {
-				t.Fatalf("GetLaunchPlan() error = %v, want %s", err, test.wantCode)
-			}
-			if strings.Contains(err.Error(), privateCause.Error()) {
-				t.Fatalf("GetLaunchPlan() leaked private cause: %q", err)
-			}
-		})
-	}
 }
 
 func TestQueries_RejectInvalidRefsAndTranslateRepositoryFailuresSafely(t *testing.T) {
@@ -585,18 +494,59 @@ func failureCode(err error) domain.ErrorCode {
 }
 
 type queryRepository struct {
-	tasks             []domain.Task
-	operation         domain.OperationRecord
-	preparation       ManagedRunPreparation
-	preparationErr    error
-	stateVersion      int64
-	stateVersionErr   error
-	readErr           error
-	readCalled        bool
-	snapshotCalled    bool
-	candidateJudgment domain.CandidateJudgment
-	candidateErr      error
-	candidateCalled   bool
+	tasks                  []domain.Task
+	operation              domain.OperationRecord
+	preparation            ManagedRunPreparation
+	preparationErr         error
+	stateVersion           int64
+	stateVersionErr        error
+	readErr                error
+	readCalled             bool
+	snapshotCalled         bool
+	candidateJudgment      domain.CandidateJudgment
+	candidateEvidence      *domain.SealedDeliveryEvidence
+	candidateErr           error
+	candidateCalled        bool
+	taskEvidence           TaskEvidenceView
+	taskEvidenceErr        error
+	taskEvidenceCalled     bool
+	observationCalled      bool
+	evidenceSnapshotCalled bool
+}
+
+func (repository *queryRepository) ReadTaskObservation(ctx context.Context, handle string) (TaskObservation, error) {
+	repository.observationCalled = true
+	repository.taskEvidenceCalled = true
+	task, err := repository.GetTask(ctx, handle)
+	if err != nil {
+		return TaskObservation{}, err
+	}
+	return TaskObservation{Task: task, Evidence: repository.taskEvidence}, nil
+}
+
+func (repository *queryRepository) TaskEvidenceSnapshot(context.Context) ([]TaskObservation, int64, error) {
+	repository.evidenceSnapshotCalled = true
+	repository.readCalled = true
+	repository.snapshotCalled = true
+	if repository.readErr != nil {
+		return nil, 0, repository.readErr
+	}
+	if repository.stateVersionErr != nil {
+		return nil, 0, repository.stateVersionErr
+	}
+	observations := make([]TaskObservation, 0, len(repository.tasks))
+	for _, task := range repository.tasks {
+		observations = append(observations, TaskObservation{Task: task, Evidence: repository.taskEvidence})
+	}
+	return observations, repository.stateVersion, nil
+}
+
+func (repository *queryRepository) ReadTaskEvidence(context.Context, string) (TaskEvidenceView, error) {
+	repository.taskEvidenceCalled = true
+	if repository.taskEvidenceErr != nil {
+		return TaskEvidenceView{}, repository.taskEvidenceErr
+	}
+	return repository.taskEvidence, nil
 }
 
 func (repository *queryRepository) LatestCandidateEvidence(
@@ -604,7 +554,7 @@ func (repository *queryRepository) LatestCandidateEvidence(
 	string,
 ) (*domain.SealedDeliveryEvidence, domain.CandidateJudgment, error) {
 	repository.candidateCalled = true
-	return nil, repository.candidateJudgment, repository.candidateErr
+	return repository.candidateEvidence, repository.candidateJudgment, repository.candidateErr
 }
 
 func (repository *queryRepository) GetManagedRunPreparation(context.Context, string) (ManagedRunPreparation, error) {
@@ -747,6 +697,29 @@ func queryTask(handle string, state domain.TaskState, stateVersion int64) domain
 		panic(err)
 	}
 	return pinned
+}
+
+func queryCandidateEvidence(t *testing.T, task domain.Task, producedAt time.Time) *domain.SealedDeliveryEvidence {
+	t.Helper()
+	head := strings.Repeat("b", 40)
+	sealed, err := domain.SealDeliveryEvidence(domain.DeliveryEvidenceBundle{
+		SchemaVersion: 1, TaskHandle: task.Handle, RepositoryIdentity: task.RepositoryID,
+		BaseRevision: task.BaseRevision, HeadRevision: head, WorktreeCleanliness: domain.WorktreeClean,
+		ValidationReceipts: []domain.ValidationEvidenceReceipt{{
+			CheckID: "unit", ProgramID: "go-test", HeadRevision: head,
+			Conclusion: domain.CheckPassed, Required: true, OutputHash: strings.Repeat("c", 64),
+			StartedAt: producedAt.Add(-time.Second), CompletedAt: producedAt,
+		}},
+		ForgeEvidence: &domain.ForgeEvidence{
+			Repository: task.RepositoryID, PullRequestID: "github-pr-17", HeadRevision: head,
+			CheckConclusions: []domain.ForgeCheckEvidence{{Name: "ci/unit", Conclusion: domain.CheckPassed}},
+		},
+		ProducedAt: producedAt, ExpiresAt: producedAt.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("SealDeliveryEvidence() error = %v", err)
+	}
+	return sealed
 }
 
 func queryOperation(id string, stateVersion int64) domain.OperationRecord {

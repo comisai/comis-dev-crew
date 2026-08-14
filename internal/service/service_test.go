@@ -73,6 +73,53 @@ func TestRun_ComposesCanonicalMutationOnDedicatedMCPEndpoint(t *testing.T) {
 	}
 }
 
+func TestRun_ComposesTaskReconciliationOnOperatorEndpoint(t *testing.T) {
+	root := shortTempDir(t)
+	socketPath := filepath.Join(root, "run", "operator.sock")
+	ready := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Config{
+			DatabasePath: filepath.Join(root, "state", "devcrew.db"), SocketPath: socketPath,
+			reconciliationInspector: serviceReconciliationInspector{},
+			Ready:                   func() { close(ready) },
+		})
+	}()
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("Run() before ready error = %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() did not advertise ready")
+	}
+	client, err := localapi.NewClient(socketPath, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.ReconcileTask(context.Background(), "operation-service-reconcile", localapi.ReconcileTaskInput{
+		TaskHandle: "task-service-reconcile", Action: application.ReconcileValidateCleanCandidate,
+	})
+	var failure *domain.Failure
+	if !errors.As(err, &failure) || failure.Code != domain.ErrorPrecondition {
+		t.Fatalf("ReconcileTask(missing authority) error = %v, want composed precondition failure", err)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
+type serviceReconciliationInspector struct{}
+
+func (serviceReconciliationInspector) InspectReconciliationCandidate(
+	context.Context,
+	application.ReconciliationWorkspaceRequest,
+) (application.WorkspaceSnapshot, error) {
+	return application.WorkspaceSnapshot{}, errors.New("unexpected reconciliation inspection")
+}
+
 type serviceRepositoryCatalog struct{}
 
 func (serviceRepositoryCatalog) ValidateRepository(context.Context, string) error { return nil }

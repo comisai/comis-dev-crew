@@ -37,7 +37,7 @@ body:
     attributes:
       label: Platform and Go toolchain
       description: Operating system, architecture, and `go version` output.
-      placeholder: macOS 15 arm64, go1.26.5
+      placeholder: macOS 15 arm64, go1.26.6
     validations:
       required: true
   - type: textarea

@@ -384,6 +384,28 @@ func TestControlConnectionReportRejectsInvalidUncertainAndMismatchedOutcomes(t *
 	}
 }
 
+func TestControlSessionServeStopsOnInvalidRoutedFrame(t *testing.T) {
+	service, host := net.Pipe()
+	t.Cleanup(func() {
+		_ = service.Close()
+		_ = host.Close()
+	})
+	session := newControlSession(service, controlTestBearer, controlHandlerStub{}, time.Second)
+	done := make(chan error, 1)
+	go func() { done <- session.serve(context.Background()) }()
+	if _, err := host.Write([]byte("{\"jsonrpc\":\"1.0\",\"id\":\"operation_invalid_route\"}\n")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "envelope is invalid") {
+			t.Fatalf("serve(invalid routed frame) error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("serve(invalid routed frame) did not stop")
+	}
+}
+
 func TestControlConnectionRunAndHandshakeCancellationBoundaries(t *testing.T) {
 	connection := &ControlConnection{config: ControlConnectionConfig{MinimumBackoff: time.Millisecond, MaximumBackoff: time.Second}}
 	if err := connection.Run(nilControlContext()); err == nil {

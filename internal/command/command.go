@@ -7,9 +7,9 @@ import (
 	"io"
 )
 
-// Version is the pre-release scaffold version. Release builds will replace this
-// package with the repository's ratified version provenance mechanism.
-const Version = "dev"
+// Version identifies the source build unless a tagged release injects its exact
+// tag through the Go linker.
+var Version = "dev"
 
 // Run handles the version and help behavior shared by each composition root.
 // It returns a process exit code and performs no privileged operation.

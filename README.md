@@ -57,8 +57,9 @@ curl -fsSL https://raw.githubusercontent.com/comisai/comis-dev-crew/main/docs/in
 Replace `v0.1.0` with the required tag. The installer exits without changing the
 system if it cannot find a release or verify its checksum.
 
-> No release is published yet. Until one is available, use the source build
-> below.
+The current published pre-release is `v0.1.0`. Recovery work on branches newer
+than that tag is available only from source until a subsequent pre-release is
+published.
 
 ### Build from source
 
@@ -88,7 +89,12 @@ In another terminal, inspect service and task state:
 ```sh
 devcrew --socket /absolute/private/run/devcrew.sock service status
 devcrew --socket /absolute/private/run/devcrew.sock tasks list --format json
+devcrew --socket /absolute/private/run/devcrew.sock task explain TASK --format json
 ```
+
+Task detail and explanation JSON include content-free evidence and authority
+references, allowing candidate, report, validation, delivery, and cleanup state
+to be reconciled without reading SQLite or worker output.
 
 Without explicit path flags, the service and CLI derive matching locations from
 the operating system's user configuration directory. For the full Comis and
@@ -104,6 +110,8 @@ coding-worker configuration, see [Running comis-dev-crew](docs/running.md).
 | `devcrew-report` | Restricted, task-scoped worker reporter |
 
 Every command supports `--help` and `--version`.
+Published release artifacts report their exact tag from `--version`; untagged
+source builds report `dev`.
 
 ## Architecture
 
@@ -136,8 +144,12 @@ make verify
 ```
 
 Use `make verify-full` before a push or production-readiness claim. The protected
-`make test-live` campaign is separate and requires explicitly configured external
-prerequisites.
+`make test-live` campaign is separate: it runs only on the dedicated Linux host,
+requires a real human Telegram sender plus an owner-private manifest, and fails
+when any external prerequisite or promised evidence row is unavailable. After a
+completed campaign, `make live-recovery` proves clean release installation,
+prior-release upgrade, backup, isolated restore, and previous-binary rollback
+before `make live-closeout` reruns the same bounded evidence collector.
 
 Additional references:
 

@@ -33,7 +33,7 @@ func observeOSProcess(ctx context.Context, pid int) (ProcessObservation, error) 
 	for index, character := range process.Proc.P_comm {
 		labelBytes[index] = byte(character)
 	}
-	labelBytes = bytes.TrimRight(labelBytes, "\x00")
+	labelBytes = darwinProcessLabel(labelBytes)
 	if len(labelBytes) == 0 || process.Eproc.Pgid < 1 {
 		return ProcessObservation{}, errors.New("observe validation process: kernel identity is incomplete")
 	}
@@ -61,11 +61,18 @@ func observeOSExecutableLabel(ctx context.Context, label string) (bool, error) {
 		for index, character := range process.Proc.P_comm {
 			labelBytes[index] = byte(character)
 		}
-		if string(bytes.TrimRight(labelBytes, "\x00")) == label && process.Proc.P_stat != 0 {
+		if string(darwinProcessLabel(labelBytes)) == label && process.Proc.P_stat != 0 {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+func darwinProcessLabel(buffer []byte) []byte {
+	if terminator := bytes.IndexByte(buffer, 0); terminator >= 0 {
+		return buffer[:terminator]
+	}
+	return buffer
 }
 
 func expectedExecutableLabel(executable string) string {

@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "e0-real-telegram-YYYYMMDD",
+  "startedAtMs": 0,
+  "endedAtMs": 0,
+  "source": {
+    "comisCommit": "0000000000000000000000000000000000000000",
+    "devcrewCommit": "0000000000000000000000000000000000000000"
+  },
+  "protocol": {
+    "id": "comis.capability-service/1",
+    "digest": "fff96cf5105d9cda9da5dfd2fbc7e9f15242754f63d7f8155cde4ef874d5c52b"
+  },
+  "artifacts": [
+    {"kind": "comis-cli", "path": "/opt/comis/packages/cli/dist/cli.js", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-comis-version"},
+    {"kind": "devcrew", "path": "/opt/comis-dev-crew/bin/devcrew", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-devcrew-version"},
+    {"kind": "devcrew-mcp", "path": "/opt/comis-dev-crew/bin/devcrew-mcp", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-devcrew-version"},
+    {"kind": "devcrew-report", "path": "/opt/comis-dev-crew/bin/devcrew-report", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-devcrew-version"},
+    {"kind": "devcrew-service", "path": "/opt/comis-dev-crew/bin/devcrew-service", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-devcrew-version"}
+  ],
+  "workers": [
+    {"kind": "codex", "profileId": "codex-reviewed", "path": "/opt/codex/bin/codex", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-codex-version"},
+    {"kind": "claude", "profileId": "claude-reviewed", "path": "/opt/claude/bin/claude", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-claude-version"}
+  ],
+  "devcrew": {
+    "cliPath": "/opt/comis-dev-crew/bin/devcrew",
+    "codeRoot": "/opt/comis-dev-crew/source",
+    "socketPath": "/run/devcrew-e0-live/service.sock",
+    "databasePath": "/var/lib/devcrew-e0-live/state.db",
+    "worktreeRoot": "/srv/comis-e0-live/worktrees",
+    "repositoryId": "comis-repository"
+  },
+  "comis": {
+    "nodePath": "/usr/bin/node",
+    "cliScriptPath": "/opt/comis/packages/cli/dist/cli.js",
+    "codeRoot": "/opt/comis",
+    "dataDir": "/var/lib/comis-e0-live",
+    "databasePath": "/var/lib/comis-e0-live/memory.db",
+    "agentId": "devcrew-liaison",
+    "secretResidencyScript": "/opt/comis/test/live/self-driving/scripts/secret-residency.mjs",
+    "secretNames": ["TELEGRAM_BOT_TOKEN", "GITHUB_TOKEN"],
+    "explainRefs": ["root-session-replace-with-origin-run"]
+  },
+  "telegram": {
+    "originChatId": "replace-origin-chat",
+    "newerChatId": "replace-newer-chat",
+    "senderId": "replace-human-sender",
+    "checkpoints": [
+      {"kind": "task_request", "chatId": "replace-origin-chat", "marker": "e0cp-task-replace"},
+      {"kind": "unrelated_conversation", "chatId": "replace-newer-chat", "marker": "e0cp-newer-replace"},
+      {"kind": "mcp_restarted_ack", "chatId": "replace-origin-chat", "marker": "e0cp-mcp-replace"},
+      {"kind": "decision_reply", "chatId": "replace-origin-chat", "marker": "e0cp-decision-replace"},
+      {"kind": "pause_handback", "chatId": "replace-origin-chat", "marker": "e0cp-handback-replace"},
+      {"kind": "reconcile_approval", "chatId": "replace-origin-chat", "marker": "e0cp-reconcile-replace"},
+      {"kind": "devcrew_restart_ready", "chatId": "replace-origin-chat", "marker": "e0cp-devcrew-ready-replace"},
+      {"kind": "devcrew_restarted_ack", "chatId": "replace-origin-chat", "marker": "e0cp-devcrew-ack-replace"},
+      {"kind": "comis_restart_ready", "chatId": "replace-origin-chat", "marker": "e0cp-comis-ready-replace"},
+      {"kind": "comis_restarted_ack", "chatId": "replace-origin-chat", "marker": "e0cp-comis-ack-replace"},
+      {"kind": "cleanup_confirmation", "chatId": "replace-origin-chat", "marker": "e0cp-cleanup-replace"}
+    ]
+  },
+  "github": {
+    "cliPath": "/usr/bin/gh",
+    "gitPath": "/usr/bin/git",
+    "repository": "comisai/comis",
+    "primaryCheckout": "/srv/comis-e0-live/repository",
+    "baseBranch": "main",
+    "requiredChecks": ["validate"]
+  },
+  "services": {
+    "systemctlPath": "/usr/bin/systemctl",
+    "isolationLabel": "e0-live",
+    "mcpUnit": "devcrew-e0-live-mcp.service",
+    "mcpUnitSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "devcrewUnit": "devcrew-e0-live.service",
+    "devcrewUnitSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "comisUnit": "comis-e0-live.service",
+    "comisUnitSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "recovery": {
+    "candidateConfigPath": "/var/lib/devcrew-e0-live/candidate.json",
+    "syntheticComisDataDir": "/var/lib/devcrew-e0-live-rollback/comis",
+    "syntheticDevcrewDatabasePath": "/var/lib/devcrew-e0-live-rollback/devcrew.db",
+    "previousDevcrewRelease": "v0.1.0",
+    "previousArtifacts": [
+      {"kind": "comis-cli", "path": "/opt/comis-previous/packages/cli/dist/cli.js", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-previous-comis-version"},
+      {"kind": "devcrew", "path": "/opt/comis-dev-crew-previous/bin/devcrew", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-previous-devcrew-version"},
+      {"kind": "devcrew-mcp", "path": "/opt/comis-dev-crew-previous/bin/devcrew-mcp", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-previous-devcrew-version"},
+      {"kind": "devcrew-report", "path": "/opt/comis-dev-crew-previous/bin/devcrew-report", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-previous-devcrew-version"},
+      {"kind": "devcrew-service", "path": "/opt/comis-dev-crew-previous/bin/devcrew-service", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-previous-devcrew-version"}
+    ]
+  },
+  "tasks": [
+    {"taskHandle": "replace-recovered-task", "workerProfileId": "codex-reviewed", "managedRunId": "replace-recovered-run", "expectReconciliation": true},
+    {"taskHandle": "replace-handback-task", "workerProfileId": "claude-reviewed", "managedRunId": "replace-handback-run", "expectReconciliation": false}
+  ],
+  "operations": [
+    {"operationId": "replace-reconcile-operation", "taskHandle": "replace-recovered-task", "command": "ReconcileTask"},
+    {"operationId": "replace-handback-operation", "taskHandle": "replace-handback-task", "command": "HandbackTask"},
+    {"operationId": "replace-cleanup-recovered", "taskHandle": "replace-recovered-task", "command": "CleanupTask"},
+    {"operationId": "replace-cleanup-handback", "taskHandle": "replace-handback-task", "command": "CleanupTask"}
+  ]
+}

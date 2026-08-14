@@ -52,3 +52,25 @@ func TestRepositoryPolicy_ClaudeNotesRemainSubordinate(t *testing.T) {
 		t.Fatalf("CLAUDE.md must retain the AGENTS.md precedence declaration")
 	}
 }
+
+func TestRepositoryPolicy_ProtectedWorkflowSuppliesEveryLiveRecoveryRoot(t *testing.T) {
+	workflow := readRepositoryFile(t, ".github/workflows/live.yml")
+	for _, required := range []string{
+		"backup_root:",
+		"restore_root:",
+		"DEVCREW_LIVE_BACKUP_ROOT: ${{ inputs.backup_root }}",
+		"DEVCREW_LIVE_RESTORE_ROOT: ${{ inputs.restore_root }}",
+		`test -n "${DEVCREW_LIVE_BACKUP_ROOT}"`,
+		`test -n "${DEVCREW_LIVE_RESTORE_ROOT}"`,
+		"fresh_install_root:",
+		"upgrade_root:",
+		"DEVCREW_LIVE_FRESH_INSTALL_ROOT: ${{ inputs.fresh_install_root }}",
+		"DEVCREW_LIVE_UPGRADE_ROOT: ${{ inputs.upgrade_root }}",
+		`test -n "${DEVCREW_LIVE_FRESH_INSTALL_ROOT}"`,
+		`test -n "${DEVCREW_LIVE_UPGRADE_ROOT}"`,
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("protected live workflow is missing recovery contract %q", required)
+		}
+	}
+}

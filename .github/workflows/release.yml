@@ -34,6 +34,7 @@ jobs:
         run: |
           set -eu
           version="${GITHUB_REF_NAME}"
+          ldflags="-X github.com/comisai/comis-dev-crew/internal/command.Version=${version}"
           mkdir -p dist
           for platform in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
             goos="${platform%/*}"
@@ -42,7 +43,8 @@ jobs:
             mkdir -p "${staging}/bin"
             for name in devcrew devcrew-service devcrew-mcp devcrew-report; do
               CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" \
-                go build -trimpath -o "${staging}/bin/${name}" "./cmd/${name}"
+                go build -trimpath -ldflags "${ldflags}" \
+                -o "${staging}/bin/${name}" "./cmd/${name}"
             done
             cp LICENSE NOTICE README.md "${staging}/"
             # Sorted names and a fixed timestamp keep the archive byte-stable
@@ -65,7 +67,10 @@ jobs:
           tar xzf "dist/comis-dev-crew-${version}-linux-amd64.tar.gz" -C "${root}"
           for name in devcrew devcrew-service devcrew-mcp devcrew-report; do
             test -x "${root}/bin/${name}" || { echo "missing bin/${name}"; exit 1; }
-            "${root}/bin/${name}" --version
+            test "$("${root}/bin/${name}" --version)" = "${name} ${version}" || {
+              echo "incorrect version identity for ${name}"
+              exit 1
+            }
           done
           test -f "${root}/LICENSE" && test -f "${root}/NOTICE"
 
@@ -94,6 +99,5 @@ jobs:
           installer does this automatically and refuses a mismatch.
 
           This project is pre-release. Read the status section in the README
-          before running it against anything you care about. Executables report
-          \`dev\` for \`--version\` until the version provenance mechanism is
-          ratified."
+          before running it against anything you care about. Every executable
+          reports this exact release tag from \`--version\`."
