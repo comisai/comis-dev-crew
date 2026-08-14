@@ -268,6 +268,19 @@ separated by at least one hour. It refuses excessive memory, RSS,
 file-descriptor, or disk growth and requires two starting terminals/worktrees and
 jails followed by zero residual terminals, jails, worktrees, or deliveries.
 
+Recovery fields bind the owner-private candidate configuration, non-overlapping
+synthetic rollback roots, and the exact previous Comis CLI plus four DevCrew
+executables by path, SHA-256, and reported version. The live recovery support
+stops only the three isolated units, copies the Comis data tree without `.env`,
+adds the DevCrew database, candidate configuration, and full unit definitions,
+then restarts every stopped unit in reverse order even when backup construction
+fails. Its manifest hashes every retained file and mode. Restore rechecks that
+inventory, runs SQLite integrity checks, validates the copied Comis
+configuration, and requires the candidate configuration and all three unit
+definitions. Rollback uses only copied synthetic state: the previous Comis CLI
+must validate it and the previous DevCrew service must open its copied database
+and answer a healthy, complete status read through the previous CLI.
+
 Run the protected campaign:
 
 ```sh

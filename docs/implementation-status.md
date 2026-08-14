@@ -50,6 +50,14 @@ writes the observation into the hashed evidence directory. Evidence-only
 closeout likewise requires a non-overwriting owner-private baseline bound to the
 same campaign and exact source commits; a manifest duration cannot substitute
 for two live samples.
+The protected recovery library also implements non-overwriting, hash-inventoried
+backup and isolated restore of Comis data, DevCrew SQLite state, candidate
+configuration, and repository-bearing unit definitions. It excludes plaintext
+`.env`, runs the count-only secret-residency oracle over the full retained tree,
+checks every restored SQLite database and the restored Comis configuration, and
+probes exact previous binaries only against separately copied synthetic state.
+These are executable acceptance mechanisms; the external protected run remains
+required before their evidence can be credited.
 Comis system-health and session-explanation artifacts are structurally validated
 before they can contribute a passing verdict: source coverage, campaign activity,
 hard-degraded posture, agent identity, and the exact origin Telegram conversation

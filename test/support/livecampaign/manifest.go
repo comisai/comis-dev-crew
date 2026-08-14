@@ -53,6 +53,7 @@ type Manifest struct {
 	Telegram      TelegramTarget         `json:"telegram"`
 	GitHub        GitHubTarget           `json:"github"`
 	Services      ServiceTargets         `json:"services"`
+	Recovery      RecoveryTarget         `json:"recovery"`
 	Tasks         []TaskExpectation      `json:"tasks"`
 	Operations    []OperationExpectation `json:"operations"`
 }
@@ -243,6 +244,9 @@ func (manifest Manifest) validate() error {
 		return err
 	}
 	if err := manifest.validateServices(); err != nil {
+		return err
+	}
+	if err := manifest.validateRecovery(); err != nil {
 		return err
 	}
 	return manifest.validateTasksAndOperations()

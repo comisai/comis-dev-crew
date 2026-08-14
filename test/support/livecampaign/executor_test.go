@@ -122,6 +122,10 @@ func TestValidateRuntimeRejectsNonSocketAndNonPrivateDataRoot(t *testing.T) {
 	if err := os.Mkdir(manifest.DevCrew.WorktreeRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	manifest.Recovery.CandidateConfigPath = filepath.Join(root, "candidate.json")
+	if err := os.WriteFile(manifest.Recovery.CandidateConfigPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	manifest.Comis.DataDir = root
 	manifest.Comis.DatabasePath = filepath.Join(root, "comis.db")
 	if err := os.WriteFile(manifest.Comis.DatabasePath, []byte("database-fixture"), 0o600); err != nil {
@@ -143,6 +147,15 @@ func TestValidateRuntimeRejectsNonSocketAndNonPrivateDataRoot(t *testing.T) {
 		case "devcrew":
 			manifest.DevCrew.CLIPath = path
 		}
+	}
+	for index := range manifest.Recovery.PreviousArtifacts {
+		path := filepath.Join(root, "previous-"+manifest.Recovery.PreviousArtifacts[index].Kind)
+		contents := []byte("previous-" + manifest.Recovery.PreviousArtifacts[index].Kind)
+		if err := os.WriteFile(path, contents, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		manifest.Recovery.PreviousArtifacts[index].Path = path
+		manifest.Recovery.PreviousArtifacts[index].SHA256 = sha256Hex(contents)
 	}
 	for index := range manifest.Workers {
 		path := filepath.Join(root, manifest.Workers[index].Kind)
@@ -170,7 +183,14 @@ type versionFixtureExecutor struct {
 
 func (executor versionFixtureExecutor) Run(ctx context.Context, command Command) ([]byte, error) {
 	if len(command.Args) == 2 && command.Args[1] == "--version" {
-		return []byte(executor.comis), nil
+		if command.Args[0] == executor.manifest.Comis.CLIScriptPath {
+			return []byte(executor.comis), nil
+		}
+		for _, artifact := range executor.manifest.Recovery.PreviousArtifacts {
+			if artifact.Kind == "comis-cli" && command.Args[0] == artifact.Path {
+				return []byte(artifact.Version + "\n"), nil
+			}
+		}
 	}
 	if len(command.Args) == 2 && command.Args[0] == "cat" {
 		switch command.Args[1] {
@@ -183,6 +203,14 @@ func (executor versionFixtureExecutor) Run(ctx context.Context, command Command)
 		}
 	}
 	if len(command.Args) == 1 && command.Args[0] == "--version" {
+		for _, artifact := range append(
+			append([]ArtifactPin(nil), executor.manifest.Artifacts...),
+			executor.manifest.Recovery.PreviousArtifacts...,
+		) {
+			if artifact.Kind != "comis-cli" && artifact.Path == command.Path {
+				return []byte(artifact.Kind + " " + artifact.Version + "\n"), nil
+			}
+		}
 		switch filepath.Base(command.Path) {
 		case "codex":
 			return []byte("codex-cli 0.147.0\n"), nil

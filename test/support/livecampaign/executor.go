@@ -107,6 +107,14 @@ func validateRuntime(ctx context.Context, manifest Manifest, executor Executor) 
 			return fmt.Errorf("validate protected runtime: %s artifact: %w", artifact.Kind, err)
 		}
 	}
+	for _, artifact := range manifest.Recovery.PreviousArtifacts {
+		if err := validatePinnedArtifact(artifact); err != nil {
+			return fmt.Errorf("validate protected runtime: previous %s artifact: %w", artifact.Kind, err)
+		}
+		if err := validatePinnedArtifactVersion(ctx, manifest, artifact, executor); err != nil {
+			return fmt.Errorf("validate protected runtime: previous %s artifact: %w", artifact.Kind, err)
+		}
+	}
 	for _, worker := range manifest.Workers {
 		if err := validatePinnedWorker(ctx, worker, executor); err != nil {
 			return fmt.Errorf("validate protected runtime: %s worker: %w", worker.Kind, err)
@@ -144,12 +152,19 @@ func validateRuntime(ctx context.Context, manifest Manifest, executor Executor) 
 		{name: "secret residency script", path: manifest.Comis.SecretResidencyScript, root: manifest.Comis.CodeRoot},
 		{name: "DevCrew database", path: manifest.DevCrew.DatabasePath},
 		{name: "Comis database", path: manifest.Comis.DatabasePath, root: manifest.Comis.DataDir},
+		{name: "candidate configuration", path: manifest.Recovery.CandidateConfigPath},
 	} {
 		if err := validateCanonicalRegularFile(target.path); err != nil {
 			return fmt.Errorf("validate protected runtime: %s: %w", target.name, err)
 		}
 		if target.root != "" && !pathWithin(target.root, target.path) {
 			return fmt.Errorf("validate protected runtime: %s is outside its pinned root", target.name)
+		}
+		if target.name == "candidate configuration" {
+			info, err := os.Lstat(target.path)
+			if err != nil || info.Mode().Perm()&0o077 != 0 {
+				return errors.New("validate protected runtime: candidate configuration must be owner-private")
+			}
 		}
 	}
 	for name, path := range map[string]string{

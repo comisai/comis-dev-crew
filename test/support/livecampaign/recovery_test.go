@@ -126,7 +126,10 @@ func TestCreateAndRestoreRecoveryBackupPreservesStateWithoutPlaintextEnvironment
 func recoveryManifestFixture(t *testing.T) Manifest {
 	t.Helper()
 	manifest := validManifest()
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chmod(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -152,8 +155,15 @@ func recoveryManifestFixture(t *testing.T) Manifest {
 	if err := os.WriteFile(manifest.Recovery.CandidateConfigPath, []byte(`{"repository":"comis-repository","readCredentialFile":"/run/secrets/read"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	manifest.Recovery.SyntheticComisDataDir = filepath.Join(root, "synthetic-comis")
-	manifest.Recovery.SyntheticDevCrewDatabasePath = filepath.Join(root, "synthetic-devcrew.db")
+	syntheticRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(syntheticRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Recovery.SyntheticComisDataDir = filepath.Join(syntheticRoot, "comis")
+	manifest.Recovery.SyntheticDevCrewDatabasePath = filepath.Join(syntheticRoot, "devcrew.db")
 	for index := range manifest.Recovery.PreviousArtifacts {
 		artifact := &manifest.Recovery.PreviousArtifacts[index]
 		artifact.Path = filepath.Join(root, "previous-"+artifact.Kind)

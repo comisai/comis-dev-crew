@@ -77,6 +77,18 @@
     "comisUnit": "comis-e0-live.service",
     "comisUnitSha256": "0000000000000000000000000000000000000000000000000000000000000000"
   },
+  "recovery": {
+    "candidateConfigPath": "/var/lib/devcrew-e0-live/candidate.json",
+    "syntheticComisDataDir": "/var/lib/devcrew-e0-live-rollback/comis",
+    "syntheticDevcrewDatabasePath": "/var/lib/devcrew-e0-live-rollback/devcrew.db",
+    "previousArtifacts": [
+      {"kind": "comis-cli", "path": "/opt/comis-previous/packages/cli/dist/cli.js", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-previous-comis-version"},
+      {"kind": "devcrew", "path": "/opt/comis-dev-crew-previous/bin/devcrew", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-previous-devcrew-version"},
+      {"kind": "devcrew-mcp", "path": "/opt/comis-dev-crew-previous/bin/devcrew-mcp", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-previous-devcrew-version"},
+      {"kind": "devcrew-report", "path": "/opt/comis-dev-crew-previous/bin/devcrew-report", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-previous-devcrew-version"},
+      {"kind": "devcrew-service", "path": "/opt/comis-dev-crew-previous/bin/devcrew-service", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-previous-devcrew-version"}
+    ]
+  },
   "tasks": [
     {"taskHandle": "replace-recovered-task", "workerProfileId": "codex-reviewed", "managedRunId": "replace-recovered-run", "expectReconciliation": true},
     {"taskHandle": "replace-handback-task", "workerProfileId": "claude-reviewed", "managedRunId": "replace-handback-run", "expectReconciliation": false}

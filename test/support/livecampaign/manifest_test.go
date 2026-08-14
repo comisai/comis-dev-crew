@@ -72,8 +72,8 @@ func validManifest() Manifest {
 		},
 		Recovery: RecoveryTarget{
 			CandidateConfigPath:          "/var/lib/devcrew-e0/candidate.json",
-			SyntheticComisDataDir:        "/var/lib/devcrew-e0/synthetic/comis",
-			SyntheticDevCrewDatabasePath: "/var/lib/devcrew-e0/synthetic/devcrew.db",
+			SyntheticComisDataDir:        "/var/lib/devcrew-e0-rollback/comis",
+			SyntheticDevCrewDatabasePath: "/var/lib/devcrew-e0-rollback/devcrew.db",
 			PreviousArtifacts: []ArtifactPin{
 				{Kind: "comis-cli", Path: "/opt/previous/comis/cli.js", SHA256: strings.Repeat("8", 64), Version: "1.0.60"},
 				{Kind: "devcrew", Path: "/opt/previous/devcrew/devcrew", SHA256: strings.Repeat("9", 64), Version: "0.0.9"},
