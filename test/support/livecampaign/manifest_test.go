@@ -74,6 +74,7 @@ func validManifest() Manifest {
 			CandidateConfigPath:          "/var/lib/devcrew-e0/candidate.json",
 			SyntheticComisDataDir:        "/var/lib/devcrew-e0-rollback/comis",
 			SyntheticDevCrewDatabasePath: "/var/lib/devcrew-e0-rollback/devcrew.db",
+			PreviousDevCrewRelease:       "v0.1.0",
 			PreviousArtifacts: []ArtifactPin{
 				{Kind: "comis-cli", Path: "/opt/previous/comis/cli.js", SHA256: strings.Repeat("8", 64), Version: "1.0.60"},
 				{Kind: "devcrew", Path: "/opt/previous/devcrew/devcrew", SHA256: strings.Repeat("9", 64), Version: "0.0.9"},
@@ -120,6 +121,15 @@ func TestManifestRejectsPlaceholderSourceCommits(t *testing.T) {
 	manifest.Source.DevCrewCommit = strings.Repeat("0", 40)
 	if _, err := LoadManifest(writeManifest(t, manifest, "-placeholder-source")); err == nil || !strings.Contains(err.Error(), "source commits") {
 		t.Fatalf("expected placeholder-source refusal, got %v", err)
+	}
+}
+
+func TestManifestRequiresExactPreviousDevCrewReleaseCoordinate(t *testing.T) {
+	manifest := validManifest()
+	manifest.Recovery.PreviousDevCrewRelease = "dev"
+	if _, err := LoadManifest(writeManifest(t, manifest, "-previous-release")); err == nil ||
+		!strings.Contains(err.Error(), "previous DevCrew release") {
+		t.Fatalf("expected previous-release refusal, got %v", err)
 	}
 }
 

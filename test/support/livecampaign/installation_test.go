@@ -2,7 +2,6 @@ package livecampaign
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -66,26 +65,16 @@ func TestVerifyReleaseInstallationUsesPreviousReleaseCoordinateWhenReportedVersi
 		}
 		pin.SHA256 = sha256Hex([]byte(pin.Kind + "|" + pin.Version + "\n"))
 	}
-	contents, err := json.Marshal(manifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	contents = []byte(strings.Replace(
-		string(contents),
-		`"previousArtifacts":`,
-		`"previousDevcrewRelease":"v0.1.0","previousArtifacts":`,
-		1,
-	))
-	manifestPath := filepath.Join(t.TempDir(), "campaign.json")
-	if err := os.WriteFile(manifestPath, contents, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	loaded, err := LoadManifest(manifestPath)
+	manifest.Recovery.PreviousDevCrewRelease = "v0.1.0"
+	loaded, err := LoadManifest(writeManifest(t, manifest, "-reported-version"))
 	if err != nil {
 		t.Fatalf("LoadManifest() error = %v", err)
 	}
 	parent, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	executor := &installationExecutorFixture{

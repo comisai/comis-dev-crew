@@ -61,7 +61,7 @@ func VerifyReleaseInstallation(
 	if err := installComis(ctx, manifest, executor, upgradeRoot, previous["comis-cli"].Version); err != nil {
 		return InstallationEvidence{}, err
 	}
-	checksumPrevious, err := installDevCrew(ctx, manifest, executor, upgradeRoot, previous["devcrew"].Version)
+	checksumPrevious, err := installDevCrew(ctx, manifest, executor, upgradeRoot, manifest.Recovery.PreviousDevCrewRelease)
 	if err != nil {
 		return InstallationEvidence{}, err
 	}

@@ -81,6 +81,7 @@
     "candidateConfigPath": "/var/lib/devcrew-e0-live/candidate.json",
     "syntheticComisDataDir": "/var/lib/devcrew-e0-live-rollback/comis",
     "syntheticDevcrewDatabasePath": "/var/lib/devcrew-e0-live-rollback/devcrew.db",
+    "previousDevcrewRelease": "v0.1.0",
     "previousArtifacts": [
       {"kind": "comis-cli", "path": "/opt/comis-previous/packages/cli/dist/cli.js", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-previous-comis-version"},
       {"kind": "devcrew", "path": "/opt/comis-dev-crew-previous/bin/devcrew", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-previous-devcrew-version"},

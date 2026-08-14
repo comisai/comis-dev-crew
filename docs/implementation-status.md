@@ -59,7 +59,8 @@ probes exact previous binaries only against separately copied synthetic state.
 Before those recovery probes, it runs the repository-shipped Comis and DevCrew
 installers into a new private prefix, verifies all five installed artifacts by
 the manifest hashes and versions, installs the five previous artifacts into a
-second prefix, upgrades that prefix to the candidate versions, and re-verifies
+second prefix using the separately pinned DevCrew release tag, upgrades that
+prefix to the candidate versions, and re-verifies
 all five bytes and versions. Every DevCrew install must retain the installer's
 successful release-checksum proof.
 The full campaign runner and evidence-only closeout both require the resulting

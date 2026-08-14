@@ -4,13 +4,17 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 )
+
+var devCrewReleasePattern = regexp.MustCompile(`^v[0-9]+(?:\.[0-9]+){2}(?:[-+][0-9A-Za-z.-]+)?$`)
 
 // RecoveryTarget binds backup configuration and synthetic rollback fixtures.
 type RecoveryTarget struct {
 	CandidateConfigPath          string        `json:"candidateConfigPath"`
 	SyntheticComisDataDir        string        `json:"syntheticComisDataDir"`
 	SyntheticDevCrewDatabasePath string        `json:"syntheticDevcrewDatabasePath"`
+	PreviousDevCrewRelease       string        `json:"previousDevcrewRelease"`
 	PreviousArtifacts            []ArtifactPin `json:"previousArtifacts"`
 }
 
@@ -32,6 +36,9 @@ func (manifest Manifest) validateRecovery() error {
 		pathWithin(filepath.Dir(manifest.DevCrew.DatabasePath), manifest.Recovery.SyntheticDevCrewDatabasePath) ||
 		manifest.Recovery.SyntheticDevCrewDatabasePath == manifest.DevCrew.DatabasePath {
 		return errors.New("recovery synthetic fixtures must not overlap live campaign state")
+	}
+	if !devCrewReleasePattern.MatchString(manifest.Recovery.PreviousDevCrewRelease) {
+		return errors.New("recovery previous DevCrew release must be one exact v-prefixed semantic version")
 	}
 	if err := validatePreviousArtifacts(manifest); err != nil {
 		return err

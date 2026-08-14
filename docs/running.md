@@ -276,7 +276,9 @@ jails followed by zero residual terminals, jails, worktrees, or deliveries.
 Recovery fields bind the owner-private candidate configuration, non-overlapping
 synthetic rollback roots, and the exact previous Comis CLI plus four DevCrew
 executables by path, SHA-256, and reported version. The live recovery support
-first runs the repository-shipped installers in two new owner-private prefixes.
+also records the exact previous DevCrew release tag used by the installer; this
+package coordinate is independent of the executables' reported version. It first
+runs the repository-shipped installers in two new owner-private prefixes.
 The fresh prefix must contain exact candidate Comis and DevCrew artifacts. The
 upgrade prefix is verified first at every previous artifact hash and version,
 then after an in-place candidate install at every current hash and version. All
