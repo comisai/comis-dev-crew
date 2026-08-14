@@ -17,13 +17,15 @@ import (
 type CampaignRunner struct {
 	Executor         Executor
 	CaptureResources func(context.Context, Manifest, Executor, int64) (ResourceSnapshot, error)
+	VerifyRecovery   func(context.Context, Manifest, Executor, int64) (RecoveryEvidence, error)
 	PollInterval     time.Duration
 	NowMs            func() int64
 	Logf             func(string, ...any)
 }
 
 func (runner CampaignRunner) Run(ctx context.Context, manifest Manifest, evidenceRoot string) (Verdict, error) {
-	if ctx == nil || runner.Executor == nil || runner.CaptureResources == nil || runner.NowMs == nil || runner.PollInterval <= 0 {
+	if ctx == nil || runner.Executor == nil || runner.CaptureResources == nil || runner.VerifyRecovery == nil ||
+		runner.NowMs == nil || runner.PollInterval <= 0 {
 		return Verdict{}, errors.New("run protected live campaign: runner dependencies are required")
 	}
 	if err := manifest.validate(); err != nil {
@@ -125,10 +127,14 @@ func (runner CampaignRunner) Run(ctx context.Context, manifest Manifest, evidenc
 	if err != nil {
 		return Verdict{}, fmt.Errorf("run protected live campaign: capture finishing resources: %w", err)
 	}
+	recovery, err := runner.VerifyRecovery(ctx, manifest, runner.Executor, runner.NowMs())
+	if err != nil {
+		return Verdict{}, fmt.Errorf("run protected live campaign: verify backup restore and rollback: %w", err)
+	}
 	runner.log("campaign state is terminal; collecting bounded closeout evidence")
 	return Collect(ctx, manifest, evidenceRoot, runner.Executor, runner.NowMs(), ResourceObservation{
 		SchemaVersion: 1, Started: resourceStarted, Finished: resourceFinished,
-	})
+	}, recovery)
 }
 
 func (runner CampaignRunner) requireHandbackSiblingWorking(ctx context.Context, manifest Manifest) error {

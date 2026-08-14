@@ -5,7 +5,7 @@ SHELL := /bin/sh
 .PHONY: docs-check format-check mod-check generate-check vet staticcheck \
 	test-architecture test coverage test-race test-conformance test-integration \
 	test-fuzz-smoke build cross-build vulncheck license-check secret-check smoke \
-	test-live live-baseline live-closeout verify verify-full post-full-check protocol-sync protocol-check
+	test-live live-baseline live-recovery live-closeout verify verify-full post-full-check protocol-sync protocol-check
 
 docs-check:
 	go run ./tools/checkdocs
@@ -89,11 +89,19 @@ live-baseline:
 	@test -n "$(DEVCREW_LIVE_RESOURCE_BASELINE)" || { echo "DEVCREW_LIVE_RESOURCE_BASELINE is required"; exit 1; }
 	go run ./tools/livebaseline --manifest "$(DEVCREW_LIVE_MANIFEST)" --output "$(DEVCREW_LIVE_RESOURCE_BASELINE)"
 
+live-recovery:
+	@test -n "$(DEVCREW_LIVE_MANIFEST)" || { echo "DEVCREW_LIVE_MANIFEST is required"; exit 1; }
+	@test -n "$(DEVCREW_LIVE_BACKUP_ROOT)" || { echo "DEVCREW_LIVE_BACKUP_ROOT is required"; exit 1; }
+	@test -n "$(DEVCREW_LIVE_RESTORE_ROOT)" || { echo "DEVCREW_LIVE_RESTORE_ROOT is required"; exit 1; }
+	@test -n "$(DEVCREW_LIVE_RECOVERY_EVIDENCE)" || { echo "DEVCREW_LIVE_RECOVERY_EVIDENCE is required"; exit 1; }
+	go run ./tools/liverecovery --manifest "$(DEVCREW_LIVE_MANIFEST)" --backup-root "$(DEVCREW_LIVE_BACKUP_ROOT)" --restore-root "$(DEVCREW_LIVE_RESTORE_ROOT)" --output "$(DEVCREW_LIVE_RECOVERY_EVIDENCE)"
+
 live-closeout:
 	@test -n "$(DEVCREW_LIVE_MANIFEST)" || { echo "DEVCREW_LIVE_MANIFEST is required"; exit 1; }
 	@test -n "$(DEVCREW_LIVE_EVIDENCE_ROOT)" || { echo "DEVCREW_LIVE_EVIDENCE_ROOT is required"; exit 1; }
 	@test -n "$(DEVCREW_LIVE_RESOURCE_BASELINE)" || { echo "DEVCREW_LIVE_RESOURCE_BASELINE is required"; exit 1; }
-	go run ./tools/livecloseout --manifest "$(DEVCREW_LIVE_MANIFEST)" --evidence-root "$(DEVCREW_LIVE_EVIDENCE_ROOT)" --resource-baseline "$(DEVCREW_LIVE_RESOURCE_BASELINE)"
+	@test -n "$(DEVCREW_LIVE_RECOVERY_EVIDENCE)" || { echo "DEVCREW_LIVE_RECOVERY_EVIDENCE is required"; exit 1; }
+	go run ./tools/livecloseout --manifest "$(DEVCREW_LIVE_MANIFEST)" --evidence-root "$(DEVCREW_LIVE_EVIDENCE_ROOT)" --resource-baseline "$(DEVCREW_LIVE_RESOURCE_BASELINE)" --recovery-evidence "$(DEVCREW_LIVE_RECOVERY_EVIDENCE)"
 
 verify: docs-check format-check mod-check generate-check vet staticcheck test-architecture test coverage test-race test-conformance build
 

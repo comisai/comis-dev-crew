@@ -45,6 +45,7 @@ func Collect(
 	executor Executor,
 	capturedAtMs int64,
 	resources ResourceObservation,
+	recovery RecoveryEvidence,
 ) (Verdict, error) {
 	if ctx == nil || executor == nil || capturedAtMs <= 0 {
 		return Verdict{}, errors.New("collect live closeout: context, executor, and capture time are required")
@@ -54,6 +55,9 @@ func Collect(
 	}
 	if err := VerifyResourceObservation(manifest, resources); err != nil {
 		return Verdict{}, fmt.Errorf("collect live closeout: resource observation refused: %w", err)
+	}
+	if err := VerifyRecoveryEvidence(manifest, recovery); err != nil {
+		return Verdict{}, fmt.Errorf("collect live closeout: recovery evidence refused: %w", err)
 	}
 	if !filepath.IsAbs(outputRoot) || filepath.Clean(outputRoot) != outputRoot {
 		return Verdict{}, errors.New("collect live closeout: evidence root must be one clean absolute path")
@@ -78,6 +82,10 @@ func Collect(
 		return Verdict{}, err
 	}
 	instance.pass("one_hour_resource_observation")
+	if err := instance.writeJSON("recovery-evidence.json", recovery); err != nil {
+		return Verdict{}, err
+	}
+	instance.pass("backup_restore_and_rollback")
 	if err := instance.collectDevCrew(); err != nil {
 		return instance.failureVerdict(capturedAtMs, err)
 	}

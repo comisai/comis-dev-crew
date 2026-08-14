@@ -56,6 +56,8 @@ configuration, and repository-bearing unit definitions. It excludes plaintext
 `.env`, runs the count-only secret-residency oracle over the full retained tree,
 checks every restored SQLite database and the restored Comis configuration, and
 probes exact previous binaries only against separately copied synthetic state.
+The full campaign runner and evidence-only closeout both require the resulting
+strict owner-private recovery artifact before a passing verdict can be written.
 These are executable acceptance mechanisms; the external protected run remains
 required before their evidence can be credited.
 Comis system-health and session-explanation artifacts are structurally validated

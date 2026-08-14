@@ -18,8 +18,10 @@ func TestE0LiveCampaign_RealTelegramProtectedLinuxCloseout(t *testing.T) {
 	}
 	manifestPath := os.Getenv("DEVCREW_LIVE_MANIFEST")
 	evidenceRoot := os.Getenv("DEVCREW_LIVE_EVIDENCE_ROOT")
-	if manifestPath == "" || evidenceRoot == "" {
-		t.Fatal("protected E0 campaign requires DEVCREW_LIVE_MANIFEST and DEVCREW_LIVE_EVIDENCE_ROOT")
+	backupRoot := os.Getenv("DEVCREW_LIVE_BACKUP_ROOT")
+	restoreRoot := os.Getenv("DEVCREW_LIVE_RESTORE_ROOT")
+	if manifestPath == "" || evidenceRoot == "" || backupRoot == "" || restoreRoot == "" {
+		t.Fatal("protected E0 campaign requires manifest, evidence, backup, and restore roots")
 	}
 	manifest, err := livecampaign.LoadManifest(manifestPath)
 	if err != nil {
@@ -31,7 +33,15 @@ func TestE0LiveCampaign_RealTelegramProtectedLinuxCloseout(t *testing.T) {
 	runner := livecampaign.CampaignRunner{
 		Executor: livecampaign.RealExecutor{}, PollInterval: 5 * time.Second,
 		CaptureResources: livecampaign.CaptureResourceSnapshot,
-		NowMs:            func() int64 { return time.Now().UnixMilli() }, Logf: t.Logf,
+		VerifyRecovery: func(
+			ctx context.Context, manifest livecampaign.Manifest, executor livecampaign.Executor, capturedAtMs int64,
+		) (livecampaign.RecoveryEvidence, error) {
+			return livecampaign.RunRecoveryVerification(
+				ctx, manifest, backupRoot, restoreRoot, executor,
+				livecampaign.RealRollbackServiceProbe, capturedAtMs,
+			)
+		},
+		NowMs: func() int64 { return time.Now().UnixMilli() }, Logf: t.Logf,
 	}
 	verdict, err := runner.Run(context.Background(), manifest, evidenceRoot)
 	if err != nil {
