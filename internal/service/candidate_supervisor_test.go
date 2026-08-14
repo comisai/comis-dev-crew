@@ -138,6 +138,32 @@ func TestCandidateSupervisor_RefusesChangedHeadOpenDecisionAndIncompleteValidati
 	}
 }
 
+func TestCandidateSupervisor_BindsReconciledValidationToDurableSnapshot(t *testing.T) {
+	fixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	fixture.store.reconciled = true
+	fixture.store.reconciledSnapshot = application.WorkspaceSnapshot{
+		TaskHandle: fixture.task.Handle, RepositoryID: fixture.snapshot.RepositoryID,
+		WorktreePath: fixture.snapshot.WorktreePath, Branch: fixture.snapshot.Branch,
+		HeadRevision: fixture.snapshot.HeadRevision, Cleanliness: application.WorkspaceClean,
+	}
+	changed := fixture.snapshot
+	changed.HeadRevision = strings.Repeat("c", 40)
+	fixture.git.snapshots = []devgit.CandidateSnapshot{changed}
+	supervisor, err := newCandidateSupervisor(fixture.config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := supervisor.ValidateTask(context.Background(), fixture.task.Handle); err == nil {
+		t.Fatal("ValidateTask(changed reconciled head) error = nil")
+	}
+	if fixture.store.reconciledReads != 1 || fixture.runner.calls != 0 ||
+		fixture.pullRequests.calls != 0 || fixture.artifact.calls != 0 || fixture.store.evidence != nil {
+		t.Fatalf("reconciled authority effects = reads %d validation %d forge %d artifact %d evidence %t",
+			fixture.store.reconciledReads, fixture.runner.calls, fixture.pullRequests.calls,
+			fixture.artifact.calls, fixture.store.evidence != nil)
+	}
+}
+
 func TestCandidateSupervisor_FailsClosedForUnavailableDependenciesTimeAndShape(t *testing.T) {
 	if _, err := newCandidateSupervisor(candidateSupervisorConfig{}); err == nil {
 		t.Fatal("newCandidateSupervisor(empty) error = nil")
@@ -555,6 +581,10 @@ type candidateSupervisorStore struct {
 	publicationBodies     [][]byte
 	onCommit              func()
 	list                  func(context.Context) ([]domain.Task, error)
+	reconciledSnapshot    application.WorkspaceSnapshot
+	reconciled            bool
+	reconciledErr         error
+	reconciledReads       int
 }
 
 func (store *candidateSupervisorStore) ListTasks(ctx context.Context) ([]domain.Task, error) {
@@ -574,6 +604,14 @@ func (store *candidateSupervisorStore) GetManagedRunPreparation(context.Context,
 
 func (store *candidateSupervisorStore) ListAcceptedReports(context.Context, string) ([]domain.AcceptedReport, error) {
 	return append([]domain.AcceptedReport(nil), store.reports...), nil
+}
+
+func (store *candidateSupervisorStore) ReadReconciledCandidateSnapshot(
+	context.Context,
+	string,
+) (application.WorkspaceSnapshot, bool, error) {
+	store.reconciledReads++
+	return store.reconciledSnapshot, store.reconciled, store.reconciledErr
 }
 
 func (store *candidateSupervisorStore) CommitCandidateEvidence(

@@ -43,6 +43,10 @@ func (store *Store) ReadTaskRecoveryEvidence(
 		WHERE task_handle = ? AND kind = 'candidate_complete'`, taskHandle).Scan(&candidateReports); err != nil {
 		return application.TaskRecoveryEvidence{}, fmt.Errorf("inspect task recovery candidate reports: %w", err)
 	}
+	recoveryHistory, err := candidateRecoveryHistoryExists(ctx, transaction, taskHandle)
+	if err != nil {
+		return application.TaskRecoveryEvidence{}, err
+	}
 	binding, found, err := findTerminalBinding(ctx, transaction, taskHandle)
 	if err != nil {
 		return application.TaskRecoveryEvidence{}, err
@@ -50,7 +54,7 @@ func (store *Store) ReadTaskRecoveryEvidence(
 	settled := found && binding.managedRunID == task.ManagedRunID &&
 		binding.workspaceLeaseID == task.WorkspaceLeaseID &&
 		(binding.latestTransition == application.TerminalExited || binding.latestTransition == application.TerminalReleased)
-	if candidateReports != 0 || !settled {
+	if candidateReports != 0 || recoveryHistory || !settled {
 		return complete(application.TaskRecoveryEvidence{Kind: application.RecoveryRestartEvidenceUnresolved})
 	}
 	authority, err := readTaskReconciliationAuthority(ctx, transaction, taskHandle)

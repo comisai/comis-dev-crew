@@ -137,7 +137,8 @@ func TestServerClient_HandbackUsesCanonicalRevalidationMutation(t *testing.T) {
 	interventions := &apiInterventions{result: application.MutationResult{
 		Task: domain.Task{Handle: "task-handback-local", State: domain.TaskValidating, StateVersion: 21},
 		Operation: domain.OperationRecord{
-			ID: "operation-handback-local", Status: domain.OperationCompleted, StateVersion: 21,
+			ID: "operation-handback-local", Command: "HandbackTask", Status: domain.OperationCompleted,
+			ResultRef: "task-handback-local", StateVersion: 21,
 		},
 	}}
 	handler, err := NewHandler(HandlerConfig{
@@ -172,7 +173,8 @@ func TestServerClient_ReconcileTaskUsesClosedServerAuthorityMutation(t *testing.
 	reconciliation := &apiTaskReconciliation{result: application.MutationResult{
 		Task: domain.Task{Handle: "task-reconcile-local", State: domain.TaskValidating, StateVersion: 25},
 		Operation: domain.OperationRecord{
-			ID: "operation-reconcile-local", Status: domain.OperationCompleted, StateVersion: 25,
+			ID: "operation-reconcile-local", Command: "ReconcileTask", Status: domain.OperationCompleted,
+			ResultRef: "task-reconcile-local", StateVersion: 25,
 		},
 	}}
 	handler, err := NewHandler(HandlerConfig{
@@ -202,6 +204,17 @@ func TestServerClient_ReconcileTaskUsesClosedServerAuthorityMutation(t *testing.
 		reconciliation.command.Action != input.Action {
 		t.Fatalf("canonical reconciliation command = %#v", reconciliation.command)
 	}
+	reconciliation.result.Task.State = domain.TaskCandidateComplete
+	reconciliation.result.Task.StateVersion = 27
+	result, err = client.ReconcileTask(context.Background(), "operation-reconcile-local", input)
+	if err != nil || result.State != domain.TaskCandidateComplete || result.StateVersion != 27 {
+		t.Fatalf("ReconcileTask(advanced replay) = %#v, %v", result, err)
+	}
+	reconciliation.result.Operation.ResultRef = "task-reconcile-other"
+	if _, err := client.ReconcileTask(context.Background(), "operation-reconcile-local", input); err == nil {
+		t.Fatal("ReconcileTask(mismatched replay result) error = nil")
+	}
+	reconciliation.result.Operation.ResultRef = input.TaskHandle
 
 	forged := []byte(`{"protocolVersion":"devcrew.local.v1","operationId":"operation-reconcile-forged","method":"ReconcileTask","payload":{"taskHandle":"task-reconcile-local","action":"validate-clean-candidate","worktreePath":"/forged","headRevision":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}`)
 	outcome := handler.handle(context.Background(), CallerMCPFacade, forged)
@@ -215,7 +228,8 @@ func TestServerClient_CleanupUsesCanonicalReleaseBeforeRemovalMutation(t *testin
 	cleanup := &apiCleanup{result: application.MutationResult{
 		Task: domain.Task{Handle: "task-cleanup-local", State: domain.TaskCleaned, StateVersion: 34},
 		Operation: domain.OperationRecord{
-			ID: "operation-cleanup-local", Status: domain.OperationCompleted, StateVersion: 34,
+			ID: "operation-cleanup-local", Command: "CleanupTask", Status: domain.OperationCompleted,
+			ResultRef: "task-cleanup-local", StateVersion: 34,
 		},
 	}}
 	handler, err := NewHandler(HandlerConfig{

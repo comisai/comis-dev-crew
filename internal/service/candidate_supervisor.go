@@ -21,6 +21,7 @@ type candidateEvidenceStore interface {
 	GetTask(context.Context, string) (domain.Task, error)
 	GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error)
 	ListAcceptedReports(context.Context, string) ([]domain.AcceptedReport, error)
+	ReadReconciledCandidateSnapshot(context.Context, string) (application.WorkspaceSnapshot, bool, error)
 	CommitCandidateEvidence(context.Context, string, *domain.SealedDeliveryEvidence, []string, []string, time.Time, []application.ComisEvidencePublication) (domain.Task, domain.CandidateJudgment, error)
 }
 
@@ -148,6 +149,10 @@ func (supervisor *candidateSupervisor) ValidateTask(
 	if err != nil || preparation.RequestedWorkspaceRoot == "" {
 		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: durable worktree is unavailable")
 	}
+	reconciledSnapshot, reconciled, err := supervisor.config.Store.ReadReconciledCandidateSnapshot(ctx, taskHandle)
+	if err != nil {
+		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: reconciliation authority is unavailable")
+	}
 	profile, err := supervisor.config.Catalog.ResolveProfile(task.ValidationProfile)
 	if err != nil {
 		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: reviewed profile is unavailable")
@@ -165,6 +170,9 @@ func (supervisor *candidateSupervisor) ValidateTask(
 	})
 	if err != nil {
 		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: Git evidence is unavailable")
+	}
+	if reconciled && !candidateMatchesReconciledSnapshot(task, snapshot, reconciledSnapshot) {
+		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: Git evidence differs from reconciliation authority")
 	}
 	receipts, requiredLocal, err := supervisor.runLocalChecks(ctx, task, profile, snapshot)
 	if err != nil {

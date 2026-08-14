@@ -151,7 +151,10 @@ func insertEvidenceReconciliation(t *testing.T, store *Store, task domain.Task, 
 	if err := store.RecordOperation(context.Background(), preparation); err != nil {
 		t.Fatalf("RecordOperation(preparation) error = %v", err)
 	}
-	reconciliation := storeOperation("reconcile-recovery-delivery", 1)
+	if _, err := store.db.Exec("UPDATE tasks SET state_version = 2 WHERE handle = ?", task.Handle); err != nil {
+		t.Fatalf("advance fixture task version: %v", err)
+	}
+	reconciliation := storeOperation("reconcile-recovery-delivery", 2)
 	reconciliation.Command = "ReconcileTask"
 	reconciliation.ResultRef = task.Handle
 	if err := store.RecordOperation(context.Background(), reconciliation); err != nil {
@@ -170,8 +173,8 @@ func insertEvidenceReconciliation(t *testing.T, store *Store, task domain.Task, 
 		repository_id, worktree_path, branch, base_revision, head_revision,
 		cleanliness, terminal_session_id, terminal_transition,
 		terminal_observed_at, observed_at, started_state_version, completed_state_version)
-		VALUES (?, ?, 'validate-clean-candidate', ?, ?, ?, ?, ?, ?, 'clean',
-		'terminal-recovery-delivery', 'exited', ?, ?, 0, 1)`,
+			VALUES (?, ?, 'validate-clean-candidate', ?, ?, ?, ?, ?, ?, 'clean',
+			'terminal-recovery-delivery', 'exited', ?, ?, 1, 2)`,
 		reconciliation.ID, task.Handle, preparation.ID, task.RepositoryID, workspace,
 		"devcrew/"+task.Handle+"-reconciled", task.BaseRevision, headRevision,
 		formatTime(terminalAt), formatTime(terminalAt)); err != nil {

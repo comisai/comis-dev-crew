@@ -135,7 +135,10 @@ Before opening its local socket or advertising readiness, the service reconciles
 durable startup state. Prepared and ready tasks remain known because no work-start
 evidence exists. Tasks whose runtime may have been active become `unknown`, as do
 operations left merely `accepted`. Stable terminal task evidence and completed or
-already-unknown operations are preserved, and a repeated restart is idempotent.
+already-unknown operations are preserved. A reconciled `candidate_complete` task is
+also preserved when its accepted sealed evidence and exact pending publications are
+consistent, so host delivery resumes after restart. A repeated restart is
+idempotent.
 
 ## Unknown-task candidate recovery
 
@@ -148,15 +151,20 @@ branch, head, run, lease, terminal, or attachment authority.
 The service combines durable preparation and terminal bindings with a fresh Git
 inspection, then atomically records reconciliation evidence and advances
 `unknown` through `reconciling` into `validating`. It neither synthesizes a worker
-report nor increments the report cursor. Exact operation replay returns the
-original outcome, altered reuse conflicts, and dirty, missing, base-equal,
-divergent, ambiguous, active, or mismatched authority leaves the task unchanged.
-The normal candidate supervisor re-reads the exact head around fixed validation.
-Cleanup later accepts exactly one candidate origin: a delivered worker candidate
-report or one exact completed reconciliation record matching the sealed head.
+report nor increments the report cursor. Exact operation replay remains bound to
+the original result reference and may project only a monotonically newer state of
+that task; altered reuse conflicts, and dirty, missing, base-equal, divergent,
+ambiguous, active, or mismatched authority leaves the task unchanged.
+The normal candidate supervisor binds its pre-validation Git read, validation
+receipts, evidence commit, and forge request to the branch and head stored by the
+completed reconciliation, while the Git pusher re-verifies that exact snapshot
+before transfer. Cleanup later accepts exactly one candidate origin: a delivered
+worker candidate report or one exact completed reconciliation record matching the
+sealed head.
 After successful recovery validation, the two exact server-owned evidence
 publications drive the task to `delivered`; the service does not create a worker
-report merely to close the state machine.
+report merely to close the state machine. Incomplete recovery history remains
+unresolved after restart and refuses a second reconciliation record.
 
 `ExplainTask` combines durable terminal posture, current host connectivity, and
 fresh registered-worktree inspection. Its closed recovery reasons distinguish a

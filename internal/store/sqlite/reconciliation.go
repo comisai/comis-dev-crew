@@ -37,6 +37,15 @@ func (store *Store) ReconcileStartup(ctx context.Context, at time.Time) (applica
 		if !runtimeSensitiveState(task.State) {
 			continue
 		}
+		if task.State == domain.TaskCandidateComplete {
+			resumable, resumeErr := resumableReconciledCandidateDelivery(ctx, transaction, task, at)
+			if resumeErr != nil {
+				return result, resumeErr
+			}
+			if resumable {
+				continue
+			}
+		}
 		unknown, err := reconcileTaskUnknown(task, at)
 		if err != nil {
 			return result, fmt.Errorf("reconcile task startup state: %w", err)
