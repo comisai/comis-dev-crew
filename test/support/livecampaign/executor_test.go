@@ -197,3 +197,24 @@ func TestValidatePinnedArtifactVersionRejectsDifferentExecutable(t *testing.T) {
 		t.Fatalf("unexpected Comis version command: %#v", last)
 	}
 }
+
+func TestValidatePinnedServiceUnitRejectsChangedDefinition(t *testing.T) {
+	manifest := validManifest()
+	executor := &fixedOutputExecutor{output: []byte("changed unit\n")}
+	if err := validatePinnedServiceUnit(
+		context.Background(), manifest.Services.SystemctlPath, manifest.Services.MCPUnit,
+		manifest.Services.MCPUnitSHA256, executor,
+	); err == nil || !strings.Contains(err.Error(), "SHA-256") {
+		t.Fatalf("expected changed-unit refusal, got %v", err)
+	}
+	executor.output = []byte("mcp unit\n")
+	if err := validatePinnedServiceUnit(
+		context.Background(), manifest.Services.SystemctlPath, manifest.Services.MCPUnit,
+		manifest.Services.MCPUnitSHA256, executor,
+	); err != nil {
+		t.Fatalf("validate exact service unit: %v", err)
+	}
+	if len(executor.seen) != 2 || strings.Join(executor.seen[1].Args, " ") != "cat "+manifest.Services.MCPUnit {
+		t.Fatalf("unexpected service-unit command: %#v", executor.seen)
+	}
+}

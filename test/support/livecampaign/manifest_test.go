@@ -61,7 +61,8 @@ func validManifest() Manifest {
 		Services: ServiceTargets{
 			SystemctlPath: "/usr/bin/systemctl", IsolationLabel: "e0-live",
 			MCPUnit: "devcrew-e0-live-mcp.service", DevCrewUnit: "devcrew-e0-live.service",
-			ComisUnit: "comis-e0-live.service",
+			ComisUnit: "comis-e0-live.service", MCPUnitSHA256: sha256Hex([]byte("mcp unit\n")),
+			DevCrewUnitSHA256: sha256Hex([]byte("devcrew unit\n")), ComisUnitSHA256: sha256Hex([]byte("comis unit\n")),
 		},
 		Tasks: []TaskExpectation{
 			{TaskHandle: "task-codex-e0", WorkerProfileID: "codex-reviewed", ManagedRunID: "managed-run-codex", ExpectReconciliation: true},
@@ -163,5 +164,13 @@ func TestManifestConfinesServiceRestartsToIsolationLabel(t *testing.T) {
 	manifest.Services.ComisUnit = "comis.service"
 	if _, err := LoadManifest(writeManifest(t, manifest, "-unit")); err == nil || !strings.Contains(err.Error(), "isolation label") {
 		t.Fatalf("expected protected-unit refusal, got %v", err)
+	}
+}
+
+func TestManifestRequiresExactServiceUnitDigests(t *testing.T) {
+	manifest := validManifest()
+	manifest.Services.ComisUnitSHA256 = "untrusted"
+	if _, err := LoadManifest(writeManifest(t, manifest, "-unit-digest")); err == nil || !strings.Contains(err.Error(), "unit definition") {
+		t.Fatalf("expected service-unit-digest refusal, got %v", err)
 	}
 }
