@@ -229,3 +229,30 @@ func TestValidatePinnedServiceUnitRejectsChangedDefinition(t *testing.T) {
 		t.Fatalf("unexpected service-unit command: %#v", executor.seen)
 	}
 }
+
+func TestValidatePinnedWorkerRejectsVersionAndDigestDrift(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "codex")
+	contents := []byte("worker")
+	if err := os.WriteFile(path, contents, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pin := WorkerPin{Kind: "codex", ProfileID: "codex-reviewed", Path: path, SHA256: sha256Hex(contents), Version: "codex-cli 0.147.0"}
+	executor := &fixedOutputExecutor{output: []byte("codex-cli 0.148.0\n")}
+	if err := validatePinnedWorker(context.Background(), pin, executor); err == nil || !strings.Contains(err.Error(), "version") {
+		t.Fatalf("expected worker-version refusal, got %v", err)
+	}
+	executor.output = []byte("codex-cli 0.147.0\n")
+	if err := validatePinnedWorker(context.Background(), pin, executor); err != nil {
+		t.Fatalf("validate exact worker: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("changed"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePinnedWorker(context.Background(), pin, executor); err == nil || !strings.Contains(err.Error(), "SHA-256") {
+		t.Fatalf("expected worker-digest refusal, got %v", err)
+	}
+}

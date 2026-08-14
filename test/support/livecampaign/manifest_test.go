@@ -27,6 +27,10 @@ func validManifest() Manifest {
 			{Kind: "devcrew-report", Path: "/opt/devcrew/bin/devcrew-report", SHA256: strings.Repeat("4", 64), Version: "dev"},
 			{Kind: "devcrew-service", Path: "/opt/devcrew/bin/devcrew-service", SHA256: strings.Repeat("5", 64), Version: "dev"},
 		},
+		Workers: []WorkerPin{
+			{Kind: "codex", ProfileID: "codex-reviewed", Path: "/opt/codex/bin/codex", SHA256: strings.Repeat("6", 64), Version: "codex-cli 0.147.0"},
+			{Kind: "claude", ProfileID: "claude-reviewed", Path: "/opt/claude/bin/claude", SHA256: strings.Repeat("7", 64), Version: "2.1.224 (Claude Code)"},
+		},
 		DevCrew: DevCrewTarget{
 			CLIPath: "/opt/devcrew/bin/devcrew", SocketPath: "/run/devcrew-e0/service.sock",
 			RepositoryID: "comis-repository",
@@ -94,6 +98,19 @@ func TestManifestRejectsSourceProtocolAndArtifactIdentityDrift(t *testing.T) {
 	manifest.Artifacts = manifest.Artifacts[:len(manifest.Artifacts)-1]
 	if _, err := LoadManifest(writeManifest(t, manifest, "-artifact")); err == nil || !strings.Contains(err.Error(), "artifact catalog") {
 		t.Fatalf("expected incomplete-artifact refusal, got %v", err)
+	}
+}
+
+func TestManifestRequiresWorkerPinsForBothTaskProfiles(t *testing.T) {
+	manifest := validManifest()
+	manifest.Workers[1].ProfileID = manifest.Workers[0].ProfileID
+	if _, err := LoadManifest(writeManifest(t, manifest, "-worker-profile")); err == nil || !strings.Contains(err.Error(), "worker") {
+		t.Fatalf("expected worker-profile refusal, got %v", err)
+	}
+	manifest = validManifest()
+	manifest.Workers = manifest.Workers[:1]
+	if _, err := LoadManifest(writeManifest(t, manifest, "-worker-catalog")); err == nil || !strings.Contains(err.Error(), "worker") {
+		t.Fatalf("expected worker-catalog refusal, got %v", err)
 	}
 }
 
