@@ -38,7 +38,8 @@ func validManifest() Manifest {
 		},
 		Comis: ComisTarget{
 			NodePath: "/usr/bin/node", CLIScriptPath: "/opt/comis/packages/cli/dist/cli.js",
-			CodeRoot: "/opt/comis", DataDir: "/var/lib/comis-e0", AgentID: "devcrew-liaison",
+			CodeRoot: "/opt/comis", DataDir: "/var/lib/comis-e0", DatabasePath: "/var/lib/comis-e0/memory.db",
+			AgentID:               "devcrew-liaison",
 			SecretResidencyScript: "/opt/comis/test/live/self-driving/scripts/secret-residency.mjs",
 			SecretNames:           []string{"TELEGRAM_BOT_TOKEN", "GITHUB_TOKEN"},
 			ExplainRefs:           []string{"root-session-e0-origin"},
