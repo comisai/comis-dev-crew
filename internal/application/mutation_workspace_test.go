@@ -86,6 +86,57 @@ func TestMutations_PrepareRefusesWorkspaceFailureBeforeNonceOrStoreCommit(t *tes
 	}
 }
 
+func TestMutations_PrepareRejectsUnknownProfilesBeforeWorkspaceAllocation(t *testing.T) {
+	profileUnavailable := errors.New("profile unavailable")
+	tests := []struct {
+		name               string
+		workerProfiles     WorkerProfileValidator
+		validationProfiles ValidationProfileValidator
+	}{
+		{
+			name: "worker profile",
+			workerProfiles: func(string, domain.TaskShape) error {
+				return profileUnavailable
+			},
+			validationProfiles: func(string) error { return nil },
+		},
+		{
+			name:               "validation profile",
+			workerProfiles:     func(string, domain.TaskShape) error { return nil },
+			validationProfiles: func(string) error { return profileUnavailable },
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := &mutationStore{}
+			workspaces := testWorkspacePreparer()
+			attachments := testRuntimeAttachments()
+			mutations, err := NewMutations(MutationConfig{
+				Store: store, Repositories: &repositoryCatalog{},
+				WorkerProfiles: test.workerProfiles, ValidationProfiles: test.validationProfiles,
+				Workspaces: workspaces, RuntimeAttachments: attachments,
+				TaskIDs:            func(string) (string, error) { return "task-stable-0001", nil },
+				RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour,
+				Clock: func() time.Time { return time.Date(2026, time.August, 10, 9, 0, 0, 0, time.UTC) },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := mutations.PrepareTask(context.Background(), validPrepareCommand()); err == nil {
+				t.Fatal("PrepareTask(unknown profile) error = nil")
+			}
+			if workspaces.calls != 0 || attachments.prepareCalls != 0 || store.prepareCalls != 0 {
+				t.Fatalf(
+					"profile rejection side effects = workspace:%d attachment:%d store:%d, want zero",
+					workspaces.calls,
+					attachments.prepareCalls,
+					store.prepareCalls,
+				)
+			}
+		})
+	}
+}
+
 func mustRenderWorkerBriefForTest(t *testing.T, task domain.Task) domain.WorkerBrief {
 	t.Helper()
 	brief, err := task.RenderWorkerBrief()
