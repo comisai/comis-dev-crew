@@ -228,7 +228,8 @@ evidence root owner-private. Record both exact source commits, the compiled
 protocol ID and digest, and the SHA-256 plus reported version of the Comis CLI
 and all four DevCrew executables. Artifact paths must select canonical installed
 files rather than `PATH` symlinks. Runtime validation re-hashes each file and
-refuses protocol drift before the campaign starts. The manifest must describe
+executes its fixed `--version` command; it refuses digest, version, or protocol
+drift before the campaign starts. The manifest must describe
 exactly two ship lanes:
 one Codex/Claude profile per lane, exactly one recovered candidate, one handback,
 and one cleanup operation per task. Its eleven opaque `e0cp-*` markers are sent by

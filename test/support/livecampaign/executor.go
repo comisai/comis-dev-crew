@@ -89,11 +89,21 @@ func (buffer *boundedBuffer) Bytes() []byte {
 }
 
 func ValidateRuntime(manifest Manifest) error {
+	return validateRuntime(context.Background(), manifest, RealExecutor{})
+}
+
+func validateRuntime(ctx context.Context, manifest Manifest, executor Executor) error {
+	if ctx == nil || executor == nil {
+		return errors.New("validate protected runtime: context and executor are required")
+	}
 	if err := manifest.validate(); err != nil {
 		return fmt.Errorf("validate protected runtime: %w", err)
 	}
 	for _, artifact := range manifest.Artifacts {
 		if err := validatePinnedArtifact(artifact); err != nil {
+			return fmt.Errorf("validate protected runtime: %s artifact: %w", artifact.Kind, err)
+		}
+		if err := validatePinnedArtifactVersion(ctx, manifest, artifact, executor); err != nil {
 			return fmt.Errorf("validate protected runtime: %s artifact: %w", artifact.Kind, err)
 		}
 	}
@@ -141,6 +151,23 @@ func ValidateRuntime(manifest Manifest) error {
 	}
 	if os.Getenv("GH_TOKEN") == "" {
 		return errors.New("validate protected runtime: GH_TOKEN credential prerequisite is unavailable")
+	}
+	return nil
+}
+
+func validatePinnedArtifactVersion(ctx context.Context, manifest Manifest, pin ArtifactPin, executor Executor) error {
+	command := Command{Path: pin.Path, Args: []string{"--version"}}
+	want := pin.Kind + " " + pin.Version
+	if pin.Kind == "comis-cli" {
+		command = Command{Path: manifest.Comis.NodePath, Args: []string{pin.Path, "--version"}}
+		want = pin.Version
+	}
+	output, err := executor.Run(ctx, command)
+	if err != nil {
+		return errors.New("read pinned artifact version")
+	}
+	if strings.TrimSpace(string(output)) != want {
+		return errors.New("reported artifact version differs from the protected manifest")
 	}
 	return nil
 }

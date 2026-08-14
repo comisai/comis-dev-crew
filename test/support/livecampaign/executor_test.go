@@ -131,9 +131,23 @@ func TestValidateRuntimeRejectsNonSocketAndNonPrivateDataRoot(t *testing.T) {
 	if err := os.WriteFile(manifest.DevCrew.SocketPath, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateRuntime(manifest); err == nil || !strings.Contains(err.Error(), "Unix socket") {
+	if err := validateRuntime(context.Background(), manifest, versionFixtureExecutor{
+		comis: "1.0.61\n",
+	}); err == nil || !strings.Contains(err.Error(), "Unix socket") {
 		t.Fatalf("expected non-socket refusal, got %v", err)
 	}
+}
+
+type versionFixtureExecutor struct {
+	comis string
+}
+
+func (executor versionFixtureExecutor) Run(ctx context.Context, command Command) ([]byte, error) {
+	if len(command.Args) == 2 && command.Args[1] == "--version" {
+		return []byte(executor.comis), nil
+	}
+	name := filepath.Base(command.Path)
+	return []byte(name + " dev\n"), nil
 }
 
 func TestValidatePinnedArtifactRejectsChangedBytes(t *testing.T) {
