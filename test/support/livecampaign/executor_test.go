@@ -103,6 +103,21 @@ func TestValidateRuntimeRejectsNonSocketAndNonPrivateDataRoot(t *testing.T) {
 	manifest.Comis.DataDir = root
 	manifest.GitHub.PrimaryCheckout = root
 	manifest.DevCrew.SocketPath = filepath.Join(root, "not-a-socket")
+	for index := range manifest.Artifacts {
+		path := filepath.Join(root, manifest.Artifacts[index].Kind)
+		contents := []byte("artifact-" + manifest.Artifacts[index].Kind)
+		if err := os.WriteFile(path, contents, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		manifest.Artifacts[index].Path = path
+		manifest.Artifacts[index].SHA256 = sha256Hex(contents)
+		switch manifest.Artifacts[index].Kind {
+		case "comis-cli":
+			manifest.Comis.CLIScriptPath = path
+		case "devcrew":
+			manifest.DevCrew.CLIPath = path
+		}
+	}
 	if err := os.WriteFile(manifest.DevCrew.SocketPath, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +127,11 @@ func TestValidateRuntimeRejectsNonSocketAndNonPrivateDataRoot(t *testing.T) {
 }
 
 func TestValidatePinnedArtifactRejectsChangedBytes(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "artifact")
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "artifact")
 	if err := os.WriteFile(path, []byte("expected"), 0o700); err != nil {
 		t.Fatal(err)
 	}

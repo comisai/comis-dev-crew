@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/comisai/comis-dev-crew/internal/comiswire"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
@@ -21,7 +22,17 @@ var (
 	githubRepositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 	secretNamePattern       = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,255}$`)
 	serviceUnitPattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}\.service$`)
+	lowerHexCommitPattern   = regexp.MustCompile(`^[a-f0-9]{40}$`)
+	lowerHexDigestPattern   = regexp.MustCompile(`^[a-f0-9]{64}$`)
 )
+
+var requiredArtifactKinds = []string{
+	"comis-cli",
+	"devcrew",
+	"devcrew-mcp",
+	"devcrew-report",
+	"devcrew-service",
+}
 
 var requiredCheckpointKinds = []string{
 	"task_request",
@@ -43,6 +54,9 @@ type Manifest struct {
 	CampaignID    string                 `json:"campaignId"`
 	StartedAtMs   int64                  `json:"startedAtMs"`
 	EndedAtMs     int64                  `json:"endedAtMs"`
+	Source        SourcePins             `json:"source"`
+	Protocol      ProtocolPin            `json:"protocol"`
+	Artifacts     []ArtifactPin          `json:"artifacts"`
 	DevCrew       DevCrewTarget          `json:"devcrew"`
 	Comis         ComisTarget            `json:"comis"`
 	Telegram      TelegramTarget         `json:"telegram"`
@@ -50,6 +64,23 @@ type Manifest struct {
 	Services      ServiceTargets         `json:"services"`
 	Tasks         []TaskExpectation      `json:"tasks"`
 	Operations    []OperationExpectation `json:"operations"`
+}
+
+type SourcePins struct {
+	ComisCommit   string `json:"comisCommit"`
+	DevCrewCommit string `json:"devcrewCommit"`
+}
+
+type ProtocolPin struct {
+	ID     string `json:"id"`
+	Digest string `json:"digest"`
+}
+
+type ArtifactPin struct {
+	Kind    string `json:"kind"`
+	Path    string `json:"path"`
+	SHA256  string `json:"sha256"`
+	Version string `json:"version"`
 }
 
 type DevCrewTarget struct {
@@ -164,6 +195,16 @@ func (manifest Manifest) validate() error {
 	if manifest.StartedAtMs <= 0 || durationMs < minimumCampaignMs || durationMs > maximumCampaignMs {
 		return errors.New("campaign time window must be closed and span between one and twenty-four hours")
 	}
+	if !lowerHexCommitPattern.MatchString(manifest.Source.ComisCommit) ||
+		!lowerHexCommitPattern.MatchString(manifest.Source.DevCrewCommit) {
+		return errors.New("source commits must be exact lowercase 40-character Git object IDs")
+	}
+	if manifest.Protocol.ID != comiswire.ProtocolID || manifest.Protocol.Digest != comiswire.BundleDigest {
+		return errors.New("manifest protocol identity differs from the compiled protocol pin")
+	}
+	if err := manifest.validateArtifacts(); err != nil {
+		return err
+	}
 	for name, path := range map[string]string{
 		"devcrew.cliPath":             manifest.DevCrew.CLIPath,
 		"devcrew.socketPath":          manifest.DevCrew.SocketPath,
@@ -215,6 +256,54 @@ func (manifest Manifest) validate() error {
 		return err
 	}
 	return manifest.validateTasksAndOperations()
+}
+
+func (manifest Manifest) validateArtifacts() error {
+	if len(manifest.Artifacts) != len(requiredArtifactKinds) {
+		return errors.New("runtime artifact catalog must contain exactly the five required product artifacts")
+	}
+	byKind := make(map[string]ArtifactPin, len(manifest.Artifacts))
+	paths := make(map[string]struct{}, len(manifest.Artifacts))
+	for _, artifact := range manifest.Artifacts {
+		if !contains(requiredArtifactKinds, artifact.Kind) {
+			return fmt.Errorf("runtime artifact kind %s is outside the closed artifact catalog", artifact.Kind)
+		}
+		if _, exists := byKind[artifact.Kind]; exists {
+			return errors.New("runtime artifact kinds must be unique")
+		}
+		if !filepath.IsAbs(artifact.Path) || filepath.Clean(artifact.Path) != artifact.Path {
+			return errors.New("runtime artifact paths must be clean and absolute")
+		}
+		if _, exists := paths[artifact.Path]; exists {
+			return errors.New("runtime artifact paths must be unique")
+		}
+		if !lowerHexDigestPattern.MatchString(artifact.SHA256) {
+			return errors.New("runtime artifact SHA-256 pins must be lowercase 64-character digests")
+		}
+		if !safeReferencePattern.MatchString(artifact.Version) {
+			return errors.New("runtime artifact versions must be bounded identifiers")
+		}
+		byKind[artifact.Kind] = artifact
+		paths[artifact.Path] = struct{}{}
+	}
+	for _, kind := range requiredArtifactKinds {
+		if _, exists := byKind[kind]; !exists {
+			return fmt.Errorf("runtime artifact catalog is missing %s", kind)
+		}
+	}
+	if byKind["comis-cli"].Path != manifest.Comis.CLIScriptPath {
+		return errors.New("comis-cli artifact path must equal comis.cliScriptPath")
+	}
+	if byKind["devcrew"].Path != manifest.DevCrew.CLIPath {
+		return errors.New("devcrew artifact path must equal devcrew.cliPath")
+	}
+	devCrewVersion := byKind["devcrew"].Version
+	for _, kind := range []string{"devcrew-mcp", "devcrew-report", "devcrew-service"} {
+		if byKind[kind].Version != devCrewVersion {
+			return errors.New("all four DevCrew artifacts must declare one exact version")
+		}
+	}
+	return nil
 }
 
 func validDisplayName(value string) bool {

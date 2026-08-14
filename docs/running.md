@@ -224,7 +224,12 @@ bot credential remains in Comis secret management; it is never a workflow input.
 
 Copy `test/live/manifest.example.json` outside the repository, replace every
 placeholder with current content-free identities, set mode `0600`, and keep the
-evidence root owner-private. The manifest must describe exactly two ship lanes:
+evidence root owner-private. Record both exact source commits, the compiled
+protocol ID and digest, and the SHA-256 plus reported version of the Comis CLI
+and all four DevCrew executables. Artifact paths must select canonical installed
+files rather than `PATH` symlinks. Runtime validation re-hashes each file and
+refuses protocol drift before the campaign starts. The manifest must describe
+exactly two ship lanes:
 one Codex/Claude profile per lane, exactly one recovered candidate, one handback,
 and one cleanup operation per task. Its eleven opaque `e0cp-*` markers are sent by
 the human from the Telegram app at the named checkpoints. The unrelated marker

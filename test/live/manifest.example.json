@@ -3,6 +3,21 @@
   "campaignId": "e0-real-telegram-YYYYMMDD",
   "startedAtMs": 0,
   "endedAtMs": 0,
+  "source": {
+    "comisCommit": "0000000000000000000000000000000000000000",
+    "devcrewCommit": "0000000000000000000000000000000000000000"
+  },
+  "protocol": {
+    "id": "comis.capability-service/1",
+    "digest": "fff96cf5105d9cda9da5dfd2fbc7e9f15242754f63d7f8155cde4ef874d5c52b"
+  },
+  "artifacts": [
+    {"kind": "comis-cli", "path": "/opt/comis/packages/cli/dist/cli.js", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-comis-version"},
+    {"kind": "devcrew", "path": "/opt/comis-dev-crew/bin/devcrew", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-devcrew-version"},
+    {"kind": "devcrew-mcp", "path": "/opt/comis-dev-crew/bin/devcrew-mcp", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-devcrew-version"},
+    {"kind": "devcrew-report", "path": "/opt/comis-dev-crew/bin/devcrew-report", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-devcrew-version"},
+    {"kind": "devcrew-service", "path": "/opt/comis-dev-crew/bin/devcrew-service", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-devcrew-version"}
+  ],
   "devcrew": {
     "cliPath": "/opt/comis-dev-crew/bin/devcrew",
     "socketPath": "/run/devcrew-e0-live/service.sock",

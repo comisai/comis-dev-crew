@@ -3,6 +3,8 @@ package livecampaign
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -90,6 +92,11 @@ func ValidateRuntime(manifest Manifest) error {
 	if err := manifest.validate(); err != nil {
 		return fmt.Errorf("validate protected runtime: %w", err)
 	}
+	for _, artifact := range manifest.Artifacts {
+		if err := validatePinnedArtifact(artifact); err != nil {
+			return fmt.Errorf("validate protected runtime: %s artifact: %w", artifact.Kind, err)
+		}
+	}
 	for name, path := range map[string]string{
 		"DevCrew CLI": manifest.DevCrew.CLIPath,
 		"Node":        manifest.Comis.NodePath,
@@ -136,6 +143,30 @@ func ValidateRuntime(manifest Manifest) error {
 		return errors.New("validate protected runtime: GH_TOKEN credential prerequisite is unavailable")
 	}
 	return nil
+}
+
+func validatePinnedArtifact(pin ArtifactPin) error {
+	if err := validateCanonicalRegularFile(pin.Path); err != nil {
+		return err
+	}
+	if pin.Kind != "comis-cli" {
+		if err := validateExecutable(pin.Path); err != nil {
+			return err
+		}
+	}
+	contents, err := os.ReadFile(pin.Path)
+	if err != nil {
+		return errors.New("read pinned artifact")
+	}
+	if sha256Hex(contents) != pin.SHA256 {
+		return errors.New("artifact SHA-256 differs from the protected manifest")
+	}
+	return nil
+}
+
+func sha256Hex(contents []byte) string {
+	digest := sha256.Sum256(contents)
+	return hex.EncodeToString(digest[:])
 }
 
 func validateExecutable(path string) error {
