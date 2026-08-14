@@ -96,6 +96,7 @@ type WorkerPin struct {
 
 type DevCrewTarget struct {
 	CLIPath      string `json:"cliPath"`
+	CodeRoot     string `json:"codeRoot"`
 	SocketPath   string `json:"socketPath"`
 	RepositoryID string `json:"repositoryId"`
 }
@@ -210,7 +211,9 @@ func (manifest Manifest) validate() error {
 		return errors.New("campaign time window must be closed and span between one and twenty-four hours")
 	}
 	if !lowerHexCommitPattern.MatchString(manifest.Source.ComisCommit) ||
-		!lowerHexCommitPattern.MatchString(manifest.Source.DevCrewCommit) {
+		!lowerHexCommitPattern.MatchString(manifest.Source.DevCrewCommit) ||
+		manifest.Source.ComisCommit == strings.Repeat("0", 40) ||
+		manifest.Source.DevCrewCommit == strings.Repeat("0", 40) {
 		return errors.New("source commits must be exact lowercase 40-character Git object IDs")
 	}
 	if manifest.Protocol.ID != comiswire.ProtocolID || manifest.Protocol.Digest != comiswire.BundleDigest {
@@ -224,6 +227,7 @@ func (manifest Manifest) validate() error {
 	}
 	for name, path := range map[string]string{
 		"devcrew.cliPath":             manifest.DevCrew.CLIPath,
+		"devcrew.codeRoot":            manifest.DevCrew.CodeRoot,
 		"devcrew.socketPath":          manifest.DevCrew.SocketPath,
 		"comis.nodePath":              manifest.Comis.NodePath,
 		"comis.cliScriptPath":         manifest.Comis.CLIScriptPath,

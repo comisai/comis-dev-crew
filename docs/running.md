@@ -227,7 +227,9 @@ placeholder with current content-free identities, set mode `0600`, and keep the
 evidence root owner-private. Record both exact source commits, the compiled
 protocol ID and digest, and the SHA-256 plus reported version of the Comis CLI
 and all four DevCrew executables. Artifact paths must select canonical installed
-files rather than `PATH` symlinks. Runtime validation re-hashes each file and
+files rather than `PATH` symlinks. The canonical `comis.codeRoot` and
+`devcrew.codeRoot` checkouts must have `HEAD` at their respective recorded source
+commit. Runtime validation re-hashes each file and
 executes its fixed `--version` command; it refuses digest, version, or protocol
 drift before the campaign starts. The three isolated systemd units are likewise
 pinned to the SHA-256 of `systemctl cat <unit>` so drop-ins and unit-definition

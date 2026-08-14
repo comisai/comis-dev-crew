@@ -110,6 +110,10 @@ func TestValidateRuntimeRejectsNonSocketAndNonPrivateDataRoot(t *testing.T) {
 	manifest.GitHub.GitPath = program
 	manifest.Services.SystemctlPath = program
 	manifest.Comis.CodeRoot = root
+	manifest.DevCrew.CodeRoot = filepath.Join(root, "devcrew-source")
+	if err := os.Mkdir(manifest.DevCrew.CodeRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	manifest.Comis.DataDir = root
 	manifest.GitHub.PrimaryCheckout = root
 	manifest.DevCrew.SocketPath = filepath.Join(root, "not-a-socket")
@@ -172,6 +176,14 @@ func (executor versionFixtureExecutor) Run(ctx context.Context, command Command)
 			return []byte("codex-cli 0.147.0\n"), nil
 		case "claude":
 			return []byte("2.1.224 (Claude Code)\n"), nil
+		}
+	}
+	if len(command.Args) == 4 && command.Args[0] == "-C" && command.Args[2] == "rev-parse" && command.Args[3] == "HEAD" {
+		if command.Args[1] == executor.manifest.Comis.CodeRoot {
+			return []byte(executor.manifest.Source.ComisCommit + "\n"), nil
+		}
+		if command.Args[1] == executor.manifest.DevCrew.CodeRoot {
+			return []byte(executor.manifest.Source.DevCrewCommit + "\n"), nil
 		}
 	}
 	name := filepath.Base(command.Path)

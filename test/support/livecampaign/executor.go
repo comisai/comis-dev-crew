@@ -147,12 +147,25 @@ func validateRuntime(ctx context.Context, manifest Manifest, executor Executor) 
 		}
 	}
 	for name, path := range map[string]string{
+		"DevCrew code root":    manifest.DevCrew.CodeRoot,
 		"Comis code root":      manifest.Comis.CodeRoot,
 		"Comis data root":      manifest.Comis.DataDir,
 		"Git primary checkout": manifest.GitHub.PrimaryCheckout,
 	} {
 		if err := validateCanonicalDirectory(path); err != nil {
 			return fmt.Errorf("validate protected runtime: %s: %w", name, err)
+		}
+	}
+	for _, source := range []struct {
+		name   string
+		root   string
+		commit string
+	}{
+		{name: "Comis", root: manifest.Comis.CodeRoot, commit: manifest.Source.ComisCommit},
+		{name: "DevCrew", root: manifest.DevCrew.CodeRoot, commit: manifest.Source.DevCrewCommit},
+	} {
+		if err := validatePinnedSource(ctx, manifest.GitHub.GitPath, source.root, source.commit, executor); err != nil {
+			return fmt.Errorf("validate protected runtime: %s source: %w", source.name, err)
 		}
 	}
 	dataInfo, err := os.Stat(manifest.Comis.DataDir)
@@ -168,6 +181,14 @@ func validateRuntime(ctx context.Context, manifest Manifest, executor Executor) 
 	}
 	if os.Getenv("GH_TOKEN") == "" {
 		return errors.New("validate protected runtime: GH_TOKEN credential prerequisite is unavailable")
+	}
+	return nil
+}
+
+func validatePinnedSource(ctx context.Context, gitPath, root, commit string, executor Executor) error {
+	output, err := executor.Run(ctx, Command{Path: gitPath, Args: []string{"-C", root, "rev-parse", "HEAD"}})
+	if err != nil || strings.TrimSpace(string(output)) != commit {
+		return errors.New("source HEAD differs from the protected manifest")
 	}
 	return nil
 }
