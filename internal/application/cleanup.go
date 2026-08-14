@@ -352,18 +352,26 @@ func cleanupVerificationFailure(cause error) error {
 }
 
 func cleanupCommitFailure(cause error) error {
-	if !errors.Is(cause, ErrCleanupOpenHold) {
+	var message, hint string
+	switch {
+	case errors.Is(cause, ErrCleanupOpenHold):
+		message = "cleanup is blocked by an open task hold"
+		hint = "close the exact task cleanup hold, then retry cleanup"
+	case errors.Is(cause, ErrCleanupOpenDecision):
+		message = "cleanup is blocked by an unresolved task decision"
+		hint = "resolve the exact open task decision, then retry cleanup"
+	default:
 		return mutationCommitFailure(cause)
 	}
 	failure, err := domain.NewFailure(
 		domain.ErrorPrecondition,
 		true,
-		"cleanup is blocked by an open task hold",
-		"close the exact task cleanup hold, then retry cleanup",
+		message,
+		hint,
 		cause,
 	)
 	if err != nil {
-		return errors.New("cleanup open hold failure classification failed")
+		return errors.New("cleanup blocker failure classification failed")
 	}
 	return failure
 }

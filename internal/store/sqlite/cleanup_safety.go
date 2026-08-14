@@ -38,7 +38,7 @@ func proveCleanupDatabaseSafety(ctx context.Context, transaction *sql.Tx, task d
             WHERE d.task_handle = ? AND d.kind = 'decision' AND NOT EXISTS (
                 SELECT 1 FROM reports r WHERE r.task_handle = d.task_handle
                 AND r.kind = 'resolution' AND r.external_key = d.external_key
-			)`, args: []any{task.Handle}, blocker: application.ErrPrecondition},
+			)`, args: []any{task.Handle}, blocker: application.ErrCleanupOpenDecision},
 	}
 	for _, check := range queries {
 		var count int

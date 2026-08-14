@@ -184,7 +184,9 @@ cleanup effect.
 Cleanup refuses before release when an operator cleanup hold remains open. The
 error names the closed `open task hold` category and directs the operator to close
 that exact hold; it never includes the operator-authored hold reason. Dirty-worktree
-refusals likewise name the clean-worktree action required before a safe retry.
+refusals likewise name the clean-worktree action required before a safe retry. An
+unresolved decision is a distinct retryable precondition: the error directs the
+operator to resolve that exact task decision without exposing its prompt or answer.
 
 ## Operator CLI surface
 

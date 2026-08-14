@@ -225,7 +225,9 @@ remains authoritative, an operation ID already owned by another command is rejec
 and the service re-proves the clean exact worktree and current forge truth before
 host release and again before removal authorization. Open cleanup holds remain a
 fail-closed pre-release blocker; the operator surface identifies only that closed
-category and never exposes the hold's free-text reason.
+category and never exposes the hold's free-text reason. Unresolved decisions have
+their own closed retryable precondition and operator hint, without exposing
+decision content.
 
 ## Reporter seam
 

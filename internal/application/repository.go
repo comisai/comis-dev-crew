@@ -29,6 +29,16 @@ func (cleanupOpenHoldError) Is(target error) bool { return target == ErrPrecondi
 // the operator-authored hold reason across a transport boundary.
 var ErrCleanupOpenHold error = cleanupOpenHoldError{}
 
+type cleanupOpenDecisionError struct{}
+
+func (cleanupOpenDecisionError) Error() string { return "cleanup decision remains unresolved" }
+
+func (cleanupOpenDecisionError) Is(target error) bool { return target == ErrPrecondition }
+
+// ErrCleanupOpenDecision identifies an unresolved decision without exposing
+// the decision prompt or response across an operator transport.
+var ErrCleanupOpenDecision error = cleanupOpenDecisionError{}
+
 // Repository is the consumer-owned durable port used by canonical handlers.
 // Its mutations are wired only into the service-owned mutation path.
 type Repository interface {
