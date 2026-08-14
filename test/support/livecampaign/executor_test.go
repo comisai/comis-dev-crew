@@ -110,3 +110,20 @@ func TestValidateRuntimeRejectsNonSocketAndNonPrivateDataRoot(t *testing.T) {
 		t.Fatalf("expected non-socket refusal, got %v", err)
 	}
 }
+
+func TestValidatePinnedArtifactRejectsChangedBytes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "artifact")
+	if err := os.WriteFile(path, []byte("expected"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pin := ArtifactPin{Kind: "devcrew", Path: path, SHA256: sha256Hex([]byte("expected")), Version: "dev"}
+	if err := validatePinnedArtifact(pin); err != nil {
+		t.Fatalf("validate unchanged artifact: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("changed"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePinnedArtifact(pin); err == nil || !strings.Contains(err.Error(), "SHA-256") {
+		t.Fatalf("expected changed-artifact refusal, got %v", err)
+	}
+}

@@ -14,6 +14,19 @@ func validManifest() Manifest {
 		CampaignID:    "e0-real-telegram-20260814",
 		StartedAtMs:   1_786_656_000_000,
 		EndedAtMs:     1_786_659_600_000,
+		Source: SourcePins{
+			ComisCommit: strings.Repeat("c", 40), DevCrewCommit: strings.Repeat("d", 40),
+		},
+		Protocol: ProtocolPin{
+			ID: "comis.capability-service/1", Digest: "fff96cf5105d9cda9da5dfd2fbc7e9f15242754f63d7f8155cde4ef874d5c52b",
+		},
+		Artifacts: []ArtifactPin{
+			{Kind: "comis-cli", Path: "/opt/comis/packages/cli/dist/cli.js", SHA256: strings.Repeat("1", 64), Version: "1.0.61"},
+			{Kind: "devcrew", Path: "/opt/devcrew/bin/devcrew", SHA256: strings.Repeat("2", 64), Version: "dev"},
+			{Kind: "devcrew-mcp", Path: "/opt/devcrew/bin/devcrew-mcp", SHA256: strings.Repeat("3", 64), Version: "dev"},
+			{Kind: "devcrew-report", Path: "/opt/devcrew/bin/devcrew-report", SHA256: strings.Repeat("4", 64), Version: "dev"},
+			{Kind: "devcrew-service", Path: "/opt/devcrew/bin/devcrew-service", SHA256: strings.Repeat("5", 64), Version: "dev"},
+		},
 		DevCrew: DevCrewTarget{
 			CLIPath: "/opt/devcrew/bin/devcrew", SocketPath: "/run/devcrew-e0/service.sock",
 			RepositoryID: "comis-repository",
@@ -60,6 +73,26 @@ func validManifest() Manifest {
 			{OperationID: "operation-cleanup-codex", TaskHandle: "task-codex-e0", Command: "CleanupTask"},
 			{OperationID: "operation-cleanup-claude", TaskHandle: "task-claude-e0", Command: "CleanupTask"},
 		},
+	}
+}
+
+func TestManifestRejectsSourceProtocolAndArtifactIdentityDrift(t *testing.T) {
+	manifest := validManifest()
+	manifest.Protocol.Digest = strings.Repeat("0", 64)
+	if _, err := LoadManifest(writeManifest(t, manifest, "-protocol")); err == nil || !strings.Contains(err.Error(), "compiled protocol") {
+		t.Fatalf("expected protocol-drift refusal, got %v", err)
+	}
+
+	manifest = validManifest()
+	manifest.Source.ComisCommit = "short"
+	if _, err := LoadManifest(writeManifest(t, manifest, "-source")); err == nil || !strings.Contains(err.Error(), "source commits") {
+		t.Fatalf("expected source-pin refusal, got %v", err)
+	}
+
+	manifest = validManifest()
+	manifest.Artifacts = manifest.Artifacts[:len(manifest.Artifacts)-1]
+	if _, err := LoadManifest(writeManifest(t, manifest, "-artifact")); err == nil || !strings.Contains(err.Error(), "artifact catalog") {
+		t.Fatalf("expected incomplete-artifact refusal, got %v", err)
 	}
 }
 
