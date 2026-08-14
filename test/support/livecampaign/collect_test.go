@@ -285,6 +285,17 @@ func TestCollectWritesPrivateBoundedEvidenceAndPassingVerdict(t *testing.T) {
 	}
 }
 
+func TestCollectRefusesMissingResourceObservation(t *testing.T) {
+	manifest := validManifest()
+	_, err := Collect(
+		context.Background(), manifest, filepath.Join(t.TempDir(), "evidence"),
+		&fixtureExecutor{manifest: manifest}, manifest.EndedAtMs, ResourceObservation{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "resource observation") {
+		t.Fatalf("Collect(missing resource observation) error = %v", err)
+	}
+}
+
 func TestCollectRefusesStructurallyEmptyComisObservabilityReports(t *testing.T) {
 	for _, test := range []struct {
 		name          string

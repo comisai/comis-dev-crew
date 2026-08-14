@@ -13,7 +13,7 @@ func validManifest() Manifest {
 		SchemaVersion: 1,
 		CampaignID:    "e0-real-telegram-20260814",
 		StartedAtMs:   1_786_656_000_000,
-		EndedAtMs:     1_786_659_600_000,
+		EndedAtMs:     1_786_663_200_000,
 		Source: SourcePins{
 			ComisCommit: strings.Repeat("c", 40), DevCrewCommit: strings.Repeat("d", 40),
 		},
