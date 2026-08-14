@@ -37,6 +37,9 @@ func NewMutations(config MutationConfig) (*Mutations, error) {
 		config.RegistrationNonces == nil || config.Clock == nil {
 		return nil, errors.New("create mutations: store, repositories, workspaces, runtime attachments, task IDs, registration nonces, and clock are required")
 	}
+	if (config.WorkerProfiles == nil) != (config.ValidationProfiles == nil) {
+		return nil, errors.New("create mutations: worker and validation profile checks must be configured together")
+	}
 	if config.PreparationTTL <= 0 || config.PreparationTTL > 24*time.Hour {
 		return nil, errors.New("create mutations: preparation TTL must be within 24 hours")
 	}
@@ -87,6 +90,14 @@ func (mutations *Mutations) PrepareTask(ctx context.Context, command PrepareTask
 	}
 	if err := mutations.repositories.ValidateRepository(ctx, command.RepositoryID); err != nil {
 		return MutationResult{}, &dependencyFailure{message: "repository validation failed", cause: err}
+	}
+	if mutations.workerProfiles != nil {
+		if err := mutations.workerProfiles(command.WorkerProfileID, command.Shape); err != nil {
+			return MutationResult{}, mutationValidationFailure("worker profile is unavailable")
+		}
+		if err := mutations.validationProfiles(command.ValidationProfile); err != nil {
+			return MutationResult{}, mutationValidationFailure("validation profile is unavailable")
+		}
 	}
 	workspace, err := mutations.workspaces.PrepareWorkspace(ctx, WorkspacePreparationRequest{
 		OperationID: command.OperationID, TaskHandle: task.Handle,

@@ -398,6 +398,10 @@ func TestMutations_ValidatesRequiredDependenciesAndCancellation(t *testing.T) {
 		func(config *MutationConfig) { config.PreparationTTL = 0 },
 		func(config *MutationConfig) { config.PreparationTTL = 25 * time.Hour },
 		func(config *MutationConfig) { config.Clock = nil },
+		func(config *MutationConfig) {
+			config.WorkerProfiles = func(string, domain.TaskShape) error { return nil }
+		},
+		func(config *MutationConfig) { config.ValidationProfiles = func(string) error { return nil } },
 	} {
 		config := valid
 		mutate(&config)
