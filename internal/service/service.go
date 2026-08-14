@@ -45,6 +45,8 @@ type Config struct {
 	RuntimeRoot              string
 	ServiceInstanceID        string
 	Repositories             application.RepositoryCatalog
+	WorkerProfiles           application.WorkerProfileValidator
+	ValidationProfiles       application.ValidationProfileValidator
 	Workspaces               application.WorkspacePreparer
 	RuntimeAttachments       application.RuntimeAttachmentCoordinator
 	WorkerHarnesses          application.WorkerHarnessResolver
@@ -387,7 +389,9 @@ func composeMutations(config Config, store *sqlite.Store, clock application.Cloc
 		return nil, nil
 	}
 	mutations, err := application.NewMutations(application.MutationConfig{
-		Store: store, Repositories: config.Repositories, Workspaces: config.Workspaces, TaskIDs: config.TaskIDs,
+		Store: store, Repositories: config.Repositories,
+		WorkerProfiles: config.WorkerProfiles, ValidationProfiles: config.ValidationProfiles,
+		Workspaces: config.Workspaces, TaskIDs: config.TaskIDs,
 		RuntimeAttachments: config.RuntimeAttachments,
 		RegistrationNonces: config.RegistrationNonces,
 		PreparationTTL:     config.PreparationTTL,

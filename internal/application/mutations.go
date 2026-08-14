@@ -16,14 +16,16 @@ import (
 
 // Mutations owns canonical E0 prepare and bind command construction.
 type Mutations struct {
-	store          MutationStore
-	repositories   RepositoryCatalog
-	workspaces     WorkspacePreparer
-	attachments    RuntimeAttachmentCoordinator
-	taskIDs        TaskIDSource
-	nonces         RegistrationNonceSource
-	preparationTTL time.Duration
-	clock          Clock
+	store              MutationStore
+	repositories       RepositoryCatalog
+	workerProfiles     WorkerProfileValidator
+	validationProfiles ValidationProfileValidator
+	workspaces         WorkspacePreparer
+	attachments        RuntimeAttachmentCoordinator
+	taskIDs            TaskIDSource
+	nonces             RegistrationNonceSource
+	preparationTTL     time.Duration
+	clock              Clock
 }
 
 var registrationNoncePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._~-]{15,255}$`)
@@ -39,7 +41,9 @@ func NewMutations(config MutationConfig) (*Mutations, error) {
 		return nil, errors.New("create mutations: preparation TTL must be within 24 hours")
 	}
 	return &Mutations{
-		store: config.Store, repositories: config.Repositories, workspaces: config.Workspaces, attachments: config.RuntimeAttachments,
+		store: config.Store, repositories: config.Repositories,
+		workerProfiles: config.WorkerProfiles, validationProfiles: config.ValidationProfiles,
+		workspaces: config.Workspaces, attachments: config.RuntimeAttachments,
 		taskIDs: config.TaskIDs, nonces: config.RegistrationNonces,
 		preparationTTL: config.PreparationTTL, clock: config.Clock,
 	}, nil

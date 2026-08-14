@@ -143,6 +143,14 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	if err != nil {
 		return Config{}, fmt.Errorf("run service validation composition: %w", err)
 	}
+	config.WorkerProfiles = func(profileID string, shape domain.TaskShape) error {
+		_, resolveErr := profiles.ResolveProfile(profileID, shape)
+		return resolveErr
+	}
+	config.ValidationProfiles = func(profileID string) error {
+		_, resolveErr := catalog.ResolveProfile(profileID)
+		return resolveErr
+	}
 	if validationConfig.MaxOutputBytes < 1 || validationConfig.MaxOutputBytes > 16<<20 ||
 		validationConfig.PollInterval <= 0 || validationConfig.PollInterval > time.Minute {
 		return Config{}, errors.New("run service: validation execution bounds are invalid")
