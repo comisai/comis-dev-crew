@@ -102,8 +102,9 @@ func pinRuntimeMountDirectory(path string) (os.FileInfo, error) {
 	if !info.IsDir() {
 		return nil, errors.New("runtime mounted attachment path is not a directory")
 	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return nil, errors.New("runtime mounted attachment directory permissions are unsafe: group or other access is forbidden")
+	permissions := info.Mode().Perm()
+	if permissions&0o700 != 0o700 || permissions&0o066 != 0 {
+		return nil, errors.New("runtime mounted attachment directory permissions are unsafe: require owner rwx and no group or other read/write access")
 	}
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil || resolved != path {

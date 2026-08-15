@@ -425,13 +425,15 @@ Subcommands:
 A candidate report remains non-terminal until service validation.
 
 This boundary treats both environment values as untrusted selectors. The mount
-directory must already exist without group or other access and must equal its
-`EvalSymlinks` result. The socket must already exist at client construction, be a
-Unix socket with mode `0600`, and keep its pinned inode. The fixed directory and
-exact assigned-name equality must also agree. Any missing, altered, symlinked, or
-differently named target fails closed. Client-construction failures are written to
-worker stderr with their concrete safe reason before command dispatch; a nil
-capability is never used.
+directory must already grant its owner full access while denying group and other
+read/write access; execute-only traversal is permitted so a dedicated worker UID
+can reach its assigned socket without listing the directory. The directory must
+equal its `EvalSymlinks` result. The socket must already exist at client
+construction, be a Unix socket with mode `0600`, and keep its pinned inode. The
+fixed directory and exact assigned-name equality must also agree. Any missing,
+altered, symlinked, or differently named target fails closed. Client-construction
+failures are written to worker stderr with their concrete safe reason before
+command dispatch; a nil capability is never used.
 
 ## Attachment threat boundary
 
