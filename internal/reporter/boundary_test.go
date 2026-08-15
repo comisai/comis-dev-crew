@@ -127,6 +127,9 @@ func TestDevcrewReportBriefProbeConnectsThroughAssignedMountedTarget(t *testing.
 	if err := os.Chmod(socketPath, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(mountRoot, 0o711); err != nil {
+		t.Fatal(err)
+	}
 	info, err := os.Lstat(socketPath)
 	if err != nil {
 		t.Fatal(err)
