@@ -215,6 +215,18 @@ func TestMountedRuntimeClientReproducesRealJailMountShape(t *testing.T) {
 		}
 	})
 
+	t.Run("execute only traversal mount", func(t *testing.T) {
+		mountDirectory := mountedRuntimeTestDirectory(t)
+		socketPath := filepath.Join(mountDirectory, targetName)
+		listenBoundarySocket(t, socketPath, 0o600)
+		if err := os.Chmod(mountDirectory, 0o711); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := newMountedRuntimeClient(socketPath, targetName, mountDirectory, time.Second); err != nil {
+			t.Fatalf("NewMountedRuntimeClient(execute-only traversal mount) error = %v", err)
+		}
+	})
+
 	tests := []struct {
 		name string
 		want string
