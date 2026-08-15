@@ -144,6 +144,12 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 		return Config{}, fmt.Errorf("run service validation composition: %w", err)
 	}
 	config.WorkerProfiles = func(profileID string, shape domain.TaskShape) error {
+		if config.FixtureComposition != nil && profileID == "fixture-worker" {
+			if shape == domain.ShapeShip || shape == domain.ShapeScout {
+				return nil
+			}
+			return workers.ErrProfileShapeUnsupported
+		}
 		_, resolveErr := profiles.ResolveProfile(profileID, shape)
 		return resolveErr
 	}
