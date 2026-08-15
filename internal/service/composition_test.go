@@ -145,6 +145,11 @@ func TestInstalledRuntime_ComposesFixtureBesideRealCandidatePipeline(t *testing.
 		configured.pullRequests == nil || configured.cleanupRemover == nil || configured.cleanupForge == nil {
 		t.Fatalf("installed fixture candidate composition = %#v", configured)
 	}
+	for _, shape := range []domain.TaskShape{domain.ShapeShip, domain.ShapeScout} {
+		if err := configured.WorkerProfiles("fixture-worker", shape); err != nil {
+			t.Fatalf("WorkerProfiles(fixture-worker, %s) error = %v", shape, err)
+		}
+	}
 }
 
 func TestInstalledRuntime_RejectsPartialMixedAndUnverifiedConfiguration(t *testing.T) {
