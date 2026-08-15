@@ -376,7 +376,7 @@ func (client *RuntimeClient) call(ctx context.Context, request runtimeRequest) (
 	if client.mountInfo != nil {
 		currentMount, mountErr := os.Lstat(client.mountDirectory)
 		if mountErr != nil || !os.SameFile(client.mountInfo, currentMount) || !currentMount.IsDir() ||
-			currentMount.Mode()&os.ModeSymlink != 0 || currentMount.Mode().Perm()&0o077 != 0 {
+			currentMount.Mode()&os.ModeSymlink != 0 || !safeRuntimeMountPermissions(currentMount.Mode()) {
 			return RuntimeOutcome{}, errors.New("call runtime attachment: protected mount identity changed")
 		}
 	}
