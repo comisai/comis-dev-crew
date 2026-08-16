@@ -32,7 +32,15 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeRelayIdentityUpgr
 			record.RelaySeed = upgrade.RelaySeed
 			_, err = publishRuntimeAttachmentIdentity(descriptor, upgrade.TaskHandle, record, &prior, nil)
 		} else {
-			err = upgradeLegacyRuntimeAttachmentIdentity(descriptor, upgrade)
+			_, _, legacyFound, legacyErr := readLegacyRuntimeAttachmentIdentityRecord(descriptor, upgrade.TaskHandle)
+			switch {
+			case legacyErr == nil && legacyFound:
+				err = upgradeLegacyRuntimeAttachmentIdentity(descriptor, upgrade)
+			case readErr != nil || legacyErr != nil:
+				err = errors.New("runtime relay identity authority is ambiguous")
+			default:
+				err = upgradeBaseRuntimeAttachmentIdentity(descriptor, upgrade)
+			}
 		}
 		closeErr := closeRuntimeRootDescriptor(descriptor)
 		if err != nil || closeErr != nil {
@@ -43,6 +51,85 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeRelayIdentityUpgr
 		}
 	}
 	return nil
+}
+
+func upgradeBaseRuntimeAttachmentIdentity(
+	runtimeRootDescriptor int,
+	upgrade application.RuntimeRelayIdentityUpgrade,
+) error {
+	if !runtimeAttachmentPathAbsent(runtimeRootDescriptor, runtimeAttachmentCreationName(upgrade.TaskHandle)) {
+		return errors.New("base runtime relay identity artifact is ambiguous")
+	}
+	taskDescriptor, taskIdentity, missing, err := openTaskRuntimeDirectory(runtimeRootDescriptor, upgrade.TaskHandle)
+	if err != nil {
+		return err
+	}
+	if missing {
+		record := runtimeAttachmentIdentityRecord{
+			Stage: runtimeAttachmentCreatingIntent, RelaySeed: upgrade.RelaySeed,
+		}
+		_, err := publishRuntimeAttachmentIdentity(
+			runtimeRootDescriptor, upgrade.TaskHandle, record, nil, nil,
+		)
+		return err
+	}
+	closeTask := func(resultErr error) error {
+		return errors.Join(resultErr, unix.Close(taskDescriptor))
+	}
+	if err := unix.Fsync(taskDescriptor); err != nil {
+		return closeTask(errors.New("base runtime relay identity artifact cannot be synchronized"))
+	}
+	taskIdentity, err = runtimeAttachmentDescriptorIdentity(taskDescriptor)
+	if err != nil {
+		return closeTask(err)
+	}
+	socketIdentity, mode, socketFound, err := readPinnedRuntimeSocketIdentity(taskDescriptor)
+	if err != nil {
+		return closeTask(err)
+	}
+	record := runtimeAttachmentIdentityRecord{
+		Stage: runtimeAttachmentCreating, Task: taskIdentity, RelaySeed: upgrade.RelaySeed,
+	}
+	if socketFound {
+		if mode&unix.S_IFMT != unix.S_IFSOCK || mode&0o777 != 0o600 {
+			return closeTask(errors.New("base runtime relay identity socket is unsafe"))
+		}
+		if !runtimeAttachmentDirectoryContainsOnly(taskDescriptor, "attachment.sock") {
+			return closeTask(errors.New("base runtime relay identity directory is ambiguous"))
+		}
+		record.Stage = runtimeAttachmentActive
+		record.Socket = socketIdentity
+	} else if !runtimeAttachmentDirectoryEmpty(taskDescriptor) {
+		return closeTask(errors.New("base runtime relay identity artifact is ambiguous"))
+	}
+	_, err = publishRuntimeAttachmentIdentity(
+		runtimeRootDescriptor, upgrade.TaskHandle, record, nil, nil,
+	)
+	return closeTask(err)
+}
+
+func runtimeAttachmentDirectoryContainsOnly(descriptor int, expected string) bool {
+	duplicate, err := unix.Dup(descriptor)
+	if err != nil {
+		return false
+	}
+	directory := os.NewFile(uintptr(duplicate), "base-runtime-attachment-directory")
+	if directory == nil {
+		_ = unix.Close(duplicate)
+		return false
+	}
+	var names []string
+	var readErr error
+	for len(names) < 2 {
+		var batch []string
+		batch, readErr = directory.Readdirnames(2 - len(names))
+		names = append(names, batch...)
+		if readErr != nil || len(batch) == 0 {
+			break
+		}
+	}
+	closeErr := directory.Close()
+	return len(names) == 1 && names[0] == expected && errors.Is(readErr, io.EOF) && closeErr == nil
 }
 
 func upgradeLegacyRuntimeAttachmentIdentity(

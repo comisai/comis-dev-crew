@@ -13,6 +13,7 @@ import (
 const maximumGitOutputBytes = 8192
 
 var errGitOutputTooLarge = errors.New("git output exceeded the configured bound")
+var errGitInfrastructure = errors.New("git execution infrastructure is unavailable")
 
 type boundedBuffer struct {
 	buffer bytes.Buffer
@@ -102,7 +103,7 @@ func executeGit(ctx context.Context, executable string, arguments ...string) ([]
 		if errors.As(err, &exit) {
 			return append([]byte(nil), stdout.buffer.Bytes()...), exit.ExitCode(), nil
 		}
-		return nil, -1, fmt.Errorf("git command execution failed: %w", err)
+		return nil, -1, fmt.Errorf("git command execution failed: %w", errGitInfrastructure)
 	}
 	return append([]byte(nil), stdout.buffer.Bytes()...), 0, nil
 }

@@ -48,6 +48,9 @@ func (coordinator *runtimeAttachmentCoordinator) ReleaseRuntimeAttachment(ctx co
 	delete(coordinator.entries, taskHandle)
 	coordinator.mu.Unlock()
 	if entry != nil {
+		if err := coordinator.releaseRuntimeServer(entry.server); err != nil {
+			return errors.Join(err, entry.server.Close(), pinned.close())
+		}
 		if err := entry.server.Close(); err != nil {
 			return errors.Join(err, pinned.close())
 		}
@@ -68,15 +71,19 @@ func (coordinator *runtimeAttachmentCoordinator) ReleaseRuntimeAttachment(ctx co
 	return nil
 }
 
-func (coordinator *runtimeAttachmentCoordinator) hasRuntimeServer(server *reporter.RuntimeServer) bool {
-	coordinator.mu.Lock()
-	defer coordinator.mu.Unlock()
-	for _, entry := range coordinator.entries {
-		if entry.server == server {
-			return true
-		}
+func (coordinator *runtimeAttachmentCoordinator) releaseRuntimeServer(server *reporter.RuntimeServer) error {
+	release := runtimeAttachmentRelease{server: server, ready: make(chan error, 1)}
+	select {
+	case coordinator.releases <- release:
+	case <-coordinator.runDone:
+		return errors.New("release runtime attachment: coordinator stopped")
 	}
-	return false
+	select {
+	case err := <-release.ready:
+		return err
+	case <-coordinator.runDone:
+		return errors.New("release runtime attachment: coordinator stopped")
+	}
 }
 
 func closeRuntimeServers(servers []*reporter.RuntimeServer) error {

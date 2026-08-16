@@ -31,7 +31,10 @@ func (registry *Registry) InspectCandidate(ctx context.Context, request Candidat
 		if ctx.Err() != nil {
 			return CandidateSnapshot{}, ctx.Err()
 		}
-		return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: worktree identity is invalid: %w", ErrCandidateWorktreeUnverified)
+		if errors.Is(err, errCandidateWorktreeStructural) {
+			return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: worktree identity is invalid: %w", ErrCandidateWorktreeUnverified)
+		}
+		return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: worktree inspection failed: %w", err)
 	}
 	entries, err := registry.worktreeEntries(ctx, repository)
 	if err != nil {
@@ -47,6 +50,9 @@ func (registry *Registry) InspectCandidate(ctx context.Context, request Candidat
 		if ctx.Err() != nil {
 			return CandidateSnapshot{}, ctx.Err()
 		}
+		if errors.Is(err, errGitInfrastructure) || errors.Is(err, errFilesystemInfrastructure) {
+			return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: branch inspection failed: %w", err)
+		}
 		return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: branch identity differs: %w", ErrCandidateWorktreeUnverified)
 	}
 	head, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.WorktreePath,
@@ -55,6 +61,9 @@ func (registry *Registry) InspectCandidate(ctx context.Context, request Candidat
 		if ctx.Err() != nil {
 			return CandidateSnapshot{}, ctx.Err()
 		}
+		if errors.Is(err, errGitInfrastructure) || errors.Is(err, errFilesystemInfrastructure) {
+			return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: head inspection failed: %w", err)
+		}
 		return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: head identity differs: %w", ErrCandidateWorktreeUnverified)
 	}
 	status, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.WorktreePath,
@@ -62,6 +71,9 @@ func (registry *Registry) InspectCandidate(ctx context.Context, request Candidat
 	if err != nil {
 		if ctx.Err() != nil {
 			return CandidateSnapshot{}, ctx.Err()
+		}
+		if errors.Is(err, errGitInfrastructure) || errors.Is(err, errFilesystemInfrastructure) {
+			return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: status inspection failed: %w", err)
 		}
 		return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: worktree status is unavailable: %w", ErrCandidateWorktreeUnverified)
 	}

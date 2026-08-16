@@ -10,6 +10,7 @@ import (
 )
 
 var repositoryIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,63}$`)
+var errCandidateWorktreeStructural = errors.New("task worktree structure is unverified")
 
 // Registry is an immutable map from operator-owned IDs to verified repository
 // identities. It performs no Git mutation and launches no worker.
@@ -100,25 +101,43 @@ func (registry *Registry) ValidateWorktree(ctx context.Context, repositoryID, pa
 		return Worktree{}, fmt.Errorf("validate task worktree: %w", err)
 	}
 	if err := validateCanonicalDirectory(path); err != nil {
-		return Worktree{}, safePathError("validate task worktree", err)
+		if errors.Is(err, errFilesystemInfrastructure) {
+			return Worktree{}, err
+		}
+		return Worktree{}, candidateWorktreeStructuralError(safePathError("validate task worktree", err))
 	}
 	if !pathWithin(repository.WorktreeRoot, path, true) || path == repository.PrimaryCheckout {
-		return Worktree{}, errors.New("validate task worktree: path is outside its dedicated root")
+		return Worktree{}, candidateWorktreeStructuralError(
+			errors.New("validate task worktree: path is outside its dedicated root"),
+		)
 	}
 	if err := validateWorktreeMarker(path); err != nil {
-		return Worktree{}, safePathError("validate task worktree", err)
+		if errors.Is(err, errFilesystemInfrastructure) {
+			return Worktree{}, err
+		}
+		return Worktree{}, candidateWorktreeStructuralError(safePathError("validate task worktree", err))
 	}
 	commonDirectory, identity, err := inspectGitWorktree(ctx, registry.gitExecutable, path)
 	if err != nil {
-		return Worktree{}, err
+		if errors.Is(err, errGitInfrastructure) || errors.Is(err, errFilesystemInfrastructure) ||
+			errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return Worktree{}, err
+		}
+		return Worktree{}, candidateWorktreeStructuralError(err)
 	}
 	if commonDirectory != repository.GitCommonDir || identity != repository.GitCommonDirIdentity {
-		return Worktree{}, errors.New("validate task worktree: git common-directory identity differs")
+		return Worktree{}, candidateWorktreeStructuralError(
+			errors.New("validate task worktree: git common-directory identity differs"),
+		)
 	}
 	return Worktree{
 		RepositoryID: repository.ID, CanonicalPath: path,
 		GitCommonDir: commonDirectory, GitCommonDirIdentity: identity,
 	}, nil
+}
+
+func candidateWorktreeStructuralError(cause error) error {
+	return fmt.Errorf("%w: %w", errCandidateWorktreeStructural, cause)
 }
 
 func validateApprovedRoots(configured []string) ([]string, error) {

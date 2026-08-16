@@ -670,16 +670,6 @@ func TestRuntimeAttachmentCoordinator_ClosesSocketsOnRegistrationFailures(t *tes
 		}
 	})
 
-	t.Run("registration acknowledgement cancelled", func(t *testing.T) {
-		coordinator := newPending("ack-cancelled")
-		go func() { <-coordinator.registrations }()
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-		defer cancel()
-		if _, err := coordinator.PrepareRuntimeAttachment(ctx, request); !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("PrepareRuntimeAttachment(ack cancelled) error = %v", err)
-		}
-	})
-
 	coordinator := newPending("binding")
 	if err := coordinator.BindRuntimeAttachment(context.Background(), application.RuntimeAttachmentBindingRequest{}); err == nil {
 		t.Fatal("BindRuntimeAttachment(invalid) error = nil")

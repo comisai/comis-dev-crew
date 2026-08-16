@@ -12,7 +12,7 @@ import (
 func commonDirectoryIdentity(path string) (string, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
-		return "", fmt.Errorf("inspect git common directory identity: %w", err)
+		return "", fmt.Errorf("inspect git common directory identity: %w", errFilesystemInfrastructure)
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
