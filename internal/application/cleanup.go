@@ -276,6 +276,11 @@ func (coordinator *CleanupCoordinator) CleanupTask(ctx context.Context, command 
 				receipt.State != ManagedRunReleased {
 				return MutationResult{}, errors.New("cleanup task: host release acknowledgement differs")
 			}
+			record, err = coordinator.config.Store.RecordTaskCleanupHostRelease(ctx, TaskCleanupHostReleaseMutation{
+				OperationID: record.OperationID, SubjectDigest: record.SubjectDigest, Snapshot: snapshot,
+				DeliveryTruth: truth, Receipt: receipt, At: coordinator.config.Clock(),
+			})
+		case CleanupHostReleased:
 			if releaseErr := coordinator.config.Attachments.ReleaseRuntimeAttachment(ctx, record.TaskHandle); releaseErr != nil {
 				return MutationResult{}, cleanupDependencyFailure(
 					"runtime attachment release failed",
@@ -283,11 +288,6 @@ func (coordinator *CleanupCoordinator) CleanupTask(ctx context.Context, command 
 					releaseErr,
 				)
 			}
-			record, err = coordinator.config.Store.RecordTaskCleanupHostRelease(ctx, TaskCleanupHostReleaseMutation{
-				OperationID: record.OperationID, SubjectDigest: record.SubjectDigest, Snapshot: snapshot,
-				DeliveryTruth: truth, Receipt: receipt, At: coordinator.config.Clock(),
-			})
-		case CleanupHostReleased:
 			snapshot, truth, verifyErr := coordinator.verifyCurrentSafety(ctx, record)
 			if verifyErr != nil {
 				return MutationResult{}, cleanupVerificationFailure(verifyErr)

@@ -60,18 +60,19 @@ func TestCleanupCoordinator_ReleasesHostThenRemovesExactDeliveredWorkspace(t *te
 	}
 }
 
-func TestCleanupCoordinator_StopsBeforeHostReleaseRecordWhenAttachmentReleaseFails(t *testing.T) {
+func TestCleanupCoordinator_PersistsHostReleaseBeforeRetryableAttachmentFailure(t *testing.T) {
 	record := cleanupFixtureRecord(strings.Repeat("b", 40))
 	store := &cleanupStoreFixture{record: record}
 	attachments := &cleanupAttachmentReleaseFixture{err: errors.New("attachment unavailable")}
+	releaser := &cleanupReleaseFixture{}
+	workspace := &cleanupWorkspaceFixture{snapshot: cleanupFixtureSnapshot(record, record.HeadRevision)}
+	forge := &cleanupForgeFixture{truth: PullRequestDeliveryTruth{
+		RepositoryID: record.RepositoryID, PullRequestID: record.PullRequestID,
+		HeadRevision: record.HeadRevision, Checks: []ForgeCheckTruth{{Name: "ci/unit", Conclusion: domain.CheckPassed}},
+	}}
 	coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
-		Store:      store,
-		Workspaces: &cleanupWorkspaceFixture{snapshot: cleanupFixtureSnapshot(record, record.HeadRevision)},
-		Forge: &cleanupForgeFixture{truth: PullRequestDeliveryTruth{
-			RepositoryID: record.RepositoryID, PullRequestID: record.PullRequestID,
-			HeadRevision: record.HeadRevision, Checks: []ForgeCheckTruth{{Name: "ci/unit", Conclusion: domain.CheckPassed}},
-		}},
-		Releaser: &cleanupReleaseFixture{}, Attachments: attachments, Remover: &cleanupRemovalFixture{},
+		Store: store, Workspaces: workspace, Forge: forge, Releaser: releaser,
+		Attachments: attachments, Remover: &cleanupRemovalFixture{},
 		Clock: func() time.Time { return record.ReleasedAt },
 	})
 	if err != nil {
@@ -86,8 +87,19 @@ func TestCleanupCoordinator_StopsBeforeHostReleaseRecordWhenAttachmentReleaseFai
 		failure.Hint != "inspect the exact task runtime attachment before retrying cleanup" {
 		t.Fatalf("CleanupTask(attachment release) error = %#v", cleanupErr)
 	}
-	if attachments.calls != 1 || store.releaseCalls != 0 || store.authorizeCalls != 0 || store.completeCalls != 0 {
-		t.Fatalf("attachment failure advanced cleanup: attachments=%d store=%#v", attachments.calls, store)
+	if attachments.calls != 1 || releaser.calls != 1 || store.releaseCalls != 1 ||
+		store.record.Stage != CleanupHostReleased || store.authorizeCalls != 0 || store.completeCalls != 0 {
+		t.Fatalf("attachment failure posture: attachments=%d release=%d store=%#v", attachments.calls, releaser.calls, store)
+	}
+	attachments.err = nil
+	result, retryErr := coordinator.CleanupTask(context.Background(), CleanupTaskCommand{
+		OperationID: record.OperationID, TaskHandle: record.TaskHandle,
+	})
+	if retryErr != nil || result.Task.State != domain.TaskCleaned || attachments.calls != 2 || releaser.calls != 1 ||
+		store.releaseCalls != 1 || store.authorizeCalls != 1 || store.completeCalls != 1 ||
+		workspace.calls != 2 || forge.calls != 2 {
+		t.Fatalf("CleanupTask(attachment retry) = %#v, %v; attachments=%d release=%d store=%#v",
+			result, retryErr, attachments.calls, releaser.calls, store)
 	}
 }
 

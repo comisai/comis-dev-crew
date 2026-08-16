@@ -246,28 +246,45 @@ func (adapter *GitHubAdapter) readChecks(
 		return nil, err
 	}
 	type observedCheck struct {
-		id         int64
-		startedAt  time.Time
-		conclusion domain.CheckConclusion
+		id           int64
+		startedAt    time.Time
+		recencyKnown bool
+		conclusion   domain.CheckConclusion
 	}
 	observed := make(map[string]observedCheck, len(response.Runs))
+	seenIDs := make(map[int64]struct{}, len(response.Runs))
 	for _, run := range response.Runs {
 		if run.Name == "" || len(run.Name) > 128 || strings.TrimSpace(run.Name) != run.Name {
 			return nil, errors.New("deliver GitHub pull request: check identity is invalid")
 		}
-		startedAt, err := time.Parse(time.RFC3339, run.StartedAt)
-		if run.ID < 1 || err != nil || startedAt.IsZero() {
-			return nil, errors.New("deliver GitHub pull request: check recency is invalid")
+		if run.ID < 1 {
+			return nil, errors.New("deliver GitHub pull request: check identity is invalid")
+		}
+		if _, duplicate := seenIDs[run.ID]; duplicate {
+			return nil, errors.New("deliver GitHub pull request: check identity is duplicated")
+		}
+		seenIDs[run.ID] = struct{}{}
+		startedAt := time.Time{}
+		recencyKnown := run.StartedAt != ""
+		if recencyKnown {
+			var err error
+			startedAt, err = time.Parse(time.RFC3339, run.StartedAt)
+			if err != nil || startedAt.IsZero() {
+				return nil, errors.New("deliver GitHub pull request: check recency is invalid")
+			}
 		}
 		current, exists := observed[run.Name]
-		if exists && run.ID == current.id {
-			return nil, errors.New("deliver GitHub pull request: check identity is duplicated")
+		if exists && (!current.recencyKnown || !recencyKnown) {
+			current.recencyKnown = false
+			current.conclusion = domain.CheckUnknown
+			observed[run.Name] = current
+			continue
 		}
 		if exists && (startedAt.Before(current.startedAt) || startedAt.Equal(current.startedAt) && run.ID < current.id) {
 			continue
 		}
 		observed[run.Name] = observedCheck{
-			id: run.ID, startedAt: startedAt,
+			id: run.ID, startedAt: startedAt, recencyKnown: recencyKnown,
 			conclusion: githubCheckConclusion(run.Status, run.Conclusion),
 		}
 	}

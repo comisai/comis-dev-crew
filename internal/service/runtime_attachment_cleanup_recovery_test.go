@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,18 @@ func TestRuntimeAttachmentCoordinator_DoesNotRestoreDurablyReleasedAttachment(t 
 			}
 			taskRoot := filepath.Join(runtimeRoot, task.Handle)
 			if err := os.Mkdir(taskRoot, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			socketPath := filepath.Join(taskRoot, "attachment.sock")
+			listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			listener.SetUnlinkOnClose(false)
+			if err := os.Chmod(socketPath, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := listener.Close(); err != nil {
 				t.Fatal(err)
 			}
 			servers, err := coordinator.recoverRuntimeAttachments(context.Background())
