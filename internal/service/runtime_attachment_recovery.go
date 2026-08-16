@@ -30,7 +30,7 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeAttachments(ctx c
 	}
 	servers := make([]*reporter.RuntimeServer, 0, len(tasks))
 	for _, task := range tasks {
-		if _, refused := coordinator.runtimeRelayIdentityRefusals[task.Handle]; refused {
+		if _, refused := coordinator.runtimeAttachmentRefusals[task.Handle]; refused {
 			continue
 		}
 		if task.State == domain.TaskCleaned {

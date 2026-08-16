@@ -228,6 +228,8 @@ func readPinnedRuntimeSocketIdentity(
 	return identity, uint32(stat.Mode), true, err
 }
 
+var errRuntimeAttachmentPreparationUnproven = errors.New("runtime attachment preparation authority is unproven")
+
 func (coordinator *runtimeAttachmentCoordinator) removeTaskRuntimeDirectory(taskHandle string) error {
 	if domain.ValidateTaskHandle(taskHandle) != nil {
 		return errors.New("task runtime directory identity is invalid")
@@ -244,6 +246,7 @@ func (coordinator *runtimeAttachmentCoordinator) removeTaskRuntimeDirectory(task
 		if !runtimeAttachmentPathAbsent(runtimeRootDescriptor, taskHandle) ||
 			!runtimeAttachmentPathAbsent(runtimeRootDescriptor, runtimeAttachmentCreationName(taskHandle)) {
 			return errors.Join(
+				errRuntimeAttachmentPreparationUnproven,
 				errors.New("task runtime directory identity is unproven; path preserved"),
 				closeRuntimeRootDescriptor(runtimeRootDescriptor),
 			)
@@ -271,10 +274,16 @@ func removeRuntimeAttachmentCreationIntent(
 	_ runtimeAttachmentIdentityRecord,
 ) error {
 	if !runtimeAttachmentPathAbsent(runtimeRootDescriptor, taskHandle) {
-		return errors.New("task runtime directory identity is unproven; path preserved")
+		return errors.Join(
+			errRuntimeAttachmentPreparationUnproven,
+			errors.New("task runtime directory identity is unproven; path preserved"),
+		)
 	}
 	if !runtimeAttachmentPathAbsent(runtimeRootDescriptor, runtimeAttachmentCreationName(taskHandle)) {
-		return errors.New("task runtime creation directory is unproven; path preserved")
+		return errors.Join(
+			errRuntimeAttachmentPreparationUnproven,
+			errors.New("task runtime creation directory is unproven; path preserved"),
+		)
 	}
 	return nil
 }

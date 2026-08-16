@@ -448,7 +448,7 @@ func TestCandidateSupervisor_RunRecoversFromTemporaryGitHubStatusEndToEnd(t *tes
 	if err := supervisor.Run(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want context.Canceled after recovered delivery", err)
 	}
-	if requests != 4 || pusher.calls != 2 || fixture.store.task.State != domain.TaskCandidateComplete {
+	if requests != 5 || pusher.calls != 2 || fixture.store.task.State != domain.TaskCandidateComplete {
 		t.Fatalf("recovered GitHub delivery: requests=%d pushes=%d state=%q", requests, pusher.calls, fixture.store.task.State)
 	}
 	t.Logf("GitHub 503 was retried by the live candidate supervisor: http_requests=%d pushes=%d final_state=%s",

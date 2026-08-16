@@ -748,6 +748,20 @@ func (*runtimeTransitionStore) ListTaskPreparationIntents(context.Context) ([]ap
 	return nil, nil
 }
 
+func (*runtimeTransitionStore) ListRuntimeAttachmentRecoveryRefusals(
+	context.Context,
+) ([]application.RuntimeAttachmentRecoveryRefusal, error) {
+	return nil, nil
+}
+
+func (*runtimeTransitionStore) RefuseRuntimeAttachmentRecovery(
+	context.Context,
+	application.TaskPreparationIntent,
+	time.Time,
+) error {
+	return nil
+}
+
 func (*runtimeTransitionStore) ListRuntimeRelayIdentityUpgrades(context.Context) ([]application.RuntimeRelayIdentityUpgrade, error) {
 	return nil, nil
 }

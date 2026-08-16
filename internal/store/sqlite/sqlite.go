@@ -365,7 +365,10 @@ func (store *Store) migrate(ctx context.Context) error {
 	if err := store.applyRuntimeRelayUpgradeMigration(ctx); err != nil {
 		return err
 	}
-	return store.applyVersionedMigration(ctx, 21, runtimeRelayRefusalMigration)
+	if err := store.applyVersionedMigration(ctx, 21, runtimeRelayRefusalMigration); err != nil {
+		return err
+	}
+	return store.applyVersionedMigration(ctx, 22, runtimeAttachmentRecoveryRefusalMigration)
 }
 func (store *Store) applyVersionedMigration(ctx context.Context, version int, migration string) error {
 	var applied int

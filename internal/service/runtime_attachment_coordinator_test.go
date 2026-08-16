@@ -670,20 +670,42 @@ func runtimeAttachmentRequest(t *testing.T, workspace, taskHandle string) applic
 }
 
 type runtimeAttachmentRecoveryStore struct {
-	tasks            []domain.Task
-	preparationReads int
-	cleanupRecord    application.TaskCleanupRecord
-	cleanupFound     bool
-	cleanupReads     int
-	cleanupErr       error
+	tasks               []domain.Task
+	taskReads           int
+	preparationIntents  []application.TaskPreparationIntent
+	preparationRefusals []application.RuntimeAttachmentRecoveryRefusal
+	preparationReads    int
+	cleanupRecord       application.TaskCleanupRecord
+	cleanupFound        bool
+	cleanupReads        int
+	cleanupErr          error
 }
 
 func (store *runtimeAttachmentRecoveryStore) ListTasks(context.Context) ([]domain.Task, error) {
+	store.taskReads++
 	return append([]domain.Task(nil), store.tasks...), nil
 }
 
-func (*runtimeAttachmentRecoveryStore) ListTaskPreparationIntents(context.Context) ([]application.TaskPreparationIntent, error) {
-	return nil, nil
+func (store *runtimeAttachmentRecoveryStore) ListTaskPreparationIntents(context.Context) ([]application.TaskPreparationIntent, error) {
+	return append([]application.TaskPreparationIntent(nil), store.preparationIntents...), nil
+}
+
+func (store *runtimeAttachmentRecoveryStore) ListRuntimeAttachmentRecoveryRefusals(
+	context.Context,
+) ([]application.RuntimeAttachmentRecoveryRefusal, error) {
+	return append([]application.RuntimeAttachmentRecoveryRefusal(nil), store.preparationRefusals...), nil
+}
+
+func (store *runtimeAttachmentRecoveryStore) RefuseRuntimeAttachmentRecovery(
+	_ context.Context,
+	intent application.TaskPreparationIntent,
+	at time.Time,
+) error {
+	store.preparationRefusals = append(store.preparationRefusals, application.RuntimeAttachmentRecoveryRefusal{
+		OperationID: intent.OperationID, TaskHandle: intent.TaskHandle, SubjectDigest: intent.SubjectDigest,
+		Reason: application.RuntimeAttachmentPreparationUnproven, RefusedAt: at,
+	})
+	return nil
 }
 
 func (*runtimeAttachmentRecoveryStore) ListRuntimeRelayIdentityUpgrades(context.Context) ([]application.RuntimeRelayIdentityUpgrade, error) {

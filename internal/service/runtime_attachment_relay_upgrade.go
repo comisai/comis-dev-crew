@@ -16,12 +16,12 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeRelayIdentityUpgr
 	if err != nil {
 		return errors.New("recover runtime relay identities: durable refusals are unavailable")
 	}
-	coordinator.runtimeRelayIdentityRefusals = make(map[string]struct{}, len(refusals))
+	coordinator.runtimeAttachmentRefusals = make(map[string]struct{}, len(refusals))
 	for _, refusal := range refusals {
 		if refusal.Validate() != nil {
 			return errors.New("recover runtime relay identities: durable refusal is invalid")
 		}
-		coordinator.runtimeRelayIdentityRefusals[refusal.TaskHandle] = struct{}{}
+		coordinator.runtimeAttachmentRefusals[refusal.TaskHandle] = struct{}{}
 	}
 	upgrades, err := coordinator.store.ListRuntimeRelayIdentityUpgrades(ctx)
 	if err != nil {
@@ -31,7 +31,7 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeRelayIdentityUpgr
 		if upgrade.Validate() != nil {
 			return errors.New("recover runtime relay identities: durable upgrade is invalid")
 		}
-		if _, refused := coordinator.runtimeRelayIdentityRefusals[upgrade.TaskHandle]; refused {
+		if _, refused := coordinator.runtimeAttachmentRefusals[upgrade.TaskHandle]; refused {
 			return errors.New("recover runtime relay identities: durable outcomes conflict")
 		}
 		descriptor, err := coordinator.pinRuntimeRoot()
@@ -58,7 +58,7 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeRelayIdentityUpgr
 			if err := coordinator.store.RefuseRuntimeRelayIdentityUpgrade(ctx, upgrade, at); err != nil {
 				return errors.New("recover runtime relay identities: durable refusal cannot be recorded")
 			}
-			coordinator.runtimeRelayIdentityRefusals[upgrade.TaskHandle] = struct{}{}
+			coordinator.runtimeAttachmentRefusals[upgrade.TaskHandle] = struct{}{}
 			continue
 		}
 		if err != nil || closeErr != nil {

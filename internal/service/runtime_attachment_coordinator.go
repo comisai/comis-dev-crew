@@ -21,6 +21,8 @@ type runtimeAttachmentStore interface {
 	CompleteRuntimeRelayIdentityUpgrade(context.Context, application.RuntimeRelayIdentityUpgrade) error
 	RefuseRuntimeRelayIdentityUpgrade(context.Context, application.RuntimeRelayIdentityUpgrade, time.Time) error
 	ListTaskPreparationIntents(context.Context) ([]application.TaskPreparationIntent, error)
+	ListRuntimeAttachmentRecoveryRefusals(context.Context) ([]application.RuntimeAttachmentRecoveryRefusal, error)
+	RefuseRuntimeAttachmentRecovery(context.Context, application.TaskPreparationIntent, time.Time) error
 	ListTasks(context.Context) ([]domain.Task, error)
 	GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error)
 	GetTaskCleanupRecord(context.Context, string) (application.TaskCleanupRecord, bool, error)
@@ -63,7 +65,7 @@ type runtimeAttachmentCoordinator struct {
 	runDone                                chan struct{}
 	mu                                     sync.Mutex
 	entries                                map[string]*runtimeAttachmentEntry
-	runtimeRelayIdentityRefusals           map[string]struct{}
+	runtimeAttachmentRefusals              map[string]struct{}
 	acknowledger                           application.WorkerLaunchAcknowledger
 	attentionResponses                     comiswire.AttentionResponseReceiver
 	releasedServerStopped                  func(*reporter.RuntimeServer)
@@ -98,8 +100,8 @@ func newRuntimeAttachmentCoordinator(config runtimeAttachmentCoordinatorConfig) 
 		newAttentionOperationID: config.NewAttentionOperationID,
 		registrations:           make(chan runtimeAttachmentRegistration), releases: make(chan runtimeAttachmentRelease),
 		recoveryReady: make(chan struct{}), runDone: make(chan struct{}),
-		entries:                      make(map[string]*runtimeAttachmentEntry),
-		runtimeRelayIdentityRefusals: make(map[string]struct{}),
+		entries:                   make(map[string]*runtimeAttachmentEntry),
+		runtimeAttachmentRefusals: make(map[string]struct{}),
 	}, nil
 }
 
@@ -142,9 +144,9 @@ func (coordinator *runtimeAttachmentCoordinator) PrepareRuntimeAttachment(
 		coordinator.mu.Unlock()
 		return application.PreparedRuntimeAttachment{}, recoveryErr
 	}
-	if _, refused := coordinator.runtimeRelayIdentityRefusals[request.TaskHandle]; refused {
+	if _, refused := coordinator.runtimeAttachmentRefusals[request.TaskHandle]; refused {
 		coordinator.mu.Unlock()
-		return application.PreparedRuntimeAttachment{}, errors.New("prepare runtime attachment: relay ownership is unproven")
+		return application.PreparedRuntimeAttachment{}, errors.New("prepare runtime attachment: filesystem ownership is unproven")
 	}
 	if existing := coordinator.entries[request.TaskHandle]; existing != nil {
 		if existing.request != request {

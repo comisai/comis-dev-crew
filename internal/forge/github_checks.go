@@ -63,6 +63,21 @@ func (adapter *GitHubAdapter) readAllCheckRuns(
 	ctx context.Context,
 	secret, head string,
 ) (githubChecks, bool, error) {
+	first, complete, err := adapter.readCompleteCheckRunPass(ctx, secret, head)
+	if err != nil || !complete {
+		return githubChecks{}, false, err
+	}
+	second, complete, err := adapter.readCompleteCheckRunPass(ctx, secret, head)
+	if err != nil || !complete || !sameGitHubCheckSnapshot(first, second) {
+		return githubChecks{}, false, err
+	}
+	return second, true, nil
+}
+
+func (adapter *GitHubAdapter) readCompleteCheckRunPass(
+	ctx context.Context,
+	secret, head string,
+) (githubChecks, bool, error) {
 	var all githubChecks
 	expectedTotal := -1
 	for page := 1; page <= maximumGitHubCheckPages; page++ {
@@ -93,6 +108,8 @@ func (adapter *GitHubAdapter) readAllCheckRuns(
 		}
 		all.Runs = append(all.Runs, response.Runs...)
 		if len(all.Runs) == expectedTotal {
+			all.TotalCount = json.RawMessage(strconv.Itoa(expectedTotal))
+			all.Valid = true
 			return all, true, nil
 		}
 		if len(all.Runs) > expectedTotal || len(response.Runs) != githubCheckRunsPerPage {
@@ -100,6 +117,20 @@ func (adapter *GitHubAdapter) readAllCheckRuns(
 		}
 	}
 	return githubChecks{}, false, nil
+}
+
+func sameGitHubCheckSnapshot(first, second githubChecks) bool {
+	firstTotal, firstValid := parseGitHubCheckTotal(first.TotalCount)
+	secondTotal, secondValid := parseGitHubCheckTotal(second.TotalCount)
+	if !firstValid || !secondValid || firstTotal != secondTotal || len(first.Runs) != len(second.Runs) {
+		return false
+	}
+	for index := range first.Runs {
+		if !bytes.Equal(first.Runs[index], second.Runs[index]) {
+			return false
+		}
+	}
+	return true
 }
 
 func parseGitHubCheckTotal(raw json.RawMessage) (int, bool) {

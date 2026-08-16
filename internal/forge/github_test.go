@@ -87,6 +87,7 @@ func TestGitHubAdapter_UsesSeparateAuthoritiesAndRereadsExactPullRequestTruth(t 
 		"POST /repos/comisai/fixture/pulls",
 		"GET /repos/comisai/fixture/pulls/17",
 		"GET /repos/comisai/fixture/commits/" + head + "/check-runs?filter=all&page=1&per_page=100",
+		"GET /repos/comisai/fixture/commits/" + head + "/check-runs?filter=all&page=1&per_page=100",
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -438,8 +439,8 @@ func TestGitHubAdapter_ExhaustsCheckRunPaginationBeforeSelectingRepeatedName(t *
 		t.Fatalf("readChecks(paginated repeated name) error = %v", err)
 	}
 	want := []domain.ForgeCheckEvidence{{Name: "ci/unit", Conclusion: domain.CheckPending}}
-	if !reflect.DeepEqual(checks, want) || requests != 2 {
-		t.Fatalf("readChecks(paginated repeated name) = %#v after %d requests, want %#v after 2", checks, requests, want)
+	if !reflect.DeepEqual(checks, want) || requests != 4 {
+		t.Fatalf("readChecks(paginated repeated name) = %#v after %d requests, want %#v after 4", checks, requests, want)
 	}
 }
 
