@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
@@ -92,5 +93,31 @@ func TestCandidateSupervisorPersistsStructuralFailureAfterValidation(t *testing.
 	if fixture.runner.calls != 1 || fixture.store.evidence == nil ||
 		fixture.store.evidence.Bundle().WorktreeCleanliness != domain.WorktreeUnknown {
 		t.Fatalf("post-validation structural evidence=%v validation=%d", fixture.store.evidence, fixture.runner.calls)
+	}
+}
+
+func TestCandidateSupervisorPersistsHeadDriftAfterValidationOnce(t *testing.T) {
+	fixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	changed := fixture.snapshot
+	changed.HeadRevision = strings.Repeat("c", 40)
+	fixture.git.snapshots = []devgit.CandidateSnapshot{fixture.snapshot, changed, changed}
+	commits := 0
+	fixture.store.onCommit = func() { commits++ }
+	supervisor, err := newCandidateSupervisor(fixture.config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		_, judgment, validateErr := supervisor.ValidateTask(context.Background(), fixture.task.Handle)
+		if validateErr != nil || judgment.Outcome != domain.CandidateUnknown ||
+			judgment.Reason != domain.CandidateWorktreeUnverified {
+			t.Fatalf("ValidateTask(head drift attempt %d) = %#v, %v", attempt, judgment, validateErr)
+		}
+	}
+	if commits != 1 || fixture.runner.calls != 1 || fixture.pullRequests.calls != 0 ||
+		fixture.store.evidence == nil || fixture.store.evidence.Bundle().HeadRevision != changed.HeadRevision ||
+		fixture.store.evidence.Bundle().UnverifiedReason != domain.CandidateValidationDrift {
+		t.Fatalf("head drift effects: commits=%d validation=%d forge=%d evidence=%v",
+			commits, fixture.runner.calls, fixture.pullRequests.calls, fixture.store.evidence)
 	}
 }

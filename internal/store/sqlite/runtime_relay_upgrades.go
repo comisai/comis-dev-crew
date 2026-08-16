@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 )
@@ -17,6 +19,15 @@ CREATE TABLE IF NOT EXISTS runtime_relay_identity_upgrades (
     relay_identity TEXT NOT NULL,
     relay_seed BLOB NOT NULL
 );
+`
+
+const runtimeRelayRefusalMigration = `
+CREATE TABLE runtime_relay_identity_refusals (
+    task_handle TEXT PRIMARY KEY REFERENCES tasks(handle) ON DELETE CASCADE,
+    reason TEXT NOT NULL CHECK(reason = 'unproven_filesystem_authority')
+);
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (21, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 `
 
 func (store *Store) applyRuntimeRelayUpgradeMigration(ctx context.Context) error {
@@ -122,4 +133,100 @@ func (store *Store) CompleteRuntimeRelayIdentityUpgrade(ctx context.Context, upg
 		return errors.New("complete runtime relay identity upgrade: durable authority differs")
 	}
 	return nil
+}
+
+// ListRuntimeRelayIdentityRefusals returns the closed task-scoped upgrade refusals.
+func (store *Store) ListRuntimeRelayIdentityRefusals(ctx context.Context) ([]application.RuntimeRelayIdentityRefusal, error) {
+	rows, err := store.db.QueryContext(ctx, `SELECT task_handle, reason
+		FROM runtime_relay_identity_refusals ORDER BY task_handle`)
+	if err != nil {
+		return nil, fmt.Errorf("list runtime relay identity refusals: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var refusals []application.RuntimeRelayIdentityRefusal
+	for rows.Next() {
+		var refusal application.RuntimeRelayIdentityRefusal
+		if err := rows.Scan(&refusal.TaskHandle, &refusal.Reason); err != nil || refusal.Validate() != nil {
+			return nil, errors.New("stored runtime relay identity refusal is invalid")
+		}
+		refusals = append(refusals, refusal)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list runtime relay identity refusals: %w", err)
+	}
+	return refusals, nil
+}
+
+// RefuseRuntimeRelayIdentityUpgrade atomically closes one task whose prior relay cannot be proven.
+func (store *Store) RefuseRuntimeRelayIdentityUpgrade(
+	ctx context.Context,
+	upgrade application.RuntimeRelayIdentityUpgrade,
+	at time.Time,
+) error {
+	if upgrade.Validate() != nil || at.IsZero() || at.Location() != time.UTC {
+		return errors.New("refuse runtime relay identity upgrade: authority is invalid")
+	}
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin runtime relay identity refusal: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	task, err := getTask(ctx, transaction, upgrade.TaskHandle)
+	if err != nil {
+		return err
+	}
+	unknown, err := reconcileTaskUnknown(task, at)
+	if err != nil {
+		return fmt.Errorf("close runtime relay identity task recovery: %w", err)
+	}
+	version, err := nextReconciliationVersion(ctx, transaction)
+	if err != nil {
+		return err
+	}
+	unknown.StateVersion = version
+	if err := updateTaskState(ctx, transaction, unknown); err != nil {
+		return err
+	}
+	refusal := application.RuntimeRelayIdentityRefusal{
+		TaskHandle: upgrade.TaskHandle,
+		Reason:     application.RuntimeRelayIdentityUnproven,
+	}
+	if refusal.Validate() != nil {
+		return errors.New("refuse runtime relay identity upgrade: refusal is invalid")
+	}
+	if _, err := transaction.ExecContext(ctx, `INSERT INTO runtime_relay_identity_refusals(task_handle, reason)
+		VALUES (?, ?)`, refusal.TaskHandle, refusal.Reason); err != nil {
+		return fmt.Errorf("record runtime relay identity refusal: %w", err)
+	}
+	result, err := transaction.ExecContext(ctx, `DELETE FROM runtime_relay_identity_upgrades
+		WHERE task_handle = ? AND relay_identity = ? AND relay_seed = ?`,
+		upgrade.TaskHandle, upgrade.RelayIdentity, upgrade.RelaySeed[:])
+	if err != nil {
+		return fmt.Errorf("close refused runtime relay identity upgrade: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil || affected != 1 {
+		return errors.New("refuse runtime relay identity upgrade: durable authority differs")
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit runtime relay identity refusal: %w", err)
+	}
+	return nil
+}
+
+func runtimeRelayIdentityRefusalExists(ctx context.Context, source queryer, taskHandle string) (bool, error) {
+	var reason application.RuntimeRelayIdentityRefusalReason
+	err := source.QueryRowContext(ctx, `SELECT reason FROM runtime_relay_identity_refusals
+		WHERE task_handle = ?`, taskHandle).Scan(&reason)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read runtime relay identity refusal: %w", err)
+	}
+	refusal := application.RuntimeRelayIdentityRefusal{TaskHandle: taskHandle, Reason: reason}
+	if refusal.Validate() != nil {
+		return false, errors.New("stored runtime relay identity refusal is invalid")
+	}
+	return true, nil
 }

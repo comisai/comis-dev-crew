@@ -108,11 +108,6 @@ func TestCandidateSupervisor_RefusesChangedHeadOpenDecisionAndIncompleteValidati
 		name   string
 		mutate func(*candidateSupervisorFixture)
 	}{
-		{name: "changed head", mutate: func(fixture *candidateSupervisorFixture) {
-			changed := fixture.snapshot
-			changed.HeadRevision = strings.Repeat("c", 40)
-			fixture.git.snapshots = []devgit.CandidateSnapshot{fixture.snapshot, changed}
-		}},
 		{name: "open decision", mutate: func(fixture *candidateSupervisorFixture) {
 			fixture.store.reports = []domain.AcceptedReport{{Report: domain.WorkerReport{Kind: domain.ReportDecision, ExternalKey: "decision-one"}}}
 		}},
@@ -153,11 +148,15 @@ func TestCandidateSupervisor_BindsReconciledValidationToDurableSnapshot(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := supervisor.ValidateTask(context.Background(), fixture.task.Handle); err == nil {
-		t.Fatal("ValidateTask(changed reconciled head) error = nil")
+	_, judgment, err := supervisor.ValidateTask(context.Background(), fixture.task.Handle)
+	if err != nil || judgment.Outcome != domain.CandidateUnknown ||
+		judgment.Reason != domain.CandidateWorktreeUnverified {
+		t.Fatalf("ValidateTask(changed reconciled head) = %#v, %v", judgment, err)
 	}
 	if fixture.store.reconciledReads != 1 || fixture.runner.calls != 0 ||
-		fixture.pullRequests.calls != 0 || fixture.artifact.calls != 0 || fixture.store.evidence != nil {
+		fixture.pullRequests.calls != 0 || fixture.artifact.calls != 0 || fixture.store.evidence == nil ||
+		fixture.store.evidence.Bundle().HeadRevision != changed.HeadRevision ||
+		fixture.store.evidence.Bundle().UnverifiedReason != domain.CandidateReconciliationMismatch {
 		t.Fatalf("reconciled authority effects = reads %d validation %d forge %d artifact %d evidence %t",
 			fixture.store.reconciledReads, fixture.runner.calls, fixture.pullRequests.calls,
 			fixture.artifact.calls, fixture.store.evidence != nil)

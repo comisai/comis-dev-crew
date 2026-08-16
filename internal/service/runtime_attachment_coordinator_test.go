@@ -732,9 +732,21 @@ func (*runtimeAttachmentRecoveryStore) ListRuntimeRelayIdentityUpgrades(context.
 	return nil, nil
 }
 
+func (*runtimeAttachmentRecoveryStore) ListRuntimeRelayIdentityRefusals(context.Context) ([]application.RuntimeRelayIdentityRefusal, error) {
+	return nil, nil
+}
+
 func (*runtimeAttachmentRecoveryStore) CompleteRuntimeRelayIdentityUpgrade(
 	context.Context,
 	application.RuntimeRelayIdentityUpgrade,
+) error {
+	return nil
+}
+
+func (*runtimeAttachmentRecoveryStore) RefuseRuntimeRelayIdentityUpgrade(
+	context.Context,
+	application.RuntimeRelayIdentityUpgrade,
+	time.Time,
 ) error {
 	return nil
 }

@@ -58,19 +58,29 @@ func (queries *Queries) explainUnknownRecovery(
 	ctx context.Context,
 	task domain.Task,
 ) (string, string, string, []NextAction, error) {
+	reader, ok := queries.repository.(taskRecoveryEvidenceReader)
+	var evidence TaskRecoveryEvidence
+	if ok {
+		var err error
+		evidence, err = reader.ReadTaskRecoveryEvidence(ctx, task.Handle)
+		if err != nil {
+			return "", "", "", nil, translateReadError(err, "task recovery evidence")
+		}
+		if evidence.Kind == RecoveryRuntimeRelayIdentityUnproven {
+			return "runtime_relay_identity_unproven",
+				"Task recovery is blocked because ownership of its existing reporter relay cannot be proven.",
+				"The relay path predates durable filesystem identity and has been preserved without granting cleanup authority.",
+				[]NextAction{ActionInspectHealth, ActionInspectTask}, nil
+		}
+	}
 	if queries.host == nil || !queries.host.Connected() {
 		return "host_integration_unavailable",
 			"Task recovery is waiting for the authenticated host integration.",
 			"Current terminal authority cannot be refreshed while host control is unavailable.",
 			[]NextAction{ActionInspectHealth}, nil
 	}
-	reader, ok := queries.repository.(taskRecoveryEvidenceReader)
 	if !ok {
 		return restartEvidenceUnresolvedExplanation()
-	}
-	evidence, err := reader.ReadTaskRecoveryEvidence(ctx, task.Handle)
-	if err != nil {
-		return "", "", "", nil, translateReadError(err, "task recovery evidence")
 	}
 	switch evidence.Kind {
 	case RecoveryRestartEvidenceUnresolved:
@@ -152,6 +162,12 @@ func (queries *Queries) explainCandidatePosture(
 }
 
 func unverifiedCandidateRootCause(task domain.Task, bundle domain.DeliveryEvidenceBundle) string {
+	switch bundle.UnverifiedReason {
+	case domain.CandidateReconciliationMismatch:
+		return "The observed clean candidate head differs from the durable reconciliation authority."
+	case domain.CandidateValidationDrift:
+		return "The observed clean candidate head changed while required local validation was running."
+	}
 	if bundle.WorktreeCleanliness == domain.WorktreeUnknown {
 		return "The exact registered worktree Git posture is unknown; no clean candidate head was observed."
 	}

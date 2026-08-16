@@ -342,8 +342,8 @@ upload command, and removes the key before returning. There is no merge operatio
 The Codex harness adapter builds a fixed no-shell `codex exec --json`
 descriptor from an exact-version static profile. The descriptor validates the
 activation-returned attachment ID and target name, references no host socket
-source, and binds only the exact protected mounted path and its matching target
-name to the two fixed reporter environment keys. Task, run, and lease identity,
+source, and binds the exact protected mounted path, its matching target name,
+and the public untrusted relay identity to three fixed reporter environment keys. Task, run, and lease identity,
 the execution-attachment ID, and brief authority remain only in the protected
 attachment, never in argv or the generic bootstrap prompt.
 

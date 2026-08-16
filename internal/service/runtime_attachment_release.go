@@ -30,6 +30,10 @@ func (coordinator *runtimeAttachmentCoordinator) ReleaseRuntimeAttachment(ctx co
 			coordinator.mu.Unlock()
 			return recoveryErr
 		}
+		if _, refused := coordinator.runtimeRelayIdentityRefusals[taskHandle]; refused {
+			coordinator.mu.Unlock()
+			return errors.New("release runtime attachment: relay ownership is unproven")
+		}
 		entry := coordinator.entries[taskHandle]
 		if entry == nil {
 			coordinator.mu.Unlock()

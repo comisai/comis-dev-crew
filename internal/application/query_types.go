@@ -72,6 +72,7 @@ type TaskRecoveryEvidenceKind string
 const (
 	RecoveryTerminalSettledWithoutCandidate TaskRecoveryEvidenceKind = "terminal_settled_without_candidate"
 	RecoveryRestartEvidenceUnresolved       TaskRecoveryEvidenceKind = "restart_evidence_unresolved"
+	RecoveryRuntimeRelayIdentityUnproven    TaskRecoveryEvidenceKind = "runtime_relay_identity_unproven"
 )
 
 // TaskRecoveryEvidence carries server-owned recovery authority to the query

@@ -38,6 +38,13 @@ func (store *Store) ReadTaskRecoveryEvidence(
 	if task.State != domain.TaskUnknown {
 		return application.TaskRecoveryEvidence{}, fmt.Errorf("task recovery evidence posture: %w", application.ErrPrecondition)
 	}
+	refused, err := runtimeRelayIdentityRefusalExists(ctx, transaction, taskHandle)
+	if err != nil {
+		return application.TaskRecoveryEvidence{}, err
+	}
+	if refused {
+		return complete(application.TaskRecoveryEvidence{Kind: application.RecoveryRuntimeRelayIdentityUnproven})
+	}
 	var candidateReports int
 	if err := transaction.QueryRowContext(ctx, `SELECT COUNT(*) FROM reports
 		WHERE task_handle = ? AND kind = 'candidate_complete'`, taskHandle).Scan(&candidateReports); err != nil {

@@ -131,6 +131,27 @@ func TestCandidateJudge_ClassifiesBaseEqualHeadAsUnverifiedForEveryShape(t *test
 	}
 }
 
+func TestCandidateJudge_ClassifiesTaskScopedGitAuthorityDriftAsUnverified(t *testing.T) {
+	task := validTask(ShapeShip, DeliveryPullRequest)
+	for _, reason := range []CandidateUnverifiedReason{
+		CandidateReconciliationMismatch,
+		CandidateValidationDrift,
+	} {
+		bundle := shipEvidence(task)
+		bundle.UnverifiedReason = reason
+		bundle.ValidationReceipts = nil
+		bundle.ForgeEvidence = nil
+		judgment := JudgeCandidate(CandidateJudgeInput{
+			Task: task, Evidence: sealCandidateEvidence(t, bundle),
+			Now: task.UpdatedAt.Add(5 * time.Minute), RequiredLocalChecks: []string{"unit"},
+			RequiredForgeChecks: []string{"ci/unit"},
+		})
+		if judgment.Outcome != CandidateUnknown || judgment.Reason != CandidateWorktreeUnverified {
+			t.Fatalf("JudgeCandidate(%s) = %#v", reason, judgment)
+		}
+	}
+}
+
 func TestDeliveryEvidenceSeal_IsCanonicalImmutableAndRejectsAmbiguity(t *testing.T) {
 	task := validTask(ShapeShip, DeliveryPullRequest)
 	bundle := shipEvidence(task)
@@ -178,6 +199,10 @@ func TestDeliveryEvidenceSeal_RejectsEveryIncompleteEvidenceClass(t *testing.T) 
 	}{
 		{name: "schema", mutate: func(bundle *DeliveryEvidenceBundle) { bundle.SchemaVersion = 2 }},
 		{name: "worktree posture", mutate: func(bundle *DeliveryEvidenceBundle) { bundle.WorktreeCleanliness = "forged" }},
+		{name: "unverified reason", mutate: func(bundle *DeliveryEvidenceBundle) { bundle.UnverifiedReason = "forged" }},
+		{name: "contradictory unverified authority", mutate: func(bundle *DeliveryEvidenceBundle) {
+			bundle.UnverifiedReason = CandidateValidationDrift
+		}},
 		{name: "missing receipts", mutate: func(bundle *DeliveryEvidenceBundle) { bundle.ValidationReceipts = nil }},
 		{name: "invalid receipt identity", mutate: func(bundle *DeliveryEvidenceBundle) { bundle.ValidationReceipts[0].CheckID = "bad check" }},
 		{name: "invalid receipt conclusion", mutate: func(bundle *DeliveryEvidenceBundle) { bundle.ValidationReceipts[0].Conclusion = "forged" }},

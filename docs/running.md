@@ -426,7 +426,9 @@ Subcommands:
 
 A candidate report remains non-terminal until service validation.
 
-This boundary treats both environment values as untrusted selectors. The mount
+This boundary treats all three environment values as untrusted inputs: the path
+and target name are selectors, while the relay identity is public authentication
+material rather than authority. The mount
 directory must already grant its owner full access while denying group and other
 read/write access; execute-only traversal is permitted so a dedicated worker UID
 can reach its assigned socket without listing the directory. The directory must

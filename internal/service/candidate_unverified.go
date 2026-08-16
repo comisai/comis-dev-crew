@@ -20,6 +20,7 @@ func (supervisor *candidateSupervisor) commitUnverifiedCandidate(
 	profile validation.Profile,
 	snapshot devgit.CandidateSnapshot,
 	openDecisions int,
+	reason domain.CandidateUnverifiedReason,
 ) (domain.Task, domain.CandidateJudgment, error) {
 	producedAt := supervisor.config.Clock()
 	if producedAt.IsZero() || producedAt.Location() != time.UTC {
@@ -29,6 +30,7 @@ func (supervisor *candidateSupervisor) commitUnverifiedCandidate(
 		SchemaVersion: 1, TaskHandle: task.Handle, RepositoryIdentity: task.RepositoryID,
 		BaseRevision: task.BaseRevision, HeadRevision: snapshot.HeadRevision,
 		WorktreeCleanliness:     candidateCleanliness(snapshot.Cleanliness),
+		UnverifiedReason:        reason,
 		UnresolvedDecisionCount: openDecisions, ProducedAt: producedAt,
 		ExpiresAt: producedAt.Add(profile.EvidenceTTL).UTC(),
 	})

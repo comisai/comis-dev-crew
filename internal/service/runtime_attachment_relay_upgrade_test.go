@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 func TestBaseRuntimeRelayIdentityUpgradePreservesUnprovenSocket(t *testing.T) {
@@ -19,7 +20,11 @@ func TestBaseRuntimeRelayIdentityUpgradePreservesUnprovenSocket(t *testing.T) {
 	runtimeRoot := filepath.Join(root, "runtime")
 	taskHandle := "task-runtime-relay-base-upgrade"
 	taskRoot := filepath.Join(runtimeRoot, taskHandle)
-	store := &runtimeRelayUpgradeStore{}
+	task := serviceTask()
+	task.Handle = taskHandle
+	store := &runtimeRelayUpgradeStore{runtimeAttachmentRecoveryStore: runtimeAttachmentRecoveryStore{
+		tasks: []domain.Task{task},
+	}}
 	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, store, time.Now().UTC())
 	if err := os.Mkdir(taskRoot, 0o700); err != nil {
 		t.Fatal(err)
@@ -40,11 +45,13 @@ func TestBaseRuntimeRelayIdentityUpgradePreservesUnprovenSocket(t *testing.T) {
 		TaskHandle: taskHandle, RelaySeed: seed,
 		RelayIdentity: hex.EncodeToString(privateKey.Public().(ed25519.PublicKey)),
 	}}
-	if err := coordinator.recoverRuntimeRelayIdentityUpgrades(context.Background()); err == nil {
-		t.Fatal("recoverRuntimeRelayIdentityUpgrades(unproven socket) error = nil")
+	servers, err := coordinator.recoverRuntimeAttachments(context.Background())
+	if err != nil || len(servers) != 0 {
+		t.Fatalf("recoverRuntimeAttachments(unproven socket) = %d servers, %v", len(servers), err)
 	}
-	if len(store.completed) != 0 {
-		t.Fatalf("completed upgrades = %#v", store.completed)
+	if len(store.completed) != 0 || len(store.refusals) != 1 ||
+		store.refusals[0].TaskHandle != taskHandle {
+		t.Fatalf("upgrade outcomes: completed=%#v refusals=%#v", store.completed, store.refusals)
 	}
 	if info, err := os.Lstat(socketPath); err != nil || info.Mode()&os.ModeSocket == 0 {
 		t.Fatalf("unproven base socket was not preserved: %#v, %v", info, err)
@@ -77,11 +84,11 @@ func TestBaseRuntimeRelayIdentityUpgradePreservesUnprovenEmptyDirectory(t *testi
 		TaskHandle: taskHandle, RelaySeed: seed,
 		RelayIdentity: hex.EncodeToString(privateKey.Public().(ed25519.PublicKey)),
 	}}
-	if err := coordinator.recoverRuntimeRelayIdentityUpgrades(context.Background()); err == nil {
-		t.Fatal("recoverRuntimeRelayIdentityUpgrades(unproven directory) error = nil")
+	if err := coordinator.recoverRuntimeRelayIdentityUpgrades(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	if len(store.completed) != 0 {
-		t.Fatalf("completed upgrades = %#v", store.completed)
+	if len(store.completed) != 0 || len(store.refusals) != 1 {
+		t.Fatalf("upgrade outcomes: completed=%#v refusals=%#v", store.completed, store.refusals)
 	}
 	if info, err := os.Lstat(filepath.Join(runtimeRoot, taskHandle)); err != nil || !info.IsDir() {
 		t.Fatalf("unproven base directory was not preserved: %#v, %v", info, err)
@@ -107,14 +114,15 @@ func TestBaseRuntimeRelayIdentityUpgradeStartsOnlyWhenPathsAreAbsent(t *testing.
 	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, store, time.Now().UTC())
 	seed := runtimeRelaySeedForTest(0x39)
 	privateKey := ed25519.NewKeyFromSeed(seed[:])
-	store.upgrades = []application.RuntimeRelayIdentityUpgrade{{
+	upgrade := application.RuntimeRelayIdentityUpgrade{
 		TaskHandle: taskHandle, RelaySeed: seed,
 		RelayIdentity: hex.EncodeToString(privateKey.Public().(ed25519.PublicKey)),
-	}}
+	}
+	store.upgrades = []application.RuntimeRelayIdentityUpgrade{upgrade}
 	if err := coordinator.recoverRuntimeRelayIdentityUpgrades(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(store.completed) != 1 || store.completed[0] != store.upgrades[0] {
+	if len(store.completed) != 1 || store.completed[0] != upgrade || len(store.refusals) != 0 {
 		t.Fatalf("completed upgrades = %#v", store.completed)
 	}
 	descriptor, err := coordinator.pinRuntimeRoot()
@@ -165,10 +173,11 @@ func TestBaseRuntimeRelayIdentityUpgradePreservesAmbiguousArtifact(t *testing.T)
 	}
 }
 
-func TestLegacyRuntimeRelayIdentityUpgradesToExactDurableSeed(t *testing.T) {
+func TestIntermediateRuntimeRelayIdentityFormatIsRejected(t *testing.T) {
 	root := shortTempDir(t)
 	runtimeRoot := filepath.Join(root, "runtime")
-	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, &runtimeAttachmentRecoveryStore{}, time.Now().UTC())
+	store := &runtimeRelayUpgradeStore{}
+	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, store, time.Now().UTC())
 	taskHandle := "task-runtime-relay-filesystem-upgrade"
 	taskRoot := filepath.Join(runtimeRoot, taskHandle)
 	if err := os.Mkdir(taskRoot, 0o700); err != nil {
@@ -197,26 +206,30 @@ func TestLegacyRuntimeRelayIdentityUpgradesToExactDurableSeed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(runtimeRoot, name), []byte(formatLegacyRuntimeIdentity(legacy)), 0o600); err != nil {
+	encoded := []byte(formatIntermediateRuntimeIdentity(legacy))
+	if err := os.WriteFile(filepath.Join(runtimeRoot, name), encoded, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	seed := runtimeRelaySeedForTest(0x35)
 	privateKey := ed25519.NewKeyFromSeed(seed[:])
-	upgrade := application.RuntimeRelayIdentityUpgrade{
+	store.upgrades = []application.RuntimeRelayIdentityUpgrade{{
 		TaskHandle: taskHandle, RelaySeed: seed,
 		RelayIdentity: hex.EncodeToString(privateKey.Public().(ed25519.PublicKey)),
+	}}
+	if err := coordinator.recoverRuntimeRelayIdentityUpgrades(context.Background()); err == nil {
+		t.Fatal("recoverRuntimeRelayIdentityUpgrades(intermediate format) error = nil")
 	}
-	if err := upgradeLegacyRuntimeAttachmentIdentity(pinned.runtimeRootDescriptor, upgrade); err != nil {
-		t.Fatal(err)
+	if len(store.completed) != 0 || len(store.refusals) != 0 {
+		t.Fatalf("intermediate format outcomes: completed=%#v refusals=%#v", store.completed, store.refusals)
 	}
-	stored, _, found, err := readRuntimeAttachmentIdentityRecord(pinned.runtimeRootDescriptor, taskHandle)
-	if err != nil || !found || stored.RelaySeed != seed || stored.Task != legacy.Task || stored.Socket != legacy.Socket {
-		t.Fatalf("upgraded runtime identity = %#v, %t, %v", stored, found, err)
+	stored, err := os.ReadFile(filepath.Join(runtimeRoot, name))
+	if err != nil || string(stored) != string(encoded) {
+		t.Fatalf("intermediate identity record changed = %q, %v", stored, err)
 	}
 	_ = pinned.close()
 }
 
-func formatLegacyRuntimeIdentity(record runtimeAttachmentIdentityRecord) string {
+func formatIntermediateRuntimeIdentity(record runtimeAttachmentIdentityRecord) string {
 	return fmt.Sprintf(
 		"%02x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x\n",
 		record.Stage,
@@ -231,6 +244,7 @@ type runtimeRelayUpgradeStore struct {
 	runtimeAttachmentRecoveryStore
 	upgrades  []application.RuntimeRelayIdentityUpgrade
 	completed []application.RuntimeRelayIdentityUpgrade
+	refusals  []application.RuntimeRelayIdentityRefusal
 }
 
 func (store *runtimeRelayUpgradeStore) ListRuntimeRelayIdentityUpgrades(
@@ -239,10 +253,30 @@ func (store *runtimeRelayUpgradeStore) ListRuntimeRelayIdentityUpgrades(
 	return append([]application.RuntimeRelayIdentityUpgrade(nil), store.upgrades...), nil
 }
 
+func (store *runtimeRelayUpgradeStore) ListRuntimeRelayIdentityRefusals(
+	context.Context,
+) ([]application.RuntimeRelayIdentityRefusal, error) {
+	return append([]application.RuntimeRelayIdentityRefusal(nil), store.refusals...), nil
+}
+
 func (store *runtimeRelayUpgradeStore) CompleteRuntimeRelayIdentityUpgrade(
 	_ context.Context,
 	upgrade application.RuntimeRelayIdentityUpgrade,
 ) error {
 	store.completed = append(store.completed, upgrade)
+	store.upgrades = nil
+	return nil
+}
+
+func (store *runtimeRelayUpgradeStore) RefuseRuntimeRelayIdentityUpgrade(
+	_ context.Context,
+	upgrade application.RuntimeRelayIdentityUpgrade,
+	_ time.Time,
+) error {
+	store.refusals = append(store.refusals, application.RuntimeRelayIdentityRefusal{
+		TaskHandle: upgrade.TaskHandle,
+		Reason:     application.RuntimeRelayIdentityUnproven,
+	})
+	store.upgrades = nil
 	return nil
 }

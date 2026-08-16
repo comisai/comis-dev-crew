@@ -362,7 +362,10 @@ func (store *Store) migrate(ctx context.Context) error {
 	if err := store.applyTaskPreparationMigrations(ctx); err != nil {
 		return err
 	}
-	return store.applyRuntimeRelayUpgradeMigration(ctx)
+	if err := store.applyRuntimeRelayUpgradeMigration(ctx); err != nil {
+		return err
+	}
+	return store.applyVersionedMigration(ctx, 21, runtimeRelayRefusalMigration)
 }
 func (store *Store) applyComisReportOutboxMigration(ctx context.Context) error {
 	var applied int

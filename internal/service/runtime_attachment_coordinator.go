@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/comiswire"
@@ -17,7 +18,9 @@ import (
 type runtimeAttachmentStore interface {
 	application.ReportMutationStore
 	ListRuntimeRelayIdentityUpgrades(context.Context) ([]application.RuntimeRelayIdentityUpgrade, error)
+	ListRuntimeRelayIdentityRefusals(context.Context) ([]application.RuntimeRelayIdentityRefusal, error)
 	CompleteRuntimeRelayIdentityUpgrade(context.Context, application.RuntimeRelayIdentityUpgrade) error
+	RefuseRuntimeRelayIdentityUpgrade(context.Context, application.RuntimeRelayIdentityUpgrade, time.Time) error
 	ListTaskPreparationIntents(context.Context) ([]application.TaskPreparationIntent, error)
 	ListTasks(context.Context) ([]domain.Task, error)
 	GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error)
@@ -51,6 +54,7 @@ type runtimeAttachmentCoordinator struct {
 	runtimeRoot                            string
 	runtimeRootIdentity                    reporter.RuntimeSocketIdentity
 	store                                  runtimeAttachmentStore
+	clock                                  application.Clock
 	reportSink                             *application.ReportSink
 	newCredential                          func() (string, error)
 	newAttentionOperationID                func() (string, error)
@@ -60,6 +64,7 @@ type runtimeAttachmentCoordinator struct {
 	runDone                                chan struct{}
 	mu                                     sync.Mutex
 	entries                                map[string]*runtimeAttachmentEntry
+	runtimeRelayIdentityRefusals           map[string]struct{}
 	acknowledger                           application.WorkerLaunchAcknowledger
 	attentionResponses                     comiswire.AttentionResponseReceiver
 	releasedServerStopped                  func(*reporter.RuntimeServer)
@@ -89,11 +94,12 @@ func newRuntimeAttachmentCoordinator(config runtimeAttachmentCoordinatorConfig) 
 	}
 	return &runtimeAttachmentCoordinator{
 		runtimeRoot: runtimeRoot, runtimeRootIdentity: runtimeRootIdentity,
-		store: config.Store, reportSink: sink, newCredential: config.NewCredential,
+		store: config.Store, clock: config.Clock, reportSink: sink, newCredential: config.NewCredential,
 		newAttentionOperationID: config.NewAttentionOperationID,
 		registrations:           make(chan runtimeAttachmentRegistration), releases: make(chan runtimeAttachmentRelease),
 		recoveryReady: make(chan struct{}), runDone: make(chan struct{}),
-		entries: make(map[string]*runtimeAttachmentEntry),
+		entries:                      make(map[string]*runtimeAttachmentEntry),
+		runtimeRelayIdentityRefusals: make(map[string]struct{}),
 	}, nil
 }
 
@@ -135,6 +141,10 @@ func (coordinator *runtimeAttachmentCoordinator) PrepareRuntimeAttachment(
 		recoveryErr := coordinator.recoveryErr
 		coordinator.mu.Unlock()
 		return application.PreparedRuntimeAttachment{}, recoveryErr
+	}
+	if _, refused := coordinator.runtimeRelayIdentityRefusals[request.TaskHandle]; refused {
+		coordinator.mu.Unlock()
+		return application.PreparedRuntimeAttachment{}, errors.New("prepare runtime attachment: relay ownership is unproven")
 	}
 	if existing := coordinator.entries[request.TaskHandle]; existing != nil {
 		if existing.request != request {
@@ -299,6 +309,9 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeAttachments(ctx c
 	}
 	servers := make([]*reporter.RuntimeServer, 0, len(tasks))
 	for _, task := range tasks {
+		if _, refused := coordinator.runtimeRelayIdentityRefusals[task.Handle]; refused {
+			continue
+		}
 		if task.State == domain.TaskCleaned {
 			if err := coordinator.removeTaskRuntimeDirectory(task.Handle); err != nil {
 				return nil, errors.Join(errors.New("recover runtime attachments: cleaned task runtime directory remains"), err)

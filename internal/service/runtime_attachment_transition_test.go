@@ -402,9 +402,21 @@ func (*runtimeTransitionStore) ListRuntimeRelayIdentityUpgrades(context.Context)
 	return nil, nil
 }
 
+func (*runtimeTransitionStore) ListRuntimeRelayIdentityRefusals(context.Context) ([]application.RuntimeRelayIdentityRefusal, error) {
+	return nil, nil
+}
+
 func (*runtimeTransitionStore) CompleteRuntimeRelayIdentityUpgrade(
 	context.Context,
 	application.RuntimeRelayIdentityUpgrade,
+) error {
+	return nil
+}
+
+func (*runtimeTransitionStore) RefuseRuntimeRelayIdentityUpgrade(
+	context.Context,
+	application.RuntimeRelayIdentityUpgrade,
+	time.Time,
 ) error {
 	return nil
 }

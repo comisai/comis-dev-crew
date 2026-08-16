@@ -43,3 +43,31 @@ func TestQueriesExplainUnknownWorktreeWithoutInventingGitFacts(t *testing.T) {
 		t.Fatalf("ExplainTask(unknown worktree) head = %q, want unknown", explanation.Summary.Head)
 	}
 }
+
+func TestQueriesExplainObservedCandidateAuthorityDrift(t *testing.T) {
+	task := queryTask("task-candidate-validation-drift", domain.TaskValidating, 9)
+	bundle := queryCandidateEvidence(t, task, time.Now().UTC()).Bundle()
+	bundle.UnverifiedReason = domain.CandidateValidationDrift
+	bundle.ValidationReceipts = nil
+	bundle.ForgeEvidence = nil
+	sealed, err := domain.SealDeliveryEvidence(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &queryRepository{
+		tasks: []domain.Task{task}, candidateEvidence: sealed,
+		candidateJudgment: domain.CandidateJudgment{
+			Outcome: domain.CandidateUnknown, Reason: domain.CandidateWorktreeUnverified,
+		},
+	}
+	queries, err := NewQueries(QueryConfig{Repository: repository, Clock: time.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	explanation, err := queries.ExplainTask(context.Background(), task.Handle)
+	if err != nil || explanation.ReasonCode != "candidate_worktree_unverified" ||
+		!strings.Contains(explanation.LikelyRootCause, "changed while required local validation") ||
+		explanation.Summary.Head != bundle.HeadRevision {
+		t.Fatalf("ExplainTask(candidate drift) = %#v, %v", explanation, err)
+	}
+}

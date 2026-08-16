@@ -8,11 +8,30 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
-// RuntimeRelayIdentityUpgrade binds one legacy preparation to newly durable relay authority.
+// RuntimeRelayIdentityUpgrade binds one existing preparation to newly durable relay authority.
 type RuntimeRelayIdentityUpgrade struct {
 	TaskHandle    string
 	RelayIdentity string
 	RelaySeed     [32]byte `json:"-"`
+}
+
+// RuntimeRelayIdentityRefusalReason is the closed reason an upgrade cannot establish authority.
+type RuntimeRelayIdentityRefusalReason string
+
+const RuntimeRelayIdentityUnproven RuntimeRelayIdentityRefusalReason = "unproven_filesystem_authority"
+
+// RuntimeRelayIdentityRefusal preserves one task whose relay ownership cannot be proven.
+type RuntimeRelayIdentityRefusal struct {
+	TaskHandle string
+	Reason     RuntimeRelayIdentityRefusalReason
+}
+
+// Validate rejects incomplete or unknown relay refusal evidence.
+func (refusal RuntimeRelayIdentityRefusal) Validate() error {
+	if domain.ValidateTaskHandle(refusal.TaskHandle) != nil || refusal.Reason != RuntimeRelayIdentityUnproven {
+		return errors.New("runtime relay identity refusal is invalid")
+	}
+	return nil
 }
 
 // Validate rejects incomplete or contradictory relay upgrade authority.
