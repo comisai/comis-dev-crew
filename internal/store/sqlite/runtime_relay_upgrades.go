@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 const runtimeRelayUpgradeMigration = `
@@ -175,17 +176,19 @@ func (store *Store) RefuseRuntimeRelayIdentityUpgrade(
 	if err != nil {
 		return err
 	}
-	unknown, err := reconcileTaskUnknown(task, at)
-	if err != nil {
-		return fmt.Errorf("close runtime relay identity task recovery: %w", err)
-	}
-	version, err := nextReconciliationVersion(ctx, transaction)
-	if err != nil {
-		return err
-	}
-	unknown.StateVersion = version
-	if err := updateTaskState(ctx, transaction, unknown); err != nil {
-		return err
+	if task.State != domain.TaskCleaned {
+		unknown, err := reconcileTaskUnknown(task, at)
+		if err != nil {
+			return fmt.Errorf("close runtime relay identity task recovery: %w", err)
+		}
+		version, err := nextReconciliationVersion(ctx, transaction)
+		if err != nil {
+			return err
+		}
+		unknown.StateVersion = version
+		if err := updateTaskState(ctx, transaction, unknown); err != nil {
+			return err
+		}
 	}
 	refusal := application.RuntimeRelayIdentityRefusal{
 		TaskHandle: upgrade.TaskHandle,

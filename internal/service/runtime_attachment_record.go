@@ -39,6 +39,9 @@ func persistPinnedRuntimeAttachmentIdentity(
 	record runtimeAttachmentIdentityRecord,
 	beforePublish func(),
 ) error {
+	if !runtimeAttachmentGenerationMatches(pinned, record.Generation, record.GenerationID) {
+		return errors.New("persist runtime attachment identity: generation differs")
+	}
 	current, mode, found, err := readPinnedRuntimeSocketIdentity(pinned.taskDescriptor)
 	if err != nil || !found || current != record.Socket || mode&unix.S_IFMT != unix.S_IFSOCK || mode&0o777 != 0o600 {
 		return errors.New("persist runtime attachment identity: prepared socket identity differs")
@@ -170,26 +173,29 @@ func prepareRuntimeAttachmentIdentityTemporary(
 
 func formatRuntimeAttachmentIdentityRecord(record runtimeAttachmentIdentityRecord) string {
 	return fmt.Sprintf(
-		"%02x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%x\n",
+		"%02x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%x:%x\n",
 		record.Stage,
 		record.Task.Device, record.Task.Inode, uint64(record.Task.ChangeSec), uint64(record.Task.ChangeNsec),
 		uint64(record.Task.BirthSec), uint64(record.Task.BirthNsec),
 		record.Socket.Device, record.Socket.Inode, uint64(record.Socket.ChangeSec), uint64(record.Socket.ChangeNsec),
 		uint64(record.Socket.BirthSec), uint64(record.Socket.BirthNsec),
+		record.Generation.Device, record.Generation.Inode, uint64(record.Generation.ChangeSec),
+		uint64(record.Generation.ChangeNsec), uint64(record.Generation.BirthSec), uint64(record.Generation.BirthNsec),
+		record.GenerationID,
 		record.RelaySeed,
 	)
 }
 
 func parseRuntimeAttachmentIdentityRecord(encoded string) (runtimeAttachmentIdentityRecord, error) {
-	if len(encoded) != 272 || encoded[len(encoded)-1] != '\n' {
+	if len(encoded) != 407 || encoded[len(encoded)-1] != '\n' {
 		return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
 	}
 	parts := strings.Split(encoded[:len(encoded)-1], ":")
-	if len(parts) != 14 || len(parts[0]) != 2 || len(parts[13]) != 64 {
+	if len(parts) != 21 || len(parts[0]) != 2 || len(parts[19]) != 32 || len(parts[20]) != 64 {
 		return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
 	}
-	values := make([]uint64, 13)
-	for index, part := range parts[:13] {
+	values := make([]uint64, 19)
+	for index, part := range parts[:19] {
 		if index == 0 {
 			value, err := strconv.ParseUint(part, 16, 8)
 			if err != nil {
@@ -217,8 +223,17 @@ func parseRuntimeAttachmentIdentityRecord(encoded string) (runtimeAttachmentIden
 			Device: values[7], Inode: values[8], ChangeSec: int64(values[9]), ChangeNsec: int64(values[10]),
 			BirthSec: int64(values[11]), BirthNsec: int64(values[12]),
 		},
+		Generation: reporter.RuntimeSocketIdentity{
+			Device: values[13], Inode: values[14], ChangeSec: int64(values[15]), ChangeNsec: int64(values[16]),
+			BirthSec: int64(values[17]), BirthNsec: int64(values[18]),
+		},
 	}
-	seed, err := hex.DecodeString(parts[13])
+	generationID, err := hex.DecodeString(parts[19])
+	if err != nil || len(generationID) != len(record.GenerationID) {
+		return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
+	}
+	copy(record.GenerationID[:], generationID)
+	seed, err := hex.DecodeString(parts[20])
 	if err != nil || len(seed) != len(record.RelaySeed) {
 		return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
 	}
@@ -227,14 +242,18 @@ func parseRuntimeAttachmentIdentityRecord(encoded string) (runtimeAttachmentIden
 	for _, value := range record.RelaySeed {
 		seedNonzero |= value
 	}
+	var generationIDNonzero byte
+	for _, value := range record.GenerationID {
+		generationIDNonzero |= value
+	}
 	valid := record.Stage == runtimeAttachmentCreatingIntent && record.Task == (reporter.RuntimeSocketIdentity{}) &&
-		record.Socket == (reporter.RuntimeSocketIdentity{}) ||
-		record.Stage == runtimeAttachmentCreating && record.Task.Valid() &&
+		record.Socket == (reporter.RuntimeSocketIdentity{}) && record.Generation.Valid() ||
+		record.Stage == runtimeAttachmentCreating && record.Task.Valid() && record.Generation.Valid() &&
 			(record.Socket == (reporter.RuntimeSocketIdentity{}) || record.Socket.Valid()) ||
 		(record.Stage == runtimeAttachmentActive || record.Stage == runtimeAttachmentReleaseIntent ||
 			record.Stage == runtimeAttachmentReleasing) &&
-			record.Task.Valid() && record.Socket.Valid()
-	valid = valid && seedNonzero != 0
+			record.Task.Valid() && record.Socket.Valid() && record.Generation.Valid()
+	valid = valid && generationIDNonzero != 0 && seedNonzero != 0
 	if !valid {
 		return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
 	}
@@ -264,10 +283,10 @@ func readRuntimeAttachmentIdentityRecord(
 		_ = unix.Close(descriptor)
 		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, errors.New("runtime attachment identity record is unavailable")
 	}
-	encoded, readErr := io.ReadAll(io.LimitReader(file, 273))
+	encoded, readErr := io.ReadAll(io.LimitReader(file, 408))
 	closeErr := file.Close()
 	if statErr != nil || recordIdentityErr != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o777 != 0o600 ||
-		stat.Nlink != 1 || readErr != nil || len(encoded) > 272 || closeErr != nil {
+		stat.Nlink != 1 || readErr != nil || len(encoded) > 407 || closeErr != nil {
 		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, errors.New("runtime attachment identity record is unsafe")
 	}
 	record, err := parseRuntimeAttachmentIdentityRecord(string(encoded))

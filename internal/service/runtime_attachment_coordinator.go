@@ -70,6 +70,7 @@ type runtimeAttachmentCoordinator struct {
 	releasedServerStopped                  func(*reporter.RuntimeServer)
 	afterRuntimeAttachmentClose            func() error
 	afterRuntimeDirectoryCreation          func() error
+	afterRuntimeSocketListen               func(*reporter.RuntimeServer) error
 	afterRuntimeDirectoryPublish           func() error
 	runtimeAttachmentReplayObserved        func()
 	runtimeAttachmentReleaseReplayObserved func()

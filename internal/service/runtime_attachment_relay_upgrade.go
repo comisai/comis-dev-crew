@@ -91,8 +91,13 @@ func upgradeBaseRuntimeAttachmentIdentity(
 	if taskIdentity != (reporter.RuntimeSocketIdentity{}) {
 		return errors.New("base runtime relay identity absence is ambiguous")
 	}
+	generation, generationID, err := createRuntimeAttachmentGeneration(runtimeRootDescriptor, upgrade.TaskHandle)
+	if err != nil {
+		return err
+	}
 	record := runtimeAttachmentIdentityRecord{
-		Stage: runtimeAttachmentCreatingIntent, RelaySeed: upgrade.RelaySeed,
+		Stage: runtimeAttachmentCreatingIntent, Generation: generation,
+		GenerationID: generationID, RelaySeed: upgrade.RelaySeed,
 	}
 	_, err = publishRuntimeAttachmentIdentity(
 		runtimeRootDescriptor, upgrade.TaskHandle, record, nil, nil,

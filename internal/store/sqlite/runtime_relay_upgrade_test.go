@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -154,5 +155,78 @@ func TestRuntimeRelayIdentityRefusalClosesOnlyAffectedTaskRecovery(t *testing.T)
 	}
 	if _, err := reopened.ReadTaskReconciliationAuthority(context.Background(), task.Handle); !errors.Is(err, application.ErrPrecondition) {
 		t.Fatalf("ReadTaskReconciliationAuthority(refused relay) error = %v", err)
+	}
+}
+
+func TestRuntimeRelayIdentityRefusalPreservesCleanedTaskState(t *testing.T) {
+	databasePath := filepath.Join(canonicalTempDir(t), "devcrew.db")
+	now := time.Date(2026, time.August, 16, 18, 30, 0, 0, time.UTC)
+	store, err := Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := storeTask("task-runtime-relay-cleaned-refusal", 1)
+	task.CreatedAt, task.UpdatedAt = now, now
+	mutation := application.PreparedTaskMutation{
+		Task: task, OperationID: "operation-runtime-relay-cleaned-refusal",
+		SubjectDigest: strings.Repeat("c", 64), At: now,
+		Preparation: application.ManagedRunPreparation{
+			ExternalRunRef: task.Handle, RegistrationNonce: "registration-nonce_relay_cleaned_refusal",
+			RequestedWorkspaceRoot: "/approved/workspaces/runtime-relay-cleaned-refusal",
+			RequestedAttachment: application.PreparedRuntimeAttachment{
+				Kind: application.RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/relay-cleaned-refusal/attachment.sock",
+				RelayIdentity: strings.Repeat("ef", 32),
+			},
+			ExpiresAt: now.Add(time.Hour), State: application.PreparationOpen,
+		},
+	}
+	if _, err := store.RecordTaskPreparationIntent(context.Background(), application.TaskPreparationIntent{
+		OperationID: mutation.OperationID, TaskHandle: task.Handle,
+		SubjectDigest: mutation.SubjectDigest, CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CommitPreparedTask(context.Background(), mutation); err != nil {
+		t.Fatal(err)
+	}
+	cleanedAt := now.Add(time.Minute)
+	if _, err := store.db.Exec(`UPDATE tasks SET state = 'cleaned', state_version = state_version + 1,
+		updated_at = ? WHERE handle = ?`, formatTime(cleanedAt), task.Handle); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE task_preparations
+		SET requested_attachment_relay_identity = '' WHERE task_handle = ?`, task.Handle); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`DELETE FROM schema_migrations WHERE version = 20`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	upgrades, err := reopened.ListRuntimeRelayIdentityUpgrades(context.Background())
+	if err != nil || len(upgrades) != 1 {
+		t.Fatalf("ListRuntimeRelayIdentityUpgrades() = %#v, %v", upgrades, err)
+	}
+	before, err := reopened.GetTask(context.Background(), task.Handle)
+	if err != nil || before.State != domain.TaskCleaned {
+		t.Fatalf("GetTask(before refusal) = %#v, %v", before, err)
+	}
+	if err := reopened.RefuseRuntimeRelayIdentityUpgrade(context.Background(), upgrades[0], now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	after, err := reopened.GetTask(context.Background(), task.Handle)
+	if err != nil || !reflect.DeepEqual(after, before) {
+		t.Fatalf("GetTask(after refusal) = %#v, %v, want %#v", after, err, before)
+	}
+	refusals, err := reopened.ListRuntimeRelayIdentityRefusals(context.Background())
+	if err != nil || len(refusals) != 1 || refusals[0].TaskHandle != task.Handle {
+		t.Fatalf("ListRuntimeRelayIdentityRefusals() = %#v, %v", refusals, err)
 	}
 }

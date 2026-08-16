@@ -47,6 +47,11 @@ func (coordinator *runtimeAttachmentCoordinator) listenRuntimeAttachment(
 	if err != nil {
 		return nil, errors.Join(err, pinned.close())
 	}
+	if coordinator.afterRuntimeSocketListen != nil {
+		if err := coordinator.afterRuntimeSocketListen(server); err != nil {
+			return nil, errors.Join(err, pinned.close())
+		}
+	}
 	if attachment.RelayIdentity != "" && attachment.RelayIdentity != server.RelayIdentity() {
 		return nil, errors.Join(errors.New("prepare runtime attachment: relay identity differs"), server.Close(), pinned.close())
 	}
@@ -59,21 +64,25 @@ func (coordinator *runtimeAttachmentCoordinator) listenRuntimeAttachment(
 		return nil, errors.Join(errors.New("prepare runtime attachment: prepared directory cannot be synchronized"), server.Close(), pinned.close())
 	}
 	preparedIdentity, err := runtimeAttachmentDescriptorIdentity(pinned.taskDescriptor)
-	if err != nil || !sameRuntimeAttachmentStableNode(preparedIdentity, pinned.taskIdentity) {
+	if err != nil || !sameRuntimeAttachmentNode(preparedIdentity, pinned.taskIdentity) ||
+		!runtimeAttachmentGenerationMatches(pinned, priorRecord.Generation, priorRecord.GenerationID) {
 		return nil, errors.Join(errors.New("prepare runtime attachment: prepared directory identity differs"), server.Close(), pinned.close())
 	}
 	pinned.taskIdentity = preparedIdentity
-	creating := runtimeAttachmentIdentityRecord{
-		Stage: runtimeAttachmentCreating, Task: preparedIdentity, Socket: identity, RelaySeed: relaySeed,
-	}
+	creating := *priorRecord
+	creating.Task = preparedIdentity
+	creating.Socket = identity
 	if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, creating, priorRecord, nil); err != nil {
 		return nil, errors.Join(err, server.Close(), pinned.close())
 	}
-	if err := reporter.PublishRuntimeDirectory(
+	publishedIdentity, err := reporter.PublishRuntimeDirectoryIdentity(
 		pinned.runtimeRootDescriptor, temporaryName, request.TaskHandle, pinned.taskIdentity, 0o700,
-	); err != nil {
+	)
+	if err != nil {
 		return nil, errors.Join(err, server.Close(), pinned.close())
 	}
+	pinned.taskIdentity = publishedIdentity
+	pinned.directoryName = request.TaskHandle
 	if coordinator.afterRuntimeDirectoryPublish != nil {
 		if err := coordinator.afterRuntimeDirectoryPublish(); err != nil {
 			return nil, errors.Join(err, server.Close(), pinned.close())
@@ -83,10 +92,13 @@ func (coordinator *runtimeAttachmentCoordinator) listenRuntimeAttachment(
 		return nil, errors.Join(err, server.Close(), pinned.close())
 	}
 	current, err := runtimeAttachmentDescriptorIdentity(pinned.taskDescriptor)
-	if err != nil || !sameRuntimeAttachmentStableNode(current, creating.Task) {
+	if err != nil || !sameRuntimeAttachmentNode(current, creating.Task) ||
+		!runtimeAttachmentGenerationMatches(pinned, creating.Generation, creating.GenerationID) {
 		return nil, errors.Join(errors.New("prepare runtime attachment: published directory identity differs"), server.Close(), pinned.close())
 	}
-	active := runtimeAttachmentIdentityRecord{Stage: runtimeAttachmentActive, Task: current, Socket: identity, RelaySeed: relaySeed}
+	active := creating
+	active.Stage = runtimeAttachmentActive
+	active.Task = current
 	if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, active, &creating, nil); err != nil {
 		return nil, errors.Join(err, server.Close(), pinned.close())
 	}
@@ -121,17 +133,39 @@ func (coordinator *runtimeAttachmentCoordinator) prepareRuntimeAttachmentDirecto
 	}
 	temporaryName := runtimeAttachmentCreationName(taskHandle)
 	temporaryExists := !runtimeAttachmentPathAbsent(runtimeRootDescriptor, temporaryName)
-	if temporaryExists && (!priorFound || prior.Stage != runtimeAttachmentCreatingIntent) {
+	if temporaryExists && (!priorFound || prior.Stage != runtimeAttachmentCreatingIntent &&
+		(prior.Stage != runtimeAttachmentCreating || prior.Socket.Valid())) {
 		return nil, "", nil, [32]byte{}, errors.Join(
 			errors.New("prepare runtime attachment: staged directory identity is unproven"),
 			closeRuntimeRootDescriptor(runtimeRootDescriptor),
 		)
 	}
-	intent := runtimeAttachmentIdentityRecord{Stage: runtimeAttachmentCreatingIntent, RelaySeed: proposedRelaySeed}
-	if _, err := publishRuntimeAttachmentIdentity(
-		runtimeRootDescriptor, taskHandle, intent, priorRecord, nil,
-	); err != nil {
-		return nil, "", nil, [32]byte{}, errors.Join(err, closeRuntimeRootDescriptor(runtimeRootDescriptor))
+	var generation reporter.RuntimeSocketIdentity
+	var generationID [16]byte
+	if priorFound {
+		generation, generationID = prior.Generation, prior.GenerationID
+		if !runtimeAttachmentGenerationAvailable(runtimeRootDescriptor, generation, generationID) {
+			return nil, "", nil, [32]byte{}, errors.Join(
+				errors.New("prepare runtime attachment: generation authority differs"),
+				closeRuntimeRootDescriptor(runtimeRootDescriptor),
+			)
+		}
+	} else {
+		generation, generationID, err = createRuntimeAttachmentGeneration(runtimeRootDescriptor, taskHandle)
+		if err != nil {
+			return nil, "", nil, [32]byte{}, errors.Join(err, closeRuntimeRootDescriptor(runtimeRootDescriptor))
+		}
+	}
+	intent := runtimeAttachmentIdentityRecord{
+		Stage: runtimeAttachmentCreatingIntent, Generation: generation,
+		GenerationID: generationID, RelaySeed: proposedRelaySeed,
+	}
+	if !priorFound || prior != intent {
+		if _, err := publishRuntimeAttachmentIdentity(
+			runtimeRootDescriptor, taskHandle, intent, priorRecord, nil,
+		); err != nil {
+			return nil, "", nil, [32]byte{}, errors.Join(err, closeRuntimeRootDescriptor(runtimeRootDescriptor))
+		}
 	}
 	priorRecord = &intent
 	if !temporaryExists {
@@ -159,6 +193,23 @@ func (coordinator *runtimeAttachmentCoordinator) prepareRuntimeAttachmentDirecto
 		runtimeRootDescriptor: runtimeRootDescriptor, taskDescriptor: taskDescriptor,
 		taskHandle: taskHandle, directoryName: temporaryName, taskIdentity: taskIdentity,
 	}
+	generation, err = linkRuntimeAttachmentGeneration(pinned, generation, generationID)
+	if err != nil {
+		return nil, "", nil, [32]byte{}, errors.Join(err, pinned.close())
+	}
+	boundIdentity, err := runtimeAttachmentDescriptorIdentity(pinned.taskDescriptor)
+	if err != nil {
+		return nil, "", nil, [32]byte{}, errors.Join(err, pinned.close())
+	}
+	pinned.taskIdentity = boundIdentity
+	bound := intent
+	bound.Stage = runtimeAttachmentCreating
+	bound.Task = boundIdentity
+	bound.Generation = generation
+	if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, bound, priorRecord, nil); err != nil {
+		return nil, "", nil, [32]byte{}, errors.Join(err, pinned.close())
+	}
+	priorRecord = &bound
 	if coordinator.afterRuntimeDirectoryCreation != nil {
 		if err := coordinator.afterRuntimeDirectoryCreation(); err != nil {
 			return nil, "", nil, [32]byte{}, errors.Join(err, pinned.close())

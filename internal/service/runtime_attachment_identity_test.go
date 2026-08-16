@@ -1,7 +1,6 @@
 package service
 
 import (
-	"crypto/sha256"
 	"net"
 	"os"
 	"path/filepath"
@@ -47,9 +46,9 @@ func TestPersistRuntimeAttachmentIdentityPreservesRacedHardLink(t *testing.T) {
 		t.Fatalf("pinTaskRuntimeDirectory() = %#v, missing=%t, %v", pinned, missing, err)
 	}
 	defer pinned.close()
-	record := runtimeAttachmentIdentityRecord{
-		Stage: runtimeAttachmentActive, Task: pinned.taskIdentity, Socket: socketIdentity,
-		RelaySeed: sha256.Sum256([]byte("runtime-relay-test\x00" + taskHandle)),
+	record, _, found, err := readRuntimeAttachmentIdentityRecord(pinned.runtimeRootDescriptor, taskHandle)
+	if err != nil || !found {
+		t.Fatalf("readRuntimeAttachmentIdentityRecord() = %#v, %t, %v", record, found, err)
 	}
 	sentinelPath := filepath.Join(root, "sentinel")
 	sentinelContents := []byte("preserve hard-linked content")
@@ -101,7 +100,14 @@ func TestPersistRuntimeAttachmentIdentityIgnoresIncompletePriorTemporary(t *test
 	}
 	defer closeRuntimeRootDescriptor(descriptor)
 	taskHandle := "task-runtime-record-incomplete-temporary"
-	record := runtimeAttachmentIdentityRecord{Stage: runtimeAttachmentCreatingIntent, RelaySeed: runtimeRelaySeedForTest(0x41)}
+	generation, generationID, err := createRuntimeAttachmentGeneration(descriptor, taskHandle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := runtimeAttachmentIdentityRecord{
+		Stage: runtimeAttachmentCreatingIntent, Generation: generation,
+		GenerationID: generationID, RelaySeed: runtimeRelaySeedForTest(0x41),
+	}
 	staleName, err := runtimeAttachmentIdentityTemporaryName(taskHandle)
 	if err != nil {
 		t.Fatal(err)

@@ -16,6 +16,7 @@ import (
 type runtimePathIdentity struct {
 	device     uint64
 	inode      uint64
+	mountID    uint64
 	mode       uint32
 	changeSec  int64
 	changeNsec int64
@@ -180,7 +181,13 @@ func runtimeDescriptorIdentity(descriptor int) (runtimePathIdentity, error) {
 	if err := unix.Fstat(descriptor, &stat); err != nil {
 		return runtimePathIdentity{}, err
 	}
-	return runtimeStatIdentity(stat), nil
+	identity := runtimeStatIdentity(stat)
+	mountID, err := runtimeDescriptorMountID(descriptor)
+	if err != nil || mountID == 0 {
+		return runtimePathIdentity{}, errors.New("runtime mount identity is unavailable")
+	}
+	identity.mountID = mountID
+	return identity, nil
 }
 
 func runtimeStatIdentity(stat unix.Stat_t) runtimePathIdentity {
@@ -191,7 +198,8 @@ func runtimeStatIdentity(stat unix.Stat_t) runtimePathIdentity {
 }
 
 func (identity runtimePathIdentity) sameNode(other runtimePathIdentity) bool {
-	return identity.device == other.device && identity.inode == other.inode && identity.mode == other.mode
+	return identity.device == other.device && identity.inode == other.inode && identity.mountID == other.mountID &&
+		identity.mode == other.mode
 }
 
 func (identity runtimePathIdentity) sameObject(other runtimePathIdentity) bool {

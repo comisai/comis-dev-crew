@@ -130,7 +130,8 @@ func TestBaseRuntimeRelayIdentityUpgradeStartsOnlyWhenPathsAreAbsent(t *testing.
 		t.Fatal(err)
 	}
 	record, _, found, err := readRuntimeAttachmentIdentityRecord(descriptor, taskHandle)
-	if err != nil || !found || record.Stage != runtimeAttachmentCreatingIntent || record.RelaySeed != seed {
+	if err != nil || !found || record.Stage != runtimeAttachmentCreatingIntent || record.RelaySeed != seed ||
+		!record.Generation.Valid() || !runtimeAttachmentGenerationIDValid(record.GenerationID) {
 		t.Fatalf("absent base runtime identity = %#v, %t, %v", record, found, err)
 	}
 	if err := closeRuntimeRootDescriptor(descriptor); err != nil {

@@ -244,6 +244,34 @@ func TestMountedRuntimeClientRejectsReusedSocketNodeWithDifferentChangeTime(t *t
 	}
 }
 
+func TestMountedRuntimeClientRejectsChangedMountInstance(t *testing.T) {
+	const targetName = "attachment-2123456789abcdef0123456789abcdef.sock"
+	root := shortBoundaryDirectory(t)
+	mountDirectory := filepath.Join(root, "run", "comis", "attachments")
+	if err := os.MkdirAll(mountDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	listener, connected := trackedRuntimeSocket(t, filepath.Join(mountDirectory, targetName))
+	client, err := newMountedRuntimeClient(filepath.Join(mountDirectory, targetName), targetName, mountDirectory, boundaryRuntimeRelayIdentity(t), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.mountIdentity.mountID++
+	connection, callErr := client.dialMountedRuntimeSocket()
+	if connection != nil {
+		_ = connection.Close()
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if callErr == nil {
+		t.Fatal("mounted runtime client accepted a changed mount instance")
+	}
+	if <-connected {
+		t.Fatal("mounted runtime client connected through a changed mount instance")
+	}
+}
+
 func TestMountedRuntimeClientAllowsSiblingDirectoryActivity(t *testing.T) {
 	const targetName = "attachment-0123456789abcdef0123456789abcdef.sock"
 	root := shortBoundaryDirectory(t)

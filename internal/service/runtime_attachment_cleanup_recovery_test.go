@@ -261,7 +261,7 @@ func TestRuntimeAttachmentCoordinator_PreservesUnprovenEmptyTaskDirectory(t *tes
 	}
 }
 
-func TestRuntimeAttachmentCoordinator_PreservesDirectoryWithDifferentExactIdentity(t *testing.T) {
+func TestRuntimeAttachmentCoordinator_PreservesDirectoryWithDifferentGenerationIdentity(t *testing.T) {
 	root := shortTempDir(t)
 	runtimeRoot := filepath.Join(root, "runtime")
 	now := time.Date(2026, time.August, 16, 12, 29, 0, 0, time.UTC)
@@ -309,11 +309,7 @@ func TestRuntimeAttachmentCoordinator_PreservesDirectoryWithDifferentExactIdenti
 	if closeErr := closeRuntimeRootDescriptor(rootDescriptor); err != nil || closeErr != nil || !found {
 		t.Fatalf("read identity record = %#v, found=%t, errors=%v, %v", record, found, err, closeErr)
 	}
-	if record.Task.ChangeNsec == 0 {
-		record.Task.ChangeNsec = 1
-	} else {
-		record.Task.ChangeNsec--
-	}
+	record.Generation.Inode++
 	name, err := runtimeAttachmentIdentityName(task.Handle)
 	if err != nil {
 		t.Fatal(err)
@@ -322,10 +318,10 @@ func TestRuntimeAttachmentCoordinator_PreservesDirectoryWithDifferentExactIdenti
 		t.Fatal(err)
 	}
 	if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err == nil || len(servers) != 0 {
-		t.Fatalf("recoverRuntimeAttachments(different exact directory) = %d servers, %v", len(servers), err)
+		t.Fatalf("recoverRuntimeAttachments(different generation) = %d servers, %v", len(servers), err)
 	}
 	if info, err := os.Lstat(taskRoot); err != nil || !info.IsDir() {
-		t.Fatalf("different exact task directory was not preserved: %#v, %v", info, err)
+		t.Fatalf("different generation task directory was not preserved: %#v, %v", info, err)
 	}
 }
 
