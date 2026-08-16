@@ -478,8 +478,11 @@ func TestMutations_RejectsInvalidRegistrationIdentityWithoutCommit(t *testing.T)
 	validClosed := ManagedRunPreparation{
 		ExternalRunRef: "task-0001", RegistrationNonce: "registration-nonce_0001",
 		RequestedWorkspaceRoot: "/approved/workspaces/task-0001",
-		RequestedAttachment:    PreparedRuntimeAttachment{Kind: RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/task-0001/attachment.sock"},
-		ExpiresAt:              clock.Add(time.Hour), State: PreparationAbandoned,
+		RequestedAttachment: PreparedRuntimeAttachment{
+			Kind: RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/task-0001/attachment.sock",
+			RelayIdentity: strings.Repeat("ab", 32),
+		},
+		ExpiresAt: clock.Add(time.Hour), State: PreparationAbandoned,
 		AbandonReason: AbandonReasonOwnerCancelled, Disposition: AbandonDispositionPreserve,
 		ClosedAt: &closedAt,
 	}
@@ -488,6 +491,7 @@ func TestMutations_RejectsInvalidRegistrationIdentityWithoutCommit(t *testing.T)
 	}
 	for _, mutate := range []func(*ManagedRunPreparation){
 		func(preparation *ManagedRunPreparation) { preparation.RequestedWorkspaceRoot = "relative/workspace" },
+		func(preparation *ManagedRunPreparation) { preparation.RequestedAttachment.RelayIdentity = "bad" },
 		func(preparation *ManagedRunPreparation) { preparation.State = "invented" },
 		func(preparation *ManagedRunPreparation) { preparation.AbandonReason = "invented" },
 		func(preparation *ManagedRunPreparation) { preparation.Disposition = "invented" },
@@ -504,6 +508,7 @@ func TestMutations_RejectsInvalidRegistrationIdentityWithoutCommit(t *testing.T)
 func testRuntimeAttachments() *runtimeAttachmentCoordinator {
 	return &runtimeAttachmentCoordinator{prepared: PreparedRuntimeAttachment{
 		Kind: RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/task-0001/attachment.sock",
+		RelayIdentity: strings.Repeat("ab", 32),
 	}}
 }
 

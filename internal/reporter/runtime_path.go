@@ -27,25 +27,29 @@ type pinnedRuntimeMount struct {
 }
 
 // NewRuntimeClient validates and pins a service-owned source socket identity.
-func NewRuntimeClient(socketPath string, timeout time.Duration) (*RuntimeClient, error) {
+func NewRuntimeClient(socketPath, relayIdentity string, timeout time.Duration) (*RuntimeClient, error) {
 	if err := validateRuntimeSourceSocketPath(socketPath); err != nil {
 		return nil, err
 	}
-	return openRuntimeClient(socketPath, timeout)
+	return openRuntimeClient(socketPath, relayIdentity, timeout)
 }
 
 // NewMountedRuntimeClient validates the exact activation-assigned target in
 // the fixed protected mount, then pins its owner-only Unix socket identity.
-func NewMountedRuntimeClient(socketPath, assignedTargetName string, timeout time.Duration) (*RuntimeClient, error) {
-	return newMountedRuntimeClient(socketPath, assignedTargetName, application.RuntimeAttachmentMountDirectory, timeout)
+func NewMountedRuntimeClient(socketPath, assignedTargetName, relayIdentity string, timeout time.Duration) (*RuntimeClient, error) {
+	return newMountedRuntimeClient(socketPath, assignedTargetName, application.RuntimeAttachmentMountDirectory, relayIdentity, timeout)
 }
 
-func newMountedRuntimeClient(socketPath, assignedTargetName, mountDirectory string, timeout time.Duration) (*RuntimeClient, error) {
+func newMountedRuntimeClient(socketPath, assignedTargetName, mountDirectory, relayIdentity string, timeout time.Duration) (*RuntimeClient, error) {
 	if err := validateMountedRuntimeSocketPath(socketPath, assignedTargetName, mountDirectory); err != nil {
 		return nil, err
 	}
 	if err := validateRuntimeClientTimeout(timeout); err != nil {
 		return nil, err
+	}
+	relayPublicKey, err := parseRuntimeRelayIdentity(relayIdentity)
+	if err != nil {
+		return nil, errors.New("create runtime attachment client: relay identity is invalid")
 	}
 	pinned, err := pinRuntimeMountDirectory(mountDirectory)
 	if err != nil {
@@ -61,13 +65,18 @@ func newMountedRuntimeClient(socketPath, assignedTargetName, mountDirectory stri
 	}
 	return &RuntimeClient{
 		socketPath: socketPath, mountDirectory: mountDirectory, mountTargetName: assignedTargetName,
-		mountIdentity: mountIdentity, mountedSocketIdentity: socketIdentity, timeout: timeout,
+		mountIdentity: mountIdentity, mountedSocketIdentity: socketIdentity,
+		relayPublicKey: relayPublicKey, timeout: timeout,
 	}, nil
 }
 
-func openRuntimeClient(socketPath string, timeout time.Duration) (*RuntimeClient, error) {
+func openRuntimeClient(socketPath, relayIdentity string, timeout time.Duration) (*RuntimeClient, error) {
 	if err := validateRuntimeClientTimeout(timeout); err != nil {
 		return nil, err
+	}
+	relayPublicKey, err := parseRuntimeRelayIdentity(relayIdentity)
+	if err != nil {
+		return nil, errors.New("create runtime attachment client: relay identity is invalid")
 	}
 	info, err := os.Lstat(socketPath)
 	if os.IsNotExist(err) {
@@ -82,7 +91,7 @@ func openRuntimeClient(socketPath string, timeout time.Duration) (*RuntimeClient
 	if info.Mode().Perm() != 0o600 {
 		return nil, errors.New("create runtime attachment client: socket permissions are unsafe: require 0600")
 	}
-	return &RuntimeClient{socketPath: socketPath, socketInfo: info, timeout: timeout}, nil
+	return &RuntimeClient{socketPath: socketPath, socketInfo: info, relayPublicKey: relayPublicKey, timeout: timeout}, nil
 }
 
 func validateRuntimeClientTimeout(timeout time.Duration) error {
@@ -239,9 +248,15 @@ func (client *RuntimeClient) dialMountedRuntimeSocket() (net.Conn, error) {
 	if err != nil {
 		return nil, closePinnedRuntimeMount(pinned, errors.New("call runtime attachment: socket is unavailable"))
 	}
+	if client.beforeMountedDial != nil {
+		client.beforeMountedDial()
+	}
 	connection, err := net.DialTimeout("unix", dialPath, client.timeout)
 	if err != nil {
 		return nil, closePinnedRuntimeMount(pinned, errors.New("call runtime attachment: socket is unavailable"))
+	}
+	if client.afterMountedDial != nil {
+		client.afterMountedDial()
 	}
 	currentSocket, socketErr = pinnedRuntimeSocketIdentity(pinned, client.mountTargetName)
 	stable := socketErr == nil && client.mountedSocketIdentity.sameObject(currentSocket) &&

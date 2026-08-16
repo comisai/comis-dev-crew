@@ -1,6 +1,7 @@
 package service
 
 import (
+	"crypto/sha256"
 	"net"
 	"os"
 	"path/filepath"
@@ -46,7 +47,10 @@ func TestPersistRuntimeAttachmentIdentityPreservesRacedHardLink(t *testing.T) {
 		t.Fatalf("pinTaskRuntimeDirectory() = %#v, missing=%t, %v", pinned, missing, err)
 	}
 	defer pinned.close()
-	record := runtimeAttachmentIdentityRecord{Stage: runtimeAttachmentActive, Task: pinned.taskIdentity, Socket: socketIdentity}
+	record := runtimeAttachmentIdentityRecord{
+		Stage: runtimeAttachmentActive, Task: pinned.taskIdentity, Socket: socketIdentity,
+		RelaySeed: sha256.Sum256([]byte("runtime-relay-test\x00" + taskHandle)),
+	}
 	sentinelPath := filepath.Join(root, "sentinel")
 	sentinelContents := []byte("preserve hard-linked content")
 	if err := os.WriteFile(sentinelPath, sentinelContents, 0o600); err != nil {
@@ -78,4 +82,51 @@ func TestPersistRuntimeAttachmentIdentityPreservesRacedHardLink(t *testing.T) {
 	if recordErr != nil || sentinelErr != nil || !os.SameFile(recordInfo, sentinelInfo) {
 		t.Fatalf("raced hard link was not preserved: %#v, %#v, %v, %v", recordInfo, sentinelInfo, recordErr, sentinelErr)
 	}
+}
+
+func TestPersistRuntimeAttachmentIdentityIgnoresIncompletePriorTemporary(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+		RuntimeRoot: runtimeRoot, Store: &runtimeAttachmentRecoveryStore{}, Clock: time.Now,
+		NewCredential:           func() (string, error) { return "unused-temporary-credential-0123456789", nil },
+		NewAttentionOperationID: runtimeAttentionOperationID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor, err := coordinator.pinRuntimeRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeRuntimeRootDescriptor(descriptor)
+	taskHandle := "task-runtime-record-incomplete-temporary"
+	record := runtimeAttachmentIdentityRecord{Stage: runtimeAttachmentCreatingIntent, RelaySeed: runtimeRelaySeedForTest(0x41)}
+	staleName, err := runtimeAttachmentIdentityTemporaryName(taskHandle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stalePath := filepath.Join(runtimeRoot, staleName)
+	if err := os.WriteFile(stalePath, []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := publishRuntimeAttachmentIdentity(descriptor, taskHandle, record, nil, nil); err != nil {
+		t.Fatalf("publishRuntimeAttachmentIdentity(incomplete prior temporary) error = %v", err)
+	}
+	persisted, _, found, err := readRuntimeAttachmentIdentityRecord(descriptor, taskHandle)
+	if err != nil || !found || persisted != record {
+		t.Fatalf("readRuntimeAttachmentIdentityRecord() = %#v, %t, %v", persisted, found, err)
+	}
+	contents, err := os.ReadFile(stalePath)
+	if err != nil || string(contents) != "partial" {
+		t.Fatalf("incomplete prior temporary was altered: %q, %v", contents, err)
+	}
+}
+
+func runtimeRelaySeedForTest(value byte) [32]byte {
+	var seed [32]byte
+	for index := range seed {
+		seed[index] = value
+	}
+	return seed
 }

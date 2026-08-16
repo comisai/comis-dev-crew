@@ -21,7 +21,8 @@ func TestQueries_GetLaunchPlanBuildsAndSafelyProjectsReviewedDescriptor(t *testi
 		tasks: []domain.Task{task},
 		preparation: ManagedRunPreparation{
 			ExternalRunRef: task.Handle, RequestedWorkspaceRoot: workspace,
-			State: PreparationOpen,
+			RequestedAttachment: PreparedRuntimeAttachment{RelayIdentity: strings.Repeat("ab", 32)},
+			State:               PreparationOpen,
 		},
 	}
 	adapter := &queryHarnessAdapter{}
@@ -44,6 +45,7 @@ func TestQueries_GetLaunchPlanBuildsAndSafelyProjectsReviewedDescriptor(t *testi
 		adapter.request.BriefRevision != task.BriefRevision || adapter.request.BriefRevisionHash != task.BriefRevisionHash ||
 		adapter.request.Attachment.ExecutionAttachmentID != task.ExecutionAttachmentID ||
 		adapter.request.Attachment.AttachmentTargetName != task.AttachmentTargetName ||
+		adapter.request.Attachment.RelayIdentity != repository.preparation.RequestedAttachment.RelayIdentity ||
 		adapter.request.Attachment.MountSocketPath != "/run/comis/attachments/"+task.AttachmentTargetName {
 		t.Fatalf("BuildLaunchDescriptor() request = %#v, want exact durable launch binding", adapter.request)
 	}
@@ -66,7 +68,10 @@ func TestQueries_GetLaunchPlanBuildsAndSafelyProjectsReviewedDescriptor(t *testi
 			t.Fatalf("launch plan omitted required managed terminal authority %q: %s", required, encoded)
 		}
 	}
-	for _, forbidden := range []string{workspace, "/usr/local/bin/codex", "--model", "COMIS_EXECUTION_ATTACHMENT", task.ExecutionAttachmentID} {
+	for _, forbidden := range []string{
+		workspace, "/usr/local/bin/codex", "--model", "COMIS_EXECUTION_ATTACHMENT",
+		task.ExecutionAttachmentID, repository.preparation.RequestedAttachment.RelayIdentity,
+	} {
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("launch plan leaked protected process material %q: %s", forbidden, encoded)
 		}
@@ -85,7 +90,8 @@ func TestQueries_GetLaunchPlanAllowsLaunchingRecoveryReread(t *testing.T) {
 			tasks: []domain.Task{task},
 			preparation: ManagedRunPreparation{
 				ExternalRunRef: task.Handle, RequestedWorkspaceRoot: workspace,
-				State: PreparationOpen,
+				RequestedAttachment: PreparedRuntimeAttachment{RelayIdentity: strings.Repeat("ab", 32)},
+				State:               PreparationOpen,
 			},
 		},
 		Harnesses: &queryHarnesses{adapter: adapter},
@@ -158,7 +164,11 @@ func TestQueries_GetLaunchPlanFailsClosedAcrossReadAndAdapterBoundaries(t *testi
 	readyTask := queryTask("task-launch-failures", domain.TaskReady, 8)
 	readyTask.ExecutionAttachmentID = "execution-attachment-0002"
 	readyTask.AttachmentTargetName = "attachment-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.sock"
-	preparation := ManagedRunPreparation{ExternalRunRef: readyTask.Handle, RequestedWorkspaceRoot: t.TempDir(), State: PreparationOpen}
+	preparation := ManagedRunPreparation{
+		ExternalRunRef: readyTask.Handle, RequestedWorkspaceRoot: t.TempDir(),
+		RequestedAttachment: PreparedRuntimeAttachment{RelayIdentity: strings.Repeat("ab", 32)},
+		State:               PreparationOpen,
+	}
 	tests := []struct {
 		name       string
 		handle     string

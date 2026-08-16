@@ -289,6 +289,7 @@ func reconciliationAuthority(now time.Time) TaskReconciliationAuthority {
 			RequestedWorkspaceRoot: "/approved/worktrees/" + task.Handle,
 			RequestedAttachment: PreparedRuntimeAttachment{
 				Kind: RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/attachment.sock",
+				RelayIdentity: strings.Repeat("ab", 32),
 			},
 			ExpiresAt: now.Add(time.Hour), State: PreparationOpen,
 		},

@@ -33,6 +33,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	capability, err := reporter.NewMountedRuntimeClient(
 		os.Getenv(application.RuntimeAttachmentPathEnvironment),
 		os.Getenv(application.RuntimeAttachmentTargetEnvironment),
+		os.Getenv(application.RuntimeAttachmentIdentityEnvironment),
 		5*time.Second,
 	)
 	if err != nil {

@@ -18,6 +18,7 @@ func TestRuntimeServerCloseCancelsAndJoinsAcceptedConnection(t *testing.T) {
 	socketPath := filepath.Join(boundaryRuntimeDirectory(t), "attachment.sock")
 	server, err := ListenRuntime(RuntimeServerConfig{
 		SocketPath: socketPath, Brief: boundaryBrief("task-runtime-release-join"), Reporter: &Client{},
+		RelaySeed:          boundaryRuntimeRelaySeed(),
 		AttentionResponses: receiver,
 		NewAttentionOperationID: func() (string, error) {
 			return "attention-runtime-release-join", nil
@@ -34,7 +35,12 @@ func TestRuntimeServerCloseCancelsAndJoinsAcceptedConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := connection.Write([]byte(`{"version":"devcrew.runtime.v1","kind":"attention_response","externalKey":"database-choice"}` + "\n")); err != nil {
+	publicKey, err := parseRuntimeRelayIdentity(server.RelayIdentity())
+	session, authenticationErr := authenticateRuntimeClientConnection(connection, publicKey)
+	if err != nil || authenticationErr != nil {
+		t.Fatal("runtime relay authentication failed")
+	}
+	if err := writeRuntimeFrame(connection, session, runtimeRequestDirection, []byte(`{"version":"devcrew.runtime.v1","kind":"attention_response","externalKey":"database-choice"}`)); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -88,6 +94,7 @@ func TestListenRuntimePreservesReplacementWhenIdentityCaptureFails(t *testing.T)
 	})
 	_, err := listenRuntime(RuntimeServerConfig{
 		SocketPath: socketPath, Brief: boundaryBrief("task-runtime-capture-race"), Reporter: &Client{},
+		RelaySeed: boundaryRuntimeRelaySeed(),
 	}, func() {
 		hookErr = os.Rename(socketPath, originalPath)
 		if hookErr != nil {
@@ -122,6 +129,7 @@ func TestRuntimeServerServePropagatesCloseIdentityFailure(t *testing.T) {
 	socketPath := filepath.Join(root, "attachment.sock")
 	server, err := ListenRuntime(RuntimeServerConfig{
 		SocketPath: socketPath, Brief: boundaryBrief("task-runtime-close-error"), Reporter: &Client{},
+		RelaySeed: boundaryRuntimeRelaySeed(),
 	})
 	if err != nil {
 		t.Fatal(err)

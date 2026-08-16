@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -13,6 +16,7 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/domain"
 	"github.com/comisai/comis-dev-crew/internal/reporter"
 	"github.com/comisai/comis-dev-crew/internal/store/sqlite"
+	"golang.org/x/sys/unix"
 )
 
 func TestRuntimeAttachmentReleaseRecoversAfterCloseBeforeDirectoryStage(t *testing.T) {
@@ -35,8 +39,10 @@ func TestRuntimeAttachmentReleaseRecoversAfterCloseBeforeDirectoryStage(t *testi
 		t.Fatal(err)
 	}
 	socketPath := filepath.Join(taskRoot, "attachment.sock")
+	relaySeed := runtimeRelaySeedForTest(0x21)
 	server, err := reporter.ListenRuntime(reporter.RuntimeServerConfig{
 		SocketPath: socketPath, Brief: brief, Reporter: &reporter.Client{},
+		RelaySeed: relaySeed[:],
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -49,8 +55,11 @@ func TestRuntimeAttachmentReleaseRecoversAfterCloseBeforeDirectoryStage(t *testi
 		t.Fatal(err)
 	}
 	coordinator.entries[task.Handle] = &runtimeAttachmentEntry{
-		attachment: application.PreparedRuntimeAttachment{Kind: application.RuntimeAttachmentUnixSocket, SourcePath: socketPath},
-		server:     server,
+		attachment: application.PreparedRuntimeAttachment{
+			Kind: application.RuntimeAttachmentUnixSocket, SourcePath: socketPath,
+			RelayIdentity: server.RelayIdentity(),
+		},
+		server: server,
 	}
 	crash := errors.New("simulated process stop")
 	coordinator.afterRuntimeAttachmentClose = func() error { return crash }
@@ -70,7 +79,7 @@ func TestRuntimeAttachmentReleaseRecoversAfterCloseBeforeDirectoryStage(t *testi
 	}
 }
 
-func TestOpenRecordedRuntimeReleaseAcceptsIsolatedDirectoryAfterCtimeChange(t *testing.T) {
+func TestOpenRecordedRuntimeReleasePreservesIsolatedDirectoryWithoutUnrecyclableIdentity(t *testing.T) {
 	root := shortTempDir(t)
 	runtimeRoot := filepath.Join(root, "runtime")
 	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, &runtimeAttachmentRecoveryStore{}, time.Now().UTC())
@@ -83,7 +92,9 @@ func TestOpenRecordedRuntimeReleaseAcceptsIsolatedDirectoryAfterCtimeChange(t *t
 	if err != nil || missing {
 		t.Fatalf("pinTaskRuntimeDirectory() = %#v, %t, %v", pinned, missing, err)
 	}
-	record := runtimeAttachmentIdentityRecord{Stage: runtimeAttachmentReleasing, Task: pinned.taskIdentity}
+	record := runtimeAttachmentIdentityRecord{
+		Stage: runtimeAttachmentReleasing, Task: pinned.taskIdentity, RelaySeed: runtimeRelaySeedForTest(0x22),
+	}
 	record.Task.BirthSec = 0
 	record.Task.BirthNsec = 0
 	releaseName := runtimeAttachmentReleaseName(taskHandle)
@@ -102,12 +113,46 @@ func TestOpenRecordedRuntimeReleaseAcceptsIsolatedDirectoryAfterCtimeChange(t *t
 		t.Fatal(err)
 	}
 	reopened, missing, err := openRecordedTaskRuntimeDirectory(rootDescriptor, taskHandle, record)
-	if err != nil || missing || reopened.directoryName != releaseName {
-		t.Fatalf("openRecordedTaskRuntimeDirectory() = %#v, %t, %v", reopened, missing, err)
+	if err == nil || missing || reopened != nil {
+		t.Fatalf("openRecordedTaskRuntimeDirectory() = %#v, %t, %v, want preserved ambiguity", reopened, missing, err)
 	}
-	if err := reopened.close(); err != nil {
+	if info, statErr := os.Lstat(filepath.Join(runtimeRoot, releaseName)); statErr != nil || !info.IsDir() {
+		t.Fatalf("isolated release was not preserved: %#v, %v", info, statErr)
+	}
+	_ = closeRuntimeRootDescriptor(rootDescriptor)
+}
+
+func TestOpenRecordedRuntimeReleaseRejectsDifferentAvailableBirthIdentity(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, &runtimeAttachmentRecoveryStore{}, time.Now().UTC())
+	taskHandle := "task-runtime-release-birth-identity"
+	if err := os.Mkdir(filepath.Join(runtimeRoot, runtimeAttachmentReleaseName(taskHandle)), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	rootDescriptor, err := coordinator.pinRuntimeRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor, identity, missing, err := openTaskRuntimeDirectory(rootDescriptor, runtimeAttachmentReleaseName(taskHandle))
+	if err != nil || missing {
+		t.Fatalf("openTaskRuntimeDirectory() = %d, %#v, %t, %v", descriptor, identity, missing, err)
+	}
+	_ = unix.Close(descriptor)
+	recordIdentity := identity
+	if recordIdentity.BirthSec == 0 && recordIdentity.BirthNsec == 0 {
+		recordIdentity.BirthSec = 1
+	} else {
+		recordIdentity.BirthSec++
+	}
+	record := runtimeAttachmentIdentityRecord{
+		Stage: runtimeAttachmentReleasing, Task: recordIdentity, RelaySeed: runtimeRelaySeedForTest(0x23),
+	}
+	reopened, missing, err := openRecordedTaskRuntimeDirectory(rootDescriptor, taskHandle, record)
+	if err == nil || missing || reopened != nil {
+		t.Fatalf("openRecordedTaskRuntimeDirectory(different birth) = %#v, %t, %v", reopened, missing, err)
+	}
+	_ = closeRuntimeRootDescriptor(rootDescriptor)
 }
 
 func TestRuntimeAttachmentRecoveryReplaysPublishedReplacementDirectory(t *testing.T) {
@@ -127,6 +172,7 @@ func TestRuntimeAttachmentRecoveryReplaysPublishedReplacementDirectory(t *testin
 			RequestedWorkspaceRoot: workspace,
 			RequestedAttachment: application.PreparedRuntimeAttachment{
 				Kind: application.RuntimeAttachmentUnixSocket, SourcePath: socketPath,
+				RelayIdentity: runtimeTransitionRelayIdentity(),
 			},
 		},
 	}
@@ -159,8 +205,9 @@ func TestRuntimeAttachmentRecoveryReplaysCreationIntent(t *testing.T) {
 		preparation: application.ManagedRunPreparation{
 			RequestedWorkspaceRoot: workspace,
 			RequestedAttachment: application.PreparedRuntimeAttachment{
-				Kind:       application.RuntimeAttachmentUnixSocket,
-				SourcePath: filepath.Join(runtimeRoot, task.Handle, "attachment.sock"),
+				Kind:          application.RuntimeAttachmentUnixSocket,
+				SourcePath:    filepath.Join(runtimeRoot, task.Handle, "attachment.sock"),
+				RelayIdentity: runtimeTransitionRelayIdentity(),
 			},
 		},
 	}
@@ -215,8 +262,9 @@ func TestRuntimeAttachmentRecoveryRemovesUncommittedPreparationPublication(t *te
 		t.Fatal(err)
 	}
 	attachment := application.PreparedRuntimeAttachment{
-		Kind:       application.RuntimeAttachmentUnixSocket,
-		SourcePath: filepath.Join(runtimeRoot, task.Handle, "attachment.sock"),
+		Kind:          application.RuntimeAttachmentUnixSocket,
+		SourcePath:    filepath.Join(runtimeRoot, task.Handle, "attachment.sock"),
+		RelayIdentity: runtimeTransitionRelayIdentity(),
 	}
 	entry, err := first.listenRuntimeAttachment(application.RuntimeAttachmentPreparationRequest{
 		OperationID: intent.OperationID, TaskHandle: task.Handle,
@@ -238,6 +286,12 @@ func TestRuntimeAttachmentRecoveryRemovesUncommittedPreparationPublication(t *te
 	if _, err := os.Lstat(filepath.Join(runtimeRoot, task.Handle)); !os.IsNotExist(err) {
 		t.Fatalf("uncommitted runtime publication error = %v, want absent", err)
 	}
+}
+
+func runtimeTransitionRelayIdentity() string {
+	seed := sha256.Sum256([]byte("runtime-relay\x00transition-credential-0123456789abcdef"))
+	privateKey := ed25519.NewKeyFromSeed(seed[:])
+	return hex.EncodeToString(privateKey.Public().(ed25519.PublicKey))
 }
 
 func runtimeTransitionCoordinator(

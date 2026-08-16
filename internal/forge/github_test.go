@@ -589,6 +589,35 @@ func TestGitHubAdapter_TreatsMalformedCheckNameAsUnknownTruth(t *testing.T) {
 	}
 }
 
+func TestGitHubAdapter_TreatsDuplicateGlobalCheckIdentityAsUnknownTruth(t *testing.T) {
+	head := strings.Repeat("8", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path != "/repos/comisai/fixture/commits/"+head+"/check-runs" {
+			http.NotFound(response, request)
+			return
+		}
+		_, _ = response.Write([]byte(`{"total_count":3,"check_runs":[` +
+			`{"id":51,"name":"ci/unit","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"},` +
+			`{"id":52,"name":"ci/unrelated-a","status":"completed","conclusion":"success","started_at":"2026-08-14T20:01:00Z"},` +
+			`{"id":52,"name":"ci/unrelated-b","status":"completed","conclusion":"success","started_at":"2026-08-14T20:02:00Z"}` +
+			`]}`))
+	}))
+	defer server.Close()
+	adapter, err := NewGitHubAdapter(validGitHubConfig(server))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks, err := adapter.readChecks(context.Background(), "read-token", head, []string{"ci/unit"})
+	if err != nil {
+		t.Fatalf("readChecks(duplicate global identity) error = %v", err)
+	}
+	want := []domain.ForgeCheckEvidence{{Name: "ci/unit", Conclusion: domain.CheckUnknown}}
+	if !reflect.DeepEqual(checks, want) {
+		t.Fatalf("readChecks(duplicate global identity) = %#v, want %#v", checks, want)
+	}
+}
+
 type staticCredentialSource struct{ credential Credential }
 
 func (source staticCredentialSource) Resolve(context.Context) (Credential, error) {

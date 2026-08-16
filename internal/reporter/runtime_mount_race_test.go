@@ -1,6 +1,8 @@
 package reporter
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"net"
 	"os"
@@ -8,6 +10,148 @@ import (
 	"testing"
 	"time"
 )
+
+func TestMountedRuntimeClientAuthenticatesConnectedRelayBeforeRequest(t *testing.T) {
+	const targetName = "attachment-0123456789abcdef0123456789abcdef.sock"
+	mountDirectory := shortBoundaryDirectory(t)
+	socketPath := filepath.Join(mountDirectory, targetName)
+	originalPath := filepath.Join(mountDirectory, "original.sock")
+	server := listenMountedRuntimeServer(
+		t, mountDirectory, targetName, "task-mounted-authentication", bytes.Repeat([]byte{0x31}, runtimeRelaySeedBytes),
+	)
+	t.Cleanup(func() { _ = server.Close() })
+	identity := server.RelayIdentity()
+	client, err := newMountedRuntimeClient(socketPath, targetName, mountDirectory, identity, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maliciousAccepted := make(chan *net.UnixConn, 1)
+	var malicious *net.UnixListener
+	client.beforeMountedDial = func() {
+		if err := os.Rename(socketPath, originalPath); err != nil {
+			t.Error(err)
+			return
+		}
+		address, resolveErr := net.ResolveUnixAddr("unix", socketPath)
+		if resolveErr != nil {
+			t.Error(resolveErr)
+			return
+		}
+		malicious, err = net.ListenUnix("unix", address)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		malicious.SetUnlinkOnClose(false)
+		if err := os.Chmod(socketPath, 0o600); err != nil {
+			t.Error(err)
+			return
+		}
+		go func() {
+			connection, acceptErr := malicious.AcceptUnix()
+			if acceptErr != nil {
+				maliciousAccepted <- nil
+				return
+			}
+			maliciousAccepted <- connection
+		}()
+	}
+	client.afterMountedDial = func() {
+		if malicious != nil {
+			_ = os.Remove(socketPath)
+		}
+		if err := os.Rename(originalPath, socketPath); err != nil {
+			t.Error(err)
+		}
+	}
+	requestObserved := make(chan bool, 1)
+	go func() {
+		connection := <-maliciousAccepted
+		if connection == nil {
+			requestObserved <- false
+			return
+		}
+		defer connection.Close()
+		reader := bufio.NewReader(connection)
+		if _, readErr := reader.ReadString('\n'); readErr != nil {
+			requestObserved <- false
+			return
+		}
+		_, _ = connection.Write([]byte("invalid-relay-proof\n"))
+		_ = connection.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		line, _ := reader.ReadString('\n')
+		requestObserved <- len(line) != 0
+	}()
+	if _, err := client.Brief(context.Background()); err == nil {
+		t.Fatal("mounted runtime client accepted an unauthenticated transient relay")
+	}
+	if <-requestObserved {
+		t.Fatal("mounted runtime client sent a task request before relay authentication")
+	}
+	if malicious != nil {
+		_ = malicious.Close()
+	}
+}
+
+func TestMountedRuntimeClientProtectsRequestAcrossAuthenticatedRelayProxy(t *testing.T) {
+	const targetName = "attachment-1123456789abcdef0123456789abcdef.sock"
+	root := shortBoundaryDirectory(t)
+	mountDirectory := filepath.Join(root, "mounted")
+	serverDirectory := filepath.Join(root, "server")
+	for _, directory := range []string{mountDirectory, serverDirectory} {
+		if err := os.Mkdir(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	socketPath := filepath.Join(mountDirectory, targetName)
+	serverPath := filepath.Join(serverDirectory, "attachment.sock")
+	server, err := ListenRuntime(RuntimeServerConfig{
+		SocketPath: serverPath, Brief: boundaryBrief("task-mounted-encrypted-relay"), Reporter: &Client{},
+		RelaySeed: bytes.Repeat([]byte{0x32}, runtimeRelaySeedBytes),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveDone := make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { serveDone <- server.Serve(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		_ = server.Close()
+		<-serveDone
+	})
+	address, err := net.ResolveUnixAddr("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	malicious, err := net.ListenUnix("unix", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	malicious.SetUnlinkOnClose(false)
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	observedRequest := make(chan []byte, 1)
+	proxyDone := make(chan error, 1)
+	go proxyRuntimeConnection(malicious, serverPath, observedRequest, proxyDone)
+	client, err := newMountedRuntimeClient(socketPath, targetName, mountDirectory, server.RelayIdentity(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	brief, err := client.Brief(context.Background())
+	if err != nil || brief.Content == "" {
+		t.Fatalf("Brief() = %#v, %v", brief, err)
+	}
+	request := <-observedRequest
+	if bytes.Contains(request, []byte(`"kind"`)) || bytes.Contains(request, []byte("brief")) {
+		t.Fatalf("transient relay observed plaintext request: %q", request)
+	}
+	if err := <-proxyDone; err != nil {
+		t.Fatal(err)
+	}
+	_ = malicious.Close()
+}
 
 func TestMountedRuntimeClientBindsDialToPinnedDirectoryIdentity(t *testing.T) {
 	const targetName = "attachment-0123456789abcdef0123456789abcdef.sock"
@@ -26,7 +170,7 @@ func TestMountedRuntimeClientBindsDialToPinnedDirectoryIdentity(t *testing.T) {
 	}
 	originalListener, originalConnected := trackedRuntimeSocket(t, filepath.Join(mountDirectory, targetName))
 	fakeListener, fakeConnected := trackedRuntimeSocket(t, filepath.Join(fakeMountDirectory, targetName))
-	client, err := newMountedRuntimeClient(filepath.Join(mountDirectory, targetName), targetName, mountDirectory, time.Second)
+	client, err := newMountedRuntimeClient(filepath.Join(mountDirectory, targetName), targetName, mountDirectory, boundaryRuntimeRelayIdentity(t), time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +220,7 @@ func TestMountedRuntimeClientRejectsReusedSocketNodeWithDifferentChangeTime(t *t
 		t.Fatal(err)
 	}
 	listener, connected := trackedRuntimeSocket(t, filepath.Join(mountDirectory, targetName))
-	client, err := newMountedRuntimeClient(filepath.Join(mountDirectory, targetName), targetName, mountDirectory, time.Second)
+	client, err := newMountedRuntimeClient(filepath.Join(mountDirectory, targetName), targetName, mountDirectory, boundaryRuntimeRelayIdentity(t), time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +252,7 @@ func TestMountedRuntimeClientAllowsSiblingDirectoryActivity(t *testing.T) {
 		t.Fatal(err)
 	}
 	listener, connected := trackedRuntimeSocket(t, filepath.Join(mountDirectory, targetName))
-	client, err := newMountedRuntimeClient(filepath.Join(mountDirectory, targetName), targetName, mountDirectory, time.Second)
+	client, err := newMountedRuntimeClient(filepath.Join(mountDirectory, targetName), targetName, mountDirectory, boundaryRuntimeRelayIdentity(t), time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,4 +303,78 @@ func trackedRuntimeSocket(t *testing.T, socketPath string) (*net.UnixListener, <
 		connected <- true
 	}()
 	return listener, connected
+}
+
+func proxyRuntimeConnection(
+	listener *net.UnixListener,
+	serverPath string,
+	observedRequest chan<- []byte,
+	done chan<- error,
+) {
+	clientConnection, err := listener.AcceptUnix()
+	if err != nil {
+		done <- err
+		return
+	}
+	defer clientConnection.Close()
+	serverConnection, err := net.Dial("unix", serverPath)
+	if err != nil {
+		done <- err
+		return
+	}
+	defer serverConnection.Close()
+	clientReader := bufio.NewReader(clientConnection)
+	serverReader := bufio.NewReader(serverConnection)
+	auth, err := clientReader.ReadBytes('\n')
+	if err == nil {
+		_, err = serverConnection.Write(auth)
+	}
+	var proof []byte
+	if err == nil {
+		proof, err = serverReader.ReadBytes('\n')
+	}
+	if err == nil {
+		_, err = clientConnection.Write(proof)
+	}
+	var request []byte
+	if err == nil {
+		request, err = clientReader.ReadBytes('\n')
+	}
+	if err == nil {
+		observedRequest <- append([]byte(nil), request...)
+		_, err = serverConnection.Write(request)
+	}
+	var response []byte
+	if err == nil {
+		response, err = serverReader.ReadBytes('\n')
+	}
+	if err == nil {
+		_, err = clientConnection.Write(response)
+	}
+	done <- err
+}
+
+func listenMountedRuntimeServer(
+	t *testing.T,
+	mountDirectory, targetName, taskHandle string,
+	relaySeed []byte,
+) *RuntimeServer {
+	t.Helper()
+	sourcePath := filepath.Join(mountDirectory, "attachment.sock")
+	targetPath := filepath.Join(mountDirectory, targetName)
+	server, err := ListenRuntime(RuntimeServerConfig{
+		SocketPath: sourcePath, Brief: boundaryBrief(taskHandle), Reporter: &Client{}, RelaySeed: relaySeed,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(sourcePath, targetPath); err != nil {
+		_ = server.Close()
+		t.Fatal(err)
+	}
+	if err := server.RelocateSocket(targetPath); err != nil {
+		_ = server.Close()
+		t.Fatal(err)
+	}
+	return server
 }

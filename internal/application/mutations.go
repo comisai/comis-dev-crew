@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -188,17 +187,6 @@ func (preparation ManagedRunPreparation) Validate(createdAt time.Time) error {
 		}
 	default:
 		return errors.New("preparation state is invalid")
-	}
-	return nil
-}
-
-// Validate rejects sources that cannot be handed to Comis as one exact
-// owner-controlled Unix-socket capability.
-func (attachment PreparedRuntimeAttachment) Validate() error {
-	if attachment.Kind != RuntimeAttachmentUnixSocket || !filepath.IsAbs(attachment.SourcePath) ||
-		filepath.Clean(attachment.SourcePath) != attachment.SourcePath || filepath.Base(attachment.SourcePath) != "attachment.sock" ||
-		len([]byte(attachment.SourcePath)) > 4096 || strings.ContainsAny(attachment.SourcePath, "\x00\r\n") {
-		return errors.New("prepared runtime attachment is invalid")
 	}
 	return nil
 }

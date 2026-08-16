@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
@@ -35,6 +36,7 @@ func TestProductionLaunchSupervisor_StartsOnlyAfterVerifiedCreatedAuthority(t *t
 	}
 	if adapter.request.ManagedRunID != task.ManagedRunID || adapter.request.WorkspaceLeaseID != task.WorkspaceLeaseID ||
 		adapter.request.TaskHandle != task.Handle ||
+		adapter.request.Attachment.RelayIdentity != preparation.RequestedAttachment.RelayIdentity ||
 		adapter.request.Attachment.MountSocketPath != "/run/comis/attachments/"+task.AttachmentTargetName {
 		t.Fatalf("verified descriptor request = %#v", adapter.request)
 	}
@@ -193,7 +195,8 @@ func productionLaunchFixture(t *testing.T) (domain.Task, application.ManagedRunP
 	}
 	return task, application.ManagedRunPreparation{
 		ExternalRunRef: task.Handle, RequestedWorkspaceRoot: shortTempDir(t),
-		State: application.PreparationOpen,
+		RequestedAttachment: application.PreparedRuntimeAttachment{RelayIdentity: strings.Repeat("ab", 32)},
+		State:               application.PreparationOpen,
 	}
 }
 

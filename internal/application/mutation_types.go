@@ -4,10 +4,24 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
+
+// Validate rejects sources that cannot be handed to Comis as one exact
+// owner-controlled Unix-socket capability.
+func (attachment PreparedRuntimeAttachment) Validate() error {
+	if attachment.Kind != RuntimeAttachmentUnixSocket || !filepath.IsAbs(attachment.SourcePath) ||
+		filepath.Clean(attachment.SourcePath) != attachment.SourcePath || filepath.Base(attachment.SourcePath) != "attachment.sock" ||
+		len([]byte(attachment.SourcePath)) > 4096 || strings.ContainsAny(attachment.SourcePath, "\x00\r\n") ||
+		ValidateRuntimeRelayIdentity(attachment.RelayIdentity) != nil {
+		return errors.New("prepared runtime attachment is invalid")
+	}
+	return nil
+}
 
 // TaskPreparationIntent durably binds a preparation operation to one task
 // identity before workspace or runtime attachment publication.
@@ -251,8 +265,22 @@ const (
 
 // PreparedRuntimeAttachment is the exact source Comis must validate and bind.
 type PreparedRuntimeAttachment struct {
-	Kind       RuntimeAttachmentKind `json:"kind"`
-	SourcePath string                `json:"sourcePath"`
+	Kind          RuntimeAttachmentKind `json:"kind"`
+	SourcePath    string                `json:"sourcePath"`
+	RelayIdentity string                `json:"relayIdentity"`
+}
+
+// ValidateRuntimeRelayIdentity rejects non-canonical relay public identities.
+func ValidateRuntimeRelayIdentity(value string) error {
+	decoded, err := hex.DecodeString(value)
+	var nonzero byte
+	for _, item := range decoded {
+		nonzero |= item
+	}
+	if err != nil || len(decoded) != 32 || hex.EncodeToString(decoded) != value || nonzero == 0 {
+		return errors.New("runtime relay identity is invalid")
+	}
+	return nil
 }
 
 // RuntimeAttachmentPreparationRequest binds the socket to the immutable brief

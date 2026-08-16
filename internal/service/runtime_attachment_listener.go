@@ -1,6 +1,7 @@
 package service
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -14,16 +15,19 @@ func (coordinator *runtimeAttachmentCoordinator) listenRuntimeAttachment(
 	request application.RuntimeAttachmentPreparationRequest,
 	attachment application.PreparedRuntimeAttachment,
 ) (*runtimeAttachmentEntry, error) {
-	pinned, temporaryName, priorRecord, err := coordinator.prepareRuntimeAttachmentDirectory(request.TaskHandle)
+	credential, err := coordinator.newCredential()
+	if err != nil {
+		return nil, errors.New("prepare runtime attachment: credential source failed")
+	}
+	proposedRelaySeed := sha256.Sum256([]byte("runtime-relay\x00" + credential))
+	pinned, temporaryName, priorRecord, relaySeed, err := coordinator.prepareRuntimeAttachmentDirectory(
+		request.TaskHandle, proposedRelaySeed,
+	)
 	if err != nil {
 		return nil, err
 	}
 	temporaryAttachment := attachment
 	temporaryAttachment.SourcePath = filepath.Join(coordinator.runtimeRoot, temporaryName, "attachment.sock")
-	credential, err := coordinator.newCredential()
-	if err != nil {
-		return nil, errors.Join(errors.New("prepare runtime attachment: credential source failed"), pinned.close())
-	}
 	endpoint, err := reporter.NewEndpoint(reporter.EndpointConfig{
 		TaskHandle: request.TaskHandle, BriefRevision: request.BriefRevision,
 		BriefRevisionHash: request.BriefRevisionHash, Credential: credential, Sink: coordinator.reportSink,
@@ -38,10 +42,15 @@ func (coordinator *runtimeAttachmentCoordinator) listenRuntimeAttachment(
 	server, err := reporter.ListenRuntime(reporter.RuntimeServerConfig{
 		SocketPath: temporaryAttachment.SourcePath, Brief: request.Brief, Reporter: client,
 		AttentionResponses: coordinator, NewAttentionOperationID: coordinator.newAttentionOperationID,
+		RelaySeed: relaySeed[:],
 	})
 	if err != nil {
 		return nil, errors.Join(err, pinned.close())
 	}
+	if attachment.RelayIdentity != "" && attachment.RelayIdentity != server.RelayIdentity() {
+		return nil, errors.Join(errors.New("prepare runtime attachment: relay identity differs"), server.Close(), pinned.close())
+	}
+	attachment.RelayIdentity = server.RelayIdentity()
 	identity, err := server.SocketIdentity()
 	if err != nil {
 		return nil, errors.Join(err, server.Close(), pinned.close())
@@ -55,7 +64,7 @@ func (coordinator *runtimeAttachmentCoordinator) listenRuntimeAttachment(
 	}
 	pinned.taskIdentity = preparedIdentity
 	creating := runtimeAttachmentIdentityRecord{
-		Stage: runtimeAttachmentCreating, Task: preparedIdentity, Socket: identity,
+		Stage: runtimeAttachmentCreating, Task: preparedIdentity, Socket: identity, RelaySeed: relaySeed,
 	}
 	if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, creating, priorRecord, nil); err != nil {
 		return nil, errors.Join(err, server.Close(), pinned.close())
@@ -77,7 +86,7 @@ func (coordinator *runtimeAttachmentCoordinator) listenRuntimeAttachment(
 	if err != nil || !sameRuntimeAttachmentStableNode(current, creating.Task) {
 		return nil, errors.Join(errors.New("prepare runtime attachment: published directory identity differs"), server.Close(), pinned.close())
 	}
-	active := runtimeAttachmentIdentityRecord{Stage: runtimeAttachmentActive, Task: current, Socket: identity}
+	active := runtimeAttachmentIdentityRecord{Stage: runtimeAttachmentActive, Task: current, Socket: identity, RelaySeed: relaySeed}
 	if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, active, &creating, nil); err != nil {
 		return nil, errors.Join(err, server.Close(), pinned.close())
 	}
@@ -89,21 +98,23 @@ func (coordinator *runtimeAttachmentCoordinator) listenRuntimeAttachment(
 
 func (coordinator *runtimeAttachmentCoordinator) prepareRuntimeAttachmentDirectory(
 	taskHandle string,
-) (*pinnedTaskRuntimeDirectory, string, *runtimeAttachmentIdentityRecord, error) {
+	proposedRelaySeed [32]byte,
+) (*pinnedTaskRuntimeDirectory, string, *runtimeAttachmentIdentityRecord, [32]byte, error) {
 	runtimeRootDescriptor, err := coordinator.pinRuntimeRoot()
 	if err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, [32]byte{}, err
 	}
 	prior, _, priorFound, err := readRuntimeAttachmentIdentityRecord(runtimeRootDescriptor, taskHandle)
 	if err != nil {
-		return nil, "", nil, errors.Join(err, closeRuntimeRootDescriptor(runtimeRootDescriptor))
+		return nil, "", nil, [32]byte{}, errors.Join(err, closeRuntimeRootDescriptor(runtimeRootDescriptor))
 	}
 	var priorRecord *runtimeAttachmentIdentityRecord
 	if priorFound {
 		priorRecord = &prior
+		proposedRelaySeed = prior.RelaySeed
 	}
 	if !runtimeAttachmentPathAbsent(runtimeRootDescriptor, taskHandle) {
-		return nil, "", nil, errors.Join(
+		return nil, "", nil, [32]byte{}, errors.Join(
 			errors.New("prepare runtime attachment: task runtime directory already exists"),
 			closeRuntimeRootDescriptor(runtimeRootDescriptor),
 		)
@@ -111,35 +122,35 @@ func (coordinator *runtimeAttachmentCoordinator) prepareRuntimeAttachmentDirecto
 	temporaryName := runtimeAttachmentCreationName(taskHandle)
 	temporaryExists := !runtimeAttachmentPathAbsent(runtimeRootDescriptor, temporaryName)
 	if temporaryExists && (!priorFound || prior.Stage != runtimeAttachmentCreatingIntent) {
-		return nil, "", nil, errors.Join(
+		return nil, "", nil, [32]byte{}, errors.Join(
 			errors.New("prepare runtime attachment: staged directory identity is unproven"),
 			closeRuntimeRootDescriptor(runtimeRootDescriptor),
 		)
 	}
-	intent := runtimeAttachmentIdentityRecord{Stage: runtimeAttachmentCreatingIntent}
+	intent := runtimeAttachmentIdentityRecord{Stage: runtimeAttachmentCreatingIntent, RelaySeed: proposedRelaySeed}
 	if _, err := publishRuntimeAttachmentIdentity(
 		runtimeRootDescriptor, taskHandle, intent, priorRecord, nil,
 	); err != nil {
-		return nil, "", nil, errors.Join(err, closeRuntimeRootDescriptor(runtimeRootDescriptor))
+		return nil, "", nil, [32]byte{}, errors.Join(err, closeRuntimeRootDescriptor(runtimeRootDescriptor))
 	}
 	priorRecord = &intent
 	if !temporaryExists {
 		if err := unix.Mkdirat(runtimeRootDescriptor, temporaryName, 0o700); err != nil {
-			return nil, "", nil, errors.Join(
+			return nil, "", nil, [32]byte{}, errors.Join(
 				errors.New("prepare runtime attachment: staged directory is unavailable"),
 				closeRuntimeRootDescriptor(runtimeRootDescriptor),
 			)
 		}
 	}
 	if err := unix.Fsync(runtimeRootDescriptor); err != nil {
-		return nil, "", nil, errors.Join(
+		return nil, "", nil, [32]byte{}, errors.Join(
 			errors.New("prepare runtime attachment: staged directory cannot be synchronized"),
 			closeRuntimeRootDescriptor(runtimeRootDescriptor),
 		)
 	}
 	taskDescriptor, taskIdentity, missing, err := openTaskRuntimeDirectory(runtimeRootDescriptor, temporaryName)
 	if err != nil || missing {
-		return nil, "", nil, errors.Join(
+		return nil, "", nil, [32]byte{}, errors.Join(
 			errors.New("prepare runtime attachment: staged directory identity is unavailable"),
 			closeRuntimeRootDescriptor(runtimeRootDescriptor),
 		)
@@ -150,8 +161,8 @@ func (coordinator *runtimeAttachmentCoordinator) prepareRuntimeAttachmentDirecto
 	}
 	if coordinator.afterRuntimeDirectoryCreation != nil {
 		if err := coordinator.afterRuntimeDirectoryCreation(); err != nil {
-			return nil, "", nil, errors.Join(err, pinned.close())
+			return nil, "", nil, [32]byte{}, errors.Join(err, pinned.close())
 		}
 	}
-	return pinned, temporaryName, priorRecord, nil
+	return pinned, temporaryName, priorRecord, proposedRelaySeed, nil
 }

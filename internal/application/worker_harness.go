@@ -19,6 +19,8 @@ const (
 	// RuntimeAttachmentTargetEnvironment carries the host-assigned target name
 	// that the reporter must match before connecting.
 	RuntimeAttachmentTargetEnvironment = "COMIS_EXECUTION_ATTACHMENT_TARGET_NAME"
+	// RuntimeAttachmentIdentityEnvironment carries the expected relay public identity.
+	RuntimeAttachmentIdentityEnvironment = "COMIS_EXECUTION_ATTACHMENT_IDENTITY"
 )
 
 // HarnessAvailability is the closed result of an exact adapter probe.
@@ -55,6 +57,7 @@ type RuntimeSocketAttachment struct {
 	ExecutionAttachmentID string
 	AttachmentTargetName  string
 	MountSocketPath       string
+	RelayIdentity         string
 }
 
 // WorkerLaunchRequest contains the exact launch binding. Authority fields are
@@ -215,6 +218,7 @@ func BuildWorkerLaunchDescriptor(
 		task.ManagedRunID == "" || task.WorkspaceLeaseID == "" ||
 		task.ExecutionAttachmentID == "" || task.AttachmentTargetName == "" ||
 		preparation.ExternalRunRef != task.Handle ||
+		ValidateRuntimeRelayIdentity(preparation.RequestedAttachment.RelayIdentity) != nil ||
 		!filepath.IsAbs(preparation.RequestedWorkspaceRoot) ||
 		filepath.Clean(preparation.RequestedWorkspaceRoot) != preparation.RequestedWorkspaceRoot {
 		return WorkerLaunchDescriptor{}, errLaunchAuthorityIncomplete
@@ -233,6 +237,7 @@ func BuildWorkerLaunchDescriptor(
 		ExecutionAttachmentID: task.ExecutionAttachmentID,
 		AttachmentTargetName:  task.AttachmentTargetName,
 		MountSocketPath:       filepath.Join(RuntimeAttachmentMountDirectory, task.AttachmentTargetName),
+		RelayIdentity:         preparation.RequestedAttachment.RelayIdentity,
 	}
 	request := WorkerLaunchRequest{
 		ProfileID: task.WorkerProfileID, Shape: task.Shape,

@@ -3,10 +3,18 @@ package reporter_test
 import (
 	"bufio"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/ecdh"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -56,13 +64,7 @@ func TestRuntimeAttachment_RejectsCrossTaskAndOversizedWireRequests(t *testing.T
 		t.Fatal(err)
 	}
 	request := `{"version":"devcrew.runtime.v1","kind":"report","taskHandle":"task-runtime-0002","report":{"SchemaVersion":1}}` + "\n"
-	if _, err := connection.Write([]byte(request)); err != nil {
-		t.Fatal(err)
-	}
-	var outcome reporter.RuntimeOutcome
-	if err := json.NewDecoder(bufio.NewReader(connection)).Decode(&outcome); err != nil {
-		t.Fatal(err)
-	}
+	outcome := exchangeTestRuntimeRequest(t, connection, harness.server.RelayIdentity(), []byte(request))
 	_ = connection.Close()
 	if outcome.Error == nil || harness.sink.calls != 0 {
 		t.Fatalf("cross-task wire request = %#v, sink calls=%d", outcome, harness.sink.calls)
@@ -72,12 +74,7 @@ func TestRuntimeAttachment_RejectsCrossTaskAndOversizedWireRequests(t *testing.T
 		t.Fatal(err)
 	}
 	request = `{"version":"devcrew.runtime.v1","kind":"attention_response","externalKey":"database-choice","managedRunId":"managed-run-forged"}` + "\n"
-	if _, err := connection.Write([]byte(request)); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.NewDecoder(bufio.NewReader(connection)).Decode(&outcome); err != nil {
-		t.Fatal(err)
-	}
+	outcome = exchangeTestRuntimeRequest(t, connection, harness.server.RelayIdentity(), []byte(request))
 	_ = connection.Close()
 	if outcome.Error == nil || len(harness.attention.recordedRequests()) != 0 {
 		t.Fatalf("forged attention authority = %#v, receiver requests=%#v", outcome, harness.attention.recordedRequests())
@@ -95,12 +92,7 @@ func TestRuntimeAttachment_RejectsCrossTaskAndOversizedWireRequests(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := connection.Write(append(encoded, '\n')); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.NewDecoder(bufio.NewReader(connection)).Decode(&outcome); err != nil {
-		t.Fatal(err)
-	}
+	outcome = exchangeTestRuntimeRequest(t, connection, harness.server.RelayIdentity(), append(encoded, '\n'))
 	_ = connection.Close()
 	if outcome.Error == nil || harness.acknowledger.calls != 0 {
 		t.Fatalf("forged launch acknowledgement = %#v, mutation calls=%d", outcome, harness.acknowledger.calls)
@@ -110,12 +102,7 @@ func TestRuntimeAttachment_RejectsCrossTaskAndOversizedWireRequests(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := connection.Write(append([]byte(`{"version":"devcrew.runtime.v1","kind":"brief","padding":"`), append([]byte(strings.Repeat("x", 20*1024)), []byte(`"}`+"\n")...)...)); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.NewDecoder(bufio.NewReader(connection)).Decode(&outcome); err != nil {
-		t.Fatal(err)
-	}
+	outcome = exchangeTestRuntimeRequest(t, connection, harness.server.RelayIdentity(), append([]byte(`{"version":"devcrew.runtime.v1","kind":"brief","padding":"`), append([]byte(strings.Repeat("x", 20*1024)), []byte(`"}`+"\n")...)...))
 	_ = connection.Close()
 	if outcome.Error == nil {
 		t.Fatal("oversized runtime request was accepted")
@@ -289,6 +276,7 @@ func newRuntimeHarnessWithLaunch(t *testing.T, taskHandle, localReportID string,
 	socketPath := filepath.Join(root, "attachment.sock")
 	config := reporter.RuntimeServerConfig{
 		SocketPath: socketPath, Brief: brief, Reporter: reportClient, AttentionResponses: attention,
+		RelaySeed: []byte(strings.Repeat("r", ed25519.SeedSize)),
 		NewAttentionOperationID: func() (string, error) {
 			operationSequence++
 			return fmt.Sprintf("attention-response-runtime-%d", operationSequence), nil
@@ -313,7 +301,7 @@ func newRuntimeHarnessWithLaunch(t *testing.T, taskHandle, localReportID string,
 			t.Errorf("runtime server stop error = %v", err)
 		}
 	})
-	client, err := reporter.NewRuntimeClient(socketPath, time.Second)
+	client, err := reporter.NewRuntimeClient(socketPath, server.RelayIdentity(), time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,6 +310,105 @@ func newRuntimeHarnessWithLaunch(t *testing.T, taskHandle, localReportID string,
 		workspace: workspace, expectedLaunch: expectedLaunch,
 		launchOperationID: launchOperationID, acknowledger: acknowledger, attention: attention,
 	}
+}
+
+func authenticateTestRuntimeConnection(t *testing.T, connection net.Conn, relayIdentity string) cipher.AEAD {
+	t.Helper()
+	publicKey, err := hex.DecodeString(relayIdentity)
+	if err != nil || len(publicKey) != ed25519.PublicKeySize {
+		t.Fatal("runtime relay identity is invalid")
+	}
+	curve := ecdh.X25519()
+	clientPrivate, err := curve.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		t.Fatal(err)
+	}
+	clientPublic := clientPrivate.PublicKey().Bytes()
+	if _, err := fmt.Fprintf(connection, "devcrew.runtime.v1 auth %s %s\n", hex.EncodeToString(nonce), hex.EncodeToString(clientPublic)); err != nil {
+		t.Fatal(err)
+	}
+	proof, err := bufio.NewReader(connection).ReadString('\n')
+	parts := strings.Split(strings.TrimSuffix(proof, "\n"), " ")
+	if err != nil || len(parts) != 4 || parts[0] != "devcrew.runtime.v1" || parts[1] != "proof" {
+		t.Fatal("runtime relay proof is invalid")
+	}
+	serverPublicBytes, publicErr := hex.DecodeString(parts[2])
+	signature, signatureErr := hex.DecodeString(parts[3])
+	serverPublic, keyErr := curve.NewPublicKey(serverPublicBytes)
+	transcript := testRuntimeRelayTranscript(nonce, clientPublic, serverPublicBytes)
+	if publicErr != nil || signatureErr != nil || keyErr != nil || !ed25519.Verify(publicKey, transcript, signature) {
+		t.Fatal("runtime relay proof is invalid")
+	}
+	shared, err := clientPrivate.ECDH(serverPublic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	material := append([]byte("devcrew.runtime.v1\x00"), shared...)
+	material = append(material, 0)
+	material = append(material, transcript...)
+	key := sha256.Sum256(material)
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return aead
+}
+
+func exchangeTestRuntimeRequest(t *testing.T, connection net.Conn, relayIdentity string, request []byte) reporter.RuntimeOutcome {
+	t.Helper()
+	session := authenticateTestRuntimeConnection(t, connection, relayIdentity)
+	writeTestRuntimeFrame(t, connection, session, 1, request)
+	response := readTestRuntimeFrame(t, connection, session, 2)
+	var outcome reporter.RuntimeOutcome
+	if err := json.Unmarshal(response, &outcome); err != nil {
+		t.Fatal(err)
+	}
+	return outcome
+}
+
+func writeTestRuntimeFrame(t *testing.T, connection net.Conn, session cipher.AEAD, direction byte, plaintext []byte) {
+	t.Helper()
+	nonce := make([]byte, session.NonceSize())
+	nonce[len(nonce)-1] = direction
+	sealed := session.Seal(nil, nonce, plaintext, append([]byte("devcrew.runtime.v1\x00"), direction))
+	if _, err := fmt.Fprintf(connection, "%s\n", base64.RawStdEncoding.EncodeToString(sealed)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readTestRuntimeFrame(t *testing.T, connection net.Conn, session cipher.AEAD, direction byte) []byte {
+	t.Helper()
+	encoded, err := bufio.NewReader(connection).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := base64.RawStdEncoding.DecodeString(strings.TrimSuffix(encoded, "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := make([]byte, session.NonceSize())
+	nonce[len(nonce)-1] = direction
+	plaintext, err := session.Open(nil, nonce, sealed, append([]byte("devcrew.runtime.v1\x00"), direction))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plaintext
+}
+
+func testRuntimeRelayTranscript(nonce, clientPublic, serverPublic []byte) []byte {
+	transcript := append([]byte("devcrew.runtime.v1\x00"), nonce...)
+	transcript = append(transcript, 0)
+	transcript = append(transcript, clientPublic...)
+	transcript = append(transcript, 0)
+	return append(transcript, serverPublic...)
 }
 
 type recordingAttentionReceiver struct {

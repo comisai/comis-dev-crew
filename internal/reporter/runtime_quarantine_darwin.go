@@ -104,3 +104,31 @@ func runtimeRemovalAnchorName(name string, expected RuntimeSocketIdentity) strin
 	digest := sha256.Sum256([]byte(encoded))
 	return ".devcrew-pin-" + hex.EncodeToString(digest[:])
 }
+
+func reconcileRuntimeRemovalAnchor(
+	directoryDescriptor int,
+	originalName string,
+	expected RuntimeSocketIdentity,
+	kind RuntimePathKind,
+	permissions os.FileMode,
+) error {
+	if kind != RuntimePathSocket {
+		return nil
+	}
+	anchor := runtimeRemovalAnchorName(originalName, expected)
+	var stat unix.Stat_t
+	if err := unix.Fstatat(directoryDescriptor, anchor, &stat, unix.AT_SYMLINK_NOFOLLOW); errors.Is(err, unix.ENOENT) {
+		return nil
+	} else if err != nil {
+		return ErrRuntimePathIdentity
+	}
+	identity, err := runtimeSocketStatIdentity(stat)
+	if err != nil || !runtimeSocketIdentityMatches(identity, expected) ||
+		!runtimePathModeMatches(uint32(stat.Mode), kind, permissions) || stat.Nlink != 1 {
+		return ErrRuntimePathIdentity
+	}
+	if err := unix.Unlinkat(directoryDescriptor, anchor, 0); err != nil {
+		return ErrRuntimePathIdentity
+	}
+	return unix.Fsync(directoryDescriptor)
+}

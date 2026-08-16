@@ -401,12 +401,14 @@ not prove the safety rows.
 
 ## Worker reporter contract
 
-Workers receive `devcrew-report` with `COMIS_EXECUTION_ATTACHMENT` and
-`COMIS_EXECUTION_ATTACHMENT_TARGET_NAME` set by the host-managed terminal from the same
-activation-returned binding. The former is the Comis-protected task socket at
-`/run/comis/attachments/<attachmentTargetName>`; the latter must exactly match
-that path's host-assigned `attachment-<32 lowercase hex>.sock` basename. The
-command rejects a different directory, basename, or assigned name and accepts no
+Workers receive `devcrew-report` with `COMIS_EXECUTION_ATTACHMENT`,
+`COMIS_EXECUTION_ATTACHMENT_TARGET_NAME`, and `COMIS_EXECUTION_ATTACHMENT_IDENTITY` set by
+the host-managed terminal from the same activation-returned binding. The path names the
+Comis-protected task socket at `/run/comis/attachments/<attachmentTargetName>`; the target name
+must exactly match that path's host-assigned `attachment-<32 lowercase hex>.sock` basename. The
+identity is the pinned lowercase Ed25519 public key used to authenticate an ephemeral encrypted
+session with the connected task relay before any request crosses the socket. The command rejects
+a different directory, basename, assigned name, or relay proof and accepts no
 task, run, lease, socket, or credential selector.
 
 Subcommands:

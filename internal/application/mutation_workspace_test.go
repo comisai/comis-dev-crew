@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ func TestMutations_PrepareAllocatesOperationBoundWorkspaceBeforeDurableComisPrep
 	workspaces := &workspacePreparer{prepared: PreparedWorkspace{CanonicalRoot: "/approved/worktrees/task-stable-0001"}}
 	attachments := &runtimeAttachmentCoordinator{prepared: PreparedRuntimeAttachment{
 		Kind: RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/task-stable-0001/attachment.sock",
+		RelayIdentity: strings.Repeat("ab", 32),
 	}}
 	attachments.beforePrepare = func() error {
 		if store.intent.OperationID == "" {

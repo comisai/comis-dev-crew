@@ -58,6 +58,7 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 			ExecutionAttachmentID: "execution-attachment-installed-plan",
 			AttachmentTargetName:  "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
 			MountSocketPath:       "/run/comis/attachments/attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
+			RelayIdentity:         strings.Repeat("ab", 32),
 		},
 	})
 	if err != nil {
@@ -67,9 +68,10 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 		descriptor.Unattended || descriptor.DegradedReason != application.HarnessReasonLifecycleSignalUnknown {
 		t.Fatalf("installed Codex launch posture = %#v", descriptor)
 	}
-	if len(descriptor.EnvironmentBindings) != 2 ||
+	if len(descriptor.EnvironmentBindings) != 3 ||
 		descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT"] != descriptor.Attachment.MountSocketPath ||
-		descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT_TARGET_NAME"] != descriptor.Attachment.AttachmentTargetName {
+		descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT_TARGET_NAME"] != descriptor.Attachment.AttachmentTargetName ||
+		descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT_IDENTITY"] != descriptor.Attachment.RelayIdentity {
 		t.Fatalf("installed Codex attachment bindings = %#v", descriptor.EnvironmentBindings)
 	}
 	taskID, err := configured.TaskIDs("operation-installed-stable")

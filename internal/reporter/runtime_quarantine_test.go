@@ -58,6 +58,71 @@ func TestQuarantineRuntimePathPreservesConcurrentReplacement(t *testing.T) {
 	}
 }
 
+func TestQuarantineRuntimePathPreservesReplacementBeforeFinalRemoval(t *testing.T) {
+	root := boundaryRuntimeDirectory(t)
+	socketPath := filepath.Join(root, "attachment.sock")
+	original := listenRuntimeQuarantineSocket(t, socketPath)
+	t.Cleanup(func() { _ = original.Close() })
+	expected := runtimePathTestIdentity(t, socketPath)
+	directory := runtimePathTestDirectoryDescriptor(t, root)
+	defer unix.Close(directory)
+	var replacement *net.UnixListener
+	var replacementInfo os.FileInfo
+	err := quarantineRuntimePathWithHooks(
+		directory, filepath.Base(socketPath), expected, RuntimePathSocket, 0o600,
+		runtimePathMutationHooks{beforeUnlink: func(isolationDescriptor int, target string) error {
+			isolationIdentity, identityErr := runtimeDescriptorIdentity(isolationDescriptor)
+			if identityErr != nil {
+				return identityErr
+			}
+			isolationPath, pathErr := runtimePinnedDirectoryPath(isolationDescriptor, isolationIdentity)
+			if pathErr != nil {
+				return pathErr
+			}
+			originalName := "pinned-original"
+			if err := unix.Renameat(isolationDescriptor, target, isolationDescriptor, originalName); err != nil {
+				return err
+			}
+			replacement = listenRuntimeQuarantineSocket(t, filepath.Join(isolationPath, target))
+			var statErr error
+			replacementInfo, statErr = os.Lstat(filepath.Join(isolationPath, target))
+			return statErr
+		}}, nil,
+	)
+	if !errors.Is(err, ErrRuntimePathIdentity) {
+		t.Fatalf("quarantineRuntimePathWithHooks(final replacement) error = %v", err)
+	}
+	if replacement != nil {
+		defer replacement.Close()
+	}
+	isolationName := runtimePathQuarantineName(filepath.Base(socketPath), expected, RuntimePathSocket, 0o600)
+	current, statErr := os.Lstat(filepath.Join(root, isolationName, runtimePathIsolationTarget))
+	if statErr != nil || replacementInfo == nil || !os.SameFile(current, replacementInfo) {
+		t.Fatalf("final replacement was not preserved: %#v, %v", current, statErr)
+	}
+}
+
+func TestQuarantineRuntimePathRejectsSharedRemovalNamespace(t *testing.T) {
+	root := boundaryRuntimeDirectory(t)
+	socketPath := filepath.Join(root, "attachment.sock")
+	listener := listenRuntimeQuarantineSocket(t, socketPath)
+	defer listener.Close()
+	expected := runtimePathTestIdentity(t, socketPath)
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	directory := runtimePathTestDirectoryDescriptor(t, root)
+	defer unix.Close(directory)
+	if err := QuarantineRuntimePath(
+		directory, filepath.Base(socketPath), expected, RuntimePathSocket, 0o600,
+	); err == nil {
+		t.Fatal("QuarantineRuntimePath accepted a shared removal namespace")
+	}
+	if info, err := os.Lstat(socketPath); err != nil || info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("shared namespace target was not preserved: %#v, %v", info, err)
+	}
+}
+
 func TestQuarantineRuntimePathRestoresIdentityMismatch(t *testing.T) {
 	root := boundaryRuntimeDirectory(t)
 	socketPath := filepath.Join(root, "attachment.sock")

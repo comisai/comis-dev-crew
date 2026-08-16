@@ -145,8 +145,9 @@ func (serviceRuntimeAttachments) PrepareRuntimeAttachment(
 	request application.RuntimeAttachmentPreparationRequest,
 ) (application.PreparedRuntimeAttachment, error) {
 	return application.PreparedRuntimeAttachment{
-		Kind:       application.RuntimeAttachmentUnixSocket,
-		SourcePath: "/approved/runtime/" + request.TaskHandle + "/attachment.sock",
+		Kind:          application.RuntimeAttachmentUnixSocket,
+		SourcePath:    "/approved/runtime/" + request.TaskHandle + "/attachment.sock",
+		RelayIdentity: strings.Repeat("ab", 32),
 	}, nil
 }
 

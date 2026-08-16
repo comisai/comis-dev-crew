@@ -26,9 +26,10 @@ const (
 )
 
 type runtimeAttachmentIdentityRecord struct {
-	Stage  runtimeAttachmentIdentityStage
-	Task   reporter.RuntimeSocketIdentity
-	Socket reporter.RuntimeSocketIdentity
+	Stage     runtimeAttachmentIdentityStage
+	Task      reporter.RuntimeSocketIdentity
+	Socket    reporter.RuntimeSocketIdentity
+	RelaySeed [32]byte
 }
 
 type pinnedTaskRuntimeDirectory struct {
@@ -197,6 +198,7 @@ func (coordinator *runtimeAttachmentCoordinator) persistRuntimeAttachmentIdentit
 		return errors.New("persist runtime attachment identity: task directory is unavailable")
 	}
 	record := runtimeAttachmentIdentityRecord{Stage: runtimeAttachmentActive, Task: pinned.taskIdentity, Socket: identity}
+	record.RelaySeed = sha256.Sum256([]byte("runtime-relay-test\x00" + taskHandle))
 	resultErr := persistPinnedRuntimeAttachmentIdentity(pinned, record, nil)
 	return errors.Join(resultErr, pinned.close())
 }
@@ -271,7 +273,7 @@ func removeRuntimeAttachmentCreationIntent(
 		runtimeRootDescriptor: runtimeRootDescriptor, taskDescriptor: descriptor,
 		taskHandle: taskHandle, directoryName: name, taskIdentity: identity,
 	}
-	bound := runtimeAttachmentIdentityRecord{Stage: runtimeAttachmentCreating, Task: identity}
+	bound := runtimeAttachmentIdentityRecord{Stage: runtimeAttachmentCreating, Task: identity, RelaySeed: record.RelaySeed}
 	if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, bound, &record, nil); err != nil {
 		return errors.Join(errors.New("task runtime creation identity cannot be bound"), unix.Close(descriptor))
 	}
@@ -307,7 +309,7 @@ func openRecordedTaskRuntimeDirectory(
 			return nil, false, errors.New("task runtime directory location is ambiguous; paths preserved")
 		}
 		isolatedRelease := record.Stage == runtimeAttachmentReleasing &&
-			name == runtimeAttachmentReleaseName(taskHandle) && sameRuntimeAttachmentNode(identity, record.Task)
+			name == runtimeAttachmentReleaseName(taskHandle) && sameRuntimeAttachmentStableNode(identity, record.Task)
 		if record.Task != identity && !isolatedRelease &&
 			(record.Stage == runtimeAttachmentActive || !sameRuntimeAttachmentStableNode(identity, record.Task)) {
 			_ = unix.Close(descriptor)

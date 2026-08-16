@@ -59,10 +59,11 @@ func TestRuntimeConstructionRejectsUnsafeOrAmbiguousTargets(t *testing.T) {
 	if _, err := ListenRuntime(RuntimeServerConfig{
 		SocketPath: "relative/attachment.sock", Brief: brief, Reporter: &Client{},
 		LaunchOperationID: "operation-partial-launch",
+		RelaySeed:         boundaryRuntimeRelaySeed(),
 	}); err == nil {
 		t.Fatal("ListenRuntime accepted a partial launch binding")
 	}
-	if _, err := ListenRuntime(RuntimeServerConfig{SocketPath: "relative/attachment.sock", Brief: brief, Reporter: &Client{}}); err == nil {
+	if _, err := ListenRuntime(RuntimeServerConfig{SocketPath: "relative/attachment.sock", Brief: brief, Reporter: &Client{}, RelaySeed: boundaryRuntimeRelaySeed()}); err == nil {
 		t.Fatal("ListenRuntime accepted a relative target")
 	}
 
@@ -71,10 +72,10 @@ func TestRuntimeConstructionRejectsUnsafeOrAmbiguousTargets(t *testing.T) {
 	if err := os.WriteFile(socketPath, []byte("occupied"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ListenRuntime(RuntimeServerConfig{SocketPath: socketPath, Brief: brief, Reporter: &Client{}}); err == nil {
+	if _, err := ListenRuntime(RuntimeServerConfig{SocketPath: socketPath, Brief: brief, Reporter: &Client{}, RelaySeed: boundaryRuntimeRelaySeed()}); err == nil {
 		t.Fatal("ListenRuntime replaced an existing target")
 	}
-	if _, err := NewRuntimeClient(socketPath, time.Second); err == nil {
+	if _, err := NewRuntimeClient(socketPath, boundaryRuntimeRelayIdentity(t), time.Second); err == nil {
 		t.Fatal("NewRuntimeClient accepted a regular file")
 	}
 	if err := os.Remove(socketPath); err != nil {
@@ -83,22 +84,25 @@ func TestRuntimeConstructionRejectsUnsafeOrAmbiguousTargets(t *testing.T) {
 	if err := os.Chmod(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ListenRuntime(RuntimeServerConfig{SocketPath: socketPath, Brief: brief, Reporter: &Client{}}); err == nil {
+	if _, err := ListenRuntime(RuntimeServerConfig{SocketPath: socketPath, Brief: brief, Reporter: &Client{}, RelaySeed: boundaryRuntimeRelaySeed()}); err == nil {
 		t.Fatal("ListenRuntime accepted a broad parent")
 	}
 	if err := os.Chmod(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewRuntimeClient(socketPath, 0); err == nil {
+	if _, err := NewRuntimeClient(socketPath, boundaryRuntimeRelayIdentity(t), 0); err == nil {
 		t.Fatal("NewRuntimeClient accepted a zero timeout")
 	}
-	if _, err := NewRuntimeClient(socketPath, time.Minute+time.Nanosecond); err == nil {
+	if _, err := NewRuntimeClient(socketPath, boundaryRuntimeRelayIdentity(t), time.Minute+time.Nanosecond); err == nil {
 		t.Fatal("NewRuntimeClient accepted an unbounded timeout")
 	}
-	if _, err := NewRuntimeClient("relative/attachment.sock", time.Second); err == nil {
+	if _, err := NewRuntimeClient("relative/attachment.sock", boundaryRuntimeRelayIdentity(t), time.Second); err == nil {
 		t.Fatal("NewRuntimeClient accepted a relative path")
 	}
-	if _, err := NewRuntimeClient(socketPath, time.Second); err == nil {
+	if _, err := NewRuntimeClient(socketPath, "bad", time.Second); err == nil {
+		t.Fatal("NewRuntimeClient accepted an invalid relay identity")
+	}
+	if _, err := NewRuntimeClient(socketPath, boundaryRuntimeRelayIdentity(t), time.Second); err == nil {
 		t.Fatal("NewRuntimeClient accepted a missing socket")
 	}
 }
@@ -149,7 +153,8 @@ func TestDevcrewReportBriefProbeConnectsThroughAssignedMountedTarget(t *testing.
 			t.Errorf("mounted runtime probe stop = %v", err)
 		}
 	})
-	client, err := newMountedRuntimeClient(socketPath, targetName, mountRoot, time.Second)
+	configureBoundaryRuntimeRelay(t, server)
+	client, err := newMountedRuntimeClient(socketPath, targetName, mountRoot, server.RelayIdentity(), time.Second)
 	if err != nil {
 		t.Fatalf("open assigned mounted target: %v", err)
 	}
@@ -166,6 +171,7 @@ func TestDevcrewReportBriefProbeConnectsThroughAssignedMountedTarget(t *testing.
 	if err := os.Chmod(mountRoot, 0o711); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = os.Chmod(mountRoot, 0o700) })
 }
 
 func TestMountedRuntimeClientRejectsIntermediateSymlinkReplacementOnCall(t *testing.T) {
@@ -190,6 +196,7 @@ func TestMountedRuntimeClientRejectsIntermediateSymlinkReplacementOnCall(t *test
 	}
 	brief := boundaryBrief("task-mounted-replacement")
 	server := &RuntimeServer{listener: listener, socketPath: socketPath, socketInfo: info, brief: brief, reporter: &Client{}}
+	configureBoundaryRuntimeRelay(t, server)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(ctx) }()
@@ -200,7 +207,7 @@ func TestMountedRuntimeClientRejectsIntermediateSymlinkReplacementOnCall(t *test
 			t.Errorf("mounted runtime replacement stop = %v", err)
 		}
 	})
-	client, err := newMountedRuntimeClient(socketPath, targetName, mountDirectory, time.Second)
+	client, err := newMountedRuntimeClient(socketPath, targetName, mountDirectory, server.RelayIdentity(), time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,14 +262,14 @@ func TestMountedRuntimeClientRequiresExactAssignedTarget(t *testing.T) {
 			}
 		})
 	}
-	if _, err := NewMountedRuntimeClient("/tmp/"+targetName, targetName, time.Second); err == nil {
+	if _, err := NewMountedRuntimeClient("/tmp/"+targetName, targetName, boundaryRuntimeRelayIdentity(t), time.Second); err == nil {
 		t.Fatal("NewMountedRuntimeClient accepted a socket outside the protected mount")
 	}
 	unsafeRoot := boundaryRuntimeDirectory(t)
 	if err := os.Chmod(unsafeRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newMountedRuntimeClient(filepath.Join(unsafeRoot, targetName), targetName, unsafeRoot, time.Second); err == nil {
+	if _, err := newMountedRuntimeClient(filepath.Join(unsafeRoot, targetName), targetName, unsafeRoot, boundaryRuntimeRelayIdentity(t), time.Second); err == nil {
 		t.Fatal("mounted runtime client accepted a broadly accessible mount")
 	}
 }
@@ -274,7 +281,7 @@ func TestMountedRuntimeClientReproducesRealJailMountShape(t *testing.T) {
 		mountDirectory := mountedRuntimeTestDirectory(t)
 		socketPath := filepath.Join(mountDirectory, targetName)
 		listenBoundarySocket(t, socketPath, 0o600)
-		if _, err := newMountedRuntimeClient(socketPath, targetName, mountDirectory, time.Second); err != nil {
+		if _, err := newMountedRuntimeClient(socketPath, targetName, mountDirectory, boundaryRuntimeRelayIdentity(t), time.Second); err != nil {
 			t.Fatalf("NewMountedRuntimeClient(valid jail mount) error = %v", err)
 		}
 	})
@@ -286,7 +293,7 @@ func TestMountedRuntimeClientReproducesRealJailMountShape(t *testing.T) {
 		if err := os.Chmod(mountDirectory, 0o711); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := newMountedRuntimeClient(socketPath, targetName, mountDirectory, time.Second); err != nil {
+		if _, err := newMountedRuntimeClient(socketPath, targetName, mountDirectory, boundaryRuntimeRelayIdentity(t), time.Second); err != nil {
 			t.Fatalf("NewMountedRuntimeClient(execute-only traversal mount) error = %v", err)
 		}
 	})
@@ -349,7 +356,7 @@ func TestMountedRuntimeClientReproducesRealJailMountShape(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			mountDirectory, socketPath := test.make(t)
-			_, err := newMountedRuntimeClient(socketPath, targetName, mountDirectory, time.Second)
+			_, err := newMountedRuntimeClient(socketPath, targetName, mountDirectory, boundaryRuntimeRelayIdentity(t), time.Second)
 			if err == nil || err.Error() != test.want {
 				t.Fatalf("NewMountedRuntimeClient() error = %v, want %q", err, test.want)
 			}
@@ -369,7 +376,7 @@ func TestRuntimeServerRejectsClosedWireVocabulary(t *testing.T) {
 		`{"version":` + "\n",
 	}
 	for _, request := range requests {
-		outcome := exchangeBoundaryRequest(t, socketPath, request)
+		outcome := exchangeBoundaryRequest(t, socketPath, server.RelayIdentity(), request)
 		if outcome.Error == nil || outcome.Brief != nil || outcome.Receipt != nil {
 			t.Fatalf("rejected request outcome = %#v", outcome)
 		}
@@ -516,7 +523,7 @@ func TestRuntimeClientAndCloseDetectIdentityChanges(t *testing.T) {
 	}
 
 	server, socketPath, stop := startBoundaryRuntime(t, &Client{})
-	client, err := NewRuntimeClient(socketPath, time.Second)
+	client, err := NewRuntimeClient(socketPath, server.RelayIdentity(), time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -548,7 +555,11 @@ func TestRuntimeClientAndCloseDetectIdentityChanges(t *testing.T) {
 	}
 	left, right := net.Pipe()
 	_ = right.Close()
-	if err := writeRuntimeOutcome(left, runtimeRejected("test")); err == nil {
+	session, err := newRuntimeSession(bytes.Repeat([]byte{0x41}, 32), []byte("boundary-session"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRuntimeOutcome(left, session, runtimeRejected("test")); err == nil {
 		t.Fatal("writeRuntimeOutcome ignored a closed connection")
 	}
 	_ = left.Close()
@@ -664,7 +675,10 @@ func startBoundaryRuntime(t *testing.T, client *Client) (*RuntimeServer, string,
 	t.Helper()
 	root := boundaryRuntimeDirectory(t)
 	socketPath := filepath.Join(root, "attachment.sock")
-	server, err := ListenRuntime(RuntimeServerConfig{SocketPath: socketPath, Brief: boundaryBrief("task-boundary-0001"), Reporter: client})
+	server, err := ListenRuntime(RuntimeServerConfig{
+		SocketPath: socketPath, Brief: boundaryBrief("task-boundary-0001"), Reporter: client,
+		RelaySeed: boundaryRuntimeRelaySeed(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -691,18 +705,30 @@ func startBoundaryRuntime(t *testing.T, client *Client) (*RuntimeServer, string,
 	return server, socketPath, stop
 }
 
-func exchangeBoundaryRequest(t *testing.T, socketPath, request string) RuntimeOutcome {
+func exchangeBoundaryRequest(t *testing.T, socketPath, relayIdentity, request string) RuntimeOutcome {
 	t.Helper()
 	connection, err := net.Dial("unix", socketPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer connection.Close()
-	if _, err := connection.Write([]byte(request)); err != nil {
+	publicKey, err := parseRuntimeRelayIdentity(relayIdentity)
+	session, authenticationErr := authenticateRuntimeClientConnection(connection, publicKey)
+	if err != nil || authenticationErr != nil {
+		t.Fatal("runtime relay authentication failed")
+	}
+	if err := writeRuntimeFrame(connection, session, runtimeRequestDirection, []byte(request)); err != nil {
 		t.Fatal(err)
 	}
 	var outcome RuntimeOutcome
-	if err := json.NewDecoder(bufio.NewReader(connection)).Decode(&outcome); err != nil {
+	response, err := readRuntimeFrame(
+		bufio.NewReaderSize(connection, runtimeFrameBufferSize(maximumRuntimeResponseBytes)),
+		session, runtimeResponseDirection, maximumRuntimeResponseBytes,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(response, &outcome); err != nil {
 		t.Fatal(err)
 	}
 	return outcome
@@ -724,7 +750,11 @@ func startBoundaryResponder(t *testing.T, response []byte) (*RuntimeClient, func
 	if err := os.Chmod(socketPath, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	client, err := NewRuntimeClient(socketPath, 200*time.Millisecond)
+	identity, privateKey, err := runtimeRelayIdentity(boundaryRuntimeRelaySeed())
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := NewRuntimeClient(socketPath, identity, 200*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -735,8 +765,14 @@ func startBoundaryResponder(t *testing.T, response []byte) (*RuntimeClient, func
 		if acceptErr != nil {
 			return
 		}
-		_, _ = bufio.NewReader(connection).ReadString('\n')
-		_, _ = connection.Write(response)
+		reader := bufio.NewReader(connection)
+		session, authenticationErr := authenticateRuntimeServerConnection(connection, reader, privateKey)
+		if authenticationErr != nil {
+			_ = connection.Close()
+			return
+		}
+		_, _ = readRuntimeFrame(reader, session, runtimeRequestDirection, maximumRuntimeRequestBytes)
+		_ = writeRuntimeFrame(connection, session, runtimeResponseDirection, response)
 		_ = connection.Close()
 	}()
 	var stopped bool

@@ -1,7 +1,7 @@
 package service
 
 import (
-	"crypto/sha256"
+	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -22,16 +22,16 @@ func runtimeAttachmentIdentityName(taskHandle string) (string, error) {
 	return taskHandle + runtimeAttachmentIdentitySuffix, nil
 }
 
-func runtimeAttachmentIdentityTemporaryName(
-	taskHandle string,
-	record runtimeAttachmentIdentityRecord,
-) (string, error) {
+func runtimeAttachmentIdentityTemporaryName(taskHandle string) (string, error) {
 	name, err := runtimeAttachmentIdentityName(taskHandle)
 	if err != nil {
 		return "", err
 	}
-	digest := sha256.Sum256([]byte(formatRuntimeAttachmentIdentityRecord(record)))
-	return name + ".new-" + hex.EncodeToString(digest[:16]), nil
+	var entropy [16]byte
+	if _, err := rand.Read(entropy[:]); err != nil {
+		return "", errors.New("runtime attachment identity temporary name is unavailable")
+	}
+	return name + ".new-" + hex.EncodeToString(entropy[:]), nil
 }
 
 func persistPinnedRuntimeAttachmentIdentity(
@@ -89,7 +89,7 @@ func publishRuntimeAttachmentIdentity(
 	if existingFound && existingRecord == record && beforePublish == nil {
 		return existingIdentity, nil
 	}
-	temporaryName, err := runtimeAttachmentIdentityTemporaryName(taskHandle, record)
+	temporaryName, err := runtimeAttachmentIdentityTemporaryName(taskHandle)
 	if err != nil {
 		return reporter.RuntimeSocketIdentity{}, err
 	}
@@ -147,9 +147,6 @@ func prepareRuntimeAttachmentIdentityTemporary(
 		runtimeRootDescriptor, temporaryName,
 		unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600,
 	)
-	if errors.Is(err, unix.EEXIST) {
-		return readRuntimeAttachmentIdentityTemporary(runtimeRootDescriptor, temporaryName, encoded)
-	}
 	if err != nil {
 		return reporter.RuntimeSocketIdentity{}, errors.New("persist runtime attachment identity: temporary record is unavailable")
 	}
@@ -171,54 +168,28 @@ func prepareRuntimeAttachmentIdentityTemporary(
 	return identity, nil
 }
 
-func readRuntimeAttachmentIdentityTemporary(
-	runtimeRootDescriptor int,
-	temporaryName, expected string,
-) (reporter.RuntimeSocketIdentity, error) {
-	descriptor, err := unix.Openat(
-		runtimeRootDescriptor, temporaryName, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0,
-	)
-	if err != nil {
-		return reporter.RuntimeSocketIdentity{}, errors.New("persist runtime attachment identity: temporary record is unavailable")
-	}
-	var stat unix.Stat_t
-	statErr := unix.Fstat(descriptor, &stat)
-	identity, identityErr := runtimeAttachmentStatIdentity(stat)
-	file := os.NewFile(uintptr(descriptor), temporaryName)
-	if file == nil {
-		_ = unix.Close(descriptor)
-		return reporter.RuntimeSocketIdentity{}, errors.New("persist runtime attachment identity: temporary record is unavailable")
-	}
-	encoded, readErr := io.ReadAll(io.LimitReader(file, int64(len(expected)+1)))
-	closeErr := file.Close()
-	if statErr != nil || identityErr != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o777 != 0o600 ||
-		stat.Nlink != 1 || readErr != nil || string(encoded) != expected || closeErr != nil {
-		return reporter.RuntimeSocketIdentity{}, errors.New("persist runtime attachment identity: temporary record is unsafe")
-	}
-	return identity, nil
-}
-
 func formatRuntimeAttachmentIdentityRecord(record runtimeAttachmentIdentityRecord) string {
 	return fmt.Sprintf(
-		"%02x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x\n",
+		"%02x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x:%x\n",
 		record.Stage,
 		record.Task.Device, record.Task.Inode, uint64(record.Task.ChangeSec), uint64(record.Task.ChangeNsec),
 		uint64(record.Task.BirthSec), uint64(record.Task.BirthNsec),
 		record.Socket.Device, record.Socket.Inode, uint64(record.Socket.ChangeSec), uint64(record.Socket.ChangeNsec),
 		uint64(record.Socket.BirthSec), uint64(record.Socket.BirthNsec),
+		record.RelaySeed,
 	)
 }
 
 func parseRuntimeAttachmentIdentityRecord(encoded string) (runtimeAttachmentIdentityRecord, error) {
-	if len(encoded) != 207 || encoded[len(encoded)-1] != '\n' {
+	if len(encoded) != 272 || encoded[len(encoded)-1] != '\n' {
 		return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
 	}
 	parts := strings.Split(encoded[:len(encoded)-1], ":")
-	if len(parts) != 13 || len(parts[0]) != 2 {
+	if len(parts) != 14 || len(parts[0]) != 2 || len(parts[13]) != 64 {
 		return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
 	}
-	values := make([]uint64, len(parts))
-	for index, part := range parts {
+	values := make([]uint64, 13)
+	for index, part := range parts[:13] {
 		if index == 0 {
 			value, err := strconv.ParseUint(part, 16, 8)
 			if err != nil {
@@ -247,12 +218,22 @@ func parseRuntimeAttachmentIdentityRecord(encoded string) (runtimeAttachmentIden
 			BirthSec: int64(values[11]), BirthNsec: int64(values[12]),
 		},
 	}
+	seed, err := hex.DecodeString(parts[13])
+	if err != nil || len(seed) != len(record.RelaySeed) {
+		return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
+	}
+	copy(record.RelaySeed[:], seed)
+	var seedNonzero byte
+	for _, value := range record.RelaySeed {
+		seedNonzero |= value
+	}
 	valid := record.Stage == runtimeAttachmentCreatingIntent && record.Task == (reporter.RuntimeSocketIdentity{}) &&
 		record.Socket == (reporter.RuntimeSocketIdentity{}) ||
 		record.Stage == runtimeAttachmentCreating && record.Task.Valid() &&
 			(record.Socket == (reporter.RuntimeSocketIdentity{}) || record.Socket.Valid()) ||
 		(record.Stage == runtimeAttachmentActive || record.Stage == runtimeAttachmentReleasing) &&
 			record.Task.Valid() && record.Socket.Valid()
+	valid = valid && seedNonzero != 0
 	if !valid {
 		return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
 	}
@@ -282,10 +263,10 @@ func readRuntimeAttachmentIdentityRecord(
 		_ = unix.Close(descriptor)
 		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, errors.New("runtime attachment identity record is unavailable")
 	}
-	encoded, readErr := io.ReadAll(io.LimitReader(file, 208))
+	encoded, readErr := io.ReadAll(io.LimitReader(file, 273))
 	closeErr := file.Close()
 	if statErr != nil || recordIdentityErr != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o777 != 0o600 ||
-		stat.Nlink != 1 || readErr != nil || len(encoded) > 207 || closeErr != nil {
+		stat.Nlink != 1 || readErr != nil || len(encoded) > 272 || closeErr != nil {
 		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, errors.New("runtime attachment identity record is unsafe")
 	}
 	record, err := parseRuntimeAttachmentIdentityRecord(string(encoded))

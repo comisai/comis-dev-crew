@@ -42,7 +42,8 @@ func QuarantineRuntimePath(
 }
 
 type runtimePathMutationHooks struct {
-	afterPin func() error
+	afterPin     func() error
+	beforeUnlink func(int, string) error
 }
 
 const runtimePathIsolationTarget = "target"
@@ -72,6 +73,9 @@ func quarantineRuntimePathWithHooks(
 	if directoryDescriptor < 0 || !validRuntimeRemovalName(name) || !expected.Valid() ||
 		!validRuntimePathKind(kind) || permissions.Perm() != permissions {
 		return errors.New("runtime path removal authority is invalid")
+	}
+	if !exclusiveRuntimeRemovalDirectory(directoryDescriptor) {
+		return errors.New("runtime path removal namespace is unsafe")
 	}
 	isolationName := runtimePathQuarantineName(name, expected, kind, permissions)
 	isolationDescriptor, created, err := openRuntimePathIsolation(directoryDescriptor, isolationName)
@@ -143,11 +147,17 @@ func quarantineRuntimePathWithHooks(
 		)
 	}
 	if err := removePinnedRuntimePath(
-		isolationDescriptor, runtimePathIsolationTarget, targetDescriptor, kind, permissions,
+		isolationDescriptor, runtimePathIsolationTarget, targetDescriptor, kind, permissions, hooks.beforeUnlink,
 	); err != nil {
 		return errors.Join(err, unix.Close(isolationDescriptor))
 	}
 	return discardRuntimePathIsolation(directoryDescriptor, isolationDescriptor, isolationName)
+}
+
+func exclusiveRuntimeRemovalDirectory(directoryDescriptor int) bool {
+	var stat unix.Stat_t
+	return unix.Fstat(directoryDescriptor, &stat) == nil && stat.Mode&unix.S_IFMT == unix.S_IFDIR &&
+		stat.Mode&0o777 == 0o700 && stat.Uid == uint32(unix.Geteuid())
 }
 
 func reconcileIsolatedRuntimePath(
@@ -164,18 +174,23 @@ func reconcileIsolatedRuntimePath(
 		expected, kind, permissions,
 	)
 	if errors.Is(err, ErrRuntimePathMissing) {
+		if anchorErr := reconcileRuntimeRemovalAnchor(
+			isolationDescriptor, originalName, expected, kind, permissions,
+		); anchorErr != nil {
+			return true, errors.Join(ErrRuntimePathIdentity, anchorErr, unix.Close(isolationDescriptor))
+		}
 		if discardErr := discardRuntimePathIsolation(
 			directoryDescriptor, isolationDescriptor, isolationName,
 		); discardErr != nil {
 			return true, errors.Join(ErrRuntimePathIdentity, discardErr)
 		}
-		return false, nil
+		return true, nil
 	}
 	if err != nil {
 		return true, errors.Join(err, unix.Close(isolationDescriptor))
 	}
 	if err := removePinnedRuntimePath(
-		isolationDescriptor, runtimePathIsolationTarget, descriptor, kind, permissions,
+		isolationDescriptor, runtimePathIsolationTarget, descriptor, kind, permissions, nil,
 	); err != nil {
 		return true, errors.Join(err, unix.Close(isolationDescriptor))
 	}
@@ -197,7 +212,8 @@ func openRuntimePathIsolation(directoryDescriptor int, name string) (int, bool, 
 		return -1, false, errors.New("runtime path isolation is unavailable")
 	}
 	var stat unix.Stat_t
-	if unix.Fstat(descriptor, &stat) != nil || stat.Mode&unix.S_IFMT != unix.S_IFDIR || stat.Mode&0o777 != 0o700 {
+	if unix.Fstat(descriptor, &stat) != nil || stat.Mode&unix.S_IFMT != unix.S_IFDIR || stat.Mode&0o777 != 0o700 ||
+		stat.Uid != uint32(unix.Geteuid()) {
 		_ = unix.Close(descriptor)
 		return -1, false, ErrRuntimePathIdentity
 	}
@@ -304,6 +320,7 @@ func removePinnedRuntimePath(
 	targetDescriptor *runtimeRemovalPin,
 	kind RuntimePathKind,
 	permissions os.FileMode,
+	beforeUnlink func(int, string) error,
 ) error {
 	var pinnedStat unix.Stat_t
 	var currentStat unix.Stat_t
@@ -312,6 +329,16 @@ func removePinnedRuntimePath(
 	if pinnedErr != nil || currentErr != nil || !runtimeStatsSameStableObject(pinnedStat, currentStat) ||
 		!runtimePathModeMatches(uint32(currentStat.Mode), kind, permissions) {
 		return errors.Join(ErrRuntimePathIdentity, closeRuntimeRemovalPin(targetDescriptor))
+	}
+	if beforeUnlink != nil {
+		if err := beforeUnlink(directoryDescriptor, name); err != nil {
+			return errors.Join(err, closeRuntimeRemovalPin(targetDescriptor))
+		}
+		currentErr = unix.Fstatat(directoryDescriptor, name, &currentStat, unix.AT_SYMLINK_NOFOLLOW)
+		if currentErr != nil || !runtimeStatsSameStableObject(pinnedStat, currentStat) ||
+			!runtimePathModeMatches(uint32(currentStat.Mode), kind, permissions) {
+			return errors.Join(ErrRuntimePathIdentity, closeRuntimeRemovalPin(targetDescriptor))
+		}
 	}
 	flags := 0
 	if kind == RuntimePathDirectory {

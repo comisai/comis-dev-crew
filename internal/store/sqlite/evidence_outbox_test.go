@@ -140,10 +140,11 @@ func insertEvidenceReconciliation(t *testing.T, store *Store, task domain.Task, 
 	workspace := "/approved/worktrees/" + task.Handle
 	if _, err := store.db.Exec(`INSERT INTO task_preparations(
 		task_handle, external_run_ref, registration_nonce, expires_at, created_at,
-		requested_workspace_root, state, requested_attachment_kind, requested_attachment_source_path)
-		VALUES (?, ?, 'registration-recovery-0001', ?, ?, ?, 'open', 'unix_socket', ?)`,
+		requested_workspace_root, state, requested_attachment_kind, requested_attachment_source_path,
+		requested_attachment_relay_identity)
+		VALUES (?, ?, 'registration-recovery-0001', ?, ?, ?, 'open', 'unix_socket', ?, ?)`,
 		task.Handle, task.Handle, formatTime(task.CreatedAt.Add(time.Hour)), formatTime(task.CreatedAt),
-		workspace, "/approved/runtime/"+task.Handle+"/attachment.sock"); err != nil {
+		workspace, "/approved/runtime/"+task.Handle+"/attachment.sock", strings.Repeat("ab", 32)); err != nil {
 		t.Fatalf("insert task preparation: %v", err)
 	}
 	preparation := storeOperation("prepare-recovery-delivery", 1)

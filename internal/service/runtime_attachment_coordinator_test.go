@@ -74,7 +74,7 @@ func TestRuntimeAttachmentCoordinator_PreparesServingTaskSocketUnderOwnedRoot(t 
 	if err != nil || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 {
 		t.Fatalf("prepared socket = %#v, %v", info, err)
 	}
-	client, err := reporter.NewRuntimeClient(attachment.SourcePath, time.Second)
+	client, err := reporter.NewRuntimeClient(attachment.SourcePath, attachment.RelayIdentity, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,9 @@ func TestRuntimeAttachmentCoordinator_RecoversPreparedTaskSocketAfterRestart(t *
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	client, err := reporter.NewRuntimeClient(socketPath, time.Second)
+	client, err := reporter.NewRuntimeClient(
+		socketPath, prepared.Preparation.RequestedAttachment.RelayIdentity, time.Second,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,7 +420,7 @@ func TestRuntimeAttachmentCoordinator_ReleasesOneLiveSocketWithoutStoppingSuperv
 	if _, err := os.Lstat(filepath.Dir(first.SourcePath)); !os.IsNotExist(err) {
 		t.Fatalf("released runtime directory error = %v, want not exist", err)
 	}
-	client, err := reporter.NewRuntimeClient(second.SourcePath, time.Second)
+	client, err := reporter.NewRuntimeClient(second.SourcePath, second.RelayIdentity, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}

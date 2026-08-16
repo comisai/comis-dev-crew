@@ -22,6 +22,19 @@ INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (18, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 `
 
+const runtimeRelayIdentityMigration = `
+ALTER TABLE task_preparations ADD COLUMN requested_attachment_relay_identity TEXT NOT NULL DEFAULT '';
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (19, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+`
+
+func (store *Store) applyTaskPreparationMigrations(ctx context.Context) error {
+	if err := store.applyVersionedMigration(ctx, 18, taskPreparationIntentMigration); err != nil {
+		return err
+	}
+	return store.applyVersionedMigration(ctx, 19, runtimeRelayIdentityMigration)
+}
+
 // RecordTaskPreparationIntent publishes or reuses one immutable task identity.
 func (store *Store) RecordTaskPreparationIntent(
 	ctx context.Context,

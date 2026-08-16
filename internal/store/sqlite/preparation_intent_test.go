@@ -45,8 +45,9 @@ func TestTaskPreparationIntentSurvivesRestartAndCompletesAtomically(t *testing.T
 			ExternalRunRef: intent.TaskHandle, RegistrationNonce: "registration-nonce_preparation_intent",
 			RequestedWorkspaceRoot: "/approved/workspaces/task-preparation-intent-0001",
 			RequestedAttachment: application.PreparedRuntimeAttachment{
-				Kind:       application.RuntimeAttachmentUnixSocket,
-				SourcePath: "/approved/runtime/task-preparation-intent-0001/attachment.sock",
+				Kind:          application.RuntimeAttachmentUnixSocket,
+				SourcePath:    "/approved/runtime/task-preparation-intent-0001/attachment.sock",
+				RelayIdentity: strings.Repeat("ab", 32),
 			},
 			ExpiresAt: now.Add(time.Hour), State: application.PreparationOpen,
 		},
@@ -55,6 +56,10 @@ func TestTaskPreparationIntentSurvivesRestartAndCompletesAtomically(t *testing.T
 	mutation.Task.UpdatedAt = now
 	if _, err := reopened.CommitPreparedTask(context.Background(), mutation); err != nil {
 		t.Fatal(err)
+	}
+	stored, err := reopened.GetManagedRunPreparation(context.Background(), intent.TaskHandle)
+	if err != nil || stored.RequestedAttachment.RelayIdentity != mutation.Preparation.RequestedAttachment.RelayIdentity {
+		t.Fatalf("GetManagedRunPreparation(relay identity) = %#v, %v", stored, err)
 	}
 	intents, err = reopened.ListTaskPreparationIntents(context.Background())
 	if err != nil || len(intents) != 0 {

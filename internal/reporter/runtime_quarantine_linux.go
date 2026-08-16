@@ -60,3 +60,13 @@ func runtimeRemovalPinIdentity(pin *runtimeRemovalPin, stat unix.Stat_t) (Runtim
 func closeRuntimeRemovalPin(pin *runtimeRemovalPin) error {
 	return unix.Close(pin.descriptor)
 }
+
+func reconcileRuntimeRemovalAnchor(
+	int,
+	string,
+	RuntimeSocketIdentity,
+	RuntimePathKind,
+	os.FileMode,
+) error {
+	return nil
+}
