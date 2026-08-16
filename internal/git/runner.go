@@ -119,7 +119,7 @@ func executeGit(ctx context.Context, executable string, arguments ...string) ([]
 }
 
 func classifyGitChildFailure(exitCode int, stderr []byte) gitChildFailureKind {
-	if exitCode < 0 {
+	if exitCode < 0 || exitCode == 126 || exitCode == 127 {
 		return gitChildInfrastructureFailure
 	}
 	diagnostic := strings.ToLower(strings.TrimSpace(string(stderr)))

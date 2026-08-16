@@ -117,7 +117,7 @@ func quarantineRuntimePathWithHooks(
 	if err := errors.Join(unix.Fsync(directoryDescriptor), unix.Fsync(isolationDescriptor)); err != nil {
 		return restoreIsolatedRuntimePath(
 			directoryDescriptor, isolationDescriptor, isolationName, name, targetDescriptor,
-			kind, errors.New("runtime path quarantine cannot be synchronized"),
+			kind, permissions, errors.New("runtime path quarantine cannot be synchronized"),
 		)
 	}
 	if afterQuarantine != nil {
@@ -127,12 +127,12 @@ func quarantineRuntimePathWithHooks(
 		if pinnedErr != nil || identityErr != nil {
 			return restoreIsolatedRuntimePath(
 				directoryDescriptor, isolationDescriptor, isolationName, name, targetDescriptor,
-				kind, errors.New("runtime path pinned identity is unavailable"),
+				kind, permissions, errors.New("runtime path pinned identity is unavailable"),
 			)
 		}
 		if err := afterQuarantine(pinnedIdentity); err != nil {
 			return restoreIsolatedRuntimePath(
-				directoryDescriptor, isolationDescriptor, isolationName, name, targetDescriptor, kind, err,
+				directoryDescriptor, isolationDescriptor, isolationName, name, targetDescriptor, kind, permissions, err,
 			)
 		}
 	}
@@ -141,7 +141,7 @@ func quarantineRuntimePathWithHooks(
 	); err != nil {
 		return restoreIsolatedRuntimePath(
 			directoryDescriptor, isolationDescriptor, isolationName, name, targetDescriptor,
-			kind, errors.Join(ErrRuntimePathIdentity, err),
+			kind, permissions, errors.Join(ErrRuntimePathIdentity, err),
 		)
 	}
 	return preserveIsolatedRuntimePath(isolationDescriptor, targetDescriptor, kind)
@@ -227,8 +227,16 @@ func restoreIsolatedRuntimePath(
 	name string,
 	targetDescriptor *runtimeRemovalPin,
 	kind RuntimePathKind,
+	permissions os.FileMode,
 	cause error,
 ) error {
+	if err := verifyPinnedRuntimePath(
+		isolationDescriptor, runtimePathIsolationTarget, targetDescriptor, kind, permissions,
+	); err != nil {
+		return errors.Join(cause, ErrRuntimePathIdentity, errors.New("runtime path remains isolated"),
+			unix.Fsync(isolationDescriptor), unix.Fsync(directoryDescriptor),
+			preserveRuntimeRemovalPin(targetDescriptor, kind), unix.Close(isolationDescriptor))
+	}
 	renameErr := renameRuntimePathNoReplaceBetween(
 		isolationDescriptor, runtimePathIsolationTarget, directoryDescriptor, name,
 	)
@@ -301,40 +309,24 @@ func pinExpectedRuntimePathWithAnchor(
 
 func restoreMovedRuntimePath(
 	directoryDescriptor int,
-	from, to, anchorName string,
+	from, to string,
+	targetDescriptor *runtimeRemovalPin,
 	kind RuntimePathKind,
 	permissions os.FileMode,
 	cause error,
 ) error {
-	current, err := pinCurrentRuntimePath(directoryDescriptor, from, anchorName, kind, permissions)
-	if err != nil {
-		return errors.Join(cause, ErrRuntimePathIdentity)
+	if err := verifyPinnedRuntimePath(directoryDescriptor, from, targetDescriptor, kind, permissions); err != nil {
+		return errors.Join(cause, ErrRuntimePathIdentity, errors.New("runtime path remains moved"),
+			unix.Fsync(directoryDescriptor), preserveRuntimeRemovalPin(targetDescriptor, kind))
 	}
 	if err := renameRuntimePathNoReplace(directoryDescriptor, from, to); err != nil {
-		return errors.Join(cause, errors.New("runtime path remains moved"), closeRuntimeRemovalPin(current))
+		return errors.Join(cause, errors.New("runtime path remains moved"),
+			preserveRuntimeRemovalPin(targetDescriptor, kind))
 	}
-	verifyErr := verifyPinnedRuntimePath(directoryDescriptor, to, current, kind, permissions)
+	verifyErr := verifyPinnedRuntimePath(directoryDescriptor, to, targetDescriptor, kind, permissions)
 	syncErr := unix.Fsync(directoryDescriptor)
-	closeErr := closeRuntimeRemovalPin(current)
+	closeErr := closeRuntimeRemovalPin(targetDescriptor)
 	return errors.Join(cause, verifyErr, syncErr, closeErr)
-}
-
-func pinCurrentRuntimePath(
-	directoryDescriptor int,
-	name, anchorName string,
-	kind RuntimePathKind,
-	permissions os.FileMode,
-) (*runtimeRemovalPin, error) {
-	var stat unix.Stat_t
-	if err := unix.Fstatat(directoryDescriptor, name, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-		return nil, err
-	}
-	identity, err := runtimeSocketStatIdentity(stat)
-	if err != nil || !runtimePathModeMatches(uint32(stat.Mode), kind, permissions) ||
-		(kind == RuntimePathRegular && stat.Nlink != 1) {
-		return nil, ErrRuntimePathIdentity
-	}
-	return pinExpectedRuntimePathAt(directoryDescriptor, name, anchorName, identity, kind, permissions)
 }
 
 func runtimePathQuarantineName(

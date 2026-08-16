@@ -57,16 +57,14 @@ func PublishRuntimeDirectoryIdentity(
 	)
 	if err != nil {
 		return RuntimeSocketIdentity{}, restoreMovedRuntimePath(
-			directoryDescriptor, destinationName, temporaryName, temporaryName, RuntimePathDirectory, permissions,
-			errors.Join(errors.New("runtime directory publication identity differs"), err,
-				closeRuntimeRemovalPin(targetDescriptor)),
+			directoryDescriptor, destinationName, temporaryName, targetDescriptor, RuntimePathDirectory, permissions,
+			errors.Join(errors.New("runtime directory publication identity differs"), err),
 		)
 	}
 	if err := unix.Fsync(directoryDescriptor); err != nil {
 		return RuntimeSocketIdentity{}, restoreMovedRuntimePath(
-			directoryDescriptor, destinationName, temporaryName, temporaryName, RuntimePathDirectory, permissions,
-			errors.Join(errors.New("runtime directory publication cannot be synchronized"), err,
-				closeRuntimeRemovalPin(targetDescriptor)),
+			directoryDescriptor, destinationName, temporaryName, targetDescriptor, RuntimePathDirectory, permissions,
+			errors.Join(errors.New("runtime directory publication cannot be synchronized"), err),
 		)
 	}
 	if err := closeRuntimeRemovalPin(targetDescriptor); err != nil {
@@ -141,16 +139,15 @@ func publishRuntimePathKind(
 		directoryDescriptor, destinationName, targetDescriptor, kind, permissions,
 	); err != nil {
 		return restoreMovedRuntimePath(
-			directoryDescriptor, destinationName, temporaryName, temporaryName, kind, permissions,
-			errors.Join(errors.New("runtime path publication identity differs"), err, closeRuntimeRemovalPin(targetDescriptor)),
+			directoryDescriptor, destinationName, temporaryName, targetDescriptor, kind, permissions,
+			errors.Join(errors.New("runtime path publication identity differs"), err),
 		)
 	}
 	syncErr := unix.Fsync(directoryDescriptor)
 	if syncErr != nil {
 		return restoreMovedRuntimePath(
-			directoryDescriptor, destinationName, temporaryName, temporaryName, kind, permissions,
-			errors.Join(errors.New("runtime path publication cannot be synchronized"),
-				syncErr, closeRuntimeRemovalPin(targetDescriptor)),
+			directoryDescriptor, destinationName, temporaryName, targetDescriptor, kind, permissions,
+			errors.Join(errors.New("runtime path publication cannot be synchronized"), syncErr),
 		)
 	}
 	closeErr := closeRuntimeRemovalPin(targetDescriptor)
@@ -213,20 +210,22 @@ func replaceRuntimePath(
 		directoryDescriptor, temporaryName, destinationDescriptor, RuntimePathRegular, permissions,
 	)
 	if temporaryErr != nil || destinationErr != nil {
-		cause := errors.Join(errors.New("runtime path replacement identity differs"), temporaryErr, destinationErr,
-			closeRuntimeRemovalPin(temporaryDescriptor), closeRuntimeRemovalPin(destinationDescriptor))
-		return rollbackRuntimePathExchange(directoryDescriptor, temporaryName, destinationName, permissions, cause)
-	}
-	syncErr := unix.Fsync(directoryDescriptor)
-	closeTemporaryErr := closeRuntimeRemovalPin(temporaryDescriptor)
-	closeDestinationErr := closeRuntimeRemovalPin(destinationDescriptor)
-	if syncErr != nil {
+		cause := errors.Join(errors.New("runtime path replacement identity differs"), temporaryErr, destinationErr)
 		return rollbackRuntimePathExchange(
-			directoryDescriptor, temporaryName, destinationName, permissions,
-			errors.Join(errors.New("runtime path replacement cannot be synchronized"),
-				syncErr, closeTemporaryErr, closeDestinationErr),
+			directoryDescriptor, temporaryName, destinationName,
+			temporaryDescriptor, destinationDescriptor, permissions, cause,
 		)
 	}
+	syncErr := unix.Fsync(directoryDescriptor)
+	if syncErr != nil {
+		return rollbackRuntimePathExchange(
+			directoryDescriptor, temporaryName, destinationName,
+			temporaryDescriptor, destinationDescriptor, permissions,
+			errors.Join(errors.New("runtime path replacement cannot be synchronized"), syncErr),
+		)
+	}
+	closeTemporaryErr := closeRuntimeRemovalPin(temporaryDescriptor)
+	closeDestinationErr := closeRuntimeRemovalPin(destinationDescriptor)
 	if closeTemporaryErr != nil || closeDestinationErr != nil {
 		return errors.New("runtime path replacement cannot be synchronized")
 	}
@@ -236,34 +235,32 @@ func replaceRuntimePath(
 func rollbackRuntimePathExchange(
 	directoryDescriptor int,
 	temporaryName, destinationName string,
+	temporaryDescriptor, destinationDescriptor *runtimeRemovalPin,
 	permissions os.FileMode,
 	cause error,
 ) error {
-	temporary, temporaryErr := pinCurrentRuntimePath(
-		directoryDescriptor, temporaryName, temporaryName, RuntimePathRegular, permissions,
+	temporaryErr := verifyPinnedRuntimePath(
+		directoryDescriptor, destinationName, temporaryDescriptor, RuntimePathRegular, permissions,
 	)
-	destination, destinationErr := pinCurrentRuntimePath(
-		directoryDescriptor, destinationName, destinationName, RuntimePathRegular, permissions,
+	destinationErr := verifyPinnedRuntimePath(
+		directoryDescriptor, temporaryName, destinationDescriptor, RuntimePathRegular, permissions,
 	)
 	if temporaryErr != nil || destinationErr != nil {
-		if temporary != nil {
-			_ = closeRuntimeRemovalPin(temporary)
-		}
-		if destination != nil {
-			_ = closeRuntimeRemovalPin(destination)
-		}
-		return errors.Join(cause, ErrRuntimePathIdentity)
+		return errors.Join(cause, ErrRuntimePathIdentity, unix.Fsync(directoryDescriptor),
+			preserveRuntimeRemovalPin(temporaryDescriptor, RuntimePathRegular),
+			preserveRuntimeRemovalPin(destinationDescriptor, RuntimePathRegular))
 	}
 	if err := exchangeRuntimePaths(directoryDescriptor, temporaryName, destinationName); err != nil {
 		return errors.Join(cause, errors.New("runtime path replacement cannot be restored"),
-			closeRuntimeRemovalPin(temporary), closeRuntimeRemovalPin(destination))
+			preserveRuntimeRemovalPin(temporaryDescriptor, RuntimePathRegular),
+			preserveRuntimeRemovalPin(destinationDescriptor, RuntimePathRegular))
 	}
 	temporaryVerify := verifyPinnedRuntimePath(
-		directoryDescriptor, destinationName, temporary, RuntimePathRegular, permissions,
+		directoryDescriptor, temporaryName, temporaryDescriptor, RuntimePathRegular, permissions,
 	)
 	destinationVerify := verifyPinnedRuntimePath(
-		directoryDescriptor, temporaryName, destination, RuntimePathRegular, permissions,
+		directoryDescriptor, destinationName, destinationDescriptor, RuntimePathRegular, permissions,
 	)
 	return errors.Join(cause, temporaryVerify, destinationVerify, unix.Fsync(directoryDescriptor),
-		closeRuntimeRemovalPin(temporary), closeRuntimeRemovalPin(destination))
+		closeRuntimeRemovalPin(temporaryDescriptor), closeRuntimeRemovalPin(destinationDescriptor))
 }

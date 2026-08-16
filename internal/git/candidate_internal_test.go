@@ -101,6 +101,39 @@ func TestInspectCandidatePreservesLaunchedGitIOFailure(t *testing.T) {
 	}
 }
 
+func TestInspectCandidatePreservesGitLoaderFailure(t *testing.T) {
+	root := internalCanonicalTempDir(t)
+	worktreeRoot := filepath.Join(root, "worktrees")
+	worktreePath := filepath.Join(worktreeRoot, "task-candidate-loader")
+	if err := os.MkdirAll(worktreePath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".git"), []byte("gitdir: unavailable\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	executable := filepath.Join(root, "loader-failing-git")
+	if err := os.WriteFile(
+		executable,
+		[]byte("#!/bin/sh\nprintf '%s\\n' 'git: error while loading shared libraries: libz.so: cannot open shared object file' >&2\nexit 127\n"),
+		0o700,
+	); err != nil {
+		t.Fatal(err)
+	}
+	registry := &Registry{
+		gitExecutable: executable,
+		repositories: map[string]Repository{"product-api": {
+			ID: "product-api", WorktreeRoot: worktreeRoot,
+		}},
+	}
+	request := CandidateSnapshotRequest{
+		TaskHandle: "task-candidate-loader", RepositoryID: "product-api", WorktreePath: worktreePath,
+	}
+	if _, err := registry.InspectCandidate(context.Background(), request); err == nil ||
+		errors.Is(err, ErrCandidateWorktreeUnverified) || !errors.Is(err, errGitInfrastructure) {
+		t.Fatalf("InspectCandidate(loader failure) error = %v", err)
+	}
+}
+
 func TestInspectCandidateTreatsCorruptIndexAsUnverifiedWorktree(t *testing.T) {
 	ctx := context.Background()
 	root := internalCanonicalTempDir(t)

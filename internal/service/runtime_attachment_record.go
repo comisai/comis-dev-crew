@@ -270,16 +270,32 @@ func readRuntimeAttachmentIdentityRecord(
 	if err != nil {
 		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, err
 	}
-	descriptor, err := unix.Openat(runtimeRootDescriptor, name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	descriptor, err := unix.Openat(
+		runtimeRootDescriptor, name, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0,
+	)
 	if errors.Is(err, unix.ENOENT) {
 		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, nil
 	}
 	if err != nil {
+		if errors.Is(err, unix.ELOOP) || errors.Is(err, unix.EACCES) || errors.Is(err, unix.EPERM) {
+			return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false,
+				runtimeAttachmentOwnershipUnproven("runtime attachment identity record is unsafe; path preserved")
+		}
 		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, errors.New("runtime attachment identity record is unavailable")
 	}
 	var stat unix.Stat_t
-	statErr := unix.Fstat(descriptor, &stat)
+	if err := unix.Fstat(descriptor, &stat); err != nil {
+		_ = unix.Close(descriptor)
+		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, errors.New("runtime attachment identity record is unavailable")
+	}
 	recordIdentity, recordIdentityErr := runtimeAttachmentStatIdentity(stat)
+	if recordIdentityErr != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o777 != 0o600 || stat.Nlink != 1 {
+		if err := unix.Close(descriptor); err != nil {
+			return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, errors.New("runtime attachment identity record is unavailable")
+		}
+		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false,
+			runtimeAttachmentOwnershipUnproven("runtime attachment identity record is unsafe; path preserved")
+	}
 	file := os.NewFile(uintptr(descriptor), name)
 	if file == nil {
 		_ = unix.Close(descriptor)
@@ -287,13 +303,17 @@ func readRuntimeAttachmentIdentityRecord(
 	}
 	encoded, readErr := io.ReadAll(io.LimitReader(file, 408))
 	closeErr := file.Close()
-	if statErr != nil || recordIdentityErr != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o777 != 0o600 ||
-		stat.Nlink != 1 || readErr != nil || len(encoded) > 407 || closeErr != nil {
-		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, errors.New("runtime attachment identity record is unsafe")
+	if readErr != nil || closeErr != nil {
+		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, errors.New("runtime attachment identity record is unavailable")
+	}
+	if len(encoded) > 407 {
+		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false,
+			runtimeAttachmentOwnershipUnproven("runtime attachment identity record is unsafe; path preserved")
 	}
 	record, err := parseRuntimeAttachmentIdentityRecord(string(encoded))
 	if err != nil {
-		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, err
+		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false,
+			errors.Join(runtimeAttachmentOwnershipUnproven("runtime attachment identity record is malformed; path preserved"), err)
 	}
 	return record, recordIdentity, true, nil
 }

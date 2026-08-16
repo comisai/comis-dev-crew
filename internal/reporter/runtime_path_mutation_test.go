@@ -10,7 +10,52 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func TestQuarantineRuntimePathRestoresReplacementRacedAfterPin(t *testing.T) {
+func TestQuarantineRuntimePathDoesNotRestoreReplacementFromIsolation(t *testing.T) {
+	root := boundaryRuntimeDirectory(t)
+	taskPath := filepath.Join(root, "task-runtime")
+	if err := os.Mkdir(taskPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	expected := runtimePathTestIdentity(t, taskPath)
+	directory := runtimePathTestDirectoryDescriptor(t, root)
+	isolationName := runtimePathQuarantineName(filepath.Base(taskPath), expected, RuntimePathDirectory, 0o700)
+	isolationRoot := filepath.Join(root, isolationName)
+	isolationTarget := filepath.Join(isolationRoot, runtimePathIsolationTarget)
+	preservedOriginal := filepath.Join(isolationRoot, "preserved-original")
+	var replacementInfo os.FileInfo
+	err := quarantineRuntimePath(
+		directory, filepath.Base(taskPath), expected, RuntimePathDirectory, 0o700,
+		func(RuntimeSocketIdentity) error {
+			if err := os.Rename(isolationTarget, preservedOriginal); err != nil {
+				return err
+			}
+			if err := os.Mkdir(isolationTarget, 0o700); err != nil {
+				return err
+			}
+			var err error
+			replacementInfo, err = os.Lstat(isolationTarget)
+			if err != nil {
+				return err
+			}
+			return errors.New("force quarantine rollback")
+		},
+	)
+	if !errors.Is(err, ErrRuntimePathIdentity) {
+		t.Fatalf("quarantineRuntimePath(ambiguous rollback) error = %v", err)
+	}
+	current, statErr := os.Lstat(isolationTarget)
+	if statErr != nil || replacementInfo == nil || !os.SameFile(current, replacementInfo) {
+		t.Fatalf("isolated replacement mapping = %#v, %v", current, statErr)
+	}
+	if current, statErr := os.Lstat(preservedOriginal); statErr != nil || !current.IsDir() {
+		t.Fatalf("preserved original mapping = %#v, %v", current, statErr)
+	}
+	if _, statErr := os.Lstat(taskPath); !os.IsNotExist(statErr) {
+		t.Fatalf("authoritative task path error = %v, want absent", statErr)
+	}
+}
+
+func TestQuarantineRuntimePathPreservesReplacementRacedAfterPin(t *testing.T) {
 	root := boundaryRuntimeDirectory(t)
 	socketPath := filepath.Join(root, "attachment.sock")
 	savedPath := filepath.Join(root, "attachment.saved")
@@ -34,9 +79,13 @@ func TestQuarantineRuntimePathRestoresReplacementRacedAfterPin(t *testing.T) {
 	if !errors.Is(err, ErrRuntimePathIdentity) {
 		t.Fatalf("quarantineRuntimePathWithHooks(raced replacement) error = %v", err)
 	}
-	current, statErr := os.Lstat(socketPath)
+	isolationName := runtimePathQuarantineName(filepath.Base(socketPath), expected, RuntimePathSocket, 0o600)
+	current, statErr := os.Lstat(filepath.Join(root, isolationName, runtimePathIsolationTarget))
 	if statErr != nil || replacementInfo == nil || !os.SameFile(current, replacementInfo) {
-		t.Fatalf("raced replacement mapping = %#v, %v", current, statErr)
+		t.Fatalf("isolated replacement mapping = %#v, %v", current, statErr)
+	}
+	if _, statErr := os.Lstat(socketPath); !os.IsNotExist(statErr) {
+		t.Fatalf("authoritative socket path error = %v, want absent", statErr)
 	}
 	_ = original.Close()
 	if replacement != nil {
@@ -44,7 +93,7 @@ func TestQuarantineRuntimePathRestoresReplacementRacedAfterPin(t *testing.T) {
 	}
 }
 
-func TestPublishRuntimePathRestoresRacedSourceMapping(t *testing.T) {
+func TestPublishRuntimePathPreservesRacedMappings(t *testing.T) {
 	root := boundaryRuntimeDirectory(t)
 	temporary := filepath.Join(root, "record.new")
 	destination := filepath.Join(root, "record")
@@ -66,16 +115,19 @@ func TestPublishRuntimePathRestoresRacedSourceMapping(t *testing.T) {
 	if !errors.Is(err, ErrRuntimePathIdentity) {
 		t.Fatalf("publishRuntimePath(raced source) error = %v", err)
 	}
-	contents, readErr := os.ReadFile(temporary)
+	contents, readErr := os.ReadFile(destination)
 	if readErr != nil || string(contents) != "replacement" {
-		t.Fatalf("restored source = %q, %v", contents, readErr)
+		t.Fatalf("preserved destination = %q, %v", contents, readErr)
 	}
-	if _, err := os.Lstat(destination); !os.IsNotExist(err) {
-		t.Fatalf("destination after failed publication error = %v", err)
+	if _, err := os.Lstat(temporary); !os.IsNotExist(err) {
+		t.Fatalf("source after ambiguous publication error = %v", err)
+	}
+	if contents, err := os.ReadFile(saved); err != nil || string(contents) != "prepared" {
+		t.Fatalf("preserved prepared source = %q, %v", contents, err)
 	}
 }
 
-func TestReplaceRuntimePathRestoresBothRacedMappings(t *testing.T) {
+func TestReplaceRuntimePathPreservesAmbiguousExchangedMappings(t *testing.T) {
 	root := boundaryRuntimeDirectory(t)
 	temporary := filepath.Join(root, "record.new")
 	destination := filepath.Join(root, "record")
@@ -104,9 +156,12 @@ func TestReplaceRuntimePathRestoresBothRacedMappings(t *testing.T) {
 	}
 	temporaryContents, temporaryErr := os.ReadFile(temporary)
 	destinationContents, destinationErr := os.ReadFile(destination)
-	if temporaryErr != nil || destinationErr != nil || string(temporaryContents) != "replacement" ||
-		string(destinationContents) != "prior" {
-		t.Fatalf("restored mappings = %q/%q, %v/%v", temporaryContents, destinationContents, temporaryErr, destinationErr)
+	if temporaryErr != nil || destinationErr != nil || string(temporaryContents) != "prior" ||
+		string(destinationContents) != "replacement" {
+		t.Fatalf("preserved mappings = %q/%q, %v/%v", temporaryContents, destinationContents, temporaryErr, destinationErr)
+	}
+	if contents, err := os.ReadFile(saved); err != nil || string(contents) != "prepared" {
+		t.Fatalf("preserved prepared source = %q, %v", contents, err)
 	}
 }
 
