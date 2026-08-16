@@ -30,9 +30,12 @@ Prerequisites, all of which fail closed if unmet:
 - The primary checkout and the worktree parent are separate canonical
   directories under the approved root.
 
-Task preparation creates or exactly adopts its operation-bound linked Git
-worktree beneath that parent before requesting the Comis workspace lease. Launch
-the installed service without hand-editing generated or runtime files:
+Task preparation first resolves the requested worker and validation profiles for
+the exact task shape. An unavailable, incompatible, or incomplete profile is
+rejected before any worktree or runtime attachment is allocated. Preparation
+then creates or exactly adopts its operation-bound linked Git worktree beneath
+that parent before requesting the Comis workspace lease. Launch the installed
+service without hand-editing generated or runtime files:
 
 ```text
 devcrew-service \
@@ -107,11 +110,15 @@ also leave the task `validating` and are retried without stopping the candidate
 supervisor. Other pull-request delivery errors still stop supervision so that
 permanent failures remain visible.
 
-A dirty worktree or a head that still equals the pinned base is not eligible for
-delivery. The supervisor records its local evidence as unknown without calling
-the forge or artifact delivery adapter, and remains available for other tasks.
-While that head and cleanliness are unchanged, later polls reuse the sealed
-unknown judgment instead of rerunning validation processes.
+A dirty worktree, a head that still equals the pinned base, a structurally
+unverified worktree, a reconciliation mismatch, or candidate authority that
+drifts during validation is not eligible for delivery. The supervisor seals that
+Git posture as unknown, does not call the forge or artifact delivery adapter,
+and remains available for other tasks. It skips local validation when the initial
+posture is already invalid; if the worktree changes or becomes unverified during
+local checks, it seals that drift afterward. While the observed head and
+cleanliness are unchanged, later polls reuse the sealed unknown judgment instead
+of rerunning validation processes.
 
 Diagnostic reads report validation as `unknown` when a task is already
 `validating` but no durable judgment or active validation process can be found;
@@ -186,9 +193,12 @@ closeout to prove whether the candidate came from recovery.
 
 Call `explain_task` before recovery. It distinguishes a settled terminal without
 candidate evidence, unresolved restart evidence, unavailable host integration, an
-unrecoverable workspace, and reconciliation already in progress. Only the settled
-clean-candidate reason recommends `reconcile_task`; an unrecoverable workspace
-remains preserved and requires an explicitly approved replacement task.
+unrecoverable workspace, unproven reporter-relay identity, and reconciliation
+already in progress. Only the settled clean-candidate reason recommends
+`reconcile_task`; an unrecoverable workspace remains preserved and requires an
+explicitly approved replacement task. An unproven reporter relay is likewise
+preserved without cleanup authority and recommends inspection rather than
+reconciliation.
 
 `cleanup_task` may refuse after it has placed the task in a durable cleanup hold,
 for example when the exact worktree is dirty. Once that safety condition is
@@ -196,6 +206,12 @@ corrected, call `cleanup_task` again with the same task handle. The service resu
 the existing cleanup record even though the new MCP invocation has a fresh caller
 operation ID, and records both operation identities against the single completed
 cleanup effect.
+
+After host release, cleanup closes and removes the exact service-owned reporter
+attachment before it re-verifies Git and forge truth and authorizes worktree
+removal. If attachment ownership cannot be proven, the service preserves the
+runtime path and directs the operator to inspect that exact task attachment before
+retrying cleanup.
 
 Cleanup refuses before release when an operator cleanup hold remains open. The
 error names the closed `open task hold` category and directs the operator to close
@@ -209,7 +225,9 @@ requires reconciliation and is never treated as idle. Current pull-request truth
 that differs from the delivered head or required checks is a separate stale-forge
 precondition and blocks host release. When GitHub retains repeated runs for one
 required check name, the most recently started run is authoritative so an older
-green run cannot mask a newer pending or failed rerun.
+green run cannot mask a newer pending or failed rerun. Missing or malformed check
+identity, recency, or state; duplicate check identities; incomplete pagination;
+and two changing full snapshots all resolve the required checks to `unknown`.
 
 ## Operator CLI surface
 
@@ -431,11 +449,14 @@ and target name are selectors, while the relay identity is public authentication
 material rather than authority. The mount
 directory must already grant its owner full access while denying group and other
 read/write access; execute-only traversal is permitted so a dedicated worker UID
-can reach its assigned socket without listing the directory. The directory must
-equal its `EvalSymlinks` result. The socket must already exist at client
-construction, be a Unix socket with mode `0600`, and keep its pinned inode. The
-fixed directory and exact assigned-name equality must also agree. Any missing,
-altered, symlinked, or differently named target fails closed. Client-construction
+can reach its assigned socket without listing the directory. Every directory
+component is opened without following symlinks; the protected mount identity and
+socket filesystem identity are pinned and rechecked before and after each dial.
+The socket must already exist at client construction and be a Unix socket with
+mode `0600`. The fixed directory and exact assigned-name equality must also agree.
+Any missing, altered, symlinked, mount-replaced, or differently named target fails
+closed. Protected mounted reporter calls currently require Linux mount-identity
+support; Darwin builds fail closed for this worker-mounted path. Client-construction
 failures are written to worker stderr with their concrete safe reason before
 command dispatch; a nil capability is never used.
 

@@ -167,10 +167,9 @@ report merely to close the state machine. Incomplete recovery history remains
 unresolved after restart and refuses a second reconciliation record.
 
 `ExplainTask` combines durable terminal posture, current host connectivity, and
-fresh registered-worktree inspection. Its closed recovery reasons distinguish a
-settled terminal without candidate evidence, unresolved restart evidence,
-unavailable host integration, an unrecoverable workspace, and reconciliation in
-progress, with reachable reason-specific next actions.
+fresh registered-worktree inspection. It exposes closed recovery reasons with
+reachable reason-specific next actions; their operator-facing meanings are
+documented in [running.md](running.md).
 
 Canonical task detail and explanation projections include content-free evidence
 references for candidate, report activity, decision posture, validation, forge
@@ -305,7 +304,10 @@ and append reports without a task or authority selector. Preparation creates tha
 socket under the configured private runtime root and declares it as
 `requestedAttachment`; activation then supplies the execution-attachment ID and
 target name that bind the same listener. The listener and any durable activation
-binding are reconstructed after a service restart.
+binding are reconstructed after a service restart only when the recorded runtime
+directory, socket, and relay identities still match. Ambiguous ownership preserves
+the filesystem objects, moves an affected live task to `unknown`, and exposes a
+closed recovery explanation instead of granting cleanup or relaunch authority.
 
 After a decision report is locally accepted, the reporter blocks on that same
 protected socket until Comis returns the exact keyed owner response. The service
@@ -326,9 +328,8 @@ reviewed bounded artifact. Both use durable outbox identities for exactly-once
 host delivery across restart.
 
 Task explanation reads the latest durable candidate judgment while validation is
-in progress as well as after failure. An unverified worktree is reported as a
-content-free Git-truth diagnosis, including whether the worktree is not clean,
-the candidate head still equals the pinned base, or both.
+in progress as well as after failure. Operator-facing candidate diagnoses are
+documented in [running.md](running.md).
 
 Forge API and pull-request truth and branch push use distinct credentials. HTTPS
 token push is supported, and an SSH route allows a repository-scoped deploy key
@@ -393,9 +394,7 @@ The fixture launches no subprocess and exists to prove these properties around t
 report lifecycle. Fixture composition requires explicit command flags and is used
 only with deterministic reviewed inputs. Candidate
 completion advances only to `validating`; it never claims validation, delivery, or
-terminal success. Dirty or base-equal candidate snapshots retain an unknown
-judgment and never reach forge or artifact delivery. An unchanged dirty snapshot
-reuses that judgment without spawning another validation process.
+terminal success.
 
 ## Design record
 

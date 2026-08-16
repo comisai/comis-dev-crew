@@ -83,7 +83,7 @@ func isolatePinnedRuntimeAttachmentRelease(
 	if pinned.directoryName == releaseName && record.Stage == runtimeAttachmentReleasing {
 		return record, nil
 	}
-	current := pinned.taskIdentity
+	var current reporter.RuntimeSocketIdentity
 	if pinned.directoryName != releaseName {
 		var err error
 		current, err = reporter.PublishRuntimeDirectoryIdentity(

@@ -64,13 +64,3 @@ func closeRuntimeRemovalPin(pin *runtimeRemovalPin) error {
 func preserveRuntimeRemovalPin(pin *runtimeRemovalPin, _ RuntimePathKind) error {
 	return unix.Close(pin.descriptor)
 }
-
-func reconcileRuntimeRemovalAnchor(
-	int,
-	string,
-	RuntimeSocketIdentity,
-	RuntimePathKind,
-	os.FileMode,
-) error {
-	return nil
-}
