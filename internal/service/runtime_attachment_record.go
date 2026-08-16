@@ -277,7 +277,7 @@ func readRuntimeAttachmentIdentityRecord(
 		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, nil
 	}
 	if err != nil {
-		if errors.Is(err, unix.ELOOP) || errors.Is(err, unix.EACCES) || errors.Is(err, unix.EPERM) {
+		if runtimeAttachmentRecordOpenFailureIsUnsafe(runtimeRootDescriptor, name, err) {
 			return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false,
 				runtimeAttachmentOwnershipUnproven("runtime attachment identity record is unsafe; path preserved")
 		}
@@ -316,4 +316,17 @@ func readRuntimeAttachmentIdentityRecord(
 			errors.Join(runtimeAttachmentOwnershipUnproven("runtime attachment identity record is malformed; path preserved"), err)
 	}
 	return record, recordIdentity, true, nil
+}
+
+func runtimeAttachmentRecordOpenFailureIsUnsafe(runtimeRootDescriptor int, name string, openErr error) bool {
+	if errors.Is(openErr, unix.ELOOP) || errors.Is(openErr, unix.EACCES) || errors.Is(openErr, unix.EPERM) ||
+		errors.Is(openErr, unix.ENXIO) || errors.Is(openErr, unix.ENODEV) || errors.Is(openErr, unix.EOPNOTSUPP) {
+		return true
+	}
+	var stat unix.Stat_t
+	if unix.Fstatat(runtimeRootDescriptor, name, &stat, unix.AT_SYMLINK_NOFOLLOW) != nil {
+		return false
+	}
+	_, identityErr := runtimeAttachmentStatIdentity(stat)
+	return identityErr != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o777 != 0o600 || stat.Nlink != 1
 }

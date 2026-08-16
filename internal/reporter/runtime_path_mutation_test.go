@@ -10,6 +10,32 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func TestQuarantineRuntimePathPreservesExactTargetOnRollbackFailure(t *testing.T) {
+	root := boundaryRuntimeDirectory(t)
+	taskPath := filepath.Join(root, "task-runtime-exact")
+	if err := os.Mkdir(taskPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	expected := runtimePathTestIdentity(t, taskPath)
+	directory := runtimePathTestDirectoryDescriptor(t, root)
+	err := quarantineRuntimePath(
+		directory, filepath.Base(taskPath), expected, RuntimePathDirectory, 0o700,
+		func(RuntimeSocketIdentity) error { return errors.New("force quarantine rollback") },
+	)
+	if !errors.Is(err, ErrRuntimePathIdentity) {
+		t.Fatalf("quarantineRuntimePath(exact rollback) error = %v", err)
+	}
+	isolationName := runtimePathQuarantineName(filepath.Base(taskPath), expected, RuntimePathDirectory, 0o700)
+	isolationTarget := filepath.Join(root, isolationName, runtimePathIsolationTarget)
+	current, statErr := os.Lstat(isolationTarget)
+	if statErr != nil || !current.IsDir() {
+		t.Fatalf("isolated exact target = %#v, %v", current, statErr)
+	}
+	if _, statErr := os.Lstat(taskPath); !os.IsNotExist(statErr) {
+		t.Fatalf("authoritative task path error = %v, want absent", statErr)
+	}
+}
+
 func TestQuarantineRuntimePathDoesNotRestoreReplacementFromIsolation(t *testing.T) {
 	root := boundaryRuntimeDirectory(t)
 	taskPath := filepath.Join(root, "task-runtime")
@@ -162,6 +188,81 @@ func TestReplaceRuntimePathPreservesAmbiguousExchangedMappings(t *testing.T) {
 	}
 	if contents, err := os.ReadFile(saved); err != nil || string(contents) != "prepared" {
 		t.Fatalf("preserved prepared source = %q, %v", contents, err)
+	}
+}
+
+func TestMovedRuntimePathFailurePreservesExactMapping(t *testing.T) {
+	root := boundaryRuntimeDirectory(t)
+	temporary := filepath.Join(root, "record.new")
+	destination := filepath.Join(root, "record")
+	if err := os.WriteFile(temporary, []byte("prepared"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expected := runtimePathTestIdentity(t, temporary)
+	directory := runtimePathTestDirectoryDescriptor(t, root)
+	targetDescriptor, err := pinExpectedRuntimePath(
+		directory, filepath.Base(temporary), expected, RuntimePathRegular, 0o600,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := renameRuntimePathNoReplace(directory, filepath.Base(temporary), filepath.Base(destination)); err != nil {
+		t.Fatal(err)
+	}
+	err = preserveMovedRuntimePathFailure(
+		directory, targetDescriptor, RuntimePathRegular, errors.New("force publication rollback"),
+	)
+	if !errors.Is(err, ErrRuntimePathIdentity) {
+		t.Fatalf("preserveMovedRuntimePathFailure(exact mapping) error = %v", err)
+	}
+	if contents, err := os.ReadFile(destination); err != nil || string(contents) != "prepared" {
+		t.Fatalf("preserved destination = %q, %v", contents, err)
+	}
+	if _, err := os.Lstat(temporary); !os.IsNotExist(err) {
+		t.Fatalf("temporary after failed rollback error = %v", err)
+	}
+}
+
+func TestRuntimePathExchangeFailurePreservesExactMappings(t *testing.T) {
+	root := boundaryRuntimeDirectory(t)
+	temporary := filepath.Join(root, "record.new")
+	destination := filepath.Join(root, "record")
+	if err := os.WriteFile(temporary, []byte("prepared"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destination, []byte("prior"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	directory := runtimePathTestDirectoryDescriptor(t, root)
+	temporaryDescriptor, err := pinExpectedRuntimePath(
+		directory, filepath.Base(temporary), runtimePathTestIdentity(t, temporary), RuntimePathRegular, 0o600,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destinationDescriptor, err := pinExpectedRuntimePath(
+		directory, filepath.Base(destination), runtimePathTestIdentity(t, destination), RuntimePathRegular, 0o600,
+	)
+	if err != nil {
+		_ = closeRuntimeRemovalPin(temporaryDescriptor)
+		t.Fatal(err)
+	}
+	if err := exchangeRuntimePaths(directory, filepath.Base(temporary), filepath.Base(destination)); err != nil {
+		_ = closeRuntimeRemovalPin(temporaryDescriptor)
+		_ = closeRuntimeRemovalPin(destinationDescriptor)
+		t.Fatal(err)
+	}
+	err = preserveRuntimePathExchangeFailure(
+		directory, temporaryDescriptor, destinationDescriptor, errors.New("force exchange rollback"),
+	)
+	if !errors.Is(err, ErrRuntimePathIdentity) {
+		t.Fatalf("preserveRuntimePathExchangeFailure(exact mappings) error = %v", err)
+	}
+	temporaryContents, temporaryErr := os.ReadFile(temporary)
+	destinationContents, destinationErr := os.ReadFile(destination)
+	if temporaryErr != nil || destinationErr != nil || string(temporaryContents) != "prior" ||
+		string(destinationContents) != "prepared" {
+		t.Fatalf("preserved exchange = %q/%q, %v/%v", temporaryContents, destinationContents, temporaryErr, destinationErr)
 	}
 }
 
