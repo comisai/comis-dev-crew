@@ -152,6 +152,14 @@ func TestGitMachineRunner_HandlesByteResultsAndPredicateExitCodes(t *testing.T) 
 func TestWorktreeGitQueries_RefuseUnavailableInventory(t *testing.T) {
 	registry := &Registry{gitExecutable: "/usr/bin/false"}
 	repository := Repository{PrimaryCheckout: "/unavailable"}
+	if exists, err := registry.branchExists(context.Background(), repository, "devcrew/missing"); err != nil || exists {
+		t.Fatalf("branchExists(missing) = %t, %v", exists, err)
+	}
+	registry.gitExecutable = "/bin/sh"
+	if _, err := registry.branchExists(context.Background(), repository, "devcrew/task"); err == nil {
+		t.Fatal("branchExists(failed query) error = nil")
+	}
+	registry.gitExecutable = "/usr/bin/false"
 	if _, err := registry.worktreeEntries(context.Background(), repository); err == nil {
 		t.Fatal("worktreeEntries(unavailable) error = nil")
 	}

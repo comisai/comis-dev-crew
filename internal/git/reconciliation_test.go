@@ -216,8 +216,58 @@ func TestRegistry_RefusesUnsafeLeasePrivateCandidateWithoutMovingSharedBranch(t 
 		{name: "source record names another Git directory", mutate: func(t *testing.T, fixture repositoryFixture, prepared devgit.PreparedWorktree, private leasePrivateCandidate) {
 			writeLeasePrivateSource(t, private.root, fixture.primary, private.gitDir)
 		}},
+		{name: "source record contains trailing data", mutate: func(t *testing.T, _ repositoryFixture, _ devgit.PreparedWorktree, private leasePrivateCandidate) {
+			file, err := os.OpenFile(filepath.Join(private.root, "source.json"), os.O_APPEND|os.O_WRONLY, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := file.WriteString("{}\n"); err != nil {
+				_ = file.Close()
+				t.Fatal(err)
+			}
+			if err := file.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "source record is absent", mutate: func(t *testing.T, _ repositoryFixture, _ devgit.PreparedWorktree, private leasePrivateCandidate) {
+			if err := os.Remove(filepath.Join(private.root, "source.json")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "private worktree administration is absent", mutate: func(t *testing.T, _ repositoryFixture, _ devgit.PreparedWorktree, private leasePrivateCandidate) {
+			if err := os.RemoveAll(private.worktree); err != nil {
+				t.Fatal(err)
+			}
+		}},
 		{name: "candidate has uncommitted content", mutate: func(t *testing.T, _ repositoryFixture, prepared devgit.PreparedWorktree, _ leasePrivateCandidate) {
 			if err := os.WriteFile(filepath.Join(prepared.CanonicalPath, "uncommitted.txt"), []byte("preserve\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "required control file is a symbolic link", mutate: func(t *testing.T, _ repositoryFixture, _ devgit.PreparedWorktree, private leasePrivateCandidate) {
+			path := filepath.Join(private.common, "system-config")
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(private.common, "config"), path); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "private Git configuration is absent", mutate: func(t *testing.T, _ repositoryFixture, _ devgit.PreparedWorktree, private leasePrivateCandidate) {
+			if err := os.Remove(filepath.Join(private.common, "config")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "private Git configuration duplicates identity", mutate: func(t *testing.T, _ repositoryFixture, _ devgit.PreparedWorktree, private leasePrivateCandidate) {
+			config, err := os.OpenFile(filepath.Join(private.common, "config"), os.O_APPEND|os.O_WRONLY, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := config.WriteString("\tname = Duplicate Fixture\n"); err != nil {
+				_ = config.Close()
+				t.Fatal(err)
+			}
+			if err := config.Close(); err != nil {
 				t.Fatal(err)
 			}
 		}},
@@ -232,6 +282,33 @@ func TestRegistry_RefusesUnsafeLeasePrivateCandidateWithoutMovingSharedBranch(t 
 				t.Fatal(err)
 			}
 			if err := config.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "optional control file is missing from private copy", mutate: func(t *testing.T, _ repositoryFixture, _ devgit.PreparedWorktree, private leasePrivateCandidate) {
+			path := filepath.Join(private.gitDir, "info", "sparse-checkout")
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			writeTestFile(t, path, []byte("/*\n"))
+		}},
+		{name: "optional control file contents differ", mutate: func(t *testing.T, _ repositoryFixture, _ devgit.PreparedWorktree, private leasePrivateCandidate) {
+			source := filepath.Join(private.gitDir, "info", "sparse-checkout")
+			target := filepath.Join(private.worktree, "info", "sparse-checkout")
+			if err := os.MkdirAll(filepath.Dir(source), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			writeTestFile(t, source, []byte("/*\n"))
+			writeTestFile(t, target, []byte("/other\n"))
+		}},
+		{name: "unsupported object indirection exists", mutate: func(t *testing.T, _ repositoryFixture, _ devgit.PreparedWorktree, private leasePrivateCandidate) {
+			writeTestFile(t, filepath.Join(private.common, "objects", "info", "http-alternates"), []byte("https://example.invalid/objects\n"))
+		}},
+		{name: "private branch reference is absent", mutate: func(t *testing.T, _ repositoryFixture, prepared devgit.PreparedWorktree, private leasePrivateCandidate) {
+			if err := os.Remove(filepath.Join(private.common, "refs", "heads", prepared.Branch)); err != nil {
 				t.Fatal(err)
 			}
 		}},
