@@ -45,8 +45,16 @@ func (coordinator *runtimeAttachmentCoordinator) ReleaseRuntimeAttachment(ctx co
 		switch entry.state {
 		case runtimeAttachmentEntryPending:
 			done := entry.registrationDone
+			observed := coordinator.runtimeAttachmentReleaseReplayObserved
 			coordinator.mu.Unlock()
-			<-done
+			if observed != nil {
+				observed()
+			}
+			if err := coordinator.waitRuntimeAttachmentReplay(
+				ctx, done, "release runtime attachment: coordinator stopped",
+			); err != nil {
+				return err
+			}
 			continue
 		case runtimeAttachmentEntryReleasing:
 			done := entry.releaseDone
@@ -55,7 +63,11 @@ func (coordinator *runtimeAttachmentCoordinator) ReleaseRuntimeAttachment(ctx co
 			if observed != nil {
 				observed()
 			}
-			<-done
+			if err := coordinator.waitRuntimeAttachmentReplay(
+				ctx, done, "release runtime attachment: coordinator stopped",
+			); err != nil {
+				return err
+			}
 			coordinator.mu.Lock()
 			resultErr := runtimeAttachmentReleaseResult(entry)
 			coordinator.mu.Unlock()

@@ -202,7 +202,11 @@ func (coordinator *runtimeAttachmentCoordinator) prepareRuntimeAttachmentDirecto
 			return nil, "", nil, [32]byte{}, errors.Join(err, pinned.close())
 		}
 		priorRecord = &directoryBound
-	} else if !sameRuntimeAttachmentStableDirectory(taskIdentity, priorRecord.Task) {
+	} else if !runtimeAttachmentTransitionDirectoryMatches(
+		taskIdentity,
+		priorRecord.Task,
+		runtimeAttachmentGenerationMatches(pinned, priorRecord.Generation, priorRecord.GenerationID),
+	) {
 		return nil, "", nil, [32]byte{}, errors.Join(
 			errors.New("prepare runtime attachment: staged directory identity differs"), pinned.close(),
 		)

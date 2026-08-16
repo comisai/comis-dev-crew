@@ -160,11 +160,11 @@ func TestOpenRecordedRuntimeReleaseRejectsExactDirectoryIdentityMismatch(t *test
 		t.Fatal(err)
 	}
 	recorded := identity
-	if recorded.BirthSec != 0 || recorded.BirthNsec != 0 {
-		recorded.BirthNsec++
-	} else {
-		recorded.ChangeNsec++
+	if recorded.BirthSec == 0 && recorded.BirthNsec == 0 {
+		_ = pinned.close()
+		t.Skip("filesystem does not expose stable directory birth identity")
 	}
+	recorded.BirthSec++
 	record := runtimeAttachmentIdentityRecord{
 		Stage: runtimeAttachmentReleasing, Task: recorded,
 		Socket: generation, Generation: generation, GenerationID: generationID,
@@ -495,7 +495,7 @@ func TestRuntimeAttachmentRecoveryQuarantinesSocketCreatedBeforeIdentityCommit(t
 	}
 }
 
-func TestRecordedRuntimeDirectoryPreservesGenerationCopyAcrossCtimeChanges(t *testing.T) {
+func TestRecordedRuntimeDirectoryAcceptsExactGenerationAcrossCtimeChanges(t *testing.T) {
 	root := shortTempDir(t)
 	runtimeRoot := filepath.Join(root, "runtime")
 	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, &runtimeAttachmentRecoveryStore{}, time.Now().UTC())
@@ -533,10 +533,12 @@ func TestRecordedRuntimeDirectoryPreservesGenerationCopyAcrossCtimeChanges(t *te
 		t.Fatal(err)
 	}
 	reopened, missing, err := openRecordedTaskRuntimeDirectory(rootDescriptor, taskHandle, record)
-	if err == nil || missing || reopened != nil {
-		t.Fatalf("openRecordedTaskRuntimeDirectory(generation copy) = %#v, %t, %v", reopened, missing, err)
+	if err != nil || missing || reopened == nil {
+		t.Fatalf("openRecordedTaskRuntimeDirectory(exact generation) = %#v, %t, %v", reopened, missing, err)
 	}
-	_ = closeRuntimeRootDescriptor(rootDescriptor)
+	if err := reopened.close(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRuntimeAttachmentCreationIntentPreservesUnprovenStagingDirectory(t *testing.T) {
@@ -609,12 +611,8 @@ func TestRuntimeAttachmentDirectoryBindingReplaysCompletedGenerationLink(t *test
 	if err != nil || missing {
 		t.Fatalf("openTaskRuntimeDirectory() = %d, %#v, %t, %v", descriptor, identity, missing, err)
 	}
-	if identity.BirthSec == 0 && identity.BirthNsec == 0 {
-		_ = unix.Close(descriptor)
-		_ = closeRuntimeRootDescriptor(rootDescriptor)
-		t.Skip("filesystem does not expose stable directory birth identity")
-	}
 	seed := runtimeRelaySeedForTest(0x2e)
+	identity.BirthSec, identity.BirthNsec = 0, 0
 	record := runtimeAttachmentIdentityRecord{
 		Stage: runtimeAttachmentDirectoryBound, Task: identity, Generation: generation,
 		GenerationID: generationID, RelaySeed: seed,

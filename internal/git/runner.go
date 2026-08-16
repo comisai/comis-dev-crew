@@ -101,9 +101,34 @@ func executeGit(ctx context.Context, executable string, arguments ...string) ([]
 		}
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
+			if !gitProcessExitIsStructural(exit.ExitCode(), stderr.buffer.Bytes()) {
+				return nil, -1, fmt.Errorf("git command failed after launch: %w", errGitInfrastructure)
+			}
 			return append([]byte(nil), stdout.buffer.Bytes()...), exit.ExitCode(), nil
 		}
 		return nil, -1, fmt.Errorf("git command execution failed: %w", errGitInfrastructure)
 	}
 	return append([]byte(nil), stdout.buffer.Bytes()...), 0, nil
+}
+
+func gitProcessExitIsStructural(exitCode int, stderr []byte) bool {
+	diagnostic := strings.ToLower(strings.TrimSpace(string(stderr)))
+	if exitCode == 1 && diagnostic == "" {
+		return true
+	}
+	for _, marker := range []string{
+		"not a git repository",
+		"this operation must be run in a work tree",
+		"detected dubious ownership",
+		"invalid gitfile format",
+		"needed a single revision",
+		"ambiguous argument",
+		"bad revision",
+		"bad object",
+	} {
+		if strings.Contains(diagnostic, marker) {
+			return true
+		}
+	}
+	return false
 }

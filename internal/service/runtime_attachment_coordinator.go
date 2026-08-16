@@ -160,7 +160,11 @@ func (coordinator *runtimeAttachmentCoordinator) PrepareRuntimeAttachment(
 			if observed != nil {
 				observed()
 			}
-			<-done
+			if err := coordinator.waitRuntimeAttachmentReplay(
+				ctx, done, "prepare runtime attachment: coordinator stopped",
+			); err != nil {
+				return application.PreparedRuntimeAttachment{}, err
+			}
 			coordinator.mu.Lock()
 			attachment, resultErr := runtimeAttachmentRegistrationResult(existing)
 			coordinator.mu.Unlock()

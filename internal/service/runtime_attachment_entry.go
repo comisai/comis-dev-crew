@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
@@ -74,6 +75,31 @@ func runtimeAttachmentEntryUnavailable(state runtimeAttachmentEntryState) error 
 		return errors.New("runtime attachment entry is releasing")
 	}
 	return errors.New("runtime attachment entry is unavailable")
+}
+
+func (coordinator *runtimeAttachmentCoordinator) waitRuntimeAttachmentReplay(
+	ctx context.Context,
+	done <-chan struct{},
+	stopped string,
+) error {
+	select {
+	case <-done:
+		return nil
+	default:
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-coordinator.runDone:
+		select {
+		case <-done:
+			return nil
+		default:
+			return errors.New(stopped)
+		}
+	}
 }
 
 func (coordinator *runtimeAttachmentCoordinator) releaseFailedRuntimeAttachmentRegistration(
