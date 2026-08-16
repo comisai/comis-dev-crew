@@ -200,12 +200,20 @@ func pinRuntimeAttachmentGeneration(
 	}
 	anchorDescriptor, err := unix.Openat(
 		generationDescriptor, runtimeAttachmentGenerationLink,
-		unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0,
+		unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0,
 	)
 	if err != nil {
-		_ = unix.Close(generationDescriptor)
-		if errors.Is(err, unix.ENOENT) || errors.Is(err, unix.ENOTDIR) || errors.Is(err, unix.ELOOP) {
+		unsafe := runtimeAttachmentGenerationAnchorOpenFailureIsUnsafe(generationDescriptor, err)
+		if closeErr := unix.Close(generationDescriptor); closeErr != nil {
+			return -1, -1, unix.Stat_t{}, errors.New("runtime attachment generation is unavailable")
+		}
+		if errors.Is(err, unix.ENOENT) {
 			return -1, -1, unix.Stat_t{}, errRuntimeAttachmentGenerationDiffers
+		}
+		if unsafe {
+			return -1, -1, unix.Stat_t{}, runtimeAttachmentOwnershipUnproven(
+				"runtime attachment generation anchor is unsafe; path preserved",
+			)
 		}
 		return -1, -1, unix.Stat_t{}, errors.New("runtime attachment generation is unavailable")
 	}
@@ -216,13 +224,37 @@ func pinRuntimeAttachmentGeneration(
 		_ = unix.Close(generationDescriptor)
 		return -1, -1, unix.Stat_t{}, errors.New("runtime attachment generation is unavailable")
 	}
-	if !sameRuntimeAttachmentExactGeneration(currentIdentity, expected) ||
-		anchorStat.Mode&unix.S_IFMT != unix.S_IFREG || anchorStat.Mode&0o777 != 0o600 || anchorStat.Nlink < 1 {
+	if !sameRuntimeAttachmentExactGeneration(currentIdentity, expected) {
 		_ = unix.Close(anchorDescriptor)
 		_ = unix.Close(generationDescriptor)
 		return -1, -1, unix.Stat_t{}, errRuntimeAttachmentGenerationDiffers
 	}
+	if anchorStat.Mode&unix.S_IFMT != unix.S_IFREG || anchorStat.Mode&0o777 != 0o600 || anchorStat.Nlink < 1 {
+		if closeErr := errors.Join(unix.Close(anchorDescriptor), unix.Close(generationDescriptor)); closeErr != nil {
+			return -1, -1, unix.Stat_t{}, errors.New("runtime attachment generation is unavailable")
+		}
+		return -1, -1, unix.Stat_t{}, runtimeAttachmentOwnershipUnproven(
+			"runtime attachment generation anchor is unsafe; path preserved",
+		)
+	}
 	return generationDescriptor, anchorDescriptor, anchorStat, nil
+}
+
+func runtimeAttachmentGenerationAnchorOpenFailureIsUnsafe(generationDescriptor int, openErr error) bool {
+	if runtimeAttachmentOpenFailureIsInfrastructure(openErr) {
+		return false
+	}
+	if errors.Is(openErr, unix.ELOOP) || errors.Is(openErr, unix.ENOTDIR) ||
+		errors.Is(openErr, unix.EACCES) || errors.Is(openErr, unix.EPERM) ||
+		errors.Is(openErr, unix.ENXIO) || errors.Is(openErr, unix.ENODEV) ||
+		errors.Is(openErr, unix.EOPNOTSUPP) {
+		return true
+	}
+	var stat unix.Stat_t
+	if unix.Fstatat(generationDescriptor, runtimeAttachmentGenerationLink, &stat, unix.AT_SYMLINK_NOFOLLOW) != nil {
+		return false
+	}
+	return stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o777 != 0o600 || stat.Nlink < 1
 }
 
 func sameRuntimeAttachmentExactGeneration(left, right reporter.RuntimeSocketIdentity) bool {

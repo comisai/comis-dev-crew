@@ -12,6 +12,7 @@ import (
 )
 
 func TestMountedRuntimeClientAuthenticatesConnectedRelayBeforeRequest(t *testing.T) {
+	requireRuntimeMountIdentity(t)
 	const targetName = "attachment-0123456789abcdef0123456789abcdef.sock"
 	mountDirectory := shortBoundaryDirectory(t)
 	socketPath := filepath.Join(mountDirectory, targetName)
@@ -94,6 +95,7 @@ func TestMountedRuntimeClientAuthenticatesConnectedRelayBeforeRequest(t *testing
 }
 
 func TestMountedRuntimeClientProtectsRequestAcrossAuthenticatedRelayProxy(t *testing.T) {
+	requireRuntimeMountIdentity(t)
 	const targetName = "attachment-1123456789abcdef0123456789abcdef.sock"
 	root := shortBoundaryDirectory(t)
 	mountDirectory := filepath.Join(root, "mounted")
@@ -154,6 +156,7 @@ func TestMountedRuntimeClientProtectsRequestAcrossAuthenticatedRelayProxy(t *tes
 }
 
 func TestMountedRuntimeClientBindsDialToPinnedDirectoryIdentity(t *testing.T) {
+	requireRuntimeMountIdentity(t)
 	const targetName = "attachment-0123456789abcdef0123456789abcdef.sock"
 	root := shortBoundaryDirectory(t)
 	runDirectory := filepath.Join(root, "run")
@@ -213,6 +216,7 @@ func TestMountedRuntimeClientBindsDialToPinnedDirectoryIdentity(t *testing.T) {
 }
 
 func TestMountedRuntimeClientRejectsReusedSocketNodeWithDifferentChangeTime(t *testing.T) {
+	requireRuntimeMountIdentity(t)
 	const targetName = "attachment-0123456789abcdef0123456789abcdef.sock"
 	root := shortBoundaryDirectory(t)
 	mountDirectory := filepath.Join(root, "run", "comis", "attachments")
@@ -245,6 +249,7 @@ func TestMountedRuntimeClientRejectsReusedSocketNodeWithDifferentChangeTime(t *t
 }
 
 func TestMountedRuntimeClientRejectsChangedMountInstance(t *testing.T) {
+	requireRuntimeMountIdentity(t)
 	const targetName = "attachment-2123456789abcdef0123456789abcdef.sock"
 	root := shortBoundaryDirectory(t)
 	mountDirectory := filepath.Join(root, "run", "comis", "attachments")
@@ -273,6 +278,7 @@ func TestMountedRuntimeClientRejectsChangedMountInstance(t *testing.T) {
 }
 
 func TestMountedRuntimeClientRejectsChangedSocketMountInstance(t *testing.T) {
+	requireRuntimeMountIdentity(t)
 	const targetName = "attachment-3123456789abcdef0123456789abcdef.sock"
 	root := shortBoundaryDirectory(t)
 	mountDirectory := filepath.Join(root, "run", "comis", "attachments")
@@ -304,6 +310,7 @@ func TestMountedRuntimeClientRejectsChangedSocketMountInstance(t *testing.T) {
 }
 
 func TestMountedRuntimeClientAllowsSiblingDirectoryActivity(t *testing.T) {
+	requireRuntimeMountIdentity(t)
 	const targetName = "attachment-0123456789abcdef0123456789abcdef.sock"
 	root := shortBoundaryDirectory(t)
 	mountDirectory := filepath.Join(root, "run", "comis", "attachments")
@@ -334,6 +341,13 @@ func TestMountedRuntimeClientAllowsSiblingDirectoryActivity(t *testing.T) {
 	}
 	if !<-connected {
 		t.Fatal("mounted runtime client did not connect after sibling activity")
+	}
+}
+
+func requireRuntimeMountIdentity(t *testing.T) {
+	t.Helper()
+	if !runtimeMountIdentitySupported() {
+		t.Skip("platform does not expose mount-instance identity")
 	}
 }
 

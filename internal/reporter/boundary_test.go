@@ -108,6 +108,7 @@ func TestRuntimeConstructionRejectsUnsafeOrAmbiguousTargets(t *testing.T) {
 }
 
 func TestDevcrewReportBriefProbeConnectsThroughAssignedMountedTarget(t *testing.T) {
+	requireRuntimeMountIdentity(t)
 	mountRoot, err := os.MkdirTemp("/tmp", "dcr-mount-")
 	if err != nil {
 		t.Fatal(err)
@@ -175,6 +176,7 @@ func TestDevcrewReportBriefProbeConnectsThroughAssignedMountedTarget(t *testing.
 }
 
 func TestMountedRuntimeClientRejectsIntermediateSymlinkReplacementOnCall(t *testing.T) {
+	requireRuntimeMountIdentity(t)
 	const targetName = "attachment-0123456789abcdef0123456789abcdef.sock"
 	mountDirectory := mountedRuntimeTestDirectory(t)
 	socketPath := filepath.Join(mountDirectory, targetName)
@@ -275,6 +277,7 @@ func TestMountedRuntimeClientRequiresExactAssignedTarget(t *testing.T) {
 }
 
 func TestMountedRuntimeClientReproducesRealJailMountShape(t *testing.T) {
+	requireRuntimeMountIdentity(t)
 	const targetName = "attachment-0123456789abcdef0123456789abcdef.sock"
 
 	t.Run("valid protected mount", func(t *testing.T) {

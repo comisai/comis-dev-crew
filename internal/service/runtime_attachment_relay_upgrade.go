@@ -86,8 +86,14 @@ func upgradeBaseRuntimeAttachmentIdentity(
 	runtimeRootDescriptor int,
 	upgrade application.RuntimeRelayIdentityUpgrade,
 ) error {
-	if !runtimeAttachmentPathAbsent(runtimeRootDescriptor, runtimeAttachmentCreationName(upgrade.TaskHandle)) {
-		return errors.New("base runtime relay identity artifact is ambiguous")
+	creationAbsent, err := inspectRuntimeAttachmentPathAbsent(
+		runtimeRootDescriptor, runtimeAttachmentCreationName(upgrade.TaskHandle),
+	)
+	if err != nil {
+		return err
+	}
+	if !creationAbsent {
+		return runtimeAttachmentOwnershipUnproven("base runtime relay creation path is ambiguous; path preserved")
 	}
 	taskDescriptor, taskIdentity, missing, err := openTaskRuntimeDirectory(runtimeRootDescriptor, upgrade.TaskHandle)
 	if err != nil {

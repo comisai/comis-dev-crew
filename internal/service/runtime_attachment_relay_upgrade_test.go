@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
+	"golang.org/x/sys/unix"
 )
 
 func TestBaseRuntimeRelayIdentityUpgradePreservesUnprovenSocket(t *testing.T) {
@@ -136,6 +138,53 @@ func TestBaseRuntimeRelayIdentityUpgradeStartsOnlyWhenPathsAreAbsent(t *testing.
 	}
 	if err := closeRuntimeRootDescriptor(descriptor); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestBaseRuntimeRelayIdentityUpgradeRefusesExistingCreationPath(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	taskHandle := "task-runtime-relay-base-creation"
+	store := &runtimeRelayUpgradeStore{}
+	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, store, time.Now().UTC())
+	creationPath := filepath.Join(runtimeRoot, runtimeAttachmentCreationName(taskHandle))
+	if err := os.Mkdir(creationPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	seed := runtimeRelaySeedForTest(0x53)
+	privateKey := ed25519.NewKeyFromSeed(seed[:])
+	store.upgrades = []application.RuntimeRelayIdentityUpgrade{{
+		TaskHandle: taskHandle, RelaySeed: seed,
+		RelayIdentity: hex.EncodeToString(privateKey.Public().(ed25519.PublicKey)),
+	}}
+	if err := coordinator.recoverRuntimeRelayIdentityUpgrades(context.Background()); err != nil {
+		t.Fatalf("recoverRuntimeRelayIdentityUpgrades(existing creation path) error = %v", err)
+	}
+	if len(store.completed) != 0 || len(store.refusals) != 1 || store.refusals[0].TaskHandle != taskHandle {
+		t.Fatalf("creation-path outcomes: completed=%#v refusals=%#v", store.completed, store.refusals)
+	}
+	if info, err := os.Lstat(creationPath); err != nil || !info.IsDir() {
+		t.Fatalf("existing creation path was not preserved: %#v, %v", info, err)
+	}
+}
+
+func TestBaseRuntimeRelayIdentityUpgradeKeepsCreationInspectionFailureInfrastructureScoped(t *testing.T) {
+	runtimeRoot := filepath.Join(shortTempDir(t), "runtime")
+	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, &runtimeRelayUpgradeStore{}, time.Now().UTC())
+	descriptor, err := coordinator.pinRuntimeRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := closeRuntimeRootDescriptor(descriptor); err != nil {
+		t.Fatal(err)
+	}
+	upgrade := application.RuntimeRelayIdentityUpgrade{
+		TaskHandle: "task-runtime-relay-inspection-failure",
+		RelaySeed:  runtimeRelaySeedForTest(0x54),
+	}
+	err = upgradeBaseRuntimeAttachmentIdentity(descriptor, upgrade)
+	if !errors.Is(err, unix.EBADF) || errors.Is(err, errRuntimeAttachmentOwnershipUnproven) {
+		t.Fatalf("upgradeBaseRuntimeAttachmentIdentity(closed root) error = %v", err)
 	}
 }
 

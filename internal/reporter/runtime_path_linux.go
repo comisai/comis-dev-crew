@@ -12,6 +12,10 @@ func runtimePinnedDirectoryOpenFlags() int {
 	return unix.O_PATH | unix.O_DIRECTORY | unix.O_NOFOLLOW
 }
 
+func runtimeMountIdentitySupported() bool {
+	return true
+}
+
 func runtimePinnedDirectoryPath(descriptor int, _ runtimePathIdentity) (string, error) {
 	return fmt.Sprintf("/proc/self/fd/%d", descriptor), nil
 }

@@ -132,6 +132,9 @@ func pinRuntimeMountDirectory(path string) (*pinnedRuntimeMount, error) {
 	if !validRuntimeMountDirectory(path) {
 		return nil, errors.New("runtime mounted attachment directory is not canonical")
 	}
+	if !runtimeMountIdentitySupported() {
+		return nil, errors.New("runtime mounted attachment directory mount identity is unavailable")
+	}
 	flags := runtimePinnedDirectoryOpenFlags() | unix.O_CLOEXEC
 	root, err := unix.Open(string(filepath.Separator), flags, 0)
 	if err != nil {

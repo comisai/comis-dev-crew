@@ -294,7 +294,7 @@ func inspectRuntimeAttachmentPathAbsent(directoryDescriptor int, name string) (b
 		return true, nil
 	}
 	if err != nil {
-		return false, errors.New("runtime attachment path identity is unavailable")
+		return false, errors.Join(errors.New("runtime attachment path identity is unavailable"), err)
 	}
 	return false, nil
 }
