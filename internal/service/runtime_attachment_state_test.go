@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
+	"github.com/comisai/comis-dev-crew/internal/reporter"
 	"github.com/comisai/comis-dev-crew/internal/store/sqlite"
 )
 
@@ -305,6 +308,124 @@ func TestRuntimeAttachmentReleaseReplayJoinsExactRelease(t *testing.T) {
 	if err := <-second; !errors.Is(err, crash) {
 		t.Fatalf("replayed ReleaseRuntimeAttachment() error = %v", err)
 	}
+}
+
+func TestRuntimeAttachmentUnprovenReleaseRevokesAndDrainsOnlyAffectedServer(t *testing.T) {
+	root := shortTempDir(t)
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store := &blockingRuntimeAttachmentStore{
+		reportEntered: make(chan struct{}), reportCanceled: make(chan struct{}),
+	}
+	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+		RuntimeRoot: filepath.Join(root, "runtime"), Store: store, Clock: time.Now,
+		NewCredential:           func() (string, error) { return "unproven-release-0123456789abcdef", nil },
+		NewAttentionOperationID: runtimeAttentionOperationID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped := make(chan *reporter.RuntimeServer, 1)
+	coordinator.releasedServerStopped = func(server *reporter.RuntimeServer) { stopped <- server }
+	runCtx, stop := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- coordinator.Run(runCtx) }()
+	t.Cleanup(func() {
+		stop()
+		if err := <-runDone; err != nil {
+			t.Errorf("runtime coordinator stop error = %v", err)
+		}
+	})
+	affectedRequest := runtimeAttachmentRequest(t, workspace, "task-unproven-release-drain")
+	affected, err := coordinator.PrepareRuntimeAttachment(context.Background(), affectedRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	siblingRequest := runtimeAttachmentRequest(t, workspace, "task-unproven-release-sibling")
+	siblingRequest.OperationID = "operation-unproven-release-sibling"
+	sibling, err := coordinator.PrepareRuntimeAttachment(context.Background(), siblingRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	affectedClient, err := reporter.NewRuntimeClient(affected.SourcePath, affected.RelayIdentity, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := time.Date(2026, time.August, 17, 12, 0, 0, 0, time.UTC)
+	reportDone := make(chan error, 1)
+	go func() {
+		_, err := affectedClient.Report(context.Background(), domain.WorkerReport{
+			SchemaVersion: 1, LocalReportID: "report-unproven-release-drain",
+			BriefRevision: affectedRequest.Brief.Revision, BriefRevisionHash: affectedRequest.Brief.RevisionHash,
+			Kind: domain.ReportProgress, Summary: "release drain regression", WorkerObservedAt: &observed,
+		})
+		reportDone <- err
+	}()
+	select {
+	case <-store.reportEntered:
+	case <-time.After(time.Second):
+		t.Fatal("accepted report did not reach the durable sink")
+	}
+	recordName, err := runtimeAttachmentIdentityName(affectedRequest.TaskHandle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(coordinator.runtimeRoot, recordName)); err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinator.ReleaseRuntimeAttachment(context.Background(), affectedRequest.TaskHandle); err == nil {
+		t.Fatal("ReleaseRuntimeAttachment(unproven identity) error = nil")
+	}
+	select {
+	case <-store.reportCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("unproven release did not cancel the accepted report")
+	}
+	if err := <-reportDone; err == nil {
+		t.Fatal("accepted report completed after release revocation")
+	}
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("unproven release did not join the affected server")
+	}
+	if _, err := affectedClient.Brief(context.Background()); err == nil {
+		t.Fatal("released unproven attachment remained reachable")
+	}
+	siblingClient, err := reporter.NewRuntimeClient(sibling.SourcePath, sibling.RelayIdentity, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := siblingClient.Brief(context.Background()); err != nil {
+		t.Fatalf("unaffected sibling brief error = %v", err)
+	}
+	if err := coordinator.ReleaseRuntimeAttachment(context.Background(), affectedRequest.TaskHandle); err == nil {
+		t.Fatal("ReleaseRuntimeAttachment(unproven replay) error = nil")
+	}
+	if len(store.taskRefusals) != 1 || store.taskRefusals[0].TaskHandle != affectedRequest.TaskHandle {
+		t.Fatalf("task refusals = %#v", store.taskRefusals)
+	}
+	if info, err := os.Lstat(filepath.Dir(affected.SourcePath)); err != nil || !info.IsDir() {
+		t.Fatalf("ambiguous task path was not preserved: %#v, %v", info, err)
+	}
+}
+
+type blockingRuntimeAttachmentStore struct {
+	runtimeAttachmentRecoveryStore
+	reportEntered  chan struct{}
+	reportCanceled chan struct{}
+}
+
+func (store *blockingRuntimeAttachmentStore) CommitReport(
+	ctx context.Context,
+	_ application.ReportMutation,
+) (domain.ReportReceipt, error) {
+	close(store.reportEntered)
+	<-ctx.Done()
+	close(store.reportCanceled)
+	return domain.ReportReceipt{}, ctx.Err()
 }
 
 func waitForRuntimeAttachmentEntry(

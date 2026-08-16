@@ -21,13 +21,16 @@ func (coordinator *runtimeAttachmentCoordinator) pinRuntimeAttachmentRelease(
 		(record.Stage != runtimeAttachmentActive && record.Stage != runtimeAttachmentReleaseIntent &&
 			record.Stage != runtimeAttachmentReleasing) {
 		return nil, runtimeAttachmentIdentityRecord{}, errors.Join(
+			errRuntimeAttachmentOwnershipUnproven,
 			errors.New("task runtime directory identity differs; path preserved"),
+			err,
 			closeRuntimeRootDescriptor(runtimeRootDescriptor),
 		)
 	}
 	pinned, missing, err := openRecordedTaskRuntimeDirectory(runtimeRootDescriptor, taskHandle, record)
 	if err != nil || missing {
 		return nil, runtimeAttachmentIdentityRecord{}, errors.Join(
+			errRuntimeAttachmentOwnershipUnproven,
 			errors.New("task runtime directory identity differs; path preserved"), err,
 			closeRuntimeRootDescriptor(runtimeRootDescriptor),
 		)

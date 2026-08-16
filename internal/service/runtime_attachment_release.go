@@ -38,6 +38,12 @@ func (coordinator *runtimeAttachmentCoordinator) ReleaseRuntimeAttachment(ctx co
 		if entry == nil {
 			coordinator.mu.Unlock()
 			if err := coordinator.removeTaskRuntimeDirectory(taskHandle); err != nil {
+				if errors.Is(err, errRuntimeAttachmentOwnershipUnproven) {
+					return errors.Join(
+						errors.New("release runtime attachment: filesystem ownership is unproven"),
+						coordinator.recordRuntimeAttachmentTaskRefusal(ctx, taskHandle),
+					)
+				}
 				return errors.New("release runtime attachment: task runtime directory is not empty or unavailable")
 			}
 			return nil
@@ -78,30 +84,58 @@ func (coordinator *runtimeAttachmentCoordinator) ReleaseRuntimeAttachment(ctx co
 			return errors.New("release runtime attachment: task attachment state is invalid")
 		}
 		pinned, record, pinErr := coordinator.pinRuntimeAttachmentRelease(taskHandle)
-		if pinErr != nil {
-			coordinator.mu.Unlock()
-			if errors.Is(pinErr, errRuntimeAttachmentOwnershipUnproven) {
-				if err := coordinator.persistRuntimeAttachmentTaskRefusal(ctx, taskHandle); err != nil {
-					return err
-				}
-				coordinator.mu.Lock()
-				coordinator.runtimeAttachmentRefusals[taskHandle] = struct{}{}
-				coordinator.mu.Unlock()
-			}
-			return errors.New("release runtime attachment: task runtime directory identity is unavailable")
-		}
-		record, pinErr = preparePinnedRuntimeAttachmentClose(coordinator, pinned, record, entry.server)
-		if pinErr != nil {
-			coordinator.mu.Unlock()
-			return errors.Join(pinErr, pinned.close())
+		if pinErr == nil {
+			record, pinErr = preparePinnedRuntimeAttachmentClose(coordinator, pinned, record, entry.server)
 		}
 		entry.state = runtimeAttachmentEntryReleasing
 		entry.releaseDone = make(chan struct{})
 		coordinator.mu.Unlock()
+		if pinErr != nil {
+			resultErr := coordinator.releaseUnprovenRuntimeAttachment(ctx, taskHandle, entry, pinned, pinErr)
+			coordinator.completeRuntimeAttachmentRelease(taskHandle, entry, resultErr)
+			return resultErr
+		}
 		resultErr := coordinator.releaseRegisteredRuntimeAttachment(entry, pinned, record)
 		coordinator.completeRuntimeAttachmentRelease(taskHandle, entry, resultErr)
 		return resultErr
 	}
+}
+
+func (coordinator *runtimeAttachmentCoordinator) releaseUnprovenRuntimeAttachment(
+	ctx context.Context,
+	taskHandle string,
+	entry *runtimeAttachmentEntry,
+	pinned *pinnedTaskRuntimeDirectory,
+	proofErr error,
+) error {
+	releaseErr := coordinator.releaseRuntimeServer(entry.server)
+	closeErr := entry.server.Close()
+	var pinCloseErr error
+	if pinned != nil {
+		pinCloseErr = pinned.close()
+	}
+	refusalErr := coordinator.recordRuntimeAttachmentTaskRefusal(ctx, taskHandle)
+	return errors.Join(
+		errors.New("release runtime attachment: filesystem ownership is unproven"),
+		proofErr,
+		releaseErr,
+		closeErr,
+		pinCloseErr,
+		refusalErr,
+	)
+}
+
+func (coordinator *runtimeAttachmentCoordinator) recordRuntimeAttachmentTaskRefusal(
+	ctx context.Context,
+	taskHandle string,
+) error {
+	if err := coordinator.persistRuntimeAttachmentTaskRefusal(context.WithoutCancel(ctx), taskHandle); err != nil {
+		return err
+	}
+	coordinator.mu.Lock()
+	coordinator.runtimeAttachmentRefusals[taskHandle] = struct{}{}
+	coordinator.mu.Unlock()
+	return nil
 }
 
 func (coordinator *runtimeAttachmentCoordinator) releaseRegisteredRuntimeAttachment(
