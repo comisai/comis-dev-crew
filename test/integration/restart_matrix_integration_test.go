@@ -194,6 +194,7 @@ func (harness *restartHarness) open(t *testing.T) {
 	}
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: matrixRepositoryCatalog{},
+		WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string, domain.TaskShape) error { return nil },
 		Workspaces:         parityWorkspacePreparer{root: filepath.Join(harness.root, "fixture-workspace")},
 		RuntimeAttachments: integrationRuntimeAttachments{},
 		TaskIDs:            harness.taskIDs.next,

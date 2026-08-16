@@ -17,6 +17,7 @@ func TestMutations_PrepareBuildsOnePinnedServiceMintedTask(t *testing.T) {
 	repositories := &repositoryCatalog{}
 	mutations, err := NewMutations(MutationConfig{
 		Store: store, Repositories: repositories, Workspaces: testWorkspacePreparer(), RuntimeAttachments: testRuntimeAttachments(),
+		WorkerProfiles: acceptingWorkerProfile, ValidationProfiles: acceptingValidationProfile,
 		TaskIDs:            func(string) (string, error) { return "task-0001", nil },
 		RegistrationNonces: func() (string, error) { return "registration-nonce_0001", nil },
 		PreparationTTL:     15 * time.Minute,
@@ -59,6 +60,7 @@ func TestMutations_ActivateManagedRunBuildsExactPrivateReplaySubject(t *testing.
 	attachments := testRuntimeAttachments()
 	mutations, err := NewMutations(MutationConfig{
 		Store: store, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(), RuntimeAttachments: attachments,
+		WorkerProfiles: acceptingWorkerProfile, ValidationProfiles: acceptingValidationProfile,
 		TaskIDs:            func(string) (string, error) { return "task-0001", nil },
 		RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour,
 		Clock: func() time.Time { return clock },
@@ -100,6 +102,7 @@ func TestMutations_ActivateAndAbandonValidateClosedInputsAndCommitFailures(t *te
 	newMutations := func(store *mutationStore) *Mutations {
 		mutations, err := NewMutations(MutationConfig{
 			Store: store, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(), RuntimeAttachments: testRuntimeAttachments(),
+			WorkerProfiles: acceptingWorkerProfile, ValidationProfiles: acceptingValidationProfile,
 			TaskIDs:            func(string) (string, error) { return "task-unused", nil },
 			RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour,
 			Clock: func() time.Time { return clock },
@@ -209,6 +212,7 @@ func TestMutations_StartTaskBuildsExactReplaySubject(t *testing.T) {
 	store := &mutationStore{}
 	mutations, err := NewMutations(MutationConfig{
 		Store: store, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(), RuntimeAttachments: testRuntimeAttachments(),
+		WorkerProfiles: acceptingWorkerProfile, ValidationProfiles: acceptingValidationProfile,
 		TaskIDs:            func(string) (string, error) { return "task-unused", nil },
 		RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour,
 		Clock: func() time.Time { return clock },
@@ -253,6 +257,7 @@ func TestMutations_AcknowledgesExactProtectedLaunchAndRejectsInvalidEchoes(t *te
 	store := &mutationStore{}
 	mutations, err := NewMutations(MutationConfig{
 		Store: store, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(), RuntimeAttachments: testRuntimeAttachments(),
+		WorkerProfiles: acceptingWorkerProfile, ValidationProfiles: acceptingValidationProfile,
 		TaskIDs: func(string) (string, error) { return "task-unused", nil }, RegistrationNonces: testRegistrationNonceSource,
 		PreparationTTL: time.Hour, Clock: time.Now,
 	})
@@ -283,6 +288,7 @@ func TestMutations_StartTaskRejectsInvalidCancelledAndAlteredReplay(t *testing.T
 	store := &mutationStore{}
 	mutations, err := NewMutations(MutationConfig{
 		Store: store, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(), RuntimeAttachments: testRuntimeAttachments(),
+		WorkerProfiles: acceptingWorkerProfile, ValidationProfiles: acceptingValidationProfile,
 		TaskIDs:            func(string) (string, error) { return "task-unused", nil },
 		RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour, Clock: time.Now,
 	})
@@ -320,6 +326,7 @@ func TestMutations_ClassifiesStableReplayConflictForEveryAdapter(t *testing.T) {
 	store := &mutationStore{replayErr: fmt.Errorf("private store replay detail: %w", ErrConflict)}
 	mutations, err := NewMutations(MutationConfig{
 		Store: store, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(), RuntimeAttachments: testRuntimeAttachments(),
+		WorkerProfiles: acceptingWorkerProfile, ValidationProfiles: acceptingValidationProfile,
 		TaskIDs:            func(string) (string, error) { return "task-unused", nil },
 		RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour,
 		Clock: func() time.Time { return time.Date(2026, time.August, 9, 12, 30, 0, 0, time.UTC) },
@@ -359,6 +366,7 @@ func TestMutations_RejectsInvalidCommandsAndDependencyFailuresBeforeCommit(t *te
 			repositories := &repositoryCatalog{}
 			mutations, err := NewMutations(MutationConfig{
 				Store: store, Repositories: repositories, Workspaces: testWorkspacePreparer(), RuntimeAttachments: testRuntimeAttachments(),
+				WorkerProfiles: acceptingWorkerProfile, ValidationProfiles: acceptingValidationProfile,
 				TaskIDs:            func(string) (string, error) { return "task-0001", nil },
 				RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour,
 				Clock: func() time.Time { return time.Date(2026, time.August, 9, 12, 30, 0, 0, time.UTC) },
@@ -385,6 +393,8 @@ func TestMutations_RejectsInvalidCommandsAndDependencyFailuresBeforeCommit(t *te
 func TestMutations_ValidatesRequiredDependenciesAndCancellation(t *testing.T) {
 	valid := MutationConfig{
 		Store: &mutationStore{}, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(), RuntimeAttachments: testRuntimeAttachments(),
+		WorkerProfiles:     func(string, domain.TaskShape) error { return nil },
+		ValidationProfiles: func(string, domain.TaskShape) error { return nil },
 		TaskIDs:            func(string) (string, error) { return "task-0001", nil },
 		RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour, Clock: time.Now,
 	}
@@ -398,10 +408,12 @@ func TestMutations_ValidatesRequiredDependenciesAndCancellation(t *testing.T) {
 		func(config *MutationConfig) { config.PreparationTTL = 0 },
 		func(config *MutationConfig) { config.PreparationTTL = 25 * time.Hour },
 		func(config *MutationConfig) { config.Clock = nil },
+		func(config *MutationConfig) { config.WorkerProfiles = nil },
+		func(config *MutationConfig) { config.ValidationProfiles = nil },
 		func(config *MutationConfig) {
-			config.WorkerProfiles = func(string, domain.TaskShape) error { return nil }
+			config.WorkerProfiles = nil
+			config.ValidationProfiles = nil
 		},
-		func(config *MutationConfig) { config.ValidationProfiles = func(string) error { return nil } },
 	} {
 		config := valid
 		mutate(&config)
@@ -435,6 +447,7 @@ func TestMutations_RejectsInvalidRegistrationIdentityWithoutCommit(t *testing.T)
 			store := &mutationStore{}
 			mutations, err := NewMutations(MutationConfig{
 				Store: store, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(), RuntimeAttachments: testRuntimeAttachments(),
+				WorkerProfiles: acceptingWorkerProfile, ValidationProfiles: acceptingValidationProfile,
 				TaskIDs:            func(string) (string, error) { return "task-0001", nil },
 				RegistrationNonces: test.nonce, PreparationTTL: time.Hour,
 				Clock: func() time.Time { return clock },
@@ -465,8 +478,11 @@ func TestMutations_RejectsInvalidRegistrationIdentityWithoutCommit(t *testing.T)
 	validClosed := ManagedRunPreparation{
 		ExternalRunRef: "task-0001", RegistrationNonce: "registration-nonce_0001",
 		RequestedWorkspaceRoot: "/approved/workspaces/task-0001",
-		RequestedAttachment:    PreparedRuntimeAttachment{Kind: RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/task-0001/attachment.sock"},
-		ExpiresAt:              clock.Add(time.Hour), State: PreparationAbandoned,
+		RequestedAttachment: PreparedRuntimeAttachment{
+			Kind: RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/task-0001/attachment.sock",
+			RelayIdentity: strings.Repeat("ab", 32),
+		},
+		ExpiresAt: clock.Add(time.Hour), State: PreparationAbandoned,
 		AbandonReason: AbandonReasonOwnerCancelled, Disposition: AbandonDispositionPreserve,
 		ClosedAt: &closedAt,
 	}
@@ -475,6 +491,7 @@ func TestMutations_RejectsInvalidRegistrationIdentityWithoutCommit(t *testing.T)
 	}
 	for _, mutate := range []func(*ManagedRunPreparation){
 		func(preparation *ManagedRunPreparation) { preparation.RequestedWorkspaceRoot = "relative/workspace" },
+		func(preparation *ManagedRunPreparation) { preparation.RequestedAttachment.RelayIdentity = "bad" },
 		func(preparation *ManagedRunPreparation) { preparation.State = "invented" },
 		func(preparation *ManagedRunPreparation) { preparation.AbandonReason = "invented" },
 		func(preparation *ManagedRunPreparation) { preparation.Disposition = "invented" },
@@ -491,10 +508,12 @@ func TestMutations_RejectsInvalidRegistrationIdentityWithoutCommit(t *testing.T)
 func testRuntimeAttachments() *runtimeAttachmentCoordinator {
 	return &runtimeAttachmentCoordinator{prepared: PreparedRuntimeAttachment{
 		Kind: RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/task-0001/attachment.sock",
+		RelayIdentity: strings.Repeat("ab", 32),
 	}}
 }
 
 type mutationStore struct {
+	intent        TaskPreparationIntent
 	prepared      PreparedTaskMutation
 	activation    ManagedRunActivationMutation
 	abandon       ManagedRunAbandonMutation
@@ -507,6 +526,17 @@ type mutationStore struct {
 	replayErr     error
 	activationErr error
 	abandonErr    error
+}
+
+func (store *mutationStore) RecordTaskPreparationIntent(
+	_ context.Context,
+	intent TaskPreparationIntent,
+) (TaskPreparationIntent, error) {
+	if store.intent.OperationID != "" {
+		return store.intent, nil
+	}
+	store.intent = intent
+	return intent, nil
 }
 
 func (store *mutationStore) ReplayMutation(context.Context, string, string, string) (MutationResult, bool, error) {
@@ -564,6 +594,10 @@ func validPrepareCommand() PrepareTaskCommand {
 		ValidationProfile: "go-default", DeliveryMode: domain.DeliveryPullRequest, WorkerProfileID: "fixture-worker",
 	}
 }
+
+func acceptingWorkerProfile(string, domain.TaskShape) error { return nil }
+
+func acceptingValidationProfile(string, domain.TaskShape) error { return nil }
 
 func testRegistrationNonceSource() (string, error) { return "registration-nonce_0001", nil }
 

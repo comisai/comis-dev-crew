@@ -320,6 +320,7 @@ func (harness *durableControlHarness) open(t *testing.T) {
 	}
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: acceptingCatalog{},
+		WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string, domain.TaskShape) error { return nil },
 		Workspaces:         acceptingWorkspace{root: harness.workspaceRoot},
 		RuntimeAttachments: acceptingRuntimeAttachments{},
 		TaskIDs:            func(string) (string, error) { return harness.nextTaskID, nil },
@@ -383,8 +384,9 @@ func (acceptingRuntimeAttachments) PrepareRuntimeAttachment(
 	request application.RuntimeAttachmentPreparationRequest,
 ) (application.PreparedRuntimeAttachment, error) {
 	return application.PreparedRuntimeAttachment{
-		Kind:       application.RuntimeAttachmentUnixSocket,
-		SourcePath: "/approved/runtime/" + request.TaskHandle + "/attachment.sock",
+		Kind:          application.RuntimeAttachmentUnixSocket,
+		SourcePath:    "/approved/runtime/" + request.TaskHandle + "/attachment.sock",
+		RelayIdentity: strings.Repeat("ab", 32),
 	}, nil
 }
 

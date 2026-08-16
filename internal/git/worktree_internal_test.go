@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -146,6 +147,21 @@ func TestGitMachineRunner_HandlesByteResultsAndPredicateExitCodes(t *testing.T) 
 	}
 	if _, err := gitPredicate(context.Background(), executable, "diff", "--bad-option"); err == nil {
 		t.Fatal("gitPredicate(invalid) error = nil")
+	}
+}
+
+func TestGitMachineRunner_ClassifiesCommandUnavailableExitsAsInfrastructure(t *testing.T) {
+	root := internalCanonicalTempDir(t)
+	for _, exitCode := range []int{126, 127} {
+		t.Run(strconv.Itoa(exitCode), func(t *testing.T) {
+			executable := filepath.Join(root, "git-exit-"+strconv.Itoa(exitCode))
+			if err := os.WriteFile(executable, []byte("#!/bin/sh\nexit "+strconv.Itoa(exitCode)+"\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := executeGit(context.Background(), executable, "--version"); !errors.Is(err, errGitInfrastructure) {
+				t.Fatalf("executeGit(exit %d) error = %v", exitCode, err)
+			}
+		})
 	}
 }
 

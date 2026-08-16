@@ -154,7 +154,7 @@ func (supervisor *candidateSupervisor) ValidateTask(
 	if err != nil {
 		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: reconciliation authority is unavailable")
 	}
-	profile, err := supervisor.config.Catalog.ResolveProfile(task.ValidationProfile)
+	profile, err := supervisor.config.Catalog.ResolveProfileForShape(task.ValidationProfile, task.Shape)
 	if err != nil {
 		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: reviewed profile is unavailable")
 	}
@@ -170,6 +170,22 @@ func (supervisor *candidateSupervisor) ValidateTask(
 		TaskHandle: taskHandle, RepositoryID: task.RepositoryID, WorktreePath: preparation.RequestedWorkspaceRoot,
 	})
 	if err != nil {
+		if errors.Is(err, devgit.ErrCandidateWorktreeUnverified) {
+			unverified := devgit.CandidateSnapshot{
+				RepositoryID: task.RepositoryID, WorktreePath: preparation.RequestedWorkspaceRoot,
+			}
+			latestEvidence, latestJudgment, latestErr := supervisor.config.Store.LatestCandidateEvidence(ctx, taskHandle)
+			if latestErr == nil && unchangedInvalidCandidate(task, unverified, latestEvidence, latestJudgment) {
+				return task, latestJudgment, nil
+			}
+			if latestErr != nil && !errors.Is(latestErr, application.ErrNotFound) {
+				return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: prior evidence is unavailable")
+			}
+			return supervisor.commitUnverifiedCandidate(ctx, task, profile, unverified, openDecisions, "")
+		}
+		if ctx.Err() != nil {
+			return domain.Task{}, domain.CandidateJudgment{}, ctx.Err()
+		}
 		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: Git evidence is unavailable")
 	}
 	latestEvidence, latestJudgment, latestErr := supervisor.config.Store.LatestCandidateEvidence(ctx, taskHandle)
@@ -179,8 +195,13 @@ func (supervisor *candidateSupervisor) ValidateTask(
 	if latestErr != nil && !errors.Is(latestErr, application.ErrNotFound) {
 		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: prior evidence is unavailable")
 	}
+	if candidateRequiresUnverifiedEvidence(task, snapshot) {
+		return supervisor.commitUnverifiedCandidate(ctx, task, profile, snapshot, openDecisions, "")
+	}
 	if reconciled && !candidateMatchesReconciledSnapshot(task, snapshot, reconciledSnapshot) {
-		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: Git evidence differs from reconciliation authority")
+		return supervisor.commitUnverifiedCandidate(
+			ctx, task, profile, snapshot, openDecisions, domain.CandidateReconciliationMismatch,
+		)
 	}
 	receipts, requiredLocal, err := supervisor.runLocalChecks(ctx, task, profile, snapshot)
 	if err != nil {
@@ -189,8 +210,24 @@ func (supervisor *candidateSupervisor) ValidateTask(
 	afterChecks, err := supervisor.config.Git.InspectCandidate(ctx, devgit.CandidateSnapshotRequest{
 		TaskHandle: taskHandle, RepositoryID: task.RepositoryID, WorktreePath: preparation.RequestedWorkspaceRoot,
 	})
-	if err != nil || afterChecks != snapshot {
-		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: Git evidence changed during validation")
+	if errors.Is(err, devgit.ErrCandidateWorktreeUnverified) {
+		return supervisor.commitUnverifiedCandidate(ctx, task, profile, devgit.CandidateSnapshot{
+			RepositoryID: task.RepositoryID, WorktreePath: preparation.RequestedWorkspaceRoot,
+		}, openDecisions, "")
+	}
+	if err != nil {
+		if ctx.Err() != nil {
+			return domain.Task{}, domain.CandidateJudgment{}, ctx.Err()
+		}
+		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: Git evidence is unavailable")
+	}
+	if candidateRequiresUnverifiedEvidence(task, afterChecks) {
+		return supervisor.commitUnverifiedCandidate(ctx, task, profile, afterChecks, openDecisions, "")
+	}
+	if afterChecks != snapshot {
+		return supervisor.commitUnverifiedCandidate(
+			ctx, task, profile, afterChecks, openDecisions, domain.CandidateValidationDrift,
+		)
 	}
 	bundle := domain.DeliveryEvidenceBundle{
 		SchemaVersion: 1, TaskHandle: task.Handle, RepositoryIdentity: task.RepositoryID,

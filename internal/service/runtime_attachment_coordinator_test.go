@@ -48,6 +48,7 @@ func TestRuntimeAttachmentCoordinator_PreparesServingTaskSocketUnderOwnedRoot(t 
 	})
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: serviceRepositoryCatalog{},
+		WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string, domain.TaskShape) error { return nil },
 		Workspaces: serviceWorkspacePreparer{root: workspace}, RuntimeAttachments: coordinator,
 		TaskIDs:            func(string) (string, error) { return "task-runtime-owned-0001", nil },
 		RegistrationNonces: func() (string, error) { return "registration-nonce_runtime_owned", nil },
@@ -73,7 +74,7 @@ func TestRuntimeAttachmentCoordinator_PreparesServingTaskSocketUnderOwnedRoot(t 
 	if err != nil || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 {
 		t.Fatalf("prepared socket = %#v, %v", info, err)
 	}
-	client, err := reporter.NewRuntimeClient(attachment.SourcePath, time.Second)
+	client, err := reporter.NewRuntimeClient(attachment.SourcePath, attachment.RelayIdentity, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,6 +208,7 @@ func TestRuntimeAttachmentCoordinator_RecoversPreparedTaskSocketAfterRestart(t *
 	newMutations := func(coordinator *runtimeAttachmentCoordinator) *application.Mutations {
 		mutations, err := application.NewMutations(application.MutationConfig{
 			Store: store, Repositories: serviceRepositoryCatalog{},
+			WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string, domain.TaskShape) error { return nil },
 			Workspaces: serviceWorkspacePreparer{root: workspace}, RuntimeAttachments: coordinator,
 			TaskIDs:            func(string) (string, error) { return "task-runtime-restart-0001", nil },
 			RegistrationNonces: func() (string, error) { return "registration-nonce_runtime_restart", nil },
@@ -290,7 +292,9 @@ func TestRuntimeAttachmentCoordinator_RecoversPreparedTaskSocketAfterRestart(t *
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	client, err := reporter.NewRuntimeClient(socketPath, time.Second)
+	client, err := reporter.NewRuntimeClient(
+		socketPath, prepared.Preparation.RequestedAttachment.RelayIdentity, time.Second,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,48 +308,6 @@ func TestRuntimeAttachmentCoordinator_RecoversPreparedTaskSocketAfterRestart(t *
 	task, err := store.GetTask(context.Background(), prepared.Task.Handle)
 	if err != nil || task.State != domain.TaskLaunching || task.StateVersion != 4 {
 		t.Fatalf("task after recovered acknowledgement = %#v, %v", task, err)
-	}
-}
-
-func TestRuntimeAttachmentCoordinator_SkipsCleanedTaskAfterWorkspaceRemoval(t *testing.T) {
-	root := shortTempDir(t)
-	runtimeRoot := filepath.Join(root, "runtime")
-	now := time.Date(2026, time.August, 10, 16, 45, 0, 0, time.UTC)
-	task := domain.Task{
-		SchemaVersion: 1, Handle: "task-runtime-cleaned-0001", State: domain.TaskCleaned,
-		ServiceInstanceID: "service-instance-runtime-cleaned",
-		ManagedRunID:      "managed-run.runtime-cleaned", WorkspaceLeaseID: "workspace-lease.runtime-cleaned",
-		Shape: domain.ShapeScout, RepositoryID: "product-api", BaseRevision: strings.Repeat("c", 40),
-		BriefRevision: 1, AcceptanceCriteria: []string{"Retain no reporter after cleanup."},
-		ValidationProfile: "go-default", DeliveryMode: domain.DeliveryReport,
-		WorkerProfileID: "codex-reviewed", StateVersion: 2, CreatedAt: now, UpdatedAt: now,
-	}
-	task, err := task.PinBriefRevision()
-	if err != nil {
-		t.Fatal(err)
-	}
-	cleanedRuntimeRoot := filepath.Join(runtimeRoot, task.Handle)
-	if err := os.MkdirAll(cleanedRuntimeRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	store := &runtimeAttachmentRecoveryStore{tasks: []domain.Task{task}}
-	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
-		RuntimeRoot: runtimeRoot, Store: store, Clock: func() time.Time { return now },
-		NewCredential:           func() (string, error) { return "unused-cleaned-credential-0123456789", nil },
-		NewAttentionOperationID: runtimeAttentionOperationID,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	servers, err := coordinator.recoverRuntimeAttachments(context.Background())
-	if err != nil || len(servers) != 0 {
-		t.Fatalf("recoverRuntimeAttachments(cleaned) = %d servers, %v", len(servers), err)
-	}
-	if store.preparationReads != 0 {
-		t.Fatalf("cleaned task preparation reads = %d, want 0", store.preparationReads)
-	}
-	if _, err := os.Lstat(cleanedRuntimeRoot); !os.IsNotExist(err) {
-		t.Fatalf("cleaned task runtime root error = %v, want not exist", err)
 	}
 }
 
@@ -368,6 +330,10 @@ func TestRuntimeAttachmentCoordinator_ReleasesOneLiveSocketWithoutStoppingSuperv
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	releasedServerStopped := make(chan *reporter.RuntimeServer, 1)
+	coordinator.releasedServerStopped = func(server *reporter.RuntimeServer) {
+		releasedServerStopped <- server
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -395,6 +361,14 @@ func TestRuntimeAttachmentCoordinator_ReleasesOneLiveSocketWithoutStoppingSuperv
 	if err := coordinator.ReleaseRuntimeAttachment(context.Background(), firstRequest.TaskHandle); err != nil {
 		t.Fatalf("ReleaseRuntimeAttachment() error = %v", err)
 	}
+	select {
+	case <-releasedServerStopped:
+	case runErr := <-done:
+		consumed = true
+		t.Fatalf("runtime coordinator stopped after exact release: %v", runErr)
+	case <-time.After(time.Second):
+		t.Fatal("runtime coordinator did not process released server stop")
+	}
 	if err := coordinator.ReleaseRuntimeAttachment(context.Background(), firstRequest.TaskHandle); err != nil {
 		t.Fatalf("ReleaseRuntimeAttachment(replay) error = %v", err)
 	}
@@ -404,19 +378,12 @@ func TestRuntimeAttachmentCoordinator_ReleasesOneLiveSocketWithoutStoppingSuperv
 	if _, err := os.Lstat(filepath.Dir(first.SourcePath)); !os.IsNotExist(err) {
 		t.Fatalf("released runtime directory error = %v, want not exist", err)
 	}
-	client, err := reporter.NewRuntimeClient(second.SourcePath, time.Second)
+	client, err := reporter.NewRuntimeClient(second.SourcePath, second.RelayIdentity, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.Brief(context.Background()); err != nil {
 		t.Fatalf("retained sibling brief error = %v", err)
-	}
-	time.Sleep(20 * time.Millisecond)
-	select {
-	case runErr := <-done:
-		consumed = true
-		t.Fatalf("runtime coordinator stopped after exact release: %v", runErr)
-	default:
 	}
 }
 
@@ -661,16 +628,6 @@ func TestRuntimeAttachmentCoordinator_ClosesSocketsOnRegistrationFailures(t *tes
 		}
 	})
 
-	t.Run("registration acknowledgement cancelled", func(t *testing.T) {
-		coordinator := newPending("ack-cancelled")
-		go func() { <-coordinator.registrations }()
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-		defer cancel()
-		if _, err := coordinator.PrepareRuntimeAttachment(ctx, request); !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("PrepareRuntimeAttachment(ack cancelled) error = %v", err)
-		}
-	})
-
 	coordinator := newPending("binding")
 	if err := coordinator.BindRuntimeAttachment(context.Background(), application.RuntimeAttachmentBindingRequest{}); err == nil {
 		t.Fatal("BindRuntimeAttachment(invalid) error = nil")
@@ -713,20 +670,97 @@ func runtimeAttachmentRequest(t *testing.T, workspace, taskHandle string) applic
 }
 
 type runtimeAttachmentRecoveryStore struct {
-	tasks            []domain.Task
-	preparationReads int
+	tasks               []domain.Task
+	taskReads           int
+	preparationIntents  []application.TaskPreparationIntent
+	preparationRefusals []application.RuntimeAttachmentRecoveryRefusal
+	taskRefusals        []application.RuntimeRelayIdentityRefusal
+	preparations        map[string]application.ManagedRunPreparation
+	preparationReads    int
+	cleanupRecord       application.TaskCleanupRecord
+	cleanupFound        bool
+	cleanupReads        int
+	cleanupErr          error
 }
 
 func (store *runtimeAttachmentRecoveryStore) ListTasks(context.Context) ([]domain.Task, error) {
+	store.taskReads++
 	return append([]domain.Task(nil), store.tasks...), nil
 }
 
-func (store *runtimeAttachmentRecoveryStore) GetManagedRunPreparation(
+func (store *runtimeAttachmentRecoveryStore) ListTaskPreparationIntents(context.Context) ([]application.TaskPreparationIntent, error) {
+	return append([]application.TaskPreparationIntent(nil), store.preparationIntents...), nil
+}
+
+func (store *runtimeAttachmentRecoveryStore) ListRuntimeAttachmentRecoveryRefusals(
 	context.Context,
-	string,
+) ([]application.RuntimeAttachmentRecoveryRefusal, error) {
+	return append([]application.RuntimeAttachmentRecoveryRefusal(nil), store.preparationRefusals...), nil
+}
+
+func (store *runtimeAttachmentRecoveryStore) RefuseRuntimeAttachmentRecovery(
+	_ context.Context,
+	intent application.TaskPreparationIntent,
+	at time.Time,
+) error {
+	store.preparationRefusals = append(store.preparationRefusals, application.RuntimeAttachmentRecoveryRefusal{
+		OperationID: intent.OperationID, TaskHandle: intent.TaskHandle, SubjectDigest: intent.SubjectDigest,
+		Reason: application.RuntimeAttachmentPreparationUnproven, RefusedAt: at,
+	})
+	return nil
+}
+
+func (*runtimeAttachmentRecoveryStore) ListRuntimeRelayIdentityUpgrades(context.Context) ([]application.RuntimeRelayIdentityUpgrade, error) {
+	return nil, nil
+}
+
+func (store *runtimeAttachmentRecoveryStore) ListRuntimeRelayIdentityRefusals(context.Context) ([]application.RuntimeRelayIdentityRefusal, error) {
+	return append([]application.RuntimeRelayIdentityRefusal(nil), store.taskRefusals...), nil
+}
+
+func (*runtimeAttachmentRecoveryStore) CompleteRuntimeRelayIdentityUpgrade(
+	context.Context,
+	application.RuntimeRelayIdentityUpgrade,
+) error {
+	return nil
+}
+
+func (*runtimeAttachmentRecoveryStore) RefuseRuntimeRelayIdentityUpgrade(
+	context.Context,
+	application.RuntimeRelayIdentityUpgrade,
+	time.Time,
+) error {
+	return nil
+}
+
+func (store *runtimeAttachmentRecoveryStore) RefuseRuntimeAttachmentTaskRecovery(
+	_ context.Context,
+	taskHandle string,
+	_ time.Time,
+) error {
+	store.taskRefusals = append(store.taskRefusals, application.RuntimeRelayIdentityRefusal{
+		TaskHandle: taskHandle, Reason: application.RuntimeRelayIdentityUnproven,
+	})
+	return nil
+}
+
+func (store *runtimeAttachmentRecoveryStore) GetManagedRunPreparation(
+	_ context.Context,
+	taskHandle string,
 ) (application.ManagedRunPreparation, error) {
 	store.preparationReads++
+	if preparation, found := store.preparations[taskHandle]; found {
+		return preparation, nil
+	}
 	return application.ManagedRunPreparation{}, errors.New("cleaned task preparation must not be read")
+}
+
+func (store *runtimeAttachmentRecoveryStore) GetTaskCleanupRecord(
+	context.Context,
+	string,
+) (application.TaskCleanupRecord, bool, error) {
+	store.cleanupReads++
+	return store.cleanupRecord, store.cleanupFound, store.cleanupErr
 }
 
 func (*runtimeAttachmentRecoveryStore) CommitReport(

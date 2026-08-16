@@ -50,7 +50,9 @@ func TestCodexAdapter_ProbesAndPinsExactInstalledVersion(t *testing.T) {
 func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(t *testing.T) {
 	profile := availableCodexProfile(codexFixtureExecutable(t), "codex-reviewed")
 	profile.Unattended = true
-	profile.EnvironmentKeys = append(profile.EnvironmentKeys, "COMIS_EXECUTION_ATTACHMENT_TARGET_NAME")
+	profile.EnvironmentKeys = append(
+		profile.EnvironmentKeys, "COMIS_EXECUTION_ATTACHMENT_TARGET_NAME", "COMIS_EXECUTION_ATTACHMENT_IDENTITY",
+	)
 	catalog, err := workers.NewProfileCatalog([]workers.StaticProfile{profile})
 	if err != nil {
 		t.Fatal(err)
@@ -73,6 +75,7 @@ func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(
 			ExecutionAttachmentID: "execution-attachment-secret-0001",
 			AttachmentTargetName:  attachmentTarget,
 			MountSocketPath:       attachmentMount,
+			RelayIdentity:         strings.Repeat("ab", 32),
 		},
 	}
 	descriptor, err := adapter.BuildLaunchDescriptor(context.Background(), request)
@@ -115,8 +118,10 @@ func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(
 		strings.Index(bootstrap, "devcrew-report acknowledge") > strings.Index(bootstrap, "devcrew-report brief") ||
 		!containsString(descriptor.EnvironmentKeys, "COMIS_EXECUTION_ATTACHMENT") ||
 		!containsString(descriptor.EnvironmentKeys, "COMIS_EXECUTION_ATTACHMENT_TARGET_NAME") ||
-		len(descriptor.EnvironmentBindings) != 2 || descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT"] != attachmentMount ||
-		descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT_TARGET_NAME"] != attachmentTarget {
+		!containsString(descriptor.EnvironmentKeys, "COMIS_EXECUTION_ATTACHMENT_IDENTITY") ||
+		len(descriptor.EnvironmentBindings) != 3 || descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT"] != attachmentMount ||
+		descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT_TARGET_NAME"] != attachmentTarget ||
+		descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT_IDENTITY"] != request.Attachment.RelayIdentity {
 		t.Fatalf("Codex bootstrap does not use protected attachment: %#v", descriptor)
 	}
 	if descriptor.ExpectedAcknowledgement.TaskHandle != request.TaskHandle ||
@@ -240,6 +245,7 @@ func TestCodexAdapter_RejectsInvalidConfigurationProbeAndLaunchBoundaries(t *tes
 		Attachment: application.RuntimeSocketAttachment{
 			ExecutionAttachmentID: "execution-attachment-valid-0001", AttachmentTargetName: attachmentTarget,
 			MountSocketPath: "/run/comis/attachments/" + attachmentTarget,
+			RelayIdentity:   strings.Repeat("ab", 32),
 		},
 	}
 	//lint:ignore SA1012 The launch boundary must reject nil before profile or mount inspection.
@@ -270,6 +276,7 @@ func TestCodexAdapter_RejectsInvalidConfigurationProbeAndLaunchBoundaries(t *tes
 		func(request *application.WorkerLaunchRequest) {
 			request.Attachment.MountSocketPath = "/run/comis/attachments/attachment-ffffffffffffffffffffffffffffffff.sock"
 		},
+		func(request *application.WorkerLaunchRequest) { request.Attachment.RelayIdentity = "bad" },
 	} {
 		request := valid
 		mutate(&request)

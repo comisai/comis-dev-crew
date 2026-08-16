@@ -58,7 +58,13 @@ func JudgeCandidate(input CandidateJudgeInput) CandidateJudgment {
 	if !input.Now.Before(bundle.ExpiresAt) {
 		return candidateJudgment(CandidateUnknown, CandidateEvidenceStale)
 	}
+	if bundle.UnverifiedReason != "" {
+		return candidateJudgment(CandidateUnknown, CandidateWorktreeUnverified)
+	}
 	if bundle.WorktreeCleanliness != WorktreeClean {
+		return candidateJudgment(CandidateUnknown, CandidateWorktreeUnverified)
+	}
+	if bundle.HeadRevision == input.Task.BaseRevision {
 		return candidateJudgment(CandidateUnknown, CandidateWorktreeUnverified)
 	}
 	if bundle.UnresolvedDecisionCount != 0 {

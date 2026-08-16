@@ -206,8 +206,9 @@ func TestGitMarkersAndIdentity_RejectWrongArtifactKinds(t *testing.T) {
 	if identity, err := commonDirectoryIdentity(marker); err != nil || len(identity) != 64 {
 		t.Fatalf("commonDirectoryIdentity() = %q, %v", identity, err)
 	}
-	if _, err := commonDirectoryIdentity(filepath.Join(root, "missing")); err == nil {
-		t.Fatal("commonDirectoryIdentity(missing) error = nil")
+	if _, err := commonDirectoryIdentity(filepath.Join(root, "missing")); err == nil ||
+		!errors.Is(err, errFilesystemInfrastructure) {
+		t.Fatalf("commonDirectoryIdentity(missing) error = %v", err)
 	}
 }
 

@@ -6,16 +6,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
-// ReplayMutation returns the original atomic task outcome for an identical
-// operation subject before callers mint any new local identity. Commit methods
-// repeat this check inside their write transaction to close the race window.
+// ReplayMutation returns the original atomic outcome for an identical operation subject.
 func (store *Store) ReplayMutation(
 	ctx context.Context,
 	operationID, command, subjectDigest string,
@@ -59,6 +56,9 @@ func (store *Store) CommitPreparedTask(ctx context.Context, mutation application
 		return application.MutationResult{}, commitReplayConflict(transaction, err)
 	} else if found {
 		return replayResult(ctx, transaction, replay)
+	}
+	if err := consumeTaskPreparationIntent(ctx, transaction, mutation); err != nil {
+		return application.MutationResult{}, err
 	}
 	stateVersion, err := nextMutationStateVersion(ctx, transaction)
 	if err != nil {
@@ -377,12 +377,14 @@ func insertManagedRunPreparation(
 	const statement = `INSERT INTO task_preparations (
 		task_handle, external_run_ref, registration_nonce, expires_at, created_at,
 		requested_workspace_root, requested_attachment_kind, requested_attachment_source_path,
+		requested_attachment_relay_identity,
 		state, abandon_reason, disposition, closed_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := target.ExecContext(ctx, statement, taskHandle, preparation.ExternalRunRef,
 		preparation.RegistrationNonce, formatTime(preparation.ExpiresAt), formatTime(createdAt),
 		preparation.RequestedWorkspaceRoot, preparation.RequestedAttachment.Kind,
-		preparation.RequestedAttachment.SourcePath, preparation.State, preparation.AbandonReason,
+		preparation.RequestedAttachment.SourcePath, preparation.RequestedAttachment.RelayIdentity,
+		preparation.State, preparation.AbandonReason,
 		preparation.Disposition, nil)
 	return err
 }
@@ -390,16 +392,20 @@ func insertManagedRunPreparation(
 func getManagedRunPreparation(ctx context.Context, source queryer, task domain.Task) (application.ManagedRunPreparation, error) {
 	const query = `SELECT external_run_ref, registration_nonce, expires_at,
 		requested_workspace_root, requested_attachment_kind, requested_attachment_source_path,
-		state, abandon_reason, disposition, closed_at
+		requested_attachment_relay_identity,
+		state, abandon_reason, disposition, closed_at,
+		EXISTS(SELECT 1 FROM runtime_relay_identity_upgrades u WHERE u.task_handle = task_preparations.task_handle)
         FROM task_preparations WHERE task_handle = ?`
 	var preparation application.ManagedRunPreparation
 	var expiresAt string
 	var closedAt sql.NullString
+	var relayUpgradePending bool
 	if err := source.QueryRowContext(ctx, query, task.Handle).Scan(
 		&preparation.ExternalRunRef, &preparation.RegistrationNonce, &expiresAt,
 		&preparation.RequestedWorkspaceRoot, &preparation.RequestedAttachment.Kind,
-		&preparation.RequestedAttachment.SourcePath, &preparation.State, &preparation.AbandonReason,
-		&preparation.Disposition, &closedAt,
+		&preparation.RequestedAttachment.SourcePath, &preparation.RequestedAttachment.RelayIdentity,
+		&preparation.State, &preparation.AbandonReason,
+		&preparation.Disposition, &closedAt, &relayUpgradePending,
 	); err != nil {
 		return application.ManagedRunPreparation{}, err
 	}
@@ -415,7 +421,7 @@ func getManagedRunPreparation(ctx context.Context, source queryer, task domain.T
 		}
 		preparation.ClosedAt = &parsed
 	}
-	if err := preparation.Validate(task.CreatedAt); err != nil || preparation.ExternalRunRef != task.Handle {
+	if err := preparation.Validate(task.CreatedAt); err != nil || preparation.ExternalRunRef != task.Handle || relayUpgradePending {
 		return application.ManagedRunPreparation{}, errors.New("stored managed-run preparation is invalid")
 	}
 	return preparation, nil
@@ -453,47 +459,4 @@ func updateManagedRunPreparation(
 		return fmt.Errorf("update managed-run preparation: %w", application.ErrPrecondition)
 	}
 	return nil
-}
-
-func insertReplayConflict(
-	ctx context.Context,
-	target execer,
-	original domain.OperationRecord,
-	presentedCommand, presentedDigest string,
-) error {
-	const statement = `INSERT INTO operation_replay_conflicts (
-		operation_id, original_command, original_subject_digest,
-		presented_command, presented_subject_digest
-	) VALUES (?, ?, ?, ?, ?)`
-	_, err := target.ExecContext(ctx, statement, original.ID, original.Command,
-		original.SubjectDigest, presentedCommand, presentedDigest)
-	return err
-}
-
-func commitReplayConflict(transaction *sql.Tx, cause error) error {
-	if !errors.Is(cause, application.ErrConflict) {
-		return cause
-	}
-	if err := transaction.Commit(); err != nil {
-		return fmt.Errorf("commit replay-conflict audit: %w", err)
-	}
-	return cause
-}
-
-func nextMutationStateVersion(ctx context.Context, transaction *sql.Tx) (int64, error) {
-	current, err := currentStateVersion(ctx, transaction)
-	if err != nil {
-		return 0, err
-	}
-	if current == math.MaxInt64 {
-		return 0, errors.New("state version is exhausted")
-	}
-	return current + 1, nil
-}
-func completedMutationOperation(id, command, digest, resultRef string, stateVersion int64, at time.Time) domain.OperationRecord {
-	return domain.OperationRecord{
-		SchemaVersion: 1, ID: id, Command: command, SubjectDigest: digest,
-		Status: domain.OperationCompleted, ResultRef: resultRef, StateVersion: stateVersion,
-		CreatedAt: at, UpdatedAt: at,
-	}
 }

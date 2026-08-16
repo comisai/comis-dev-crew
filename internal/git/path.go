@@ -6,10 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"unicode"
 )
 
 const maximumConfiguredPathBytes = 4096
+
+var errFilesystemInfrastructure = errors.New("filesystem inspection infrastructure is unavailable")
 
 func validateCanonicalDirectory(path string) error {
 	if err := validateCanonicalPathText(path); err != nil {
@@ -17,14 +20,14 @@ func validateCanonicalDirectory(path string) error {
 	}
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
-		return errors.New("configured directory is unavailable")
+		return classifiedPathInspectionError("configured directory is unavailable", err)
 	}
 	if resolved != path {
 		return errors.New("configured directory contains a symbolic link")
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
-		return errors.New("configured directory cannot be inspected")
+		return classifiedPathInspectionError("configured directory cannot be inspected", err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return errors.New("configured path is not a non-symlink directory")
@@ -97,12 +100,19 @@ func validateWorktreeMarker(path string) error {
 	marker := filepath.Join(path, ".git")
 	info, err := os.Lstat(marker)
 	if err != nil {
-		return errors.New("task path has no git worktree marker")
+		return classifiedPathInspectionError("task path has no git worktree marker", err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return errors.New("task path is not a linked git worktree")
 	}
 	return nil
+}
+
+func classifiedPathInspectionError(message string, cause error) error {
+	if os.IsNotExist(cause) || errors.Is(cause, syscall.ENOTDIR) || errors.Is(cause, syscall.ELOOP) {
+		return errors.New(message)
+	}
+	return fmt.Errorf("%s: %w", message, errFilesystemInfrastructure)
 }
 
 func safePathError(operation string, cause error) error {

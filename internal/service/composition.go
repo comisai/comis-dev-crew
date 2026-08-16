@@ -75,6 +75,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 		EnvironmentKeys: []string{
 			application.RuntimeAttachmentPathEnvironment,
 			application.RuntimeAttachmentTargetEnvironment,
+			application.RuntimeAttachmentIdentityEnvironment,
 			"PATH",
 		},
 		Availability: workers.AvailabilityAvailable,
@@ -92,6 +93,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 			EnvironmentKeys: []string{
 				application.RuntimeAttachmentPathEnvironment,
 				application.RuntimeAttachmentTargetEnvironment,
+				application.RuntimeAttachmentIdentityEnvironment,
 				"CLAUDE_CONFIG_DIR",
 				"PATH",
 			},
@@ -153,8 +155,8 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 		_, resolveErr := profiles.ResolveProfile(profileID, shape)
 		return resolveErr
 	}
-	config.ValidationProfiles = func(profileID string) error {
-		_, resolveErr := catalog.ResolveProfile(profileID)
+	config.ValidationProfiles = func(profileID string, shape domain.TaskShape) error {
+		_, resolveErr := catalog.ResolveProfileForShape(profileID, shape)
 		return resolveErr
 	}
 	if validationConfig.MaxOutputBytes < 1 || validationConfig.MaxOutputBytes > 16<<20 ||

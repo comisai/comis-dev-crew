@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,10 +15,18 @@ func TestMutations_PrepareAllocatesOperationBoundWorkspaceBeforeDurableComisPrep
 	workspaces := &workspacePreparer{prepared: PreparedWorkspace{CanonicalRoot: "/approved/worktrees/task-stable-0001"}}
 	attachments := &runtimeAttachmentCoordinator{prepared: PreparedRuntimeAttachment{
 		Kind: RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/task-stable-0001/attachment.sock",
+		RelayIdentity: strings.Repeat("ab", 32),
 	}}
+	attachments.beforePrepare = func() error {
+		if store.intent.OperationID == "" {
+			return errors.New("task preparation intent is not durable")
+		}
+		return nil
+	}
 	var taskOperation string
 	mutations, err := NewMutations(MutationConfig{
 		Store: store, Repositories: &repositoryCatalog{}, Workspaces: workspaces, RuntimeAttachments: attachments,
+		WorkerProfiles: acceptingWorkerProfile, ValidationProfiles: acceptingValidationProfile,
 		TaskIDs: func(operationID string) (string, error) {
 			taskOperation = operationID
 			return "task-stable-0001", nil
@@ -42,6 +51,10 @@ func TestMutations_PrepareAllocatesOperationBoundWorkspaceBeforeDurableComisPrep
 	if workspaces.calls != 1 || workspaces.request != wantRequest {
 		t.Fatalf("workspace preparation = %d / %#v, want %#v", workspaces.calls, workspaces.request, wantRequest)
 	}
+	if store.intent.OperationID != command.OperationID || store.intent.TaskHandle != "task-stable-0001" ||
+		store.intent.SubjectDigest == "" {
+		t.Fatalf("task preparation intent = %#v", store.intent)
+	}
 	if got := store.prepared.Preparation.RequestedWorkspaceRoot; got != workspaces.prepared.CanonicalRoot {
 		t.Fatalf("requested workspace root = %q, want %q", got, workspaces.prepared.CanonicalRoot)
 	}
@@ -64,6 +77,8 @@ func TestMutations_PrepareRefusesWorkspaceFailureBeforeNonceOrStoreCommit(t *tes
 	nonceCalls := 0
 	mutations, err := NewMutations(MutationConfig{
 		Store: store, Repositories: &repositoryCatalog{},
+		WorkerProfiles:     acceptingWorkerProfile,
+		ValidationProfiles: acceptingValidationProfile,
 		Workspaces:         &workspacePreparer{err: privateFailure},
 		RuntimeAttachments: &runtimeAttachmentCoordinator{},
 		TaskIDs:            func(string) (string, error) { return "task-stable-0001", nil },
@@ -90,6 +105,7 @@ func TestMutations_PrepareRejectsUnknownProfilesBeforeWorkspaceAllocation(t *tes
 	profileUnavailable := errors.New("profile unavailable")
 	tests := []struct {
 		name               string
+		shape              domain.TaskShape
 		workerProfiles     WorkerProfileValidator
 		validationProfiles ValidationProfileValidator
 	}{
@@ -98,12 +114,18 @@ func TestMutations_PrepareRejectsUnknownProfilesBeforeWorkspaceAllocation(t *tes
 			workerProfiles: func(string, domain.TaskShape) error {
 				return profileUnavailable
 			},
-			validationProfiles: func(string) error { return nil },
+			validationProfiles: func(string, domain.TaskShape) error { return nil },
 		},
 		{
-			name:               "validation profile",
-			workerProfiles:     func(string, domain.TaskShape) error { return nil },
-			validationProfiles: func(string) error { return profileUnavailable },
+			name:           "validation profile",
+			shape:          domain.ShapeScout,
+			workerProfiles: func(string, domain.TaskShape) error { return nil },
+			validationProfiles: func(_ string, shape domain.TaskShape) error {
+				if shape == domain.ShapeScout {
+					return profileUnavailable
+				}
+				return nil
+			},
 		},
 	}
 	for _, test := range tests {
@@ -122,7 +144,12 @@ func TestMutations_PrepareRejectsUnknownProfilesBeforeWorkspaceAllocation(t *tes
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := mutations.PrepareTask(context.Background(), validPrepareCommand()); err == nil {
+			command := validPrepareCommand()
+			if test.shape != "" {
+				command.Shape = test.shape
+				command.DeliveryMode = domain.DeliveryReport
+			}
+			if _, err := mutations.PrepareTask(context.Background(), command); err == nil {
 				t.Fatal("PrepareTask(unknown profile) error = nil")
 			}
 			if workspaces.calls != 0 || attachments.prepareCalls != 0 || store.prepareCalls != 0 {
@@ -153,6 +180,7 @@ type runtimeAttachmentCoordinator struct {
 	prepareCalls   int
 	bindCalls      int
 	err            error
+	beforePrepare  func() error
 }
 
 func (coordinator *runtimeAttachmentCoordinator) PrepareRuntimeAttachment(
@@ -161,6 +189,11 @@ func (coordinator *runtimeAttachmentCoordinator) PrepareRuntimeAttachment(
 ) (PreparedRuntimeAttachment, error) {
 	coordinator.prepareCalls++
 	coordinator.prepareRequest = request
+	if coordinator.beforePrepare != nil {
+		if err := coordinator.beforePrepare(); err != nil {
+			return PreparedRuntimeAttachment{}, err
+		}
+	}
 	return coordinator.prepared, coordinator.err
 }
 

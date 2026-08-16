@@ -153,7 +153,8 @@ func (adapter *CodexAdapter) BuildLaunchDescriptor(
 		return application.WorkerLaunchDescriptor{}, err
 	}
 	if !containsEnvironmentKey(base.EnvironmentKeys, application.RuntimeAttachmentPathEnvironment) ||
-		!containsEnvironmentKey(base.EnvironmentKeys, application.RuntimeAttachmentTargetEnvironment) {
+		!containsEnvironmentKey(base.EnvironmentKeys, application.RuntimeAttachmentTargetEnvironment) ||
+		!containsEnvironmentKey(base.EnvironmentKeys, application.RuntimeAttachmentIdentityEnvironment) {
 		return application.WorkerLaunchDescriptor{}, errors.New("build Codex launch descriptor: attachment environment keys are not allowed")
 	}
 	arguments := append([]string(nil), base.Arguments...)
@@ -173,8 +174,9 @@ func (adapter *CodexAdapter) BuildLaunchDescriptor(
 		Arguments: arguments, WorkingDirectory: base.WorkingDirectory,
 		EnvironmentKeys: append([]string(nil), base.EnvironmentKeys...),
 		EnvironmentBindings: map[string]string{
-			application.RuntimeAttachmentPathEnvironment:   request.Attachment.MountSocketPath,
-			application.RuntimeAttachmentTargetEnvironment: request.Attachment.AttachmentTargetName,
+			application.RuntimeAttachmentPathEnvironment:     request.Attachment.MountSocketPath,
+			application.RuntimeAttachmentTargetEnvironment:   request.Attachment.AttachmentTargetName,
+			application.RuntimeAttachmentIdentityEnvironment: request.Attachment.RelayIdentity,
 		},
 		Model: base.Model, Effort: base.Effort, TerminalAllowEntry: base.TerminalAllowEntry,
 		Network: string(base.Network), ConcurrencyLimit: base.ConcurrencyLimit,
@@ -246,7 +248,8 @@ func validateCodexLaunchBinding(request application.WorkerLaunchRequest) error {
 
 func validateRuntimeAttachment(attachment application.RuntimeSocketAttachment) error {
 	if domain.ValidateAuthorityReference("executionAttachmentId", attachment.ExecutionAttachmentID) != nil ||
-		domain.ValidateAttachmentTargetName(attachment.AttachmentTargetName) != nil {
+		domain.ValidateAttachmentTargetName(attachment.AttachmentTargetName) != nil ||
+		application.ValidateRuntimeRelayIdentity(attachment.RelayIdentity) != nil {
 		return errors.New("build Codex launch descriptor: runtime attachment authority is invalid")
 	}
 	expectedMount := filepath.Join(application.RuntimeAttachmentMountDirectory, attachment.AttachmentTargetName)

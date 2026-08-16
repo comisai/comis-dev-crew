@@ -186,6 +186,21 @@ func (store *Store) BeginTaskCleanup(
 	return record, nil
 }
 
+// GetTaskCleanupRecord returns the durable cleanup stage for one task.
+func (store *Store) GetTaskCleanupRecord(
+	ctx context.Context,
+	taskHandle string,
+) (application.TaskCleanupRecord, bool, error) {
+	if store == nil || store.db == nil || ctx == nil || domain.ValidateTaskHandle(taskHandle) != nil {
+		return application.TaskCleanupRecord{}, false, errors.New("get task cleanup record: input is invalid")
+	}
+	record, found, err := findTaskCleanupRecordByTask(ctx, store.db, taskHandle)
+	if err != nil {
+		return application.TaskCleanupRecord{}, false, fmt.Errorf("get task cleanup record: %w", err)
+	}
+	return record, found, nil
+}
+
 // RecordTaskCleanupHostRelease persists the exact host acknowledgement and the
 // safety proof that preceded it.
 func (store *Store) RecordTaskCleanupHostRelease(

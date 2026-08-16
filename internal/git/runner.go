@@ -13,6 +13,14 @@ import (
 const maximumGitOutputBytes = 8192
 
 var errGitOutputTooLarge = errors.New("git output exceeded the configured bound")
+var errGitInfrastructure = errors.New("git execution infrastructure is unavailable")
+
+type gitChildFailureKind uint8
+
+const (
+	gitChildRepositoryFailure gitChildFailureKind = iota + 1
+	gitChildInfrastructureFailure
+)
 
 type boundedBuffer struct {
 	buffer bytes.Buffer
@@ -179,9 +187,43 @@ func executeGitWithEnvironment(
 		}
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
+			if classifyGitChildFailure(exit.ExitCode(), stderr.buffer.Bytes()) == gitChildInfrastructureFailure {
+				return nil, -1, fmt.Errorf("git command failed after launch: %w", errGitInfrastructure)
+			}
 			return append([]byte(nil), stdout.buffer.Bytes()...), exit.ExitCode(), nil
 		}
-		return nil, -1, fmt.Errorf("git command execution failed: %w", err)
+		return nil, -1, fmt.Errorf("git command execution failed: %w", errGitInfrastructure)
 	}
 	return append([]byte(nil), stdout.buffer.Bytes()...), 0, nil
+}
+
+func classifyGitChildFailure(exitCode int, stderr []byte) gitChildFailureKind {
+	if exitCode < 0 || exitCode == 126 || exitCode == 127 {
+		return gitChildInfrastructureFailure
+	}
+	diagnostic := strings.ToLower(strings.TrimSpace(string(stderr)))
+	for _, marker := range []string{
+		"permission denied",
+		"operation not permitted",
+		"input/output error",
+		"i/o error",
+		"read-only file system",
+		"no space left on device",
+		"disk quota exceeded",
+		"too many open files",
+		"cannot allocate memory",
+		"out of memory",
+		"resource temporarily unavailable",
+		"stale file handle",
+		"device not configured",
+		"bad file descriptor",
+		"broken pipe",
+		"interrupted system call",
+		"timed out",
+	} {
+		if strings.Contains(diagnostic, marker) {
+			return gitChildInfrastructureFailure
+		}
+	}
+	return gitChildRepositoryFailure
 }

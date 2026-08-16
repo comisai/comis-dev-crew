@@ -108,11 +108,6 @@ func TestCandidateSupervisor_RefusesChangedHeadOpenDecisionAndIncompleteValidati
 		name   string
 		mutate func(*candidateSupervisorFixture)
 	}{
-		{name: "changed head", mutate: func(fixture *candidateSupervisorFixture) {
-			changed := fixture.snapshot
-			changed.HeadRevision = strings.Repeat("c", 40)
-			fixture.git.snapshots = []devgit.CandidateSnapshot{fixture.snapshot, changed}
-		}},
 		{name: "open decision", mutate: func(fixture *candidateSupervisorFixture) {
 			fixture.store.reports = []domain.AcceptedReport{{Report: domain.WorkerReport{Kind: domain.ReportDecision, ExternalKey: "decision-one"}}}
 		}},
@@ -153,11 +148,15 @@ func TestCandidateSupervisor_BindsReconciledValidationToDurableSnapshot(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := supervisor.ValidateTask(context.Background(), fixture.task.Handle); err == nil {
-		t.Fatal("ValidateTask(changed reconciled head) error = nil")
+	_, judgment, err := supervisor.ValidateTask(context.Background(), fixture.task.Handle)
+	if err != nil || judgment.Outcome != domain.CandidateUnknown ||
+		judgment.Reason != domain.CandidateWorktreeUnverified {
+		t.Fatalf("ValidateTask(changed reconciled head) = %#v, %v", judgment, err)
 	}
 	if fixture.store.reconciledReads != 1 || fixture.runner.calls != 0 ||
-		fixture.pullRequests.calls != 0 || fixture.artifact.calls != 0 || fixture.store.evidence != nil {
+		fixture.pullRequests.calls != 0 || fixture.artifact.calls != 0 || fixture.store.evidence == nil ||
+		fixture.store.evidence.Bundle().HeadRevision != changed.HeadRevision ||
+		fixture.store.evidence.Bundle().UnverifiedReason != domain.CandidateReconciliationMismatch {
 		t.Fatalf("reconciled authority effects = reads %d validation %d forge %d artifact %d evidence %t",
 			fixture.store.reconciledReads, fixture.runner.calls, fixture.pullRequests.calls,
 			fixture.artifact.calls, fixture.store.evidence != nil)
@@ -414,7 +413,7 @@ func TestCandidateSupervisor_RunRecoversFromTemporaryGitHubStatusEndToEnd(t *tes
 				fixture.snapshot.HeadRevision, fixture.snapshot.Branch)
 		case "/repos/comisai/fixture/commits/" + fixture.snapshot.HeadRevision + "/check-runs":
 			_, _ = fmt.Fprintf(response,
-				`{"check_runs":[{"id":17,"name":"ci/unit","status":"completed","conclusion":"success","started_at":%q}]}`,
+				`{"total_count":1,"check_runs":[{"id":17,"name":"ci/unit","status":"completed","conclusion":"success","started_at":%q}]}`,
 				fixture.now.Add(-time.Minute).Format(time.RFC3339),
 			)
 		default:
@@ -449,7 +448,7 @@ func TestCandidateSupervisor_RunRecoversFromTemporaryGitHubStatusEndToEnd(t *tes
 	if err := supervisor.Run(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want context.Canceled after recovered delivery", err)
 	}
-	if requests != 4 || pusher.calls != 2 || fixture.store.task.State != domain.TaskCandidateComplete {
+	if requests != 5 || pusher.calls != 2 || fixture.store.task.State != domain.TaskCandidateComplete {
 		t.Fatalf("recovered GitHub delivery: requests=%d pushes=%d state=%q", requests, pusher.calls, fixture.store.task.State)
 	}
 	t.Logf("GitHub 503 was retried by the live candidate supervisor: http_requests=%d pushes=%d final_state=%s",
@@ -676,12 +675,16 @@ func (store *candidateSupervisorStore) CommitCandidateEvidence(
 
 type candidateSupervisorGit struct {
 	snapshots []devgit.CandidateSnapshot
+	errors    []error
 	calls     int
 }
 
 func (git *candidateSupervisorGit) InspectCandidate(context.Context, devgit.CandidateSnapshotRequest) (devgit.CandidateSnapshot, error) {
 	index := git.calls
 	git.calls++
+	if index < len(git.errors) && git.errors[index] != nil {
+		return devgit.CandidateSnapshot{}, git.errors[index]
+	}
 	if index >= len(git.snapshots) {
 		return devgit.CandidateSnapshot{}, errors.New("snapshot unavailable")
 	}
