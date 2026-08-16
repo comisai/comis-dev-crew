@@ -397,11 +397,11 @@ func validateLeasePrivateConfig(path string, expectedCore string) error {
 func readGitControlFile(path string, maximumBytes int64) ([]byte, error) {
 	info, err := os.Lstat(path)
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() > maximumBytes {
-		return nil, errors.New("Git control file is unavailable")
+		return nil, errors.New("git control file is unavailable")
 	}
 	contents, err := os.ReadFile(path)
 	if err != nil || int64(len(contents)) != info.Size() {
-		return nil, errors.New("Git control file could not be read")
+		return nil, errors.New("git control file could not be read")
 	}
 	return contents, nil
 }
@@ -412,7 +412,7 @@ func regularFileExists(path string) (bool, error) {
 		return false, nil
 	}
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return false, errors.New("Git control path is unsafe")
+		return false, errors.New("git control path is unsafe")
 	}
 	return true, nil
 }
