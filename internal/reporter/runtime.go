@@ -279,11 +279,14 @@ func (server *RuntimeServer) acknowledgeLaunch(ctx context.Context, request runt
 
 // RuntimeClient is the worker-side narrow brief/read and report/append client.
 type RuntimeClient struct {
-	socketPath     string
-	socketInfo     os.FileInfo
-	mountDirectory string
-	mountInfo      os.FileInfo
-	timeout        time.Duration
+	socketPath            string
+	socketInfo            os.FileInfo
+	mountDirectory        string
+	mountTargetName       string
+	mountIdentity         runtimePathIdentity
+	mountedSocketIdentity runtimePathIdentity
+	afterMountPin         func()
+	timeout               time.Duration
 }
 
 // Brief fetches the exact pinned task brief from the socket capability.
@@ -370,21 +373,24 @@ func (client *RuntimeClient) call(ctx context.Context, request runtimeRequest) (
 	if err := ctx.Err(); err != nil {
 		return RuntimeOutcome{}, err
 	}
-	if client == nil || client.socketInfo == nil {
+	if client == nil || client.socketInfo == nil && client.mountDirectory == "" {
 		return RuntimeOutcome{}, errors.New("call runtime attachment: client is unavailable")
 	}
-	if client.mountInfo != nil {
-		currentMount, mountErr := pinRuntimeMountDirectory(client.mountDirectory)
-		if mountErr != nil || !os.SameFile(client.mountInfo, currentMount) {
-			return RuntimeOutcome{}, errors.New("call runtime attachment: protected mount identity changed")
+	var connection net.Conn
+	var err error
+	if client.mountDirectory != "" {
+		connection, err = client.dialMountedRuntimeSocket()
+	} else {
+		current, identityErr := os.Lstat(client.socketPath)
+		if identityErr != nil || !os.SameFile(client.socketInfo, current) {
+			return RuntimeOutcome{}, errors.New("call runtime attachment: socket identity changed")
 		}
+		connection, err = net.DialTimeout("unix", client.socketPath, client.timeout)
 	}
-	current, err := os.Lstat(client.socketPath)
-	if err != nil || !os.SameFile(client.socketInfo, current) {
-		return RuntimeOutcome{}, errors.New("call runtime attachment: socket identity changed")
-	}
-	connection, err := net.DialTimeout("unix", client.socketPath, client.timeout)
 	if err != nil {
+		if client.mountDirectory != "" {
+			return RuntimeOutcome{}, err
+		}
 		return RuntimeOutcome{}, errors.New("call runtime attachment: socket is unavailable")
 	}
 	defer connection.Close()

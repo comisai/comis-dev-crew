@@ -190,11 +190,11 @@ type githubPull struct {
 
 type githubChecks struct {
 	Runs []struct {
-		ID         int64   `json:"id"`
-		Name       string  `json:"name"`
-		Status     string  `json:"status"`
-		Conclusion *string `json:"conclusion"`
-		StartedAt  string  `json:"started_at"`
+		ID         int64           `json:"id"`
+		Name       string          `json:"name"`
+		Status     string          `json:"status"`
+		Conclusion *string         `json:"conclusion"`
+		StartedAt  json.RawMessage `json:"started_at"`
 	} `json:"check_runs"`
 }
 
@@ -264,18 +264,10 @@ func (adapter *GitHubAdapter) readChecks(
 			return nil, errors.New("deliver GitHub pull request: check identity is duplicated")
 		}
 		seenIDs[run.ID] = struct{}{}
-		startedAt := time.Time{}
-		recencyKnown := run.StartedAt != ""
+		startedAt, recencyKnown := parseGitHubCheckRecency(run.StartedAt)
 		conclusion := githubCheckConclusion(run.Status, run.Conclusion)
 		if !recencyKnown {
 			conclusion = domain.CheckUnknown
-		} else {
-			var err error
-			startedAt, err = time.Parse(time.RFC3339, run.StartedAt)
-			if err != nil || startedAt.IsZero() {
-				recencyKnown = false
-				conclusion = domain.CheckUnknown
-			}
 		}
 		current, exists := observed[run.Name]
 		if exists && (!current.recencyKnown || !recencyKnown) {

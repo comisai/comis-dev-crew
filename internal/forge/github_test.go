@@ -401,7 +401,11 @@ func TestGitHubAdapter_TreatsMissingOrMalformedCheckRecencyConservatively(t *tes
 			`{"id":13,"name":"ci/unit","status":"queued","conclusion":null,"started_at":null},` +
 			`{"id":12,"name":"ci/unit","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"},` +
 			`{"id":14,"name":"ci/lint","status":"completed","conclusion":"success","started_at":null},` +
-			`{"id":15,"name":"ci/security","status":"completed","conclusion":"success","started_at":"invalid"}` +
+			`{"id":15,"name":"ci/security","status":"completed","conclusion":"success","started_at":"invalid"},` +
+			`{"id":16,"name":"ci/number","status":"completed","conclusion":"success","started_at":42},` +
+			`{"id":17,"name":"ci/boolean","status":"completed","conclusion":"success","started_at":false},` +
+			`{"id":18,"name":"ci/object","status":"completed","conclusion":"success","started_at":{}},` +
+			`{"id":19,"name":"ci/array","status":"completed","conclusion":"success","started_at":[]}` +
 			`]}`))
 	}))
 	defer server.Close()
@@ -409,7 +413,9 @@ func TestGitHubAdapter_TreatsMissingOrMalformedCheckRecencyConservatively(t *tes
 	if err != nil {
 		t.Fatalf("NewGitHubAdapter() error = %v", err)
 	}
-	checks, err := adapter.readChecks(context.Background(), "read-token", head, []string{"ci/unit", "ci/lint", "ci/security"})
+	checks, err := adapter.readChecks(context.Background(), "read-token", head, []string{
+		"ci/unit", "ci/lint", "ci/security", "ci/number", "ci/boolean", "ci/object", "ci/array",
+	})
 	if err != nil {
 		t.Fatalf("readChecks(nullable recency) error = %v", err)
 	}
@@ -417,6 +423,10 @@ func TestGitHubAdapter_TreatsMissingOrMalformedCheckRecencyConservatively(t *tes
 		{Name: "ci/unit", Conclusion: domain.CheckUnknown},
 		{Name: "ci/lint", Conclusion: domain.CheckUnknown},
 		{Name: "ci/security", Conclusion: domain.CheckUnknown},
+		{Name: "ci/number", Conclusion: domain.CheckUnknown},
+		{Name: "ci/boolean", Conclusion: domain.CheckUnknown},
+		{Name: "ci/object", Conclusion: domain.CheckUnknown},
+		{Name: "ci/array", Conclusion: domain.CheckUnknown},
 	}
 	if !reflect.DeepEqual(checks, want) {
 		t.Fatalf("readChecks(nullable recency) = %#v, want %#v", checks, want)
