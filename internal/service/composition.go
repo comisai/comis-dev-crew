@@ -153,8 +153,8 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 		_, resolveErr := profiles.ResolveProfile(profileID, shape)
 		return resolveErr
 	}
-	config.ValidationProfiles = func(profileID string) error {
-		_, resolveErr := catalog.ResolveProfile(profileID)
+	config.ValidationProfiles = func(profileID string, shape domain.TaskShape) error {
+		_, resolveErr := catalog.ResolveProfileForShape(profileID, shape)
 		return resolveErr
 	}
 	if validationConfig.MaxOutputBytes < 1 || validationConfig.MaxOutputBytes > 16<<20 ||

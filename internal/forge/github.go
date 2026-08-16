@@ -267,7 +267,9 @@ func (adapter *GitHubAdapter) readChecks(
 		startedAt := time.Time{}
 		recencyKnown := run.StartedAt != ""
 		conclusion := githubCheckConclusion(run.Status, run.Conclusion)
-		if recencyKnown {
+		if !recencyKnown {
+			conclusion = domain.CheckUnknown
+		} else {
 			var err error
 			startedAt, err = time.Parse(time.RFC3339, run.StartedAt)
 			if err != nil || startedAt.IsZero() {

@@ -48,7 +48,7 @@ func TestRuntimeAttachmentCoordinator_PreparesServingTaskSocketUnderOwnedRoot(t 
 	})
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: serviceRepositoryCatalog{},
-		WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string) error { return nil },
+		WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string, domain.TaskShape) error { return nil },
 		Workspaces: serviceWorkspacePreparer{root: workspace}, RuntimeAttachments: coordinator,
 		TaskIDs:            func(string) (string, error) { return "task-runtime-owned-0001", nil },
 		RegistrationNonces: func() (string, error) { return "registration-nonce_runtime_owned", nil },
@@ -208,7 +208,7 @@ func TestRuntimeAttachmentCoordinator_RecoversPreparedTaskSocketAfterRestart(t *
 	newMutations := func(coordinator *runtimeAttachmentCoordinator) *application.Mutations {
 		mutations, err := application.NewMutations(application.MutationConfig{
 			Store: store, Repositories: serviceRepositoryCatalog{},
-			WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string) error { return nil },
+			WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string, domain.TaskShape) error { return nil },
 			Workspaces: serviceWorkspacePreparer{root: workspace}, RuntimeAttachments: coordinator,
 			TaskIDs:            func(string) (string, error) { return "task-runtime-restart-0001", nil },
 			RegistrationNonces: func() (string, error) { return "registration-nonce_runtime_restart", nil },

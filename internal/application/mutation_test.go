@@ -394,7 +394,7 @@ func TestMutations_ValidatesRequiredDependenciesAndCancellation(t *testing.T) {
 	valid := MutationConfig{
 		Store: &mutationStore{}, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(), RuntimeAttachments: testRuntimeAttachments(),
 		WorkerProfiles:     func(string, domain.TaskShape) error { return nil },
-		ValidationProfiles: func(string) error { return nil },
+		ValidationProfiles: func(string, domain.TaskShape) error { return nil },
 		TaskIDs:            func(string) (string, error) { return "task-0001", nil },
 		RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour, Clock: time.Now,
 	}
@@ -580,7 +580,7 @@ func validPrepareCommand() PrepareTaskCommand {
 
 func acceptingWorkerProfile(string, domain.TaskShape) error { return nil }
 
-func acceptingValidationProfile(string) error { return nil }
+func acceptingValidationProfile(string, domain.TaskShape) error { return nil }
 
 func testRegistrationNonceSource() (string, error) { return "registration-nonce_0001", nil }
 

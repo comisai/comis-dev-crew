@@ -320,7 +320,7 @@ func (harness *durableControlHarness) open(t *testing.T) {
 	}
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: acceptingCatalog{},
-		WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string) error { return nil },
+		WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string, domain.TaskShape) error { return nil },
 		Workspaces:         acceptingWorkspace{root: harness.workspaceRoot},
 		RuntimeAttachments: acceptingRuntimeAttachments{},
 		TaskIDs:            func(string) (string, error) { return harness.nextTaskID, nil },

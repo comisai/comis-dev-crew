@@ -165,6 +165,58 @@ func TestDevcrewReportBriefProbeConnectsThroughAssignedMountedTarget(t *testing.
 	}
 }
 
+func TestMountedRuntimeClientRejectsIntermediateSymlinkReplacementOnCall(t *testing.T) {
+	const targetName = "attachment-0123456789abcdef0123456789abcdef.sock"
+	mountDirectory := mountedRuntimeTestDirectory(t)
+	socketPath := filepath.Join(mountDirectory, targetName)
+	address, err := net.ResolveUnixAddr("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.ListenUnix("unix", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.SetUnlinkOnClose(false)
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	brief := boundaryBrief("task-mounted-replacement")
+	server := &RuntimeServer{listener: listener, socketPath: socketPath, socketInfo: info, brief: brief, reporter: &Client{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		_ = server.Close()
+		if err := <-done; err != nil {
+			t.Errorf("mounted runtime replacement stop = %v", err)
+		}
+	})
+	client, err := newMountedRuntimeClient(socketPath, targetName, mountDirectory, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := client.Brief(context.Background()); err != nil || got != brief {
+		t.Fatalf("Brief(before replacement) = %#v, %v", got, err)
+	}
+	runDirectory := filepath.Dir(filepath.Dir(mountDirectory))
+	originalRunDirectory := filepath.Join(filepath.Dir(runDirectory), "original-run")
+	if err := os.Rename(runDirectory, originalRunDirectory); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(originalRunDirectory, runDirectory); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Brief(context.Background()); err == nil {
+		t.Fatal("mounted runtime client accepted an intermediate symlink replacement")
+	}
+}
+
 func TestMountedRuntimeClientRequiresExactAssignedTarget(t *testing.T) {
 	targetName := "attachment-0123456789abcdef0123456789abcdef.sock"
 	mountRoot := "/run/comis/attachments"

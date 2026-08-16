@@ -400,7 +400,7 @@ func TestGitHubAdapter_TreatsMissingOrMalformedCheckRecencyConservatively(t *tes
 		_, _ = response.Write([]byte(`{"check_runs":[` +
 			`{"id":13,"name":"ci/unit","status":"queued","conclusion":null,"started_at":null},` +
 			`{"id":12,"name":"ci/unit","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"},` +
-			`{"id":14,"name":"ci/lint","status":"queued","conclusion":null,"started_at":null},` +
+			`{"id":14,"name":"ci/lint","status":"completed","conclusion":"success","started_at":null},` +
 			`{"id":15,"name":"ci/security","status":"completed","conclusion":"success","started_at":"invalid"}` +
 			`]}`))
 	}))
@@ -415,7 +415,7 @@ func TestGitHubAdapter_TreatsMissingOrMalformedCheckRecencyConservatively(t *tes
 	}
 	want := []domain.ForgeCheckEvidence{
 		{Name: "ci/unit", Conclusion: domain.CheckUnknown},
-		{Name: "ci/lint", Conclusion: domain.CheckPending},
+		{Name: "ci/lint", Conclusion: domain.CheckUnknown},
 		{Name: "ci/security", Conclusion: domain.CheckUnknown},
 	}
 	if !reflect.DeepEqual(checks, want) {

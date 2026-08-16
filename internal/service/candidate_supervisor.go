@@ -154,7 +154,7 @@ func (supervisor *candidateSupervisor) ValidateTask(
 	if err != nil {
 		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: reconciliation authority is unavailable")
 	}
-	profile, err := supervisor.config.Catalog.ResolveProfile(task.ValidationProfile)
+	profile, err := supervisor.config.Catalog.ResolveProfileForShape(task.ValidationProfile, task.Shape)
 	if err != nil {
 		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: reviewed profile is unavailable")
 	}

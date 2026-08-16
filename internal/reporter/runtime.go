@@ -374,9 +374,8 @@ func (client *RuntimeClient) call(ctx context.Context, request runtimeRequest) (
 		return RuntimeOutcome{}, errors.New("call runtime attachment: client is unavailable")
 	}
 	if client.mountInfo != nil {
-		currentMount, mountErr := os.Lstat(client.mountDirectory)
-		if mountErr != nil || !os.SameFile(client.mountInfo, currentMount) || !currentMount.IsDir() ||
-			currentMount.Mode()&os.ModeSymlink != 0 || !safeRuntimeMountPermissions(currentMount.Mode()) {
+		currentMount, mountErr := pinRuntimeMountDirectory(client.mountDirectory)
+		if mountErr != nil || !os.SameFile(client.mountInfo, currentMount) {
 			return RuntimeOutcome{}, errors.New("call runtime attachment: protected mount identity changed")
 		}
 	}

@@ -484,7 +484,7 @@ func sqliteMutations(t *testing.T, store *Store, ids *sequenceIDs, now time.Time
 	t.Helper()
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: configuredCatalog{},
-		WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string) error { return nil },
+		WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string, domain.TaskShape) error { return nil },
 		Workspaces:         configuredWorkspacePreparer{root: "/approved/workspaces/task-fixture"},
 		RuntimeAttachments: configuredRuntimeAttachments{},
 		TaskIDs:            ids.next,

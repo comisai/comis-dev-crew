@@ -93,6 +93,7 @@ func TestMutations_PrepareRejectsUnknownProfilesBeforeWorkspaceAllocation(t *tes
 	profileUnavailable := errors.New("profile unavailable")
 	tests := []struct {
 		name               string
+		shape              domain.TaskShape
 		workerProfiles     WorkerProfileValidator
 		validationProfiles ValidationProfileValidator
 	}{
@@ -101,12 +102,18 @@ func TestMutations_PrepareRejectsUnknownProfilesBeforeWorkspaceAllocation(t *tes
 			workerProfiles: func(string, domain.TaskShape) error {
 				return profileUnavailable
 			},
-			validationProfiles: func(string) error { return nil },
+			validationProfiles: func(string, domain.TaskShape) error { return nil },
 		},
 		{
-			name:               "validation profile",
-			workerProfiles:     func(string, domain.TaskShape) error { return nil },
-			validationProfiles: func(string) error { return profileUnavailable },
+			name:           "validation profile",
+			shape:          domain.ShapeScout,
+			workerProfiles: func(string, domain.TaskShape) error { return nil },
+			validationProfiles: func(_ string, shape domain.TaskShape) error {
+				if shape == domain.ShapeScout {
+					return profileUnavailable
+				}
+				return nil
+			},
 		},
 	}
 	for _, test := range tests {
@@ -125,7 +132,12 @@ func TestMutations_PrepareRejectsUnknownProfilesBeforeWorkspaceAllocation(t *tes
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := mutations.PrepareTask(context.Background(), validPrepareCommand()); err == nil {
+			command := validPrepareCommand()
+			if test.shape != "" {
+				command.Shape = test.shape
+				command.DeliveryMode = domain.DeliveryReport
+			}
+			if _, err := mutations.PrepareTask(context.Background(), command); err == nil {
 				t.Fatal("PrepareTask(unknown profile) error = nil")
 			}
 			if workspaces.calls != 0 || attachments.prepareCalls != 0 || store.prepareCalls != 0 {

@@ -92,7 +92,7 @@ func (mutations *Mutations) PrepareTask(ctx context.Context, command PrepareTask
 	if err := mutations.workerProfiles(command.WorkerProfileID, command.Shape); err != nil {
 		return MutationResult{}, mutationValidationFailure("worker profile is unavailable")
 	}
-	if err := mutations.validationProfiles(command.ValidationProfile); err != nil {
+	if err := mutations.validationProfiles(command.ValidationProfile, command.Shape); err != nil {
 		return MutationResult{}, mutationValidationFailure("validation profile is unavailable")
 	}
 	workspace, err := mutations.workspaces.PrepareWorkspace(ctx, WorkspacePreparationRequest{

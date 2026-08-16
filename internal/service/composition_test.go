@@ -26,6 +26,11 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 	if configured.Repositories == nil || configured.Workspaces == nil {
 		t.Fatalf("installed repository configuration = %#v", configured)
 	}
+	for _, shape := range []domain.TaskShape{domain.ShapeShip, domain.ShapeScout} {
+		if err := configured.ValidationProfiles("required", shape); err != nil {
+			t.Fatalf("ValidationProfiles(required, %s) error = %v", shape, err)
+		}
+	}
 	if configured.candidateGit == nil || configured.workspaceInspector == nil || configured.reconciliationInspector == nil ||
 		configured.validationCatalog == nil ||
 		configured.pullRequests == nil || configured.cleanupRemover == nil || configured.cleanupForge == nil ||
@@ -153,6 +158,37 @@ func TestInstalledRuntime_ComposesFixtureBesideRealCandidatePipeline(t *testing.
 	}
 }
 
+func TestInstalledRuntime_ValidationProfilesRejectShapeIncompletePolicy(t *testing.T) {
+	tests := []struct {
+		name   string
+		shape  domain.TaskShape
+		mutate func(*validation.Profile)
+	}{
+		{name: "required local", shape: domain.ShapeShip, mutate: func(profile *validation.Profile) {
+			profile.LocalChecks[0].Required = false
+		}},
+		{name: "required forge", shape: domain.ShapeShip, mutate: func(profile *validation.Profile) {
+			profile.ForgeChecks[0].Required = false
+		}},
+		{name: "scout artifact", shape: domain.ShapeScout, mutate: func(profile *validation.Profile) {
+			profile.ArtifactRules = nil
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			configuration := installedServiceConfig(t, shortTempDir(t))
+			test.mutate(&configuration.ValidationComposition.Profiles[0])
+			configured, err := composeInstalledRuntime(context.Background(), configuration)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := configured.ValidationProfiles("required", test.shape); err == nil {
+				t.Fatalf("ValidationProfiles(required, %s) error = nil", test.shape)
+			}
+		})
+	}
+}
+
 func TestInstalledRuntime_RejectsPartialMixedAndUnverifiedConfiguration(t *testing.T) {
 	partial := Config{RepositoryComposition: &RepositoryComposition{}}
 	if _, err := composeInstalledRuntime(context.Background(), partial); err == nil {
@@ -268,7 +304,7 @@ func TestComposeMutations_RejectsIncompleteMCPAndAuthorityConfiguration(t *testi
 	}
 	configuration := Config{
 		Repositories: serviceRepositoryCatalog{}, Workspaces: serviceWorkspacePreparer{root: "/approved/worktrees/task-composition"},
-		WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string) error { return nil },
+		WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string, domain.TaskShape) error { return nil },
 		RuntimeAttachments: serviceRuntimeAttachments{},
 		TaskIDs:            func(string) (string, error) { return "task-composition", nil },
 		RegistrationNonces: func() (string, error) { return "registration-nonce_composition", nil },
@@ -432,7 +468,8 @@ func installedServiceConfig(t *testing.T, root string) Config {
 					ID: "unit", ProgramID: "repo-check", Required: true, Timeout: time.Minute,
 					Arguments: []validation.ArgumentTemplate{{Kind: validation.ArgumentLiteral, Value: "--version"}},
 				}},
-				ForgeChecks: []validation.ForgeCheck{{Name: "ci/unit", Required: true}},
+				ForgeChecks:   []validation.ForgeCheck{{Name: "ci/unit", Required: true}},
+				ArtifactRules: []validation.ArtifactRule{{Kind: validation.ArtifactRegularFile, RelativePath: "report.md", MediaType: "text/markdown", MaxBytes: 1 << 20}},
 			}},
 			MaxOutputBytes: 64 << 10, PollInterval: 25 * time.Millisecond,
 		},

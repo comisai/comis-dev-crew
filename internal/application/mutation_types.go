@@ -195,8 +195,8 @@ type RepositoryCatalog interface {
 type WorkerProfileValidator func(string, domain.TaskShape) error
 
 // ValidationProfileValidator validates an exact operator-reviewed validation
-// profile before any workspace side effect.
-type ValidationProfileValidator func(string) error
+// profile and task shape before any workspace side effect.
+type ValidationProfileValidator func(string, domain.TaskShape) error
 
 // WorkspacePreparationRequest binds allocation to the stable preparation
 // operation and the already-validated immutable task contract.

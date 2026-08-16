@@ -327,7 +327,7 @@ func lifecycleStore(t *testing.T, withWorkspace bool) (*Store, application.Mutat
 	}
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: configuredCatalog{},
-		WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string) error { return nil },
+		WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string, domain.TaskShape) error { return nil },
 		Workspaces:         configuredWorkspacePreparer{root: workspace},
 		RuntimeAttachments: configuredRuntimeAttachments{},
 		TaskIDs:            func(string) (string, error) { return "task-lifecycle", nil },
