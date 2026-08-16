@@ -44,15 +44,17 @@ type pinnedTaskRuntimeDirectory struct {
 	taskIdentity          reporter.RuntimeSocketIdentity
 }
 
-func runtimeAttachmentDirectoryIdentity(path string) (reporter.RuntimeSocketIdentity, error) {
+func runtimeAttachmentDirectoryIdentity(path string) (reporter.RuntimeSocketIdentity, uint64, error) {
 	descriptor, identity, err := pinRuntimeAttachmentDirectory(path)
 	if err != nil {
-		return reporter.RuntimeSocketIdentity{}, err
+		return reporter.RuntimeSocketIdentity{}, 0, err
 	}
-	if err := unix.Close(descriptor); err != nil {
-		return reporter.RuntimeSocketIdentity{}, errors.New("runtime attachment directory identity release failed")
+	mountID, mountErr := runtimeAttachmentDescriptorMountID(descriptor)
+	closeErr := unix.Close(descriptor)
+	if mountErr != nil || closeErr != nil || (identity.BirthSec == 0 && identity.BirthNsec == 0) || mountID == 0 {
+		return reporter.RuntimeSocketIdentity{}, 0, errors.New("runtime attachment directory identity is unavailable")
 	}
-	return identity, nil
+	return identity, mountID, nil
 }
 
 func pinRuntimeAttachmentDirectory(path string) (int, reporter.RuntimeSocketIdentity, error) {
@@ -127,7 +129,12 @@ func (coordinator *runtimeAttachmentCoordinator) pinRuntimeRoot() (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	if !sameRuntimeAttachmentNode(identity, coordinator.runtimeRootIdentity) {
+	mountID, mountErr := runtimeAttachmentDescriptorMountID(descriptor)
+	var stat unix.Stat_t
+	statErr := unix.Fstat(descriptor, &stat)
+	if mountErr != nil || statErr != nil || mountID != coordinator.runtimeRootMountID ||
+		!sameRuntimeAttachmentRoot(identity, coordinator.runtimeRootIdentity) ||
+		stat.Mode&unix.S_IFMT != unix.S_IFDIR || stat.Mode&0o777 != 0o700 || stat.Uid != uint32(unix.Geteuid()) {
 		_ = unix.Close(descriptor)
 		return -1, errors.New("task runtime directory root identity changed")
 	}
@@ -229,27 +236,48 @@ func readPinnedRuntimeSocketIdentity(
 }
 
 func runtimeAttachmentPathAbsent(directoryDescriptor int, name string) bool {
-	var stat unix.Stat_t
-	return errors.Is(unix.Fstatat(directoryDescriptor, name, &stat, unix.AT_SYMLINK_NOFOLLOW), unix.ENOENT)
+	absent, _ := inspectRuntimeAttachmentPathAbsent(directoryDescriptor, name)
+	return absent
 }
 
-func runtimeAttachmentDirectoryEmpty(descriptor int) bool {
+func inspectRuntimeAttachmentPathAbsent(directoryDescriptor int, name string) (bool, error) {
+	var stat unix.Stat_t
+	err := unix.Fstatat(directoryDescriptor, name, &stat, unix.AT_SYMLINK_NOFOLLOW)
+	if errors.Is(err, unix.ENOENT) {
+		return true, nil
+	}
+	if err != nil {
+		return false, errors.New("runtime attachment path identity is unavailable")
+	}
+	return false, nil
+}
+
+func runtimeAttachmentDirectoryEmpty(descriptor int) (bool, error) {
 	duplicate, err := unix.Dup(descriptor)
 	if err != nil {
-		return false
+		return false, errors.New("runtime attachment directory contents are unavailable")
 	}
 	directory := os.NewFile(uintptr(duplicate), "runtime-attachment-directory")
 	if directory == nil {
 		_ = unix.Close(duplicate)
-		return false
+		return false, errors.New("runtime attachment directory contents are unavailable")
 	}
 	names, readErr := directory.Readdirnames(1)
 	closeErr := directory.Close()
-	return len(names) == 0 && errors.Is(readErr, io.EOF) && closeErr == nil
+	if closeErr != nil || readErr != nil && !errors.Is(readErr, io.EOF) {
+		return false, errors.New("runtime attachment directory contents are unavailable")
+	}
+	return len(names) == 0 && errors.Is(readErr, io.EOF), nil
 }
 
 func sameRuntimeAttachmentNode(left, right reporter.RuntimeSocketIdentity) bool {
 	return left.Device == right.Device && left.Inode == right.Inode
+}
+
+func sameRuntimeAttachmentRoot(left, right reporter.RuntimeSocketIdentity) bool {
+	return sameRuntimeAttachmentNode(left, right) &&
+		(right.BirthSec != 0 || right.BirthNsec != 0) &&
+		left.BirthSec == right.BirthSec && left.BirthNsec == right.BirthNsec
 }
 
 func sameRuntimeAttachmentStableDirectory(left, right reporter.RuntimeSocketIdentity) bool {

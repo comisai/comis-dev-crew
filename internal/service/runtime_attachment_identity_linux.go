@@ -16,3 +16,12 @@ func runtimeAttachmentDescriptorBirthTime(descriptor int) (int64, int64) {
 	}
 	return stat.Btime.Sec, int64(stat.Btime.Nsec)
 }
+
+func runtimeAttachmentDescriptorMountID(descriptor int) (uint64, error) {
+	var stat unix.Statx_t
+	if err := unix.Statx(descriptor, "", unix.AT_EMPTY_PATH|unix.AT_SYMLINK_NOFOLLOW, unix.STATX_MNT_ID, &stat); err != nil ||
+		stat.Mask&unix.STATX_MNT_ID == 0 || stat.Mnt_id == 0 {
+		return 0, unix.ESTALE
+	}
+	return stat.Mnt_id, nil
+}

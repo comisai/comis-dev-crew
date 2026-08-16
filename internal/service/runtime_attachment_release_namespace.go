@@ -75,7 +75,9 @@ func isolatePinnedRuntimeAttachmentRelease(
 	}
 	releaseName := runtimeAttachmentReleaseName(pinned.taskHandle)
 	if pinned.directoryName != releaseName && pinned.directoryName != pinned.taskHandle {
-		return runtimeAttachmentIdentityRecord{}, errors.New("task runtime attachment release location is ambiguous")
+		return runtimeAttachmentIdentityRecord{}, runtimeAttachmentOwnershipUnproven(
+			"task runtime attachment release location is ambiguous",
+		)
 	}
 	if pinned.directoryName == releaseName && record.Stage == runtimeAttachmentReleasing {
 		return record, nil
@@ -87,15 +89,30 @@ func isolatePinnedRuntimeAttachmentRelease(
 			pinned.runtimeRootDescriptor, pinned.directoryName, releaseName, pinned.taskIdentity, 0o700,
 		)
 		if err != nil {
+			if errors.Is(err, reporter.ErrRuntimePathIdentity) || errors.Is(err, reporter.ErrRuntimePathMissing) {
+				return runtimeAttachmentIdentityRecord{}, errors.Join(
+					errRuntimeAttachmentOwnershipUnproven,
+					errors.New("task runtime attachment release cannot be isolated"),
+					err,
+				)
+			}
 			return runtimeAttachmentIdentityRecord{}, errors.New("task runtime attachment release cannot be isolated")
 		}
 		pinned.directoryName = releaseName
 	} else {
 		var err error
 		current, err = runtimeAttachmentDescriptorIdentity(pinned.taskDescriptor)
-		if err != nil || !sameRuntimeAttachmentNode(current, record.Task) ||
-			!runtimeAttachmentSocketMatches(pinned.taskDescriptor, record.Socket) {
-			return runtimeAttachmentIdentityRecord{}, errors.New("task runtime attachment release identity differs")
+		if err != nil {
+			return runtimeAttachmentIdentityRecord{}, err
+		}
+		socketMatches, err := inspectRuntimeAttachmentSocket(pinned.taskDescriptor, record.Socket)
+		if err != nil {
+			return runtimeAttachmentIdentityRecord{}, err
+		}
+		if !sameRuntimeAttachmentNode(current, record.Task) || !socketMatches {
+			return runtimeAttachmentIdentityRecord{}, runtimeAttachmentOwnershipUnproven(
+				"task runtime attachment release identity differs",
+			)
 		}
 	}
 	staged := record

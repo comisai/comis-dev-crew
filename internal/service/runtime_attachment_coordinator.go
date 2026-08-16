@@ -55,6 +55,7 @@ type runtimeAttachmentResult struct {
 type runtimeAttachmentCoordinator struct {
 	runtimeRoot                            string
 	runtimeRootIdentity                    reporter.RuntimeSocketIdentity
+	runtimeRootMountID                     uint64
 	store                                  runtimeAttachmentStore
 	clock                                  application.Clock
 	reportSink                             *application.ReportSink
@@ -87,7 +88,7 @@ func newRuntimeAttachmentCoordinator(config runtimeAttachmentCoordinatorConfig) 
 	if err != nil {
 		return nil, err
 	}
-	runtimeRootIdentity, err := runtimeAttachmentDirectoryIdentity(runtimeRoot)
+	runtimeRootIdentity, runtimeRootMountID, err := runtimeAttachmentDirectoryIdentity(runtimeRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +97,7 @@ func newRuntimeAttachmentCoordinator(config runtimeAttachmentCoordinatorConfig) 
 		return nil, fmt.Errorf("create runtime attachment coordinator report sink: %w", err)
 	}
 	return &runtimeAttachmentCoordinator{
-		runtimeRoot: runtimeRoot, runtimeRootIdentity: runtimeRootIdentity,
+		runtimeRoot: runtimeRoot, runtimeRootIdentity: runtimeRootIdentity, runtimeRootMountID: runtimeRootMountID,
 		store: config.Store, clock: config.Clock, reportSink: sink, newCredential: config.NewCredential,
 		newAttentionOperationID: config.NewAttentionOperationID,
 		registrations:           make(chan runtimeAttachmentRegistration), releases: make(chan runtimeAttachmentRelease),

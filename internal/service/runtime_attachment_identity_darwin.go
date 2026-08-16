@@ -15,3 +15,15 @@ func runtimeAttachmentDescriptorBirthTime(descriptor int) (int64, int64) {
 	}
 	return runtimeAttachmentStatBirthTime(stat)
 }
+
+func runtimeAttachmentDescriptorMountID(descriptor int) (uint64, error) {
+	var stat unix.Statfs_t
+	if err := unix.Fstatfs(descriptor, &stat); err != nil {
+		return 0, err
+	}
+	mountID := uint64(uint32(stat.Fsid.Val[0]))<<32 | uint64(uint32(stat.Fsid.Val[1]))
+	if mountID == 0 {
+		return 0, unix.ESTALE
+	}
+	return mountID, nil
+}

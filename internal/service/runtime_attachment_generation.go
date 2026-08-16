@@ -11,6 +11,8 @@ import (
 
 const runtimeAttachmentGenerationLink = ".attachment.generation"
 
+var errRuntimeAttachmentGenerationDiffers = errors.New("runtime attachment generation differs")
+
 func createRuntimeAttachmentGeneration(
 	runtimeRootDescriptor int,
 	taskHandle string,
@@ -111,14 +113,23 @@ func runtimeAttachmentGenerationMatches(
 	expected reporter.RuntimeSocketIdentity,
 	generationID [16]byte,
 ) bool {
+	matches, _ := inspectRuntimeAttachmentGeneration(pinned, expected, generationID)
+	return matches
+}
+
+func inspectRuntimeAttachmentGeneration(
+	pinned *pinnedTaskRuntimeDirectory,
+	expected reporter.RuntimeSocketIdentity,
+	generationID [16]byte,
+) (bool, error) {
 	if pinned == nil {
-		return false
+		return false, errRuntimeAttachmentGenerationDiffers
 	}
 	generationDescriptor, anchorDescriptor, anchorStat, err := pinRuntimeAttachmentGeneration(
 		pinned.runtimeRootDescriptor, expected, generationID,
 	)
 	if err != nil {
-		return false
+		return false, err
 	}
 	var linkStat unix.Stat_t
 	linkErr := unix.Fstatat(
@@ -126,9 +137,21 @@ func runtimeAttachmentGenerationMatches(
 	)
 	currentIdentity, identityErr := runtimeAttachmentDescriptorIdentity(generationDescriptor)
 	closeErr := errors.Join(unix.Close(anchorDescriptor), unix.Close(generationDescriptor))
-	return linkErr == nil && identityErr == nil && closeErr == nil &&
-		sameRuntimeAttachmentExactGeneration(currentIdentity, expected) && runtimeAttachmentStatsSameNode(anchorStat, linkStat) &&
-		linkStat.Mode&unix.S_IFMT == unix.S_IFREG && linkStat.Mode&0o777 == 0o600 && linkStat.Nlink >= 2
+	if identityErr != nil || closeErr != nil {
+		return false, errors.New("runtime attachment generation is unavailable")
+	}
+	if linkErr != nil {
+		if errors.Is(linkErr, unix.ENOENT) || errors.Is(linkErr, unix.ENOTDIR) || errors.Is(linkErr, unix.ELOOP) {
+			return false, errRuntimeAttachmentGenerationDiffers
+		}
+		return false, errors.New("runtime attachment generation is unavailable")
+	}
+	if !sameRuntimeAttachmentExactGeneration(currentIdentity, expected) ||
+		!runtimeAttachmentStatsSameNode(anchorStat, linkStat) ||
+		linkStat.Mode&unix.S_IFMT != unix.S_IFREG || linkStat.Mode&0o777 != 0o600 || linkStat.Nlink < 2 {
+		return false, errRuntimeAttachmentGenerationDiffers
+	}
+	return true, nil
 }
 
 func runtimeAttachmentGenerationAvailable(
@@ -151,22 +174,29 @@ func pinRuntimeAttachmentGeneration(
 	generationID [16]byte,
 ) (int, int, unix.Stat_t, error) {
 	if runtimeRootDescriptor < 0 || !expected.Valid() || !runtimeAttachmentGenerationIDValid(generationID) {
-		return -1, -1, unix.Stat_t{}, errors.New("runtime attachment generation differs")
+		return -1, -1, unix.Stat_t{}, errRuntimeAttachmentGenerationDiffers
 	}
 	generationDescriptor, err := unix.Openat(
 		runtimeRootDescriptor, runtimeAttachmentGenerationName(generationID),
 		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0,
 	)
 	if err != nil {
-		return -1, -1, unix.Stat_t{}, errors.New("runtime attachment generation differs")
+		if errors.Is(err, unix.ENOENT) || errors.Is(err, unix.ENOTDIR) || errors.Is(err, unix.ELOOP) {
+			return -1, -1, unix.Stat_t{}, errRuntimeAttachmentGenerationDiffers
+		}
+		return -1, -1, unix.Stat_t{}, errors.New("runtime attachment generation is unavailable")
 	}
 	var generationStat unix.Stat_t
 	generationStatErr := unix.Fstat(generationDescriptor, &generationStat)
 	identity, identityErr := runtimeAttachmentDescriptorIdentity(generationDescriptor)
-	if generationStatErr != nil || identityErr != nil || !sameRuntimeAttachmentExactGeneration(identity, expected) ||
-		generationStat.Mode&unix.S_IFMT != unix.S_IFDIR || generationStat.Mode&0o777 != 0o700 {
+	if generationStatErr != nil || identityErr != nil {
 		_ = unix.Close(generationDescriptor)
-		return -1, -1, unix.Stat_t{}, errors.New("runtime attachment generation differs")
+		return -1, -1, unix.Stat_t{}, errors.New("runtime attachment generation is unavailable")
+	}
+	if !sameRuntimeAttachmentExactGeneration(identity, expected) || generationStat.Mode&unix.S_IFMT != unix.S_IFDIR ||
+		generationStat.Mode&0o777 != 0o700 {
+		_ = unix.Close(generationDescriptor)
+		return -1, -1, unix.Stat_t{}, errRuntimeAttachmentGenerationDiffers
 	}
 	anchorDescriptor, err := unix.Openat(
 		generationDescriptor, runtimeAttachmentGenerationLink,
@@ -174,16 +204,23 @@ func pinRuntimeAttachmentGeneration(
 	)
 	if err != nil {
 		_ = unix.Close(generationDescriptor)
-		return -1, -1, unix.Stat_t{}, errors.New("runtime attachment generation differs")
+		if errors.Is(err, unix.ENOENT) || errors.Is(err, unix.ENOTDIR) || errors.Is(err, unix.ELOOP) {
+			return -1, -1, unix.Stat_t{}, errRuntimeAttachmentGenerationDiffers
+		}
+		return -1, -1, unix.Stat_t{}, errors.New("runtime attachment generation is unavailable")
 	}
 	var anchorStat unix.Stat_t
 	currentIdentity, currentIdentityErr := runtimeAttachmentDescriptorIdentity(generationDescriptor)
-	if err := unix.Fstat(anchorDescriptor, &anchorStat); err != nil || currentIdentityErr != nil ||
-		!sameRuntimeAttachmentExactGeneration(currentIdentity, expected) ||
+	if err := unix.Fstat(anchorDescriptor, &anchorStat); err != nil || currentIdentityErr != nil {
+		_ = unix.Close(anchorDescriptor)
+		_ = unix.Close(generationDescriptor)
+		return -1, -1, unix.Stat_t{}, errors.New("runtime attachment generation is unavailable")
+	}
+	if !sameRuntimeAttachmentExactGeneration(currentIdentity, expected) ||
 		anchorStat.Mode&unix.S_IFMT != unix.S_IFREG || anchorStat.Mode&0o777 != 0o600 || anchorStat.Nlink < 1 {
 		_ = unix.Close(anchorDescriptor)
 		_ = unix.Close(generationDescriptor)
-		return -1, -1, unix.Stat_t{}, errors.New("runtime attachment generation differs")
+		return -1, -1, unix.Stat_t{}, errRuntimeAttachmentGenerationDiffers
 	}
 	return generationDescriptor, anchorDescriptor, anchorStat, nil
 }
