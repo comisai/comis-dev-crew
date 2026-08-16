@@ -55,7 +55,7 @@ func RealRollbackServiceProbe(
 					Path: cliPath, Args: []string{"--socket", socketPath, "service", "status"},
 				})
 				if err != nil || !rollbackServiceStatusAccepted(output) {
-					return errors.New("rollback service probe status is not healthy and complete")
+					return errors.New("rollback service probe status is not healthy in database-only or complete mode")
 				}
 				return nil
 			}
@@ -64,8 +64,14 @@ func RealRollbackServiceProbe(
 }
 
 func rollbackServiceStatusAccepted(output []byte) bool {
-	status := string(output)
-	return strings.Contains(status, "healthy") && strings.Contains(status, "complete")
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 3 && fields[0] == "devcrew-service" && fields[1] == "healthy" &&
+			(fields[2] == "partial" || fields[2] == "complete") {
+			return true
+		}
+	}
+	return false
 }
 
 func stopRollbackProbe(command *exec.Cmd) {
