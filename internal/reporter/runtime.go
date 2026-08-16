@@ -96,6 +96,10 @@ type RuntimeServer struct {
 
 // ListenRuntime creates a new attachment without replacing an existing path.
 func ListenRuntime(config RuntimeServerConfig) (*RuntimeServer, error) {
+	return listenRuntime(config, nil)
+}
+
+func listenRuntime(config RuntimeServerConfig, afterSocketInfo func()) (*RuntimeServer, error) {
 	if err := config.Brief.Validate(); err != nil || config.Reporter == nil {
 		return nil, errors.New("listen runtime attachment: pinned brief and reporter are required")
 	}
@@ -115,11 +119,14 @@ func ListenRuntime(config RuntimeServerConfig) (*RuntimeServer, error) {
 	}
 	listener.SetUnlinkOnClose(false)
 	if err := os.Chmod(config.SocketPath, 0o600); err != nil {
-		return nil, errors.Join(errors.New("listen runtime attachment: socket mode cannot be secured"), listener.Close(), os.Remove(config.SocketPath))
+		return nil, errors.Join(errors.New("listen runtime attachment: socket mode cannot be secured"), listener.Close())
 	}
 	info, err := os.Lstat(config.SocketPath)
 	if err != nil || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 {
-		return nil, errors.Join(errors.New("listen runtime attachment: socket identity is unavailable"), listener.Close(), os.Remove(config.SocketPath))
+		return nil, errors.Join(errors.New("listen runtime attachment: socket identity is unavailable"), listener.Close())
+	}
+	if afterSocketInfo != nil {
+		afterSocketInfo()
 	}
 	server := &RuntimeServer{
 		listener: listener, socketPath: config.SocketPath, socketInfo: info,
@@ -129,7 +136,7 @@ func ListenRuntime(config RuntimeServerConfig) (*RuntimeServer, error) {
 	server.initializeLifecycle()
 	identity, err := captureRuntimeSocketIdentity(config.SocketPath, info)
 	if err != nil {
-		return nil, errors.Join(err, listener.Close(), os.Remove(config.SocketPath))
+		return nil, errors.Join(err, listener.Close())
 	}
 	server.socketIdentity = identity
 	if config.LaunchOperationID != "" {
@@ -187,7 +194,10 @@ func (server *RuntimeServer) Serve(ctx context.Context) (resultErr error) {
 	defer func() {
 		close(stopCancellation)
 		<-cancellationDone
-		resultErr = errors.Join(resultErr, server.Close())
+		closeErr := server.Close()
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, closeErr)
+		}
 	}()
 	for {
 		if !server.beginAccept() {

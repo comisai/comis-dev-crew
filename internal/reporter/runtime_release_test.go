@@ -3,6 +3,7 @@ package reporter
 import (
 	"context"
 	"net"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -69,6 +70,50 @@ func TestRuntimeServerCloseCancelsAndJoinsAcceptedConnection(t *testing.T) {
 	}
 	if premature {
 		t.Fatal("Close() returned while an accepted request remained active")
+	}
+}
+
+func TestListenRuntimePreservesReplacementWhenIdentityCaptureFails(t *testing.T) {
+	root := boundaryRuntimeDirectory(t)
+	socketPath := filepath.Join(root, "attachment.sock")
+	originalPath := filepath.Join(root, "original.sock")
+	var replacement *net.UnixListener
+	var hookErr error
+	t.Cleanup(func() {
+		if replacement != nil {
+			_ = replacement.Close()
+		}
+		_ = os.Remove(socketPath)
+		_ = os.Remove(originalPath)
+	})
+	_, err := listenRuntime(RuntimeServerConfig{
+		SocketPath: socketPath, Brief: boundaryBrief("task-runtime-capture-race"), Reporter: &Client{},
+	}, func() {
+		hookErr = os.Rename(socketPath, originalPath)
+		if hookErr != nil {
+			return
+		}
+		address, resolveErr := net.ResolveUnixAddr("unix", socketPath)
+		if resolveErr != nil {
+			hookErr = resolveErr
+			return
+		}
+		replacement, hookErr = net.ListenUnix("unix", address)
+		if hookErr != nil {
+			return
+		}
+		replacement.SetUnlinkOnClose(false)
+		hookErr = os.Chmod(socketPath, 0o600)
+	})
+	if hookErr != nil {
+		t.Fatal(hookErr)
+	}
+	if err == nil {
+		t.Fatal("listenRuntime(replaced socket) error = nil")
+	}
+	info, statErr := os.Lstat(socketPath)
+	if statErr != nil || info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("unverified replacement was not preserved: %#v, %v", info, statErr)
 	}
 }
 
