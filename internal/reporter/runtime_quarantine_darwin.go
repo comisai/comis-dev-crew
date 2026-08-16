@@ -21,6 +21,10 @@ func renameRuntimePathNoReplace(directoryDescriptor int, from, to string) error 
 	return unix.RenameatxNp(directoryDescriptor, from, directoryDescriptor, to, unix.RENAME_EXCL)
 }
 
+func renameRuntimePathNoReplaceBetween(fromDescriptor int, from string, toDescriptor int, to string) error {
+	return unix.RenameatxNp(fromDescriptor, from, toDescriptor, to, unix.RENAME_EXCL)
+}
+
 func exchangeRuntimePaths(directoryDescriptor int, left, right string) error {
 	return unix.RenameatxNp(directoryDescriptor, left, directoryDescriptor, right, unix.RENAME_SWAP)
 }
@@ -28,6 +32,7 @@ func exchangeRuntimePaths(directoryDescriptor int, left, right string) error {
 func openRuntimeRemovalPath(
 	directoryDescriptor int,
 	name, anchorName string,
+	anchorDirectoryDescriptor int,
 	expected RuntimeSocketIdentity,
 	kind RuntimePathKind,
 	permissions os.FileMode,
@@ -49,14 +54,14 @@ func openRuntimeRemovalPath(
 		!runtimePathModeMatches(uint32(original.Mode), kind, permissions) {
 		return nil, ErrRuntimePathIdentity
 	}
-	linkErr := unix.Linkat(directoryDescriptor, name, directoryDescriptor, anchor, 0)
+	linkErr := unix.Linkat(directoryDescriptor, name, anchorDirectoryDescriptor, anchor, 0)
 	if linkErr != nil && !errors.Is(linkErr, unix.EEXIST) {
 		return nil, linkErr
 	}
-	pin := &runtimeRemovalPin{descriptor: -1, directoryDescriptor: directoryDescriptor, anchor: anchor}
+	pin := &runtimeRemovalPin{descriptor: -1, directoryDescriptor: anchorDirectoryDescriptor, anchor: anchor}
 	var anchored unix.Stat_t
 	var current unix.Stat_t
-	if unix.Fstatat(directoryDescriptor, anchor, &anchored, unix.AT_SYMLINK_NOFOLLOW) != nil ||
+	if unix.Fstatat(anchorDirectoryDescriptor, anchor, &anchored, unix.AT_SYMLINK_NOFOLLOW) != nil ||
 		unix.Fstatat(directoryDescriptor, name, &current, unix.AT_SYMLINK_NOFOLLOW) != nil ||
 		!runtimeStatsSameStableObject(anchored, current) {
 		if linkErr == nil {
@@ -79,6 +84,10 @@ func statRuntimeRemovalPin(pin *runtimeRemovalPin, stat *unix.Stat_t) error {
 		return unix.Fstat(pin.descriptor, stat)
 	}
 	return unix.Fstatat(pin.directoryDescriptor, pin.anchor, stat, unix.AT_SYMLINK_NOFOLLOW)
+}
+
+func runtimeRemovalPinIdentity(_ *runtimeRemovalPin, stat unix.Stat_t) (RuntimeSocketIdentity, error) {
+	return runtimeSocketStatIdentity(stat)
 }
 
 func closeRuntimeRemovalPin(pin *runtimeRemovalPin) error {

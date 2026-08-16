@@ -61,12 +61,24 @@ func publishPinnedRuntimeAttachmentIdentity(
 	priorRecord *runtimeAttachmentIdentityRecord,
 	beforePublish func(),
 ) (reporter.RuntimeSocketIdentity, error) {
-	name, err := runtimeAttachmentIdentityName(pinned.taskHandle)
+	return publishRuntimeAttachmentIdentity(
+		pinned.runtimeRootDescriptor, pinned.taskHandle, record, priorRecord, beforePublish,
+	)
+}
+
+func publishRuntimeAttachmentIdentity(
+	runtimeRootDescriptor int,
+	taskHandle string,
+	record runtimeAttachmentIdentityRecord,
+	priorRecord *runtimeAttachmentIdentityRecord,
+	beforePublish func(),
+) (reporter.RuntimeSocketIdentity, error) {
+	name, err := runtimeAttachmentIdentityName(taskHandle)
 	if err != nil {
 		return reporter.RuntimeSocketIdentity{}, err
 	}
 	existingRecord, existingIdentity, existingFound, err := readRuntimeAttachmentIdentityRecord(
-		pinned.runtimeRootDescriptor, pinned.taskHandle,
+		runtimeRootDescriptor, taskHandle,
 	)
 	if err != nil {
 		return reporter.RuntimeSocketIdentity{}, err
@@ -77,19 +89,19 @@ func publishPinnedRuntimeAttachmentIdentity(
 	if existingFound && existingRecord == record && beforePublish == nil {
 		return existingIdentity, nil
 	}
-	temporaryName, err := runtimeAttachmentIdentityTemporaryName(pinned.taskHandle, record)
+	temporaryName, err := runtimeAttachmentIdentityTemporaryName(taskHandle, record)
 	if err != nil {
 		return reporter.RuntimeSocketIdentity{}, err
 	}
 	temporaryIdentity, err := prepareRuntimeAttachmentIdentityTemporary(
-		pinned.runtimeRootDescriptor, temporaryName, record,
+		runtimeRootDescriptor, temporaryName, record,
 	)
 	if err != nil {
 		return reporter.RuntimeSocketIdentity{}, err
 	}
 	cleanupTemporary := func(resultErr error) error {
 		cleanupErr := reporter.QuarantineRuntimePath(
-			pinned.runtimeRootDescriptor, temporaryName, temporaryIdentity, reporter.RuntimePathRegular, 0o600,
+			runtimeRootDescriptor, temporaryName, temporaryIdentity, reporter.RuntimePathRegular, 0o600,
 		)
 		if errors.Is(cleanupErr, reporter.ErrRuntimePathMissing) {
 			cleanupErr = nil
@@ -101,23 +113,23 @@ func publishPinnedRuntimeAttachmentIdentity(
 	}
 	if existingFound {
 		if err := reporter.ReplaceRuntimePath(
-			pinned.runtimeRootDescriptor, temporaryName, name, temporaryIdentity, existingIdentity, 0o600,
+			runtimeRootDescriptor, temporaryName, name, temporaryIdentity, existingIdentity, 0o600,
 		); err != nil {
 			return reporter.RuntimeSocketIdentity{}, cleanupTemporary(errors.New("persist runtime attachment identity: prior record changed"))
 		}
 		cleanupErr := reporter.QuarantineRuntimePath(
-			pinned.runtimeRootDescriptor, temporaryName, existingIdentity, reporter.RuntimePathRegular, 0o600,
+			runtimeRootDescriptor, temporaryName, existingIdentity, reporter.RuntimePathRegular, 0o600,
 		)
 		if cleanupErr != nil && !errors.Is(cleanupErr, reporter.ErrRuntimePathMissing) {
 			return reporter.RuntimeSocketIdentity{}, errors.New("persist runtime attachment identity: prior record cleanup failed")
 		}
 	} else if err := reporter.PublishRuntimePath(
-		pinned.runtimeRootDescriptor, temporaryName, name, temporaryIdentity, 0o600,
+		runtimeRootDescriptor, temporaryName, name, temporaryIdentity, 0o600,
 	); err != nil {
 		return reporter.RuntimeSocketIdentity{}, cleanupTemporary(errors.New("persist runtime attachment identity: record publication failed"))
 	}
 	published, publishedIdentity, found, err := readRuntimeAttachmentIdentityRecord(
-		pinned.runtimeRootDescriptor, pinned.taskHandle,
+		runtimeRootDescriptor, taskHandle,
 	)
 	if err != nil || !found || published != record {
 		return reporter.RuntimeSocketIdentity{}, errors.New("persist runtime attachment identity: published record differs")
@@ -235,8 +247,13 @@ func parseRuntimeAttachmentIdentityRecord(encoded string) (runtimeAttachmentIden
 			BirthSec: int64(values[11]), BirthNsec: int64(values[12]),
 		},
 	}
-	if (record.Stage != runtimeAttachmentCreating && record.Stage != runtimeAttachmentActive &&
-		record.Stage != runtimeAttachmentReleasing) || !record.Task.Valid() || !record.Socket.Valid() {
+	valid := record.Stage == runtimeAttachmentCreatingIntent && record.Task == (reporter.RuntimeSocketIdentity{}) &&
+		record.Socket == (reporter.RuntimeSocketIdentity{}) ||
+		record.Stage == runtimeAttachmentCreating && record.Task.Valid() &&
+			(record.Socket == (reporter.RuntimeSocketIdentity{}) || record.Socket.Valid()) ||
+		(record.Stage == runtimeAttachmentActive || record.Stage == runtimeAttachmentReleasing) &&
+			record.Task.Valid() && record.Socket.Valid()
+	if !valid {
 		return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
 	}
 	return record, nil

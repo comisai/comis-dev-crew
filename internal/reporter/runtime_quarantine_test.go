@@ -164,7 +164,11 @@ func TestQuarantineRuntimePathReconcilesStrandedExactIdentity(t *testing.T) {
 	defer pinned.close()
 	directoryDescriptor := pinned.descriptors[len(pinned.descriptors)-1]
 	quarantine := runtimePathQuarantineName(filepath.Base(socketPath), expected, RuntimePathSocket, 0o600)
-	if err := renameRuntimePathNoReplace(directoryDescriptor, filepath.Base(socketPath), quarantine); err != nil {
+	quarantinePath := filepath.Join(root, quarantine)
+	if err := os.Mkdir(quarantinePath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(socketPath, filepath.Join(quarantinePath, runtimePathIsolationTarget)); err != nil {
 		t.Fatal(err)
 	}
 	if err := unix.Fsync(directoryDescriptor); err != nil {
@@ -178,7 +182,7 @@ func TestQuarantineRuntimePathReconcilesStrandedExactIdentity(t *testing.T) {
 	if _, err := os.Lstat(socketPath); !os.IsNotExist(err) {
 		t.Fatalf("original path after reconciliation error = %v, want not exist", err)
 	}
-	if _, err := os.Lstat(filepath.Join(root, quarantine)); !os.IsNotExist(err) {
+	if _, err := os.Lstat(quarantinePath); !os.IsNotExist(err) {
 		t.Fatalf("quarantine path after reconciliation error = %v, want not exist", err)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +19,8 @@ const runtimeAttachmentIdentitySuffix = ".attachment.identity"
 type runtimeAttachmentIdentityStage uint8
 
 const (
-	runtimeAttachmentCreating runtimeAttachmentIdentityStage = iota + 1
+	runtimeAttachmentCreatingIntent runtimeAttachmentIdentityStage = iota + 1
+	runtimeAttachmentCreating
 	runtimeAttachmentActive
 	runtimeAttachmentReleasing
 )
@@ -234,6 +236,10 @@ func (coordinator *runtimeAttachmentCoordinator) removeTaskRuntimeDirectory(task
 		}
 		return closeRuntimeRootDescriptor(runtimeRootDescriptor)
 	}
+	if record.Stage == runtimeAttachmentCreatingIntent {
+		resultErr := removeRuntimeAttachmentCreationIntent(runtimeRootDescriptor, taskHandle, record)
+		return errors.Join(resultErr, closeRuntimeRootDescriptor(runtimeRootDescriptor))
+	}
 	pinned, missing, err := openRecordedTaskRuntimeDirectory(runtimeRootDescriptor, taskHandle, record)
 	if err != nil {
 		return errors.Join(err, closeRuntimeRootDescriptor(runtimeRootDescriptor))
@@ -243,6 +249,36 @@ func (coordinator *runtimeAttachmentCoordinator) removeTaskRuntimeDirectory(task
 	}
 	resultErr := removePinnedRuntimeAttachment(pinned, record)
 	return errors.Join(resultErr, pinned.close())
+}
+
+func removeRuntimeAttachmentCreationIntent(
+	runtimeRootDescriptor int,
+	taskHandle string,
+	record runtimeAttachmentIdentityRecord,
+) error {
+	if !runtimeAttachmentPathAbsent(runtimeRootDescriptor, taskHandle) {
+		return errors.New("task runtime directory identity is unproven; path preserved")
+	}
+	name := runtimeAttachmentCreationName(taskHandle)
+	descriptor, identity, missing, err := openTaskRuntimeDirectory(runtimeRootDescriptor, name)
+	if err != nil || missing {
+		return err
+	}
+	if !runtimeAttachmentDirectoryEmpty(descriptor) {
+		return errors.Join(errors.New("task runtime creation directory is ambiguous; path preserved"), unix.Close(descriptor))
+	}
+	pinned := &pinnedTaskRuntimeDirectory{
+		runtimeRootDescriptor: runtimeRootDescriptor, taskDescriptor: descriptor,
+		taskHandle: taskHandle, directoryName: name, taskIdentity: identity,
+	}
+	bound := runtimeAttachmentIdentityRecord{Stage: runtimeAttachmentCreating, Task: identity}
+	if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, bound, &record, nil); err != nil {
+		return errors.Join(errors.New("task runtime creation identity cannot be bound"), unix.Close(descriptor))
+	}
+	removeErr := reporter.QuarantineRuntimePath(
+		runtimeRootDescriptor, name, identity, reporter.RuntimePathDirectory, 0o700,
+	)
+	return errors.Join(removeErr, unix.Close(descriptor))
 }
 
 func openRecordedTaskRuntimeDirectory(
@@ -334,6 +370,22 @@ func removePinnedTaskRuntimeDirectory(
 	pinned *pinnedTaskRuntimeDirectory,
 	record runtimeAttachmentIdentityRecord,
 ) error {
+	if record.Stage == runtimeAttachmentCreating && !record.Socket.Valid() {
+		if !runtimeAttachmentPathAbsent(pinned.taskDescriptor, "attachment.sock") ||
+			!runtimeAttachmentDirectoryEmpty(pinned.taskDescriptor) {
+			return errors.New("task runtime creation directory is ambiguous; path preserved")
+		}
+		current, err := stagePinnedRuntimeAttachmentDirectory(pinned, record)
+		if err != nil {
+			return err
+		}
+		if err := reporter.QuarantineRuntimePath(
+			pinned.runtimeRootDescriptor, pinned.directoryName, current, reporter.RuntimePathDirectory, 0o700,
+		); err != nil {
+			return errors.New("task runtime creation directory is unavailable")
+		}
+		return nil
+	}
 	if record.Stage == runtimeAttachmentActive {
 		staged := record
 		staged.Stage = runtimeAttachmentReleasing
@@ -387,6 +439,21 @@ func stagePinnedRuntimeAttachmentDirectory(
 func runtimeAttachmentPathAbsent(directoryDescriptor int, name string) bool {
 	var stat unix.Stat_t
 	return errors.Is(unix.Fstatat(directoryDescriptor, name, &stat, unix.AT_SYMLINK_NOFOLLOW), unix.ENOENT)
+}
+
+func runtimeAttachmentDirectoryEmpty(descriptor int) bool {
+	duplicate, err := unix.Dup(descriptor)
+	if err != nil {
+		return false
+	}
+	directory := os.NewFile(uintptr(duplicate), "runtime-attachment-directory")
+	if directory == nil {
+		_ = unix.Close(duplicate)
+		return false
+	}
+	names, readErr := directory.Readdirnames(1)
+	closeErr := directory.Close()
+	return len(names) == 0 && errors.Is(readErr, io.EOF) && closeErr == nil
 }
 
 func sameRuntimeAttachmentNode(left, right reporter.RuntimeSocketIdentity) bool {

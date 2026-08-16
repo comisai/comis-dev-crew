@@ -19,11 +19,16 @@ func TestQuarantineRuntimePathReconcilesOriginalDarwinAnchor(t *testing.T) {
 	directory := runtimePathTestDirectoryDescriptor(t, root)
 	name := filepath.Base(socketPath)
 	quarantine := runtimePathQuarantineName(name, expected, RuntimePathSocket, 0o600)
-	anchor := runtimeRemovalAnchorName(name, expected)
-	if err := unix.Linkat(directory, name, directory, anchor, 0); err != nil {
+	quarantinePath := filepath.Join(root, quarantine)
+	if err := os.Mkdir(quarantinePath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := renameRuntimePathNoReplace(directory, name, quarantine); err != nil {
+	isolation := runtimePathTestDirectoryDescriptor(t, quarantinePath)
+	anchor := runtimeRemovalAnchorName(name, expected)
+	if err := unix.Linkat(directory, name, isolation, anchor, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := renameRuntimePathNoReplaceBetween(directory, name, isolation, runtimePathIsolationTarget); err != nil {
 		t.Fatal(err)
 	}
 	if err := unix.Fsync(directory); err != nil {
@@ -32,7 +37,7 @@ func TestQuarantineRuntimePathReconcilesOriginalDarwinAnchor(t *testing.T) {
 	if err := QuarantineRuntimePath(directory, name, expected, RuntimePathSocket, 0o600); err != nil {
 		t.Fatalf("QuarantineRuntimePath(stranded Darwin anchor) error = %v", err)
 	}
-	if _, err := os.Lstat(filepath.Join(root, anchor)); !os.IsNotExist(err) {
-		t.Fatalf("original Darwin anchor error = %v, want not exist", err)
+	if _, err := os.Lstat(quarantinePath); !os.IsNotExist(err) {
+		t.Fatalf("Darwin isolation error = %v, want not exist", err)
 	}
 }

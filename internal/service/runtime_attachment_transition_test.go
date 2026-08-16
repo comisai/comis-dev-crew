@@ -101,6 +101,49 @@ func TestRuntimeAttachmentRecoveryReplaysPublishedReplacementDirectory(t *testin
 	}
 }
 
+func TestRuntimeAttachmentRecoveryReplaysCreationIntent(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.August, 16, 13, 20, 0, 0, time.UTC)
+	task := runtimeAttachmentRecoverableTask(t, now, "task-runtime-create-intent")
+	store := &runtimeTransitionStore{
+		task: task,
+		preparation: application.ManagedRunPreparation{
+			RequestedWorkspaceRoot: workspace,
+			RequestedAttachment: application.PreparedRuntimeAttachment{
+				Kind:       application.RuntimeAttachmentUnixSocket,
+				SourcePath: filepath.Join(runtimeRoot, task.Handle, "attachment.sock"),
+			},
+		},
+	}
+	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, store, now)
+	coordinator.afterRuntimeDirectoryCreation = func() error { return errors.New("simulated process stop") }
+	if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err == nil || len(servers) != 0 {
+		t.Fatalf("recoverRuntimeAttachments(creation stop) = %d, %v", len(servers), err)
+	}
+	descriptor, err := coordinator.pinRuntimeRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, _, found, readErr := readRuntimeAttachmentIdentityRecord(descriptor, task.Handle)
+	_ = closeRuntimeRootDescriptor(descriptor)
+	if readErr != nil || !found || record.Stage != runtimeAttachmentCreatingIntent {
+		t.Fatalf("creation intent = %#v, found=%v, err=%v", record, found, readErr)
+	}
+	restarted := runtimeTransitionCoordinator(t, runtimeRoot, store, now)
+	servers, err := restarted.recoverRuntimeAttachments(context.Background())
+	if err != nil || len(servers) != 1 {
+		t.Fatalf("recoverRuntimeAttachments(creation replay) = %d, %v", len(servers), err)
+	}
+	if err := servers[0].Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func runtimeTransitionCoordinator(
 	t *testing.T,
 	runtimeRoot string,

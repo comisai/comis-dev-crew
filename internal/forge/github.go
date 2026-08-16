@@ -261,8 +261,8 @@ func (adapter *GitHubAdapter) readChecks(
 	seenIDs := make(map[int64]string, len(response.Runs))
 	poisoned := make(map[string]struct{})
 	for _, encodedRun := range response.Runs {
-		var run githubCheckRun
-		if len(encodedRun) == 0 || json.Unmarshal(encodedRun, &run) != nil {
+		run, valid := decodeGitHubCheckRun(encodedRun)
+		if !valid {
 			return unknownRequiredChecks(required), nil
 		}
 		name, nameKnown := parseGitHubCheckName(run.Name)
@@ -315,6 +315,50 @@ func (adapter *GitHubAdapter) readChecks(
 		evidence = append(evidence, domain.ForgeCheckEvidence{Name: name, Conclusion: conclusion})
 	}
 	return evidence, nil
+}
+
+func decodeGitHubCheckRun(encoded json.RawMessage) (githubCheckRun, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return githubCheckRun{}, false
+	}
+	seen := make(map[string]struct{})
+	var run githubCheckRun
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		key, ok := keyToken.(string)
+		if err != nil || !ok {
+			return githubCheckRun{}, false
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return githubCheckRun{}, false
+		}
+		seen[key] = struct{}{}
+		var value json.RawMessage
+		if decoder.Decode(&value) != nil {
+			return githubCheckRun{}, false
+		}
+		switch key {
+		case "id":
+			run.ID = value
+		case "name":
+			run.Name = value
+		case "status":
+			run.Status = value
+		case "conclusion":
+			run.Conclusion = value
+		case "started_at":
+			run.StartedAt = value
+		}
+	}
+	if token, err = decoder.Token(); err != nil || token != json.Delim('}') {
+		return githubCheckRun{}, false
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return githubCheckRun{}, false
+	}
+	return run, true
 }
 
 func (adapter *GitHubAdapter) requestJSON(

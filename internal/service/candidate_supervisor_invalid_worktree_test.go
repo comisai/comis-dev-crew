@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 	devgit "github.com/comisai/comis-dev-crew/internal/git"
 )
@@ -48,5 +49,48 @@ func TestCandidateSupervisorKeepsInfrastructureInspectionFailureFatal(t *testing
 	}
 	if fixture.store.evidence != nil || fixture.runner.calls != 0 {
 		t.Fatal("infrastructure failure was converted into task evidence")
+	}
+}
+
+func TestCandidateSupervisorPersistsReconciledDirtySnapshotBeforeComparison(t *testing.T) {
+	fixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	fixture.store.reconciled = true
+	fixture.store.reconciledSnapshot = application.WorkspaceSnapshot{
+		TaskHandle: fixture.task.Handle, RepositoryID: fixture.snapshot.RepositoryID,
+		WorktreePath: fixture.snapshot.WorktreePath, Branch: fixture.snapshot.Branch,
+		HeadRevision: fixture.snapshot.HeadRevision, Cleanliness: application.WorkspaceClean,
+	}
+	dirty := fixture.snapshot
+	dirty.Cleanliness = devgit.CandidateDirty
+	fixture.git.snapshots = []devgit.CandidateSnapshot{dirty}
+	supervisor, err := newCandidateSupervisor(fixture.config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, judgment, err := supervisor.ValidateTask(context.Background(), fixture.task.Handle)
+	if err != nil || judgment.Outcome != domain.CandidateUnknown ||
+		judgment.Reason != domain.CandidateWorktreeUnverified {
+		t.Fatalf("ValidateTask(reconciled dirty) = %#v, %v", judgment, err)
+	}
+	if fixture.store.evidence == nil || fixture.runner.calls != 0 {
+		t.Fatalf("reconciled dirty evidence=%v validation=%d", fixture.store.evidence, fixture.runner.calls)
+	}
+}
+
+func TestCandidateSupervisorPersistsStructuralFailureAfterValidation(t *testing.T) {
+	fixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	fixture.git.errors = []error{nil, fmt.Errorf("fixture worktree disappeared: %w", devgit.ErrCandidateWorktreeUnverified)}
+	supervisor, err := newCandidateSupervisor(fixture.config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, judgment, err := supervisor.ValidateTask(context.Background(), fixture.task.Handle)
+	if err != nil || judgment.Outcome != domain.CandidateUnknown ||
+		judgment.Reason != domain.CandidateWorktreeUnverified {
+		t.Fatalf("ValidateTask(post-validation structural failure) = %#v, %v", judgment, err)
+	}
+	if fixture.runner.calls != 1 || fixture.store.evidence == nil ||
+		fixture.store.evidence.Bundle().WorktreeCleanliness != domain.WorktreeUnknown {
+		t.Fatalf("post-validation structural evidence=%v validation=%d", fixture.store.evidence, fixture.runner.calls)
 	}
 }

@@ -109,11 +109,27 @@ func (coordinator *runtimeAttachmentCoordinator) prepareRuntimeAttachmentDirecto
 		)
 	}
 	temporaryName := runtimeAttachmentCreationName(taskHandle)
-	if err := unix.Mkdirat(runtimeRootDescriptor, temporaryName, 0o700); err != nil {
+	temporaryExists := !runtimeAttachmentPathAbsent(runtimeRootDescriptor, temporaryName)
+	if temporaryExists && (!priorFound || prior.Stage != runtimeAttachmentCreatingIntent) {
 		return nil, "", nil, errors.Join(
-			errors.New("prepare runtime attachment: staged directory is unavailable"),
+			errors.New("prepare runtime attachment: staged directory identity is unproven"),
 			closeRuntimeRootDescriptor(runtimeRootDescriptor),
 		)
+	}
+	intent := runtimeAttachmentIdentityRecord{Stage: runtimeAttachmentCreatingIntent}
+	if _, err := publishRuntimeAttachmentIdentity(
+		runtimeRootDescriptor, taskHandle, intent, priorRecord, nil,
+	); err != nil {
+		return nil, "", nil, errors.Join(err, closeRuntimeRootDescriptor(runtimeRootDescriptor))
+	}
+	priorRecord = &intent
+	if !temporaryExists {
+		if err := unix.Mkdirat(runtimeRootDescriptor, temporaryName, 0o700); err != nil {
+			return nil, "", nil, errors.Join(
+				errors.New("prepare runtime attachment: staged directory is unavailable"),
+				closeRuntimeRootDescriptor(runtimeRootDescriptor),
+			)
+		}
 	}
 	if err := unix.Fsync(runtimeRootDescriptor); err != nil {
 		return nil, "", nil, errors.Join(
@@ -128,8 +144,14 @@ func (coordinator *runtimeAttachmentCoordinator) prepareRuntimeAttachmentDirecto
 			closeRuntimeRootDescriptor(runtimeRootDescriptor),
 		)
 	}
-	return &pinnedTaskRuntimeDirectory{
+	pinned := &pinnedTaskRuntimeDirectory{
 		runtimeRootDescriptor: runtimeRootDescriptor, taskDescriptor: taskDescriptor,
 		taskHandle: taskHandle, directoryName: temporaryName, taskIdentity: taskIdentity,
-	}, temporaryName, priorRecord, nil
+	}
+	if coordinator.afterRuntimeDirectoryCreation != nil {
+		if err := coordinator.afterRuntimeDirectoryCreation(); err != nil {
+			return nil, "", nil, errors.Join(err, pinned.close())
+		}
+	}
+	return pinned, temporaryName, priorRecord, nil
 }

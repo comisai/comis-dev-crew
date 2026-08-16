@@ -152,6 +152,9 @@ func (queries *Queries) explainCandidatePosture(
 }
 
 func unverifiedCandidateRootCause(task domain.Task, bundle domain.DeliveryEvidenceBundle) string {
+	if bundle.WorktreeCleanliness == domain.WorktreeUnknown {
+		return "The exact registered worktree Git posture is unknown; no clean candidate head was observed."
+	}
 	dirty := bundle.WorktreeCleanliness != domain.WorktreeClean
 	baseEqual := bundle.HeadRevision == task.BaseRevision
 	switch {

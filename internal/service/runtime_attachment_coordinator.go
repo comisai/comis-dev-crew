@@ -49,22 +49,23 @@ type runtimeAttachmentEntry struct {
 }
 
 type runtimeAttachmentCoordinator struct {
-	runtimeRoot                  string
-	runtimeRootIdentity          reporter.RuntimeSocketIdentity
-	store                        runtimeAttachmentStore
-	reportSink                   *application.ReportSink
-	newCredential                func() (string, error)
-	newAttentionOperationID      func() (string, error)
-	registrations                chan runtimeAttachmentRegistration
-	recoveryReady                chan struct{}
-	mu                           sync.Mutex
-	entries                      map[string]*runtimeAttachmentEntry
-	acknowledger                 application.WorkerLaunchAcknowledger
-	attentionResponses           comiswire.AttentionResponseReceiver
-	releasedServerStopped        func(*reporter.RuntimeServer)
-	afterRuntimeAttachmentClose  func() error
-	afterRuntimeDirectoryPublish func() error
-	recoveryErr                  error
+	runtimeRoot                   string
+	runtimeRootIdentity           reporter.RuntimeSocketIdentity
+	store                         runtimeAttachmentStore
+	reportSink                    *application.ReportSink
+	newCredential                 func() (string, error)
+	newAttentionOperationID       func() (string, error)
+	registrations                 chan runtimeAttachmentRegistration
+	recoveryReady                 chan struct{}
+	mu                            sync.Mutex
+	entries                       map[string]*runtimeAttachmentEntry
+	acknowledger                  application.WorkerLaunchAcknowledger
+	attentionResponses            comiswire.AttentionResponseReceiver
+	releasedServerStopped         func(*reporter.RuntimeServer)
+	afterRuntimeAttachmentClose   func() error
+	afterRuntimeDirectoryCreation func() error
+	afterRuntimeDirectoryPublish  func() error
+	recoveryErr                   error
 }
 
 func newRuntimeAttachmentCoordinator(config runtimeAttachmentCoordinatorConfig) (*runtimeAttachmentCoordinator, error) {
