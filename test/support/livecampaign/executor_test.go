@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -77,6 +78,28 @@ func TestRealExecutorDoesNotReturnChildStderr(t *testing.T) {
 	}
 }
 
+func TestRealExecutorScopesGatewayCredentialToRequestedCommand(t *testing.T) {
+	t.Setenv("COMIS_GATEWAY_TOKEN", "gateway-token-must-not-leak")
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := Command{
+		Path: executable,
+		Args: []string{"-test.run=TestLiveCampaignExecutorHelperProcess", "--", "credential"},
+		Env:  map[string]string{"GO_WANT_LIVE_CAMPAIGN_HELPER": "1"},
+	}
+	credentialField := reflect.ValueOf(&command).Elem().FieldByName("UseComisGatewayToken")
+	if !credentialField.IsValid() || !credentialField.CanSet() || credentialField.Kind() != reflect.Bool {
+		t.Fatal("Command.UseComisGatewayToken is unavailable")
+	}
+	credentialField.SetBool(true)
+	output, err := (RealExecutor{}).Run(context.Background(), command)
+	if err != nil || string(output) != "gateway=true" {
+		t.Fatalf("Run(gateway credential) = %q, %v", output, err)
+	}
+}
+
 func TestLiveCampaignExecutorHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_LIVE_CAMPAIGN_HELPER") != "1" {
 		return
@@ -100,6 +123,8 @@ func TestLiveCampaignExecutorHelperProcess(t *testing.T) {
 	case "fail":
 		fmt.Fprint(os.Stderr, "sensitive-child-detail")
 		os.Exit(7)
+	case "credential":
+		fmt.Printf("gateway=%t", os.Getenv("COMIS_GATEWAY_TOKEN") != "")
 	default:
 		os.Exit(2)
 	}
