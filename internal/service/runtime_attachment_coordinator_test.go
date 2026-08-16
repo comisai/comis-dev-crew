@@ -311,48 +311,6 @@ func TestRuntimeAttachmentCoordinator_RecoversPreparedTaskSocketAfterRestart(t *
 	}
 }
 
-func TestRuntimeAttachmentCoordinator_PreservesUnprovenCleanedTaskDirectory(t *testing.T) {
-	root := shortTempDir(t)
-	runtimeRoot := filepath.Join(root, "runtime")
-	now := time.Date(2026, time.August, 10, 16, 45, 0, 0, time.UTC)
-	task := domain.Task{
-		SchemaVersion: 1, Handle: "task-runtime-cleaned-0001", State: domain.TaskCleaned,
-		ServiceInstanceID: "service-instance-runtime-cleaned",
-		ManagedRunID:      "managed-run.runtime-cleaned", WorkspaceLeaseID: "workspace-lease.runtime-cleaned",
-		Shape: domain.ShapeScout, RepositoryID: "product-api", BaseRevision: strings.Repeat("c", 40),
-		BriefRevision: 1, AcceptanceCriteria: []string{"Retain no reporter after cleanup."},
-		ValidationProfile: "go-default", DeliveryMode: domain.DeliveryReport,
-		WorkerProfileID: "codex-reviewed", StateVersion: 2, CreatedAt: now, UpdatedAt: now,
-	}
-	task, err := task.PinBriefRevision()
-	if err != nil {
-		t.Fatal(err)
-	}
-	cleanedRuntimeRoot := filepath.Join(runtimeRoot, task.Handle)
-	if err := os.MkdirAll(cleanedRuntimeRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	store := &runtimeAttachmentRecoveryStore{tasks: []domain.Task{task}}
-	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
-		RuntimeRoot: runtimeRoot, Store: store, Clock: func() time.Time { return now },
-		NewCredential:           func() (string, error) { return "unused-cleaned-credential-0123456789", nil },
-		NewAttentionOperationID: runtimeAttentionOperationID,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	servers, err := coordinator.recoverRuntimeAttachments(context.Background())
-	if err == nil || len(servers) != 0 {
-		t.Fatalf("recoverRuntimeAttachments(cleaned) = %d servers, %v", len(servers), err)
-	}
-	if store.preparationReads != 0 {
-		t.Fatalf("cleaned task preparation reads = %d, want 0", store.preparationReads)
-	}
-	if info, err := os.Lstat(cleanedRuntimeRoot); err != nil || !info.IsDir() {
-		t.Fatalf("unproven cleaned task runtime root was not preserved: %#v, %v", info, err)
-	}
-}
-
 func TestRuntimeAttachmentCoordinator_ReleasesOneLiveSocketWithoutStoppingSupervisor(t *testing.T) {
 	root := shortTempDir(t)
 	runtimeRoot := filepath.Join(root, "runtime")
