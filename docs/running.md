@@ -178,7 +178,7 @@ repository, worktree, branch, base, and head authority; callers cannot supply or
 override those fields. An eligible unknown task must have a settled terminal and
 an exact clean non-base candidate. A candidate committed under Comis's
 lease-private Git confinement remains read-only during explanation; only this
-mutation may validate its source and generated controls, import its objects,
+mutation may validate its source, generated controls, and inert commit identity, import its objects,
 compare-and-swap the prepared branch from the pinned base, and synchronize the
 worktree index without replacing files. Recovery records fresh evidence and enters the
 existing validation pipeline without creating a worker candidate report or

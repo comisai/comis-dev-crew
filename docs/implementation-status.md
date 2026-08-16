@@ -171,7 +171,7 @@ unresolved after restart and refuses a second reconciliation record.
 
 The private Git handoff is a high-risk boundary. Paths come only from the
 registered worktree and its canonical Git administration, and the source record,
-generated configuration, copied worktree controls, branch, clean index, and base
+generated configuration, inert commit identity, copied worktree controls, branch, clean index, and base
 ancestry must all match. Symlinks, executable Git configuration, alternate object
 indirection, dirty content, or shared/private head drift are refused before any
 host branch mutation. Promotion imports no tags or submodules, advances the exact

@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"unicode"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 )
@@ -318,7 +320,6 @@ func validateLeasePrivateControlFiles(
 		{filepath.Join(privateWorktree, "HEAD"), headText},
 		{filepath.Join(privateWorktree, "commondir"), filepath.Join(request.WorktreePath, leasePrivateGitDirectory, "common") + "\n"},
 		{filepath.Join(privateWorktree, "gitdir"), filepath.Join(request.WorktreePath, ".git") + "\n"},
-		{filepath.Join(privateCommon, "config"), expectedConfig},
 		{filepath.Join(privateCommon, "system-config"), "[safe]\n\tdirectory = " + string(quotedWorkspace) + "\n"},
 		{filepath.Join(privateCommon, "objects", "info", "alternates"), filepath.Join(repository.GitCommonDir, "objects") + "\n"},
 		{filepath.Join(privateCommon, "info", "exclude"), "/" + leasePrivateGitDirectory + "/\n"},
@@ -328,6 +329,9 @@ func validateLeasePrivateControlFiles(
 		if err != nil || string(contents) != file.contents {
 			return errors.New("inspect lease-private candidate: control files differ")
 		}
+	}
+	if err := validateLeasePrivateConfig(filepath.Join(privateCommon, "config"), expectedConfig); err != nil {
+		return err
 	}
 	if _, err := readGitControlFile(filepath.Join(privateWorktree, "index"), maximumGitControlBytes); err != nil {
 		return errors.New("inspect lease-private candidate: index is unavailable")
@@ -351,6 +355,41 @@ func validateLeasePrivateControlFiles(
 		if exists, err := regularFileExists(forbidden); err != nil || exists {
 			return errors.New("inspect lease-private candidate: unsupported object indirection exists")
 		}
+	}
+	return nil
+}
+
+func validateLeasePrivateConfig(path string, expectedCore string) error {
+	contents, err := readGitControlFile(path, maximumGitControlBytes)
+	if err != nil {
+		return errors.New("inspect lease-private candidate: configuration is unavailable")
+	}
+	configuration := string(contents)
+	if configuration == expectedCore {
+		return nil
+	}
+	if !strings.HasPrefix(configuration, expectedCore+"[user]\n") || !strings.HasSuffix(configuration, "\n") {
+		return errors.New("inspect lease-private candidate: configuration contains unsupported keys")
+	}
+	lines := strings.Split(strings.TrimSuffix(strings.TrimPrefix(configuration, expectedCore), "\n"), "\n")
+	if len(lines) < 2 || len(lines) > 3 || lines[0] != "[user]" {
+		return errors.New("inspect lease-private candidate: user configuration is malformed")
+	}
+	seen := make(map[string]struct{}, 2)
+	for _, line := range lines[1:] {
+		if !strings.HasPrefix(line, "\t") {
+			return errors.New("inspect lease-private candidate: user configuration is malformed")
+		}
+		key, value, found := strings.Cut(line, " = ")
+		key = strings.TrimPrefix(key, "\t")
+		if !found || (key != "name" && key != "email") || value == "" || len([]byte(value)) > 512 ||
+			strings.IndexFunc(value, unicode.IsControl) >= 0 {
+			return errors.New("inspect lease-private candidate: user configuration is malformed")
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return errors.New("inspect lease-private candidate: user configuration is duplicated")
+		}
+		seen[key] = struct{}{}
 	}
 	return nil
 }
