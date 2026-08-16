@@ -715,6 +715,10 @@ func runtimeAttachmentRequest(t *testing.T, workspace, taskHandle string) applic
 type runtimeAttachmentRecoveryStore struct {
 	tasks            []domain.Task
 	preparationReads int
+	cleanupRecord    application.TaskCleanupRecord
+	cleanupFound     bool
+	cleanupReads     int
+	cleanupErr       error
 }
 
 func (store *runtimeAttachmentRecoveryStore) ListTasks(context.Context) ([]domain.Task, error) {
@@ -727,6 +731,14 @@ func (store *runtimeAttachmentRecoveryStore) GetManagedRunPreparation(
 ) (application.ManagedRunPreparation, error) {
 	store.preparationReads++
 	return application.ManagedRunPreparation{}, errors.New("cleaned task preparation must not be read")
+}
+
+func (store *runtimeAttachmentRecoveryStore) GetTaskCleanupRecord(
+	context.Context,
+	string,
+) (application.TaskCleanupRecord, bool, error) {
+	store.cleanupReads++
+	return store.cleanupRecord, store.cleanupFound, store.cleanupErr
 }
 
 func (*runtimeAttachmentRecoveryStore) CommitReport(

@@ -69,3 +69,33 @@ func TestCandidateSupervisor_DoesNotRepeatValidationForUnchangedDirtyCandidate(t
 			fixture.runner.calls, fixture.pullRequests.calls)
 	}
 }
+
+func TestCandidateSupervisor_DoesNotRepeatValidationForUnchangedBaseCandidate(t *testing.T) {
+	for _, shape := range []domain.TaskShape{domain.ShapeShip, domain.ShapeScout} {
+		t.Run(string(shape), func(t *testing.T) {
+			fixture := newCandidateSupervisorFixture(t, shape)
+			fixture.snapshot.HeadRevision = fixture.task.BaseRevision
+			fixture.git.snapshots = []devgit.CandidateSnapshot{
+				fixture.snapshot, fixture.snapshot, fixture.snapshot, fixture.snapshot,
+			}
+			fixture.runner.receipt.HeadRevision = fixture.task.BaseRevision
+			supervisor, err := newCandidateSupervisor(fixture.config())
+			if err != nil {
+				t.Fatalf("newCandidateSupervisor() error = %v", err)
+			}
+			for attempt := range 2 {
+				_, judgment, err := supervisor.ValidateTask(context.Background(), fixture.task.Handle)
+				if err != nil {
+					t.Fatalf("ValidateTask(attempt %d) error = %v", attempt+1, err)
+				}
+				if judgment.Outcome != domain.CandidateUnknown || judgment.Reason != domain.CandidateWorktreeUnverified {
+					t.Fatalf("ValidateTask(attempt %d) judgment = %#v", attempt+1, judgment)
+				}
+			}
+			if fixture.runner.calls != 1 || fixture.pullRequests.calls != 0 || fixture.artifact.calls != 0 {
+				t.Fatalf("unchanged base candidate effects: validation=%d forge=%d artifact=%d",
+					fixture.runner.calls, fixture.pullRequests.calls, fixture.artifact.calls)
+			}
+		})
+	}
+}

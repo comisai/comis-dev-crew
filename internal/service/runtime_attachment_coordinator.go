@@ -20,6 +20,7 @@ type runtimeAttachmentStore interface {
 	application.ReportMutationStore
 	ListTasks(context.Context) ([]domain.Task, error)
 	GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error)
+	GetTaskCleanupRecord(context.Context, string) (application.TaskCleanupRecord, bool, error)
 }
 
 type runtimeAttachmentCoordinatorConfig struct {
@@ -275,6 +276,27 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeAttachments(ctx c
 		}
 		if err := ctx.Err(); err != nil {
 			return nil, errors.Join(err, closeRuntimeServers(servers))
+		}
+		cleanup, cleanupFound, err := coordinator.store.GetTaskCleanupRecord(ctx, task.Handle)
+		if err != nil {
+			return nil, errors.Join(fmt.Errorf("recover runtime attachments: read cleanup posture: %w", err), closeRuntimeServers(servers))
+		}
+		if cleanupFound {
+			if cleanup.TaskHandle != task.Handle {
+				return nil, errors.Join(errors.New("recover runtime attachments: durable cleanup target differs"), closeRuntimeServers(servers))
+			}
+			switch cleanup.Stage {
+			case application.CleanupPrepared:
+			case application.CleanupHostReleased, application.CleanupRemovalAuthorized, application.CleanupCompleted:
+				if err := coordinator.removeTaskRuntimeDirectory(task.Handle); err != nil {
+					return nil, errors.Join(errors.New("recover runtime attachments: released task runtime directory remains"), err, closeRuntimeServers(servers))
+				}
+				continue
+			default:
+				return nil, errors.Join(errors.New("recover runtime attachments: durable cleanup posture is invalid"), closeRuntimeServers(servers))
+			}
+		} else if task.State == domain.TaskCleanupHeld {
+			return nil, errors.Join(errors.New("recover runtime attachments: held task cleanup posture is unavailable"), closeRuntimeServers(servers))
 		}
 		preparation, err := coordinator.store.GetManagedRunPreparation(ctx, task.Handle)
 		if err != nil {

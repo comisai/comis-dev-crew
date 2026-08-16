@@ -61,6 +61,9 @@ func JudgeCandidate(input CandidateJudgeInput) CandidateJudgment {
 	if bundle.WorktreeCleanliness != WorktreeClean {
 		return candidateJudgment(CandidateUnknown, CandidateWorktreeUnverified)
 	}
+	if bundle.HeadRevision == input.Task.BaseRevision {
+		return candidateJudgment(CandidateUnknown, CandidateWorktreeUnverified)
+	}
 	if bundle.UnresolvedDecisionCount != 0 {
 		return candidateJudgment(CandidateUnknown, CandidateDecisionUnresolved)
 	}

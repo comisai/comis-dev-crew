@@ -101,6 +101,36 @@ func TestCandidateJudge_RequiresImmutableScoutReportArtifact(t *testing.T) {
 	}
 }
 
+func TestCandidateJudge_ClassifiesBaseEqualHeadAsUnverifiedForEveryShape(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		shape       TaskShape
+		delivery    DeliveryMode
+		forgeChecks []string
+	}{
+		{name: "ship", shape: ShapeShip, delivery: DeliveryPullRequest, forgeChecks: []string{"ci/unit"}},
+		{name: "scout", shape: ShapeScout, delivery: DeliveryReport},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			task := validTask(test.shape, test.delivery)
+			bundle := shipEvidence(task)
+			bundle.HeadRevision = task.BaseRevision
+			bundle.ForgeEvidence = nil
+			for index := range bundle.ValidationReceipts {
+				bundle.ValidationReceipts[index].HeadRevision = task.BaseRevision
+			}
+			judgment := JudgeCandidate(CandidateJudgeInput{
+				Task: task, Evidence: sealCandidateEvidence(t, bundle),
+				Now: task.UpdatedAt.Add(5 * time.Minute), RequiredLocalChecks: []string{"unit"},
+				RequiredForgeChecks: test.forgeChecks,
+			})
+			if judgment.Outcome != CandidateUnknown || judgment.Reason != CandidateWorktreeUnverified {
+				t.Fatalf("JudgeCandidate(base-equal %s) = %#v", test.name, judgment)
+			}
+		})
+	}
+}
+
 func TestDeliveryEvidenceSeal_IsCanonicalImmutableAndRejectsAmbiguity(t *testing.T) {
 	task := validTask(ShapeShip, DeliveryPullRequest)
 	bundle := shipEvidence(task)
