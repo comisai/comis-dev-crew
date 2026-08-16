@@ -674,6 +674,8 @@ type runtimeAttachmentRecoveryStore struct {
 	taskReads           int
 	preparationIntents  []application.TaskPreparationIntent
 	preparationRefusals []application.RuntimeAttachmentRecoveryRefusal
+	taskRefusals        []application.RuntimeRelayIdentityRefusal
+	preparations        map[string]application.ManagedRunPreparation
 	preparationReads    int
 	cleanupRecord       application.TaskCleanupRecord
 	cleanupFound        bool
@@ -712,8 +714,8 @@ func (*runtimeAttachmentRecoveryStore) ListRuntimeRelayIdentityUpgrades(context.
 	return nil, nil
 }
 
-func (*runtimeAttachmentRecoveryStore) ListRuntimeRelayIdentityRefusals(context.Context) ([]application.RuntimeRelayIdentityRefusal, error) {
-	return nil, nil
+func (store *runtimeAttachmentRecoveryStore) ListRuntimeRelayIdentityRefusals(context.Context) ([]application.RuntimeRelayIdentityRefusal, error) {
+	return append([]application.RuntimeRelayIdentityRefusal(nil), store.taskRefusals...), nil
 }
 
 func (*runtimeAttachmentRecoveryStore) CompleteRuntimeRelayIdentityUpgrade(
@@ -731,11 +733,25 @@ func (*runtimeAttachmentRecoveryStore) RefuseRuntimeRelayIdentityUpgrade(
 	return nil
 }
 
+func (store *runtimeAttachmentRecoveryStore) RefuseRuntimeAttachmentTaskRecovery(
+	_ context.Context,
+	taskHandle string,
+	_ time.Time,
+) error {
+	store.taskRefusals = append(store.taskRefusals, application.RuntimeRelayIdentityRefusal{
+		TaskHandle: taskHandle, Reason: application.RuntimeRelayIdentityUnproven,
+	})
+	return nil
+}
+
 func (store *runtimeAttachmentRecoveryStore) GetManagedRunPreparation(
-	context.Context,
-	string,
+	_ context.Context,
+	taskHandle string,
 ) (application.ManagedRunPreparation, error) {
 	store.preparationReads++
+	if preparation, found := store.preparations[taskHandle]; found {
+		return preparation, nil
+	}
 	return application.ManagedRunPreparation{}, errors.New("cleaned task preparation must not be read")
 }
 

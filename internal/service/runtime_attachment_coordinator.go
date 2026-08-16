@@ -20,6 +20,7 @@ type runtimeAttachmentStore interface {
 	ListRuntimeRelayIdentityRefusals(context.Context) ([]application.RuntimeRelayIdentityRefusal, error)
 	CompleteRuntimeRelayIdentityUpgrade(context.Context, application.RuntimeRelayIdentityUpgrade) error
 	RefuseRuntimeRelayIdentityUpgrade(context.Context, application.RuntimeRelayIdentityUpgrade, time.Time) error
+	RefuseRuntimeAttachmentTaskRecovery(context.Context, string, time.Time) error
 	ListTaskPreparationIntents(context.Context) ([]application.TaskPreparationIntent, error)
 	ListRuntimeAttachmentRecoveryRefusals(context.Context) ([]application.RuntimeAttachmentRecoveryRefusal, error)
 	RefuseRuntimeAttachmentRecovery(context.Context, application.TaskPreparationIntent, time.Time) error

@@ -80,6 +80,14 @@ func (coordinator *runtimeAttachmentCoordinator) ReleaseRuntimeAttachment(ctx co
 		pinned, record, pinErr := coordinator.pinRuntimeAttachmentRelease(taskHandle)
 		if pinErr != nil {
 			coordinator.mu.Unlock()
+			if errors.Is(pinErr, errRuntimeAttachmentOwnershipUnproven) {
+				if err := coordinator.persistRuntimeAttachmentTaskRefusal(ctx, taskHandle); err != nil {
+					return err
+				}
+				coordinator.mu.Lock()
+				coordinator.runtimeAttachmentRefusals[taskHandle] = struct{}{}
+				coordinator.mu.Unlock()
+			}
 			return errors.New("release runtime attachment: task runtime directory identity is unavailable")
 		}
 		record, pinErr = preparePinnedRuntimeAttachmentClose(coordinator, pinned, record, entry.server)

@@ -100,3 +100,64 @@ func TestInspectCandidatePreservesLaunchedGitIOFailure(t *testing.T) {
 		t.Fatalf("InspectCandidate(child I/O failure) error = %v", err)
 	}
 }
+
+func TestInspectCandidateTreatsCorruptIndexAsUnverifiedWorktree(t *testing.T) {
+	ctx := context.Background()
+	root := internalCanonicalTempDir(t)
+	executable := internalGitExecutable(t)
+	primary := filepath.Join(root, "primary")
+	worktreeRoot := filepath.Join(root, "worktrees")
+	if err := os.Mkdir(worktreeRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, arguments := range [][]string{
+		{"init", "--initial-branch=main", primary},
+		{"--no-optional-locks", "-C", primary, "add", "fixture.txt"},
+		{"--no-optional-locks", "-C", primary, "-c", "user.name=DevCrew Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture"},
+	} {
+		if arguments[0] == "--no-optional-locks" && arguments[3] == "add" {
+			if err := os.WriteFile(filepath.Join(primary, "fixture.txt"), []byte("fixture\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := runGitBytes(ctx, executable, arguments...); err != nil {
+			t.Fatalf("Git fixture command %q: %v", arguments, err)
+		}
+	}
+	registry, err := NewRegistry(ctx, RegistryConfig{
+		GitExecutable: executable, ApprovedRoots: []string{root},
+		Repositories: []RepositoryConfig{{
+			ID: "product-api", PrimaryCheckout: primary, WorktreeRoot: worktreeRoot, DefaultBranch: "main",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := runGit(ctx, executable, "--no-optional-locks", "-C", primary, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := registry.PrepareWorktree(ctx, PrepareWorktreeRequest{
+		OperationID: "operation-corrupt-index", TaskHandle: "task-corrupt-index",
+		RepositoryID: "product-api", BaseRevision: base,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexPath, err := runGit(ctx, executable, "--no-optional-locks", "-C", prepared.CanonicalPath, "rev-parse", "--git-path", "index")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(indexPath) {
+		indexPath = filepath.Join(prepared.CanonicalPath, indexPath)
+	}
+	if err := os.WriteFile(indexPath, []byte("bad"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = registry.InspectCandidate(ctx, CandidateSnapshotRequest{
+		TaskHandle: prepared.TaskHandle, RepositoryID: prepared.RepositoryID, WorktreePath: prepared.CanonicalPath,
+	})
+	if err == nil || !errors.Is(err, ErrCandidateWorktreeUnverified) || errors.Is(err, errGitInfrastructure) {
+		t.Fatalf("InspectCandidate(corrupt index) error = %v", err)
+	}
+}

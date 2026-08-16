@@ -35,6 +35,13 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeAttachments(ctx c
 		}
 		if task.State == domain.TaskCleaned {
 			if err := coordinator.removeTaskRuntimeDirectory(task.Handle); err != nil {
+				if errors.Is(err, errRuntimeAttachmentOwnershipUnproven) {
+					if refusalErr := coordinator.persistRuntimeAttachmentTaskRefusal(ctx, task.Handle); refusalErr != nil {
+						return nil, errors.Join(refusalErr, closeRuntimeServers(servers))
+					}
+					coordinator.runtimeAttachmentRefusals[task.Handle] = struct{}{}
+					continue
+				}
 				return nil, errors.Join(errors.New("recover runtime attachments: cleaned task runtime directory remains"), err)
 			}
 			continue
@@ -54,6 +61,13 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeAttachments(ctx c
 			case application.CleanupPrepared:
 			case application.CleanupHostReleased, application.CleanupRemovalAuthorized, application.CleanupCompleted:
 				if err := coordinator.removeTaskRuntimeDirectory(task.Handle); err != nil {
+					if errors.Is(err, errRuntimeAttachmentOwnershipUnproven) {
+						if refusalErr := coordinator.persistRuntimeAttachmentTaskRefusal(ctx, task.Handle); refusalErr != nil {
+							return nil, errors.Join(refusalErr, closeRuntimeServers(servers))
+						}
+						coordinator.runtimeAttachmentRefusals[task.Handle] = struct{}{}
+						continue
+					}
 					return nil, errors.Join(errors.New("recover runtime attachments: released task runtime directory remains"), err, closeRuntimeServers(servers))
 				}
 				continue
@@ -86,6 +100,13 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeAttachments(ctx c
 			return nil, errors.Join(fmt.Errorf("recover runtime attachments: %w", err), closeRuntimeServers(servers))
 		}
 		if err := coordinator.removeTaskRuntimeDirectory(task.Handle); err != nil {
+			if errors.Is(err, errRuntimeAttachmentOwnershipUnproven) {
+				if refusalErr := coordinator.persistRuntimeAttachmentTaskRefusal(ctx, task.Handle); refusalErr != nil {
+					return nil, errors.Join(refusalErr, closeRuntimeServers(servers))
+				}
+				coordinator.runtimeAttachmentRefusals[task.Handle] = struct{}{}
+				continue
+			}
 			return nil, errors.Join(errors.New("recover runtime attachments: prior attachment cannot be released"), err, closeRuntimeServers(servers))
 		}
 		entry, err := coordinator.listenRuntimeAttachment(request, preparation.RequestedAttachment)
@@ -107,4 +128,15 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeAttachments(ctx c
 		servers = append(servers, entry.server)
 	}
 	return servers, nil
+}
+
+func (coordinator *runtimeAttachmentCoordinator) persistRuntimeAttachmentTaskRefusal(ctx context.Context, taskHandle string) error {
+	at := coordinator.clock().UTC()
+	if at.IsZero() {
+		return errors.New("runtime attachment task refusal: service time is invalid")
+	}
+	if err := coordinator.store.RefuseRuntimeAttachmentTaskRecovery(ctx, taskHandle, at); err != nil {
+		return errors.New("runtime attachment task refusal cannot be recorded")
+	}
+	return nil
 }

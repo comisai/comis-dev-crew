@@ -230,3 +230,47 @@ func TestRuntimeRelayIdentityRefusalPreservesCleanedTaskState(t *testing.T) {
 		t.Fatalf("ListRuntimeRelayIdentityRefusals() = %#v, %v", refusals, err)
 	}
 }
+
+func TestRuntimeAttachmentTaskRefusalSurvivesRestartAndIsolatesTask(t *testing.T) {
+	databasePath := filepath.Join(canonicalTempDir(t), "devcrew.db")
+	now := time.Date(2026, time.August, 17, 10, 0, 0, 0, time.UTC)
+	store, err := Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	affected := storeTask("task-runtime-ownership-refusal", 1)
+	affected.CreatedAt, affected.UpdatedAt = now, now
+	unaffected := storeTask("task-runtime-ownership-unaffected", 2)
+	unaffected.CreatedAt, unaffected.UpdatedAt = now, now
+	if err := store.CreateTask(context.Background(), affected); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateTask(context.Background(), unaffected); err != nil {
+		t.Fatal(err)
+	}
+	refusedAt := now.Add(time.Minute)
+	if err := store.RefuseRuntimeAttachmentTaskRecovery(context.Background(), affected.Handle, refusedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	storedAffected, err := reopened.GetTask(context.Background(), affected.Handle)
+	if err != nil || storedAffected.State != domain.TaskUnknown || !storedAffected.UpdatedAt.Equal(refusedAt) {
+		t.Fatalf("GetTask(affected) = %#v, %v", storedAffected, err)
+	}
+	storedUnaffected, err := reopened.GetTask(context.Background(), unaffected.Handle)
+	if err != nil || storedUnaffected.State != unaffected.State || storedUnaffected.StateVersion != unaffected.StateVersion {
+		t.Fatalf("GetTask(unaffected) = %#v, %v", storedUnaffected, err)
+	}
+	refusals, err := reopened.ListRuntimeRelayIdentityRefusals(context.Background())
+	if err != nil || len(refusals) != 1 || refusals[0].TaskHandle != affected.Handle ||
+		refusals[0].Reason != application.RuntimeRelayIdentityUnproven {
+		t.Fatalf("ListRuntimeRelayIdentityRefusals() = %#v, %v", refusals, err)
+	}
+}

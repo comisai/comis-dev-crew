@@ -15,6 +15,13 @@ const maximumGitOutputBytes = 8192
 var errGitOutputTooLarge = errors.New("git output exceeded the configured bound")
 var errGitInfrastructure = errors.New("git execution infrastructure is unavailable")
 
+type gitChildFailureKind uint8
+
+const (
+	gitChildRepositoryFailure gitChildFailureKind = iota + 1
+	gitChildInfrastructureFailure
+)
+
 type boundedBuffer struct {
 	buffer bytes.Buffer
 	limit  int
@@ -101,7 +108,7 @@ func executeGit(ctx context.Context, executable string, arguments ...string) ([]
 		}
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
-			if !gitProcessExitIsStructural(exit.ExitCode(), stderr.buffer.Bytes()) {
+			if classifyGitChildFailure(exit.ExitCode(), stderr.buffer.Bytes()) == gitChildInfrastructureFailure {
 				return nil, -1, fmt.Errorf("git command failed after launch: %w", errGitInfrastructure)
 			}
 			return append([]byte(nil), stdout.buffer.Bytes()...), exit.ExitCode(), nil
@@ -111,24 +118,33 @@ func executeGit(ctx context.Context, executable string, arguments ...string) ([]
 	return append([]byte(nil), stdout.buffer.Bytes()...), 0, nil
 }
 
-func gitProcessExitIsStructural(exitCode int, stderr []byte) bool {
-	diagnostic := strings.ToLower(strings.TrimSpace(string(stderr)))
-	if exitCode == 1 && diagnostic == "" {
-		return true
+func classifyGitChildFailure(exitCode int, stderr []byte) gitChildFailureKind {
+	if exitCode < 0 {
+		return gitChildInfrastructureFailure
 	}
+	diagnostic := strings.ToLower(strings.TrimSpace(string(stderr)))
 	for _, marker := range []string{
-		"not a git repository",
-		"this operation must be run in a work tree",
-		"detected dubious ownership",
-		"invalid gitfile format",
-		"needed a single revision",
-		"ambiguous argument",
-		"bad revision",
-		"bad object",
+		"permission denied",
+		"operation not permitted",
+		"input/output error",
+		"i/o error",
+		"read-only file system",
+		"no space left on device",
+		"disk quota exceeded",
+		"too many open files",
+		"cannot allocate memory",
+		"out of memory",
+		"resource temporarily unavailable",
+		"stale file handle",
+		"device not configured",
+		"bad file descriptor",
+		"broken pipe",
+		"interrupted system call",
+		"timed out",
 	} {
 		if strings.Contains(diagnostic, marker) {
-			return true
+			return gitChildInfrastructureFailure
 		}
 	}
-	return false
+	return gitChildRepositoryFailure
 }

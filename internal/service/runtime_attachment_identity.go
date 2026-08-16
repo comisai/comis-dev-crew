@@ -264,16 +264,12 @@ func sameRuntimeAttachmentStableDirectory(left, right reporter.RuntimeSocketIden
 
 func runtimeAttachmentTransitionDirectoryMatches(
 	current, recorded reporter.RuntimeSocketIdentity,
-	generationMatches bool,
 ) bool {
-	if !sameRuntimeAttachmentNode(current, recorded) {
+	if recorded.BirthSec == 0 && recorded.BirthNsec == 0 {
 		return false
 	}
-	if recorded.BirthSec != 0 || recorded.BirthNsec != 0 {
-		return current.BirthSec == recorded.BirthSec && current.BirthNsec == recorded.BirthNsec
-	}
-	return generationMatches ||
-		current.ChangeSec == recorded.ChangeSec && current.ChangeNsec == recorded.ChangeNsec
+	return sameRuntimeAttachmentNode(current, recorded) &&
+		current.BirthSec == recorded.BirthSec && current.BirthNsec == recorded.BirthNsec
 }
 
 func runtimeAttachmentCreationName(taskHandle string) string {

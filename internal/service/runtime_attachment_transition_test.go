@@ -416,8 +416,11 @@ func TestRuntimeAttachmentRecoveryPreservesUnboundGenerationLinkWithoutBirthTime
 	}
 	restarted := runtimeTransitionCoordinator(t, runtimeRoot, store, now)
 	servers, err := restarted.recoverRuntimeAttachments(context.Background())
-	if err == nil || len(servers) != 0 {
+	if err != nil || len(servers) != 0 {
 		t.Fatalf("recoverRuntimeAttachments(unbound generation link) = %d, %v", len(servers), err)
+	}
+	if len(store.taskRefusals) != 1 || store.taskRefusals[0].TaskHandle != task.Handle {
+		t.Fatalf("task refusals = %#v", store.taskRefusals)
 	}
 	if info, statErr := os.Lstat(filepath.Join(runtimeRoot, temporaryName)); statErr != nil || !info.IsDir() {
 		t.Fatalf("unbound generation directory was not preserved: %#v, %v", info, statErr)
@@ -495,7 +498,7 @@ func TestRuntimeAttachmentRecoveryQuarantinesSocketCreatedBeforeIdentityCommit(t
 	}
 }
 
-func TestRecordedRuntimeDirectoryAcceptsExactGenerationAcrossCtimeChanges(t *testing.T) {
+func TestRecordedRuntimeDirectoryPreservesCopyableGenerationAcrossCtimeChanges(t *testing.T) {
 	root := shortTempDir(t)
 	runtimeRoot := filepath.Join(root, "runtime")
 	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, &runtimeAttachmentRecoveryStore{}, time.Now().UTC())
@@ -533,10 +536,10 @@ func TestRecordedRuntimeDirectoryAcceptsExactGenerationAcrossCtimeChanges(t *tes
 		t.Fatal(err)
 	}
 	reopened, missing, err := openRecordedTaskRuntimeDirectory(rootDescriptor, taskHandle, record)
-	if err != nil || missing || reopened == nil {
-		t.Fatalf("openRecordedTaskRuntimeDirectory(exact generation) = %#v, %t, %v", reopened, missing, err)
+	if err == nil || missing || reopened != nil {
+		t.Fatalf("openRecordedTaskRuntimeDirectory(copyable generation) = %#v, %t, %v", reopened, missing, err)
 	}
-	if err := reopened.close(); err != nil {
+	if err := closeRuntimeRootDescriptor(rootDescriptor); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -589,7 +592,7 @@ func TestRuntimeAttachmentCreationIntentPreservesUnprovenStagingDirectory(t *tes
 	}
 }
 
-func TestRuntimeAttachmentDirectoryBindingReplaysCompletedGenerationLink(t *testing.T) {
+func TestRuntimeAttachmentDirectoryBindingPreservesWithoutBirthIdentity(t *testing.T) {
 	root := shortTempDir(t)
 	coordinator := runtimeTransitionCoordinator(
 		t, filepath.Join(root, "runtime"), &runtimeAttachmentRecoveryStore{}, time.Now().UTC(),
@@ -631,11 +634,14 @@ func TestRuntimeAttachmentDirectoryBindingReplaysCompletedGenerationLink(t *test
 		t.Fatal(err)
 	}
 	pinned, _, replayed, _, err := coordinator.prepareRuntimeAttachmentDirectory(taskHandle, seed)
-	if err != nil || replayed.Stage != runtimeAttachmentCreating {
-		t.Fatalf("prepareRuntimeAttachmentDirectory(bound replay) = %#v, %v", replayed, err)
+	if err == nil || pinned != nil || replayed != nil {
+		if pinned != nil {
+			_ = pinned.close()
+		}
+		t.Fatalf("prepareRuntimeAttachmentDirectory(unproven replay) = %#v, %v", replayed, err)
 	}
-	if err := pinned.close(); err != nil {
-		t.Fatal(err)
+	if info, err := os.Lstat(filepath.Join(coordinator.runtimeRoot, temporaryName)); err != nil || !info.IsDir() {
+		t.Fatalf("unproven staging directory = %#v, %v", info, err)
 	}
 }
 
@@ -731,66 +737,4 @@ func runtimeAttachmentRecoverableTask(t *testing.T, now time.Time, handle string
 		t.Fatalf("recoverable task = %#v, %v", pinned, err)
 	}
 	return pinned
-}
-
-type runtimeTransitionStore struct {
-	task        domain.Task
-	preparation application.ManagedRunPreparation
-}
-
-func (store *runtimeTransitionStore) ListTasks(context.Context) ([]domain.Task, error) {
-	return []domain.Task{store.task}, nil
-}
-
-func (*runtimeTransitionStore) ListTaskPreparationIntents(context.Context) ([]application.TaskPreparationIntent, error) {
-	return nil, nil
-}
-
-func (*runtimeTransitionStore) ListRuntimeAttachmentRecoveryRefusals(
-	context.Context,
-) ([]application.RuntimeAttachmentRecoveryRefusal, error) {
-	return nil, nil
-}
-
-func (*runtimeTransitionStore) RefuseRuntimeAttachmentRecovery(
-	context.Context,
-	application.TaskPreparationIntent,
-	time.Time,
-) error {
-	return nil
-}
-
-func (*runtimeTransitionStore) ListRuntimeRelayIdentityUpgrades(context.Context) ([]application.RuntimeRelayIdentityUpgrade, error) {
-	return nil, nil
-}
-
-func (*runtimeTransitionStore) ListRuntimeRelayIdentityRefusals(context.Context) ([]application.RuntimeRelayIdentityRefusal, error) {
-	return nil, nil
-}
-
-func (*runtimeTransitionStore) CompleteRuntimeRelayIdentityUpgrade(
-	context.Context,
-	application.RuntimeRelayIdentityUpgrade,
-) error {
-	return nil
-}
-
-func (*runtimeTransitionStore) RefuseRuntimeRelayIdentityUpgrade(
-	context.Context,
-	application.RuntimeRelayIdentityUpgrade,
-	time.Time,
-) error {
-	return nil
-}
-
-func (store *runtimeTransitionStore) GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error) {
-	return store.preparation, nil
-}
-
-func (*runtimeTransitionStore) GetTaskCleanupRecord(context.Context, string) (application.TaskCleanupRecord, bool, error) {
-	return application.TaskCleanupRecord{}, false, nil
-}
-
-func (*runtimeTransitionStore) CommitReport(context.Context, application.ReportMutation) (domain.ReportReceipt, error) {
-	return domain.ReportReceipt{}, nil
 }

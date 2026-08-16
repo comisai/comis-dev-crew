@@ -39,7 +39,7 @@ func (coordinator *runtimeAttachmentCoordinator) recoverTaskPreparationIntents(c
 			continue
 		}
 		if err := coordinator.removeTaskRuntimeDirectory(intent.TaskHandle); err != nil {
-			if errors.Is(err, errRuntimeAttachmentPreparationUnproven) {
+			if errors.Is(err, errRuntimeAttachmentOwnershipUnproven) {
 				at := coordinator.clock().UTC()
 				if at.IsZero() {
 					return errors.New("recover runtime attachments: service time is invalid")

@@ -8,7 +8,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var errRuntimeAttachmentPreparationUnproven = errors.New("runtime attachment preparation authority is unproven")
+var errRuntimeAttachmentOwnershipUnproven = errors.New("runtime attachment filesystem ownership is unproven")
 
 func (coordinator *runtimeAttachmentCoordinator) removeTaskRuntimeDirectory(taskHandle string) error {
 	if domain.ValidateTaskHandle(taskHandle) != nil {
@@ -26,7 +26,7 @@ func (coordinator *runtimeAttachmentCoordinator) removeTaskRuntimeDirectory(task
 		if !runtimeAttachmentPathAbsent(runtimeRootDescriptor, taskHandle) ||
 			!runtimeAttachmentPathAbsent(runtimeRootDescriptor, runtimeAttachmentCreationName(taskHandle)) {
 			return errors.Join(
-				errRuntimeAttachmentPreparationUnproven,
+				errRuntimeAttachmentOwnershipUnproven,
 				errors.New("task runtime directory identity is unproven; path preserved"),
 				closeRuntimeRootDescriptor(runtimeRootDescriptor),
 			)
@@ -55,13 +55,13 @@ func removeRuntimeAttachmentCreationIntent(
 ) error {
 	if !runtimeAttachmentPathAbsent(runtimeRootDescriptor, taskHandle) {
 		return errors.Join(
-			errRuntimeAttachmentPreparationUnproven,
+			errRuntimeAttachmentOwnershipUnproven,
 			errors.New("task runtime directory identity is unproven; path preserved"),
 		)
 	}
 	if !runtimeAttachmentPathAbsent(runtimeRootDescriptor, runtimeAttachmentCreationName(taskHandle)) {
 		return errors.Join(
-			errRuntimeAttachmentPreparationUnproven,
+			errRuntimeAttachmentOwnershipUnproven,
 			errors.New("task runtime creation directory is unproven; path preserved"),
 		)
 	}
@@ -91,7 +91,10 @@ func openRecordedTaskRuntimeDirectory(
 		if pinned != nil {
 			_ = unix.Close(descriptor)
 			_ = unix.Close(pinned.taskDescriptor)
-			return nil, false, errors.New("task runtime directory location is ambiguous; paths preserved")
+			return nil, false, errors.Join(
+				errRuntimeAttachmentOwnershipUnproven,
+				errors.New("task runtime directory location is ambiguous; paths preserved"),
+			)
 		}
 		generationMatches := runtimeAttachmentGenerationMatches(&pinnedTaskRuntimeDirectory{
 			runtimeRootDescriptor: runtimeRootDescriptor, taskDescriptor: descriptor,
@@ -103,12 +106,15 @@ func openRecordedTaskRuntimeDirectory(
 			(record.Stage == runtimeAttachmentActive || record.Stage == runtimeAttachmentReleaseIntent)
 		isolatedSocketRequired := name == runtimeAttachmentReleaseName(taskHandle) &&
 			record.Stage == runtimeAttachmentReleaseIntent
-		if !runtimeAttachmentTransitionDirectoryMatches(identity, record.Task, generationMatches) ||
+		if !runtimeAttachmentTransitionDirectoryMatches(identity, record.Task) ||
 			!directoryBound && !generationMatches ||
 			(canonicalSocketRequired || isolatedSocketRequired) &&
 				!runtimeAttachmentSocketMatches(descriptor, record.Socket) {
 			_ = unix.Close(descriptor)
-			return nil, false, errors.New("task runtime directory identity differs; path preserved")
+			return nil, false, errors.Join(
+				errRuntimeAttachmentOwnershipUnproven,
+				errors.New("task runtime directory identity differs; path preserved"),
+			)
 		}
 		pinned = &pinnedTaskRuntimeDirectory{
 			runtimeRootDescriptor: runtimeRootDescriptor, taskDescriptor: descriptor,
@@ -126,7 +132,10 @@ func openRecordedTaskRuntimeDirectory(
 			return nil, true, nil
 		}
 		if !errors.Is(err, reporter.ErrRuntimePathMissing) {
-			return nil, false, errors.New("task runtime directory quarantine is ambiguous; path preserved")
+			return nil, false, errors.Join(
+				errRuntimeAttachmentOwnershipUnproven,
+				errors.New("task runtime directory quarantine is ambiguous; path preserved"),
+			)
 		}
 	}
 	return nil, true, nil
@@ -149,7 +158,7 @@ func removePinnedTaskRuntimeDirectory(
 			return errors.New("task runtime creation directory is ambiguous; path preserved")
 		}
 		current, err := runtimeAttachmentDescriptorIdentity(pinned.taskDescriptor)
-		if err != nil || !runtimeAttachmentTransitionDirectoryMatches(current, record.Task, generationMatches) {
+		if err != nil || !runtimeAttachmentTransitionDirectoryMatches(current, record.Task) {
 			return errors.New("task runtime creation directory identity differs; path preserved")
 		}
 		if err := reporter.QuarantineRuntimePath(

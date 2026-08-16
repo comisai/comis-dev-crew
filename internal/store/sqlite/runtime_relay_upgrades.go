@@ -172,34 +172,8 @@ func (store *Store) RefuseRuntimeRelayIdentityUpgrade(
 		return fmt.Errorf("begin runtime relay identity refusal: %w", err)
 	}
 	defer func() { _ = transaction.Rollback() }()
-	task, err := getTask(ctx, transaction, upgrade.TaskHandle)
-	if err != nil {
-		return err
-	}
-	if task.State != domain.TaskCleaned {
-		unknown, err := reconcileTaskUnknown(task, at)
-		if err != nil {
-			return fmt.Errorf("close runtime relay identity task recovery: %w", err)
-		}
-		version, err := nextReconciliationVersion(ctx, transaction)
-		if err != nil {
-			return err
-		}
-		unknown.StateVersion = version
-		if err := updateTaskState(ctx, transaction, unknown); err != nil {
-			return err
-		}
-	}
-	refusal := application.RuntimeRelayIdentityRefusal{
-		TaskHandle: upgrade.TaskHandle,
-		Reason:     application.RuntimeRelayIdentityUnproven,
-	}
-	if refusal.Validate() != nil {
-		return errors.New("refuse runtime relay identity upgrade: refusal is invalid")
-	}
-	if _, err := transaction.ExecContext(ctx, `INSERT INTO runtime_relay_identity_refusals(task_handle, reason)
-		VALUES (?, ?)`, refusal.TaskHandle, refusal.Reason); err != nil {
-		return fmt.Errorf("record runtime relay identity refusal: %w", err)
+	if err := refuseRuntimeAttachmentTask(ctx, transaction, upgrade.TaskHandle, at); err != nil {
+		return fmt.Errorf("refuse runtime relay identity upgrade: %w", err)
 	}
 	result, err := transaction.ExecContext(ctx, `DELETE FROM runtime_relay_identity_upgrades
 		WHERE task_handle = ? AND relay_identity = ? AND relay_seed = ?`,
@@ -213,6 +187,66 @@ func (store *Store) RefuseRuntimeRelayIdentityUpgrade(
 	}
 	if err := transaction.Commit(); err != nil {
 		return fmt.Errorf("commit runtime relay identity refusal: %w", err)
+	}
+	return nil
+}
+
+// RefuseRuntimeAttachmentTaskRecovery durably closes only one task whose runtime directory ownership is unproven.
+func (store *Store) RefuseRuntimeAttachmentTaskRecovery(
+	ctx context.Context,
+	taskHandle string,
+	at time.Time,
+) error {
+	if domain.ValidateTaskHandle(taskHandle) != nil || at.IsZero() || at.Location() != time.UTC {
+		return errors.New("refuse runtime attachment task recovery: authority is invalid")
+	}
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin runtime attachment task refusal: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	if err := refuseRuntimeAttachmentTask(ctx, transaction, taskHandle, at); err != nil {
+		return err
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit runtime attachment task refusal: %w", err)
+	}
+	return nil
+}
+
+func refuseRuntimeAttachmentTask(ctx context.Context, transaction *sql.Tx, taskHandle string, at time.Time) error {
+	refused, err := runtimeRelayIdentityRefusalExists(ctx, transaction, taskHandle)
+	if err != nil || refused {
+		return err
+	}
+	task, err := getTask(ctx, transaction, taskHandle)
+	if err != nil {
+		return err
+	}
+	if task.State != domain.TaskCleaned && task.State != domain.TaskUnknown {
+		unknown, err := reconcileTaskUnknown(task, at)
+		if err != nil {
+			return fmt.Errorf("close runtime attachment task recovery: %w", err)
+		}
+		version, err := nextReconciliationVersion(ctx, transaction)
+		if err != nil {
+			return err
+		}
+		unknown.StateVersion = version
+		if err := updateTaskState(ctx, transaction, unknown); err != nil {
+			return err
+		}
+	}
+	refusal := application.RuntimeRelayIdentityRefusal{
+		TaskHandle: taskHandle,
+		Reason:     application.RuntimeRelayIdentityUnproven,
+	}
+	if refusal.Validate() != nil {
+		return errors.New("runtime attachment task refusal is invalid")
+	}
+	if _, err := transaction.ExecContext(ctx, `INSERT INTO runtime_relay_identity_refusals(task_handle, reason)
+		VALUES (?, ?)`, refusal.TaskHandle, refusal.Reason); err != nil {
+		return fmt.Errorf("record runtime attachment task refusal: %w", err)
 	}
 	return nil
 }

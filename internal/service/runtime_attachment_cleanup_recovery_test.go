@@ -106,8 +106,11 @@ func TestRuntimeAttachmentCoordinator_PreservesUnprovenCleanedTaskDirectory(t *t
 		t.Fatal(err)
 	}
 	servers, err := coordinator.recoverRuntimeAttachments(context.Background())
-	if err == nil || len(servers) != 0 {
+	if err != nil || len(servers) != 0 {
 		t.Fatalf("recoverRuntimeAttachments(cleaned) = %d servers, %v", len(servers), err)
+	}
+	if len(store.taskRefusals) != 1 || store.taskRefusals[0].TaskHandle != task.Handle {
+		t.Fatalf("task refusals = %#v", store.taskRefusals)
 	}
 	if store.preparationReads != 0 {
 		t.Fatalf("cleaned task preparation reads = %d, want 0", store.preparationReads)
@@ -171,8 +174,11 @@ func TestRuntimeAttachmentCoordinator_PreservesReplacementSocketAfterReleaseRest
 	if err := replacement.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err == nil || len(servers) != 0 {
+	if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err != nil || len(servers) != 0 {
 		t.Fatalf("recoverRuntimeAttachments(replacement) = %d servers, %v", len(servers), err)
+	}
+	if len(store.taskRefusals) != 1 || store.taskRefusals[0].TaskHandle != task.Handle {
+		t.Fatalf("task refusals = %#v", store.taskRefusals)
 	}
 	if info, err := os.Lstat(socketPath); err != nil || info.Mode()&os.ModeSocket == 0 {
 		t.Fatalf("replacement socket was not preserved: %#v, %v", info, err)
@@ -212,8 +218,11 @@ func TestRuntimeAttachmentCoordinator_PreservesSocketWithoutPersistedIdentity(t 
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err == nil || len(servers) != 0 {
+	if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err != nil || len(servers) != 0 {
 		t.Fatalf("recoverRuntimeAttachments(unproven socket) = %d servers, %v", len(servers), err)
+	}
+	if len(store.taskRefusals) != 1 || store.taskRefusals[0].TaskHandle != task.Handle {
+		t.Fatalf("task refusals = %#v", store.taskRefusals)
 	}
 	if info, err := os.Lstat(socketPath); err != nil || info.Mode()&os.ModeSocket == 0 {
 		t.Fatalf("unproven socket was not preserved: %#v, %v", info, err)
@@ -266,8 +275,11 @@ func TestRuntimeAttachmentCoordinator_PreservesReplacementTaskDirectoryAfterRele
 	if err := os.Mkdir(taskRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err == nil || len(servers) != 0 {
+	if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err != nil || len(servers) != 0 {
 		t.Fatalf("recoverRuntimeAttachments(replacement directory) = %d servers, %v", len(servers), err)
+	}
+	if len(store.taskRefusals) != 1 || store.taskRefusals[0].TaskHandle != task.Handle {
+		t.Fatalf("task refusals = %#v", store.taskRefusals)
 	}
 	if info, err := os.Lstat(taskRoot); err != nil || !info.IsDir() {
 		t.Fatalf("replacement task directory was not preserved: %#v, %v", info, err)
@@ -295,8 +307,11 @@ func TestRuntimeAttachmentCoordinator_PreservesUnprovenEmptyTaskDirectory(t *tes
 	if err := os.Mkdir(taskRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err == nil || len(servers) != 0 {
+	if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err != nil || len(servers) != 0 {
 		t.Fatalf("recoverRuntimeAttachments(unproven directory) = %d servers, %v", len(servers), err)
+	}
+	if len(store.taskRefusals) != 1 || store.taskRefusals[0].TaskHandle != task.Handle {
+		t.Fatalf("task refusals = %#v", store.taskRefusals)
 	}
 	if info, err := os.Lstat(taskRoot); err != nil || !info.IsDir() {
 		t.Fatalf("unproven task directory was not preserved: %#v, %v", info, err)
@@ -359,8 +374,11 @@ func TestRuntimeAttachmentCoordinator_PreservesDirectoryWithDifferentGenerationI
 	if err := os.WriteFile(filepath.Join(runtimeRoot, name), []byte(formatRuntimeAttachmentIdentityRecord(record)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err == nil || len(servers) != 0 {
+	if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err != nil || len(servers) != 0 {
 		t.Fatalf("recoverRuntimeAttachments(different generation) = %d servers, %v", len(servers), err)
+	}
+	if len(store.taskRefusals) != 1 || store.taskRefusals[0].TaskHandle != task.Handle {
+		t.Fatalf("task refusals = %#v", store.taskRefusals)
 	}
 	if info, err := os.Lstat(taskRoot); err != nil || !info.IsDir() {
 		t.Fatalf("different generation task directory was not preserved: %#v, %v", info, err)
