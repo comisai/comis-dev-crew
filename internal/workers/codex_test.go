@@ -86,7 +86,7 @@ func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(
 	}
 	wantArguments := []string{
 		"exec", "--json", "--strict-config", "--ignore-user-config", "--ignore-rules", "--ephemeral",
-		"--color", "never", "--model", profile.Model, "--sandbox", "workspace-write",
+		"--color", "never", "--model", profile.Model, "--dangerously-bypass-approvals-and-sandbox",
 		"-c", `model_reasoning_effort="high"`, "--cd", request.WorkingDirectory,
 		"Before doing any task work, acknowledge the exact protected launch binding with `devcrew-report acknowledge`. Then read the pinned task brief with `devcrew-report brief`. If either command fails, stop without reading or changing the workspace; do not continue task work. Run `devcrew-report --help` before reporting and use only its exact flag syntax; do not invent JSON or stdin formats. Use `devcrew-report` for sparse progress, decisions, blocked state, candidate completion, and failure. Treat the protected runtime attachment as the only task/report authority.\n",
 	}
@@ -106,7 +106,9 @@ func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(
 		t.Fatalf("Codex launch must not depend on post-create stdin: %q", descriptor.StandardInput)
 	}
 	bootstrap := descriptor.Arguments[len(descriptor.Arguments)-1]
-	if !strings.Contains(bootstrap, "devcrew-report acknowledge") ||
+	if !containsString(descriptor.Arguments, "--dangerously-bypass-approvals-and-sandbox") ||
+		containsString(descriptor.Arguments, "workspace-write") ||
+		!strings.Contains(bootstrap, "devcrew-report acknowledge") ||
 		!strings.Contains(bootstrap, "devcrew-report brief") ||
 		!strings.Contains(bootstrap, "If either command fails, stop without reading or changing the workspace") ||
 		!strings.Contains(bootstrap, "Run `devcrew-report --help` before reporting") ||
