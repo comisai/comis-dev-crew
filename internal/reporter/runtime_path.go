@@ -20,11 +20,14 @@ type runtimePathIdentity struct {
 	mode       uint32
 	changeSec  int64
 	changeNsec int64
+	birthSec   int64
+	birthNsec  int64
 }
 
 type pinnedRuntimeMount struct {
-	descriptors []int
-	identities  []runtimePathIdentity
+	descriptors          []int
+	identities           []runtimePathIdentity
+	requireMountIdentity bool
 }
 
 // NewRuntimeClient validates and pins a service-owned source socket identity.
@@ -52,7 +55,7 @@ func newMountedRuntimeClient(socketPath, assignedTargetName, mountDirectory, rel
 	if err != nil {
 		return nil, errors.New("create runtime attachment client: relay identity is invalid")
 	}
-	pinned, err := pinRuntimeMountDirectory(mountDirectory)
+	pinned, err := pinProtectedRuntimeMountDirectory(mountDirectory)
 	if err != nil {
 		return nil, err
 	}
@@ -129,19 +132,27 @@ func validRuntimeMountDirectory(path string) bool {
 }
 
 func pinRuntimeMountDirectory(path string) (*pinnedRuntimeMount, error) {
-	if !validRuntimeMountDirectory(path) {
-		return nil, errors.New("runtime mounted attachment directory is not canonical")
-	}
+	return pinRuntimeDirectory(path, false)
+}
+
+func pinProtectedRuntimeMountDirectory(path string) (*pinnedRuntimeMount, error) {
 	if !runtimeMountIdentitySupported() {
 		return nil, errors.New("runtime mounted attachment directory mount identity is unavailable")
+	}
+	return pinRuntimeDirectory(path, true)
+}
+
+func pinRuntimeDirectory(path string, requireMountIdentity bool) (*pinnedRuntimeMount, error) {
+	if !validRuntimeMountDirectory(path) {
+		return nil, errors.New("runtime mounted attachment directory is not canonical")
 	}
 	flags := runtimePinnedDirectoryOpenFlags() | unix.O_CLOEXEC
 	root, err := unix.Open(string(filepath.Separator), flags, 0)
 	if err != nil {
 		return nil, errors.New("runtime mounted attachment directory identity is unavailable")
 	}
-	pinned := &pinnedRuntimeMount{descriptors: []int{root}}
-	rootIdentity, err := runtimeDescriptorIdentity(root)
+	pinned := &pinnedRuntimeMount{descriptors: []int{root}, requireMountIdentity: requireMountIdentity}
+	rootIdentity, err := runtimeDirectoryDescriptorIdentity(root, requireMountIdentity)
 	if err != nil {
 		return nil, closePinnedRuntimeMount(pinned, errors.New("runtime mounted attachment directory identity is unavailable"))
 	}
@@ -158,7 +169,7 @@ func pinRuntimeMountDirectory(path string) (*pinnedRuntimeMount, error) {
 			return nil, closePinnedRuntimeMount(pinned, errors.New(message))
 		}
 		pinned.descriptors = append(pinned.descriptors, descriptor)
-		identity, identityErr := runtimeDescriptorIdentity(descriptor)
+		identity, identityErr := runtimeDirectoryDescriptorIdentity(descriptor, requireMountIdentity)
 		if identityErr != nil {
 			return nil, closePinnedRuntimeMount(pinned, errors.New("runtime mounted attachment directory identity is unavailable"))
 		}
@@ -184,7 +195,14 @@ func runtimeDescriptorIdentity(descriptor int) (runtimePathIdentity, error) {
 	if err := unix.Fstat(descriptor, &stat); err != nil {
 		return runtimePathIdentity{}, err
 	}
-	identity := runtimeStatIdentity(stat)
+	return runtimeStatIdentity(stat), nil
+}
+
+func runtimeDirectoryDescriptorIdentity(descriptor int, requireMountIdentity bool) (runtimePathIdentity, error) {
+	identity, err := runtimeDescriptorIdentity(descriptor)
+	if err != nil || !requireMountIdentity {
+		return identity, err
+	}
 	mountID, err := runtimeDescriptorMountID(descriptor)
 	if err != nil || mountID == 0 {
 		return runtimePathIdentity{}, errors.New("runtime mount identity is unavailable")
@@ -194,15 +212,17 @@ func runtimeDescriptorIdentity(descriptor int) (runtimePathIdentity, error) {
 }
 
 func runtimeStatIdentity(stat unix.Stat_t) runtimePathIdentity {
+	birthSec, birthNsec := runtimeStatBirthTime(stat)
 	return runtimePathIdentity{
 		device: uint64(stat.Dev), inode: stat.Ino, mode: uint32(stat.Mode),
 		changeSec: stat.Ctim.Sec, changeNsec: stat.Ctim.Nsec,
+		birthSec: birthSec, birthNsec: birthNsec,
 	}
 }
 
 func (identity runtimePathIdentity) sameNode(other runtimePathIdentity) bool {
 	return identity.device == other.device && identity.inode == other.inode && identity.mountID == other.mountID &&
-		identity.mode == other.mode
+		identity.mode == other.mode && identity.birthSec == other.birthSec && identity.birthNsec == other.birthNsec
 }
 
 func (identity runtimePathIdentity) sameObject(other runtimePathIdentity) bool {
@@ -240,7 +260,7 @@ func (pinned *pinnedRuntimeMount) targetPath(targetName string) (string, error) 
 }
 
 func (client *RuntimeClient) dialMountedRuntimeSocket() (net.Conn, error) {
-	pinned, err := pinRuntimeMountDirectory(client.mountDirectory)
+	pinned, err := pinProtectedRuntimeMountDirectory(client.mountDirectory)
 	if err != nil {
 		return nil, errors.New("call runtime attachment: protected mount identity changed")
 	}
@@ -284,7 +304,7 @@ func (client *RuntimeClient) dialMountedRuntimeSocket() (net.Conn, error) {
 
 func (pinned *pinnedRuntimeMount) unchanged() bool {
 	for index, descriptor := range pinned.descriptors {
-		current, err := runtimeDescriptorIdentity(descriptor)
+		current, err := runtimeDirectoryDescriptorIdentity(descriptor, pinned.requireMountIdentity)
 		if err != nil || !pinned.identities[index].sameNode(current) {
 			return false
 		}
@@ -293,7 +313,7 @@ func (pinned *pinnedRuntimeMount) unchanged() bool {
 }
 
 func (pinned *pinnedRuntimeMount) matchesPath(path string) bool {
-	current, err := pinRuntimeMountDirectory(path)
+	current, err := pinProtectedRuntimeMountDirectory(path)
 	if err != nil {
 		return false
 	}

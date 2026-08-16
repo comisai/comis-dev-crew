@@ -34,7 +34,7 @@ func runtimePinnedSocketIdentity(directoryDescriptor int, name string) (runtimeP
 	if err != nil {
 		return runtimePathIdentity{}, err
 	}
-	identity, identityErr := runtimeDescriptorIdentity(descriptor)
+	identity, identityErr := runtimeDirectoryDescriptorIdentity(descriptor, true)
 	closeErr := unix.Close(descriptor)
 	if identityErr != nil {
 		return runtimePathIdentity{}, identityErr

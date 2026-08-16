@@ -24,6 +24,18 @@ func runtimeDescriptorMountID(_ int) (uint64, error) {
 	return 0, unix.ENOTSUP
 }
 
-func runtimePinnedSocketIdentity(_ int, _ string) (runtimePathIdentity, error) {
-	return runtimePathIdentity{}, unix.ENOTSUP
+func runtimePinnedSocketIdentity(directoryDescriptor int, name string) (runtimePathIdentity, error) {
+	var before unix.Stat_t
+	if err := unix.Fstatat(directoryDescriptor, name, &before, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return runtimePathIdentity{}, err
+	}
+	var after unix.Stat_t
+	if err := unix.Fstatat(directoryDescriptor, name, &after, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return runtimePathIdentity{}, err
+	}
+	identity := runtimeStatIdentity(before)
+	if !identity.sameObject(runtimeStatIdentity(after)) {
+		return runtimePathIdentity{}, unix.ESTALE
+	}
+	return identity, nil
 }
