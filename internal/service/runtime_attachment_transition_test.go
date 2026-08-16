@@ -127,6 +127,66 @@ func TestOpenRecordedRuntimeReleasePreservesIsolatedDirectoryWithoutUnrecyclable
 	_ = closeRuntimeRootDescriptor(rootDescriptor)
 }
 
+func TestOpenRecordedRuntimeReleaseRejectsExactDirectoryIdentityMismatch(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, &runtimeAttachmentRecoveryStore{}, time.Now().UTC())
+	taskHandle := "task-runtime-release-exact-identity"
+	releaseName := runtimeAttachmentReleaseName(taskHandle)
+	if err := os.Mkdir(filepath.Join(runtimeRoot, releaseName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rootDescriptor, err := coordinator.pinRuntimeRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor, identity, missing, err := openTaskRuntimeDirectory(rootDescriptor, releaseName)
+	if err != nil || missing {
+		t.Fatalf("openTaskRuntimeDirectory() = %d, %#v, %t, %v", descriptor, identity, missing, err)
+	}
+	pinned := &pinnedTaskRuntimeDirectory{
+		runtimeRootDescriptor: rootDescriptor, taskDescriptor: descriptor,
+		taskHandle: taskHandle, directoryName: releaseName, taskIdentity: identity,
+	}
+	generation, generationID, err := createRuntimeAttachmentGeneration(rootDescriptor, taskHandle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := linkRuntimeAttachmentGeneration(pinned, generation, generationID); err != nil {
+		t.Fatal(err)
+	}
+	identity, err = runtimeAttachmentDescriptorIdentity(descriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorded := identity
+	if recorded.BirthSec != 0 || recorded.BirthNsec != 0 {
+		recorded.BirthNsec++
+	} else {
+		recorded.ChangeNsec++
+	}
+	record := runtimeAttachmentIdentityRecord{
+		Stage: runtimeAttachmentReleasing, Task: recorded,
+		Socket: generation, Generation: generation, GenerationID: generationID,
+		RelaySeed: runtimeRelaySeedForTest(0x2c),
+	}
+	if err := pinned.close(); err != nil {
+		t.Fatal(err)
+	}
+	rootDescriptor, err = coordinator.pinRuntimeRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened, missing, err := openRecordedTaskRuntimeDirectory(rootDescriptor, taskHandle, record)
+	if err == nil || missing || reopened != nil {
+		t.Fatalf("openRecordedTaskRuntimeDirectory(exact mismatch) = %#v, %t, %v", reopened, missing, err)
+	}
+	if info, statErr := os.Lstat(filepath.Join(runtimeRoot, releaseName)); statErr != nil || !info.IsDir() {
+		t.Fatalf("mismatched release directory was not preserved: %#v, %v", info, statErr)
+	}
+	_ = closeRuntimeRootDescriptor(rootDescriptor)
+}
+
 func TestRuntimeAttachmentReleaseBindsPostRenameIdentityWithoutBirthTime(t *testing.T) {
 	root := shortTempDir(t)
 	runtimeRoot := filepath.Join(root, "runtime")
@@ -298,7 +358,7 @@ func TestRuntimeAttachmentRecoveryReplaysCreationIntent(t *testing.T) {
 	}
 }
 
-func TestRuntimeAttachmentRecoveryReplaysGenerationLinkWithoutBirthTime(t *testing.T) {
+func TestRuntimeAttachmentRecoveryPreservesUnboundGenerationLinkWithoutBirthTime(t *testing.T) {
 	root := shortTempDir(t)
 	runtimeRoot := filepath.Join(root, "runtime")
 	workspace := filepath.Join(root, "workspace")
@@ -356,11 +416,11 @@ func TestRuntimeAttachmentRecoveryReplaysGenerationLinkWithoutBirthTime(t *testi
 	}
 	restarted := runtimeTransitionCoordinator(t, runtimeRoot, store, now)
 	servers, err := restarted.recoverRuntimeAttachments(context.Background())
-	if err != nil || len(servers) != 1 {
-		t.Fatalf("recoverRuntimeAttachments(generation link replay) = %d, %v", len(servers), err)
+	if err == nil || len(servers) != 0 {
+		t.Fatalf("recoverRuntimeAttachments(unbound generation link) = %d, %v", len(servers), err)
 	}
-	if err := servers[0].Close(); err != nil {
-		t.Fatal(err)
+	if info, statErr := os.Lstat(filepath.Join(runtimeRoot, temporaryName)); statErr != nil || !info.IsDir() {
+		t.Fatalf("unbound generation directory was not preserved: %#v, %v", info, statErr)
 	}
 }
 
@@ -435,7 +495,7 @@ func TestRuntimeAttachmentRecoveryQuarantinesSocketCreatedBeforeIdentityCommit(t
 	}
 }
 
-func TestRecordedRuntimeDirectoryUsesGenerationAcrossCtimeChanges(t *testing.T) {
+func TestRecordedRuntimeDirectoryPreservesGenerationCopyAcrossCtimeChanges(t *testing.T) {
 	root := shortTempDir(t)
 	runtimeRoot := filepath.Join(root, "runtime")
 	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, &runtimeAttachmentRecoveryStore{}, time.Now().UTC())
@@ -473,10 +533,112 @@ func TestRecordedRuntimeDirectoryUsesGenerationAcrossCtimeChanges(t *testing.T) 
 		t.Fatal(err)
 	}
 	reopened, missing, err := openRecordedTaskRuntimeDirectory(rootDescriptor, taskHandle, record)
-	if err != nil || missing || reopened == nil {
-		t.Fatalf("openRecordedTaskRuntimeDirectory(generation) = %#v, %t, %v", reopened, missing, err)
+	if err == nil || missing || reopened != nil {
+		t.Fatalf("openRecordedTaskRuntimeDirectory(generation copy) = %#v, %t, %v", reopened, missing, err)
 	}
-	_ = reopened.close()
+	_ = closeRuntimeRootDescriptor(rootDescriptor)
+}
+
+func TestRuntimeAttachmentCreationIntentPreservesUnprovenStagingDirectory(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, &runtimeAttachmentRecoveryStore{}, time.Now().UTC())
+	taskHandle := "task-runtime-unproven-creation"
+	rootDescriptor, err := coordinator.pinRuntimeRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation, generationID, err := createRuntimeAttachmentGeneration(rootDescriptor, taskHandle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := runtimeRelaySeedForTest(0x2d)
+	intent := runtimeAttachmentIdentityRecord{
+		Stage: runtimeAttachmentCreatingIntent, Generation: generation,
+		GenerationID: generationID, RelaySeed: seed,
+	}
+	if _, err := publishRuntimeAttachmentIdentity(rootDescriptor, taskHandle, intent, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	temporaryName := runtimeAttachmentCreationName(taskHandle)
+	if err := unix.Mkdirat(rootDescriptor, temporaryName, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(runtimeRoot, temporaryName, "replacement")
+	if err := os.WriteFile(marker, []byte("preserve"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := closeRuntimeRootDescriptor(rootDescriptor); err != nil {
+		t.Fatal(err)
+	}
+	pinned, _, _, _, err := coordinator.prepareRuntimeAttachmentDirectory(taskHandle, seed)
+	if pinned != nil {
+		_ = pinned.close()
+	}
+	if err == nil {
+		t.Fatal("prepareRuntimeAttachmentDirectory() adopted an identity-free staging directory")
+	}
+	contents, readErr := os.ReadFile(marker)
+	if readErr != nil || string(contents) != "preserve" {
+		t.Fatalf("unproven staging marker = %q, %v", contents, readErr)
+	}
+	if _, statErr := os.Lstat(filepath.Join(runtimeRoot, temporaryName, runtimeAttachmentGenerationLink)); !os.IsNotExist(statErr) {
+		t.Fatalf("unproven staging generation link error = %v", statErr)
+	}
+}
+
+func TestRuntimeAttachmentDirectoryBindingReplaysCompletedGenerationLink(t *testing.T) {
+	root := shortTempDir(t)
+	coordinator := runtimeTransitionCoordinator(
+		t, filepath.Join(root, "runtime"), &runtimeAttachmentRecoveryStore{}, time.Now().UTC(),
+	)
+	taskHandle := "task-runtime-bound-creation"
+	rootDescriptor, err := coordinator.pinRuntimeRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation, generationID, err := createRuntimeAttachmentGeneration(rootDescriptor, taskHandle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	temporaryName := runtimeAttachmentCreationName(taskHandle)
+	if err := unix.Mkdirat(rootDescriptor, temporaryName, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	descriptor, identity, missing, err := openTaskRuntimeDirectory(rootDescriptor, temporaryName)
+	if err != nil || missing {
+		t.Fatalf("openTaskRuntimeDirectory() = %d, %#v, %t, %v", descriptor, identity, missing, err)
+	}
+	if identity.BirthSec == 0 && identity.BirthNsec == 0 {
+		_ = unix.Close(descriptor)
+		_ = closeRuntimeRootDescriptor(rootDescriptor)
+		t.Skip("filesystem does not expose stable directory birth identity")
+	}
+	seed := runtimeRelaySeedForTest(0x2e)
+	record := runtimeAttachmentIdentityRecord{
+		Stage: runtimeAttachmentDirectoryBound, Task: identity, Generation: generation,
+		GenerationID: generationID, RelaySeed: seed,
+	}
+	if _, err := publishRuntimeAttachmentIdentity(rootDescriptor, taskHandle, record, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	pinned := &pinnedTaskRuntimeDirectory{
+		runtimeRootDescriptor: rootDescriptor, taskDescriptor: descriptor,
+		taskHandle: taskHandle, directoryName: temporaryName, taskIdentity: identity,
+	}
+	if _, err := linkRuntimeAttachmentGeneration(pinned, generation, generationID); err != nil {
+		t.Fatal(err)
+	}
+	if err := pinned.close(); err != nil {
+		t.Fatal(err)
+	}
+	pinned, _, replayed, _, err := coordinator.prepareRuntimeAttachmentDirectory(taskHandle, seed)
+	if err != nil || replayed.Stage != runtimeAttachmentCreating {
+		t.Fatalf("prepareRuntimeAttachmentDirectory(bound replay) = %#v, %v", replayed, err)
+	}
+	if err := pinned.close(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRuntimeAttachmentRecoveryRemovesUncommittedPreparationPublication(t *testing.T) {

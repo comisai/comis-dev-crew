@@ -75,3 +75,20 @@ func runtimeAttachmentEntryUnavailable(state runtimeAttachmentEntryState) error 
 	}
 	return errors.New("runtime attachment entry is unavailable")
 }
+
+func (coordinator *runtimeAttachmentCoordinator) releaseFailedRuntimeAttachmentRegistration(
+	entry *runtimeAttachmentEntry,
+) error {
+	pinned, record, err := coordinator.pinRuntimeAttachmentRelease(entry.request.TaskHandle)
+	if err != nil {
+		return errors.Join(err, entry.server.Close())
+	}
+	record, err = preparePinnedRuntimeAttachmentClose(coordinator, pinned, record, entry.server)
+	if err != nil {
+		return errors.Join(err, entry.server.Close(), pinned.close())
+	}
+	if err := entry.server.Close(); err != nil {
+		return errors.Join(err, pinned.close())
+	}
+	return errors.Join(removePinnedRuntimeAttachment(pinned, record), pinned.close())
+}

@@ -200,7 +200,7 @@ func (coordinator *runtimeAttachmentCoordinator) PrepareRuntimeAttachment(
 	coordinator.mu.Unlock()
 	registrationErr := coordinator.registerRuntimeAttachment(ctx, entry.server)
 	if registrationErr != nil {
-		registrationErr = errors.Join(registrationErr, entry.server.Close())
+		registrationErr = errors.Join(registrationErr, coordinator.releaseFailedRuntimeAttachmentRegistration(entry))
 	}
 	coordinator.completeRuntimeAttachmentRegistration(request.TaskHandle, entry, registrationErr)
 	return runtimeAttachmentRegistrationResult(entry)

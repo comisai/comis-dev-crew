@@ -207,14 +207,13 @@ func (identity runtimePathIdentity) sameObject(other runtimePathIdentity) bool {
 }
 
 func pinnedRuntimeSocketIdentity(pinned *pinnedRuntimeMount, targetName string) (runtimePathIdentity, error) {
-	var stat unix.Stat_t
-	if err := unix.Fstatat(pinned.descriptors[len(pinned.descriptors)-1], targetName, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	identity, err := runtimePinnedSocketIdentity(pinned.descriptors[len(pinned.descriptors)-1], targetName)
+	if err != nil {
 		if errors.Is(err, unix.ENOENT) {
 			return runtimePathIdentity{}, errors.New("create runtime attachment client: socket does not exist")
 		}
 		return runtimePathIdentity{}, errors.New("create runtime attachment client: socket identity is unavailable")
 	}
-	identity := runtimeStatIdentity(stat)
 	if identity.mode&unix.S_IFMT != unix.S_IFSOCK {
 		return runtimePathIdentity{}, errors.New("create runtime attachment client: target is not a Unix socket")
 	}

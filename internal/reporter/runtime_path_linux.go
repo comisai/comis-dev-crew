@@ -24,3 +24,19 @@ func runtimeDescriptorMountID(descriptor int) (uint64, error) {
 	}
 	return stat.Mnt_id, nil
 }
+
+func runtimePinnedSocketIdentity(directoryDescriptor int, name string) (runtimePathIdentity, error) {
+	descriptor, err := unix.Openat(directoryDescriptor, name, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return runtimePathIdentity{}, err
+	}
+	identity, identityErr := runtimeDescriptorIdentity(descriptor)
+	closeErr := unix.Close(descriptor)
+	if identityErr != nil {
+		return runtimePathIdentity{}, identityErr
+	}
+	if closeErr != nil {
+		return runtimePathIdentity{}, closeErr
+	}
+	return identity, nil
+}

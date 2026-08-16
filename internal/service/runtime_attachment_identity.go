@@ -24,6 +24,7 @@ const (
 	runtimeAttachmentActive         runtimeAttachmentIdentityStage = 3
 	runtimeAttachmentReleasing      runtimeAttachmentIdentityStage = 4
 	runtimeAttachmentReleaseIntent  runtimeAttachmentIdentityStage = 5
+	runtimeAttachmentDirectoryBound runtimeAttachmentIdentityStage = 6
 )
 
 type runtimeAttachmentIdentityRecord struct {
@@ -267,30 +268,15 @@ func (coordinator *runtimeAttachmentCoordinator) removeTaskRuntimeDirectory(task
 func removeRuntimeAttachmentCreationIntent(
 	runtimeRootDescriptor int,
 	taskHandle string,
-	record runtimeAttachmentIdentityRecord,
+	_ runtimeAttachmentIdentityRecord,
 ) error {
 	if !runtimeAttachmentPathAbsent(runtimeRootDescriptor, taskHandle) {
 		return errors.New("task runtime directory identity is unproven; path preserved")
 	}
-	name := runtimeAttachmentCreationName(taskHandle)
-	descriptor, identity, missing, err := openTaskRuntimeDirectory(runtimeRootDescriptor, name)
-	if err != nil || missing {
-		return err
+	if !runtimeAttachmentPathAbsent(runtimeRootDescriptor, runtimeAttachmentCreationName(taskHandle)) {
+		return errors.New("task runtime creation directory is unproven; path preserved")
 	}
-	pinned := &pinnedTaskRuntimeDirectory{
-		runtimeRootDescriptor: runtimeRootDescriptor, taskDescriptor: descriptor,
-		taskHandle: taskHandle, directoryName: name, taskIdentity: identity,
-	}
-	if runtimeAttachmentDirectoryEmpty(descriptor) {
-		return unix.Close(descriptor)
-	}
-	if !runtimeAttachmentGenerationMatches(pinned, record.Generation, record.GenerationID) {
-		return errors.Join(errors.New("task runtime creation directory is ambiguous; path preserved"), unix.Close(descriptor))
-	}
-	removeErr := reporter.QuarantineRuntimePath(
-		runtimeRootDescriptor, name, identity, reporter.RuntimePathDirectory, 0o700,
-	)
-	return errors.Join(removeErr, unix.Close(descriptor))
+	return nil
 }
 
 func openRecordedTaskRuntimeDirectory(
@@ -299,7 +285,7 @@ func openRecordedTaskRuntimeDirectory(
 	record runtimeAttachmentIdentityRecord,
 ) (*pinnedTaskRuntimeDirectory, bool, error) {
 	names := []string{taskHandle}
-	if record.Stage == runtimeAttachmentCreating {
+	if record.Stage == runtimeAttachmentDirectoryBound || record.Stage == runtimeAttachmentCreating {
 		names = append(names, runtimeAttachmentCreationName(taskHandle))
 	} else if record.Stage == runtimeAttachmentReleaseIntent || record.Stage == runtimeAttachmentReleasing {
 		names = append(names, runtimeAttachmentReleaseName(taskHandle))
@@ -322,15 +308,16 @@ func openRecordedTaskRuntimeDirectory(
 			runtimeRootDescriptor: runtimeRootDescriptor, taskDescriptor: descriptor,
 			taskHandle: taskHandle, directoryName: name, taskIdentity: identity,
 		}, record.Generation, record.GenerationID)
-		isolatedRelease := record.Stage == runtimeAttachmentReleasing &&
-			name == runtimeAttachmentReleaseName(taskHandle) && sameRuntimeAttachmentNode(identity, record.Task)
-		isolatedIntent := record.Stage == runtimeAttachmentReleaseIntent &&
-			name == runtimeAttachmentReleaseName(taskHandle) && sameRuntimeAttachmentNode(identity, record.Task) &&
-			runtimeAttachmentSocketMatches(descriptor, record.Socket)
+		directoryBound := record.Stage == runtimeAttachmentDirectoryBound &&
+			(runtimeAttachmentDirectoryEmpty(descriptor) || generationMatches)
 		canonicalSocketRequired := name == taskHandle &&
 			(record.Stage == runtimeAttachmentActive || record.Stage == runtimeAttachmentReleaseIntent)
-		if !generationMatches || canonicalSocketRequired && !runtimeAttachmentSocketMatches(descriptor, record.Socket) ||
-			!sameRuntimeAttachmentNode(identity, record.Task) && !isolatedRelease && !isolatedIntent {
+		isolatedSocketRequired := name == runtimeAttachmentReleaseName(taskHandle) &&
+			record.Stage == runtimeAttachmentReleaseIntent
+		if !sameRuntimeAttachmentStableDirectory(identity, record.Task) ||
+			!directoryBound && !generationMatches ||
+			(canonicalSocketRequired || isolatedSocketRequired) &&
+				!runtimeAttachmentSocketMatches(descriptor, record.Socket) {
 			_ = unix.Close(descriptor)
 			return nil, false, errors.New("task runtime directory identity differs; path preserved")
 		}
@@ -367,6 +354,22 @@ func removePinnedTaskRuntimeDirectory(
 	pinned *pinnedTaskRuntimeDirectory,
 	record runtimeAttachmentIdentityRecord,
 ) error {
+	if record.Stage == runtimeAttachmentDirectoryBound {
+		generationMatches := runtimeAttachmentGenerationMatches(pinned, record.Generation, record.GenerationID)
+		if !runtimeAttachmentDirectoryEmpty(pinned.taskDescriptor) && !generationMatches {
+			return errors.New("task runtime creation directory is ambiguous; path preserved")
+		}
+		current, err := runtimeAttachmentDescriptorIdentity(pinned.taskDescriptor)
+		if err != nil || !sameRuntimeAttachmentStableDirectory(current, record.Task) {
+			return errors.New("task runtime creation directory identity differs; path preserved")
+		}
+		if err := reporter.QuarantineRuntimePath(
+			pinned.runtimeRootDescriptor, pinned.directoryName, current, reporter.RuntimePathDirectory, 0o700,
+		); err != nil {
+			return errors.New("task runtime creation directory is unavailable")
+		}
+		return nil
+	}
 	if record.Stage == runtimeAttachmentCreating && !record.Socket.Valid() {
 		if !runtimeAttachmentGenerationMatches(pinned, record.Generation, record.GenerationID) {
 			return errors.New("task runtime creation directory is ambiguous; path preserved")
@@ -466,6 +469,16 @@ func runtimeAttachmentDirectoryEmpty(descriptor int) bool {
 
 func sameRuntimeAttachmentNode(left, right reporter.RuntimeSocketIdentity) bool {
 	return left.Device == right.Device && left.Inode == right.Inode
+}
+
+func sameRuntimeAttachmentStableDirectory(left, right reporter.RuntimeSocketIdentity) bool {
+	if !sameRuntimeAttachmentNode(left, right) {
+		return false
+	}
+	if right.BirthSec != 0 || right.BirthNsec != 0 {
+		return left.BirthSec == right.BirthSec && left.BirthNsec == right.BirthNsec
+	}
+	return left.ChangeSec == right.ChangeSec && left.ChangeNsec == right.ChangeNsec
 }
 
 func runtimeAttachmentCreationName(taskHandle string) string {

@@ -272,6 +272,37 @@ func TestMountedRuntimeClientRejectsChangedMountInstance(t *testing.T) {
 	}
 }
 
+func TestMountedRuntimeClientRejectsChangedSocketMountInstance(t *testing.T) {
+	const targetName = "attachment-3123456789abcdef0123456789abcdef.sock"
+	root := shortBoundaryDirectory(t)
+	mountDirectory := filepath.Join(root, "run", "comis", "attachments")
+	if err := os.MkdirAll(mountDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	listener, connected := trackedRuntimeSocket(t, filepath.Join(mountDirectory, targetName))
+	client, err := newMountedRuntimeClient(filepath.Join(mountDirectory, targetName), targetName, mountDirectory, boundaryRuntimeRelayIdentity(t), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.mountedSocketIdentity.mountID == 0 {
+		t.Fatal("mounted runtime client did not capture the socket mount instance")
+	}
+	client.mountedSocketIdentity.mountID++
+	connection, callErr := client.dialMountedRuntimeSocket()
+	if connection != nil {
+		_ = connection.Close()
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if callErr == nil {
+		t.Fatal("mounted runtime client accepted a changed socket mount instance")
+	}
+	if <-connected {
+		t.Fatal("mounted runtime client connected through a changed socket mount instance")
+	}
+}
+
 func TestMountedRuntimeClientAllowsSiblingDirectoryActivity(t *testing.T) {
 	const targetName = "attachment-0123456789abcdef0123456789abcdef.sock"
 	root := shortBoundaryDirectory(t)

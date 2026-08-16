@@ -189,13 +189,7 @@ func pinRuntimeAttachmentGeneration(
 }
 
 func sameRuntimeAttachmentExactGeneration(left, right reporter.RuntimeSocketIdentity) bool {
-	if !sameRuntimeAttachmentNode(left, right) {
-		return false
-	}
-	if right.BirthSec != 0 || right.BirthNsec != 0 {
-		return left.BirthSec == right.BirthSec && left.BirthNsec == right.BirthNsec
-	}
-	return left.ChangeSec == right.ChangeSec && left.ChangeNsec == right.ChangeNsec
+	return sameRuntimeAttachmentStableDirectory(left, right)
 }
 
 func runtimeAttachmentStatsSameNode(left, right unix.Stat_t) bool {

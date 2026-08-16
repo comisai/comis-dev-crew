@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/comisai/comis-dev-crew/internal/reporter"
 	"github.com/comisai/comis-dev-crew/internal/store/sqlite"
 )
 
@@ -90,5 +91,20 @@ func TestRuntimeAttachmentRegistrationJoinsAcceptedCancellation(t *testing.T) {
 	request := runtimeAttachmentRequest(t, workspace, "task-registration-cancelled")
 	if _, err := coordinator.PrepareRuntimeAttachment(ctx, request); !errors.Is(err, context.Canceled) {
 		t.Fatalf("PrepareRuntimeAttachment(accepted cancellation) error = %v", err)
+	}
+	registered := make(chan *reporter.RuntimeServer, 1)
+	go func() {
+		registration := <-coordinator.registrations
+		registered <- registration.server
+		registration.ready <- nil
+	}()
+	attachment, err := coordinator.PrepareRuntimeAttachment(context.Background(), request)
+	if err != nil {
+		t.Fatalf("PrepareRuntimeAttachment(replay after cancellation) error = %v", err)
+	}
+	server := <-registered
+	t.Cleanup(func() { _ = server.Close() })
+	if attachment.SourcePath == "" || attachment.RelayIdentity == "" {
+		t.Fatalf("PrepareRuntimeAttachment(replay after cancellation) = %#v", attachment)
 	}
 }
