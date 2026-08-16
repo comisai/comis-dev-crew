@@ -2,11 +2,8 @@ package service
 
 import (
 	"errors"
-	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -85,9 +82,11 @@ func runtimeAttachmentPathIdentity(path string) (reporter.RuntimeSocketIdentity,
 }
 
 func runtimeAttachmentStatIdentity(stat unix.Stat_t) (reporter.RuntimeSocketIdentity, error) {
+	birthSec, birthNsec := runtimeAttachmentStatBirthTime(stat)
 	identity := reporter.RuntimeSocketIdentity{
 		Device: uint64(stat.Dev), Inode: stat.Ino,
 		ChangeSec: stat.Ctim.Sec, ChangeNsec: stat.Ctim.Nsec,
+		BirthSec: birthSec, BirthNsec: birthNsec,
 	}
 	if !identity.Valid() {
 		return reporter.RuntimeSocketIdentity{}, errors.New("runtime attachment filesystem identity is invalid")
@@ -163,16 +162,17 @@ func (pinned *pinnedTaskRuntimeDirectory) close() error {
 	return nil
 }
 
-func runtimeAttachmentIdentityName(taskHandle string) (string, error) {
-	if domain.ValidateTaskHandle(taskHandle) != nil {
-		return "", errors.New("runtime attachment identity record name is invalid")
-	}
-	return taskHandle + runtimeAttachmentIdentitySuffix, nil
-}
-
 func (coordinator *runtimeAttachmentCoordinator) persistRuntimeAttachmentIdentity(
 	taskHandle string,
 	identity reporter.RuntimeSocketIdentity,
+) error {
+	return coordinator.persistRuntimeAttachmentIdentityWithPrior(taskHandle, identity, nil)
+}
+
+func (coordinator *runtimeAttachmentCoordinator) persistRuntimeAttachmentIdentityWithPrior(
+	taskHandle string,
+	identity reporter.RuntimeSocketIdentity,
+	priorTaskIdentity *reporter.RuntimeSocketIdentity,
 ) error {
 	if !identity.Valid() {
 		return errors.New("persist runtime attachment identity: identity is invalid")
@@ -181,136 +181,32 @@ func (coordinator *runtimeAttachmentCoordinator) persistRuntimeAttachmentIdentit
 	if err != nil || missing {
 		return errors.New("persist runtime attachment identity: task directory is unavailable")
 	}
-	resultErr := persistPinnedRuntimeAttachmentIdentity(pinned, runtimeAttachmentIdentityRecord{
-		Task: pinned.taskIdentity, Socket: identity,
-	})
+	record := runtimeAttachmentIdentityRecord{Task: pinned.taskIdentity, Socket: identity}
+	var resultErr error
+	if priorTaskIdentity == nil {
+		resultErr = persistPinnedRuntimeAttachmentIdentity(pinned, record, nil)
+	} else {
+		_, resultErr = publishPinnedRuntimeAttachmentIdentity(pinned, record, *priorTaskIdentity, nil)
+	}
 	return errors.Join(resultErr, pinned.close())
 }
 
-func persistPinnedRuntimeAttachmentIdentity(
-	pinned *pinnedTaskRuntimeDirectory,
-	record runtimeAttachmentIdentityRecord,
-) error {
-	current, mode, found, err := readPinnedRuntimeSocketIdentity(pinned.taskDescriptor)
-	if err != nil || !found || current != record.Socket || mode&unix.S_IFMT != unix.S_IFSOCK || mode&0o777 != 0o600 {
-		return errors.New("persist runtime attachment identity: prepared socket identity differs")
-	}
-	name, err := runtimeAttachmentIdentityName(pinned.taskHandle)
-	if err != nil {
-		return err
-	}
-	var existing unix.Stat_t
-	if err := unix.Fstatat(pinned.runtimeRootDescriptor, name, &existing, unix.AT_SYMLINK_NOFOLLOW); err == nil {
-		if existing.Mode&unix.S_IFMT != unix.S_IFREG || existing.Mode&0o777 != 0o600 {
-			return errors.New("persist runtime attachment identity: record is unsafe")
-		}
-	} else if !errors.Is(err, unix.ENOENT) {
-		return errors.New("persist runtime attachment identity: record is unavailable")
-	}
-	descriptor, err := unix.Openat(
-		pinned.runtimeRootDescriptor,
-		name,
-		unix.O_WRONLY|unix.O_CREAT|unix.O_TRUNC|unix.O_NOFOLLOW|unix.O_CLOEXEC,
-		0o600,
-	)
-	if err != nil {
-		return errors.New("persist runtime attachment identity: record is unavailable")
-	}
-	var recordStat unix.Stat_t
-	if err := unix.Fstat(descriptor, &recordStat); err != nil || recordStat.Mode&unix.S_IFMT != unix.S_IFREG || recordStat.Mode&0o777 != 0o600 {
-		_ = unix.Close(descriptor)
-		return errors.New("persist runtime attachment identity: record is unsafe")
-	}
-	file := os.NewFile(uintptr(descriptor), name)
-	if file == nil {
-		_ = unix.Close(descriptor)
-		return errors.New("persist runtime attachment identity: record is unavailable")
-	}
-	encoded := formatRuntimeAttachmentIdentityRecord(record)
-	written, writeErr := file.WriteString(encoded)
-	syncErr := file.Sync()
-	closeErr := file.Close()
-	if writeErr != nil || written != len(encoded) || syncErr != nil || closeErr != nil || unix.Fsync(pinned.runtimeRootDescriptor) != nil {
-		return errors.New("persist runtime attachment identity: record write failed")
-	}
-	return nil
-}
-
-func formatRuntimeAttachmentIdentityRecord(record runtimeAttachmentIdentityRecord) string {
-	return fmt.Sprintf(
-		"%016x:%016x:%016x:%016x:%016x:%016x:%016x:%016x\n",
-		record.Task.Device, record.Task.Inode, uint64(record.Task.ChangeSec), uint64(record.Task.ChangeNsec),
-		record.Socket.Device, record.Socket.Inode, uint64(record.Socket.ChangeSec), uint64(record.Socket.ChangeNsec),
-	)
-}
-
-func parseRuntimeAttachmentIdentityRecord(encoded string) (runtimeAttachmentIdentityRecord, error) {
-	if len(encoded) != 136 || encoded[len(encoded)-1] != '\n' {
-		return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
-	}
-	parts := strings.Split(encoded[:len(encoded)-1], ":")
-	if len(parts) != 8 {
-		return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
-	}
-	values := make([]uint64, len(parts))
-	for index, part := range parts {
-		if len(part) != 16 {
-			return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
-		}
-		value, err := strconv.ParseUint(part, 16, 64)
-		if err != nil {
-			return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
-		}
-		values[index] = value
-	}
-	record := runtimeAttachmentIdentityRecord{
-		Task: reporter.RuntimeSocketIdentity{
-			Device: values[0], Inode: values[1], ChangeSec: int64(values[2]), ChangeNsec: int64(values[3]),
-		},
-		Socket: reporter.RuntimeSocketIdentity{
-			Device: values[4], Inode: values[5], ChangeSec: int64(values[6]), ChangeNsec: int64(values[7]),
-		},
-	}
-	if !record.Task.Valid() || !record.Socket.Valid() {
-		return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
-	}
-	return record, nil
-}
-
-func readRuntimeAttachmentIdentityRecord(
-	runtimeRootDescriptor int,
+func (coordinator *runtimeAttachmentCoordinator) runtimeAttachmentReplacementAuthority(
 	taskHandle string,
-) (runtimeAttachmentIdentityRecord, reporter.RuntimeSocketIdentity, bool, error) {
-	name, err := runtimeAttachmentIdentityName(taskHandle)
+) (*reporter.RuntimeSocketIdentity, error) {
+	runtimeRootDescriptor, err := coordinator.pinRuntimeRoot()
 	if err != nil {
-		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, err
+		return nil, err
 	}
-	descriptor, err := unix.Openat(runtimeRootDescriptor, name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-	if errors.Is(err, unix.ENOENT) {
-		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, nil
+	record, _, found, readErr := readRuntimeAttachmentIdentityRecord(runtimeRootDescriptor, taskHandle)
+	closeErr := closeRuntimeRootDescriptor(runtimeRootDescriptor)
+	if readErr != nil || closeErr != nil {
+		return nil, errors.New("runtime attachment replacement authority is unavailable")
 	}
-	if err != nil {
-		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, errors.New("runtime attachment identity record is unavailable")
+	if !found {
+		return nil, nil
 	}
-	var recordStat unix.Stat_t
-	statErr := unix.Fstat(descriptor, &recordStat)
-	recordIdentity, recordIdentityErr := runtimeAttachmentStatIdentity(recordStat)
-	file := os.NewFile(uintptr(descriptor), name)
-	if file == nil {
-		_ = unix.Close(descriptor)
-		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, errors.New("runtime attachment identity record is unavailable")
-	}
-	encoded, readErr := io.ReadAll(io.LimitReader(file, 137))
-	closeErr := file.Close()
-	if statErr != nil || recordIdentityErr != nil || recordStat.Mode&unix.S_IFMT != unix.S_IFREG || recordStat.Mode&0o777 != 0o600 ||
-		readErr != nil || len(encoded) > 136 || closeErr != nil {
-		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, errors.New("runtime attachment identity record is unsafe")
-	}
-	record, err := parseRuntimeAttachmentIdentityRecord(string(encoded))
-	if err != nil {
-		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, err
-	}
-	return record, recordIdentity, true, nil
+	return &record.Task, nil
 }
 
 func readPinnedRuntimeSocketIdentity(
@@ -334,7 +230,7 @@ func (coordinator *runtimeAttachmentCoordinator) removeTaskRuntimeDirectory(task
 	if err != nil {
 		return err
 	}
-	record, recordIdentity, identityFound, err := readRuntimeAttachmentIdentityRecord(runtimeRootDescriptor, taskHandle)
+	record, _, identityFound, err := readRuntimeAttachmentIdentityRecord(runtimeRootDescriptor, taskHandle)
 	if err != nil {
 		return errors.Join(err, closeRuntimeRootDescriptor(runtimeRootDescriptor))
 	}
@@ -352,16 +248,15 @@ func (coordinator *runtimeAttachmentCoordinator) removeTaskRuntimeDirectory(task
 		}
 		return closeRuntimeRootDescriptor(runtimeRootDescriptor)
 	}
-	name, nameErr := runtimeAttachmentIdentityName(taskHandle)
-	if nameErr != nil {
-		return errors.Join(nameErr, closeRuntimeRootDescriptor(runtimeRootDescriptor))
-	}
 	if taskMissing {
 		removeErr := reporter.QuarantineRuntimePath(
-			runtimeRootDescriptor, name, recordIdentity, reporter.RuntimePathRegular, 0o600,
+			runtimeRootDescriptor, taskHandle, record.Task, reporter.RuntimePathDirectory, 0o700,
 		)
-		if removeErr == nil {
-			removeErr = unix.Fsync(runtimeRootDescriptor)
+		if errors.Is(removeErr, reporter.ErrRuntimePathMissing) {
+			removeErr = nil
+		}
+		if removeErr == nil && !runtimeAttachmentPathAbsent(runtimeRootDescriptor, taskHandle) {
+			removeErr = errors.New("task runtime directory replacement was preserved")
 		}
 		return errors.Join(removeErr, closeRuntimeRootDescriptor(runtimeRootDescriptor))
 	}
@@ -369,49 +264,85 @@ func (coordinator *runtimeAttachmentCoordinator) removeTaskRuntimeDirectory(task
 		runtimeRootDescriptor: runtimeRootDescriptor, taskDescriptor: taskDescriptor,
 		taskHandle: taskHandle, taskIdentity: taskIdentity,
 	}
-	if !sameRuntimeAttachmentNode(record.Task, taskIdentity) {
+	if record.Task != taskIdentity {
 		return errors.Join(errors.New("task runtime directory identity differs; path preserved"), pinned.close())
 	}
-	resultErr := removePinnedTaskRuntimeDirectory(pinned, record)
-	if resultErr == nil {
-		resultErr = reporter.QuarantineRuntimePath(
-			pinned.runtimeRootDescriptor, name, recordIdentity, reporter.RuntimePathRegular, 0o600,
-		)
-	}
-	if resultErr == nil && unix.Fsync(pinned.runtimeRootDescriptor) != nil {
-		resultErr = errors.New("runtime attachment identity record update cannot be synchronized")
-	}
+	resultErr := removePinnedRuntimeAttachment(pinned, record)
 	return errors.Join(resultErr, pinned.close())
+}
+
+func (coordinator *runtimeAttachmentCoordinator) pinRuntimeAttachmentRelease(
+	taskHandle string,
+) (*pinnedTaskRuntimeDirectory, runtimeAttachmentIdentityRecord, error) {
+	pinned, missing, err := coordinator.pinTaskRuntimeDirectory(taskHandle)
+	if err != nil || missing {
+		return nil, runtimeAttachmentIdentityRecord{},
+			errors.New("task runtime directory identity is unavailable")
+	}
+	record, _, found, err := readRuntimeAttachmentIdentityRecord(pinned.runtimeRootDescriptor, taskHandle)
+	if err != nil || !found || record.Task != pinned.taskIdentity {
+		return nil, runtimeAttachmentIdentityRecord{},
+			errors.Join(errors.New("task runtime directory identity differs; path preserved"), pinned.close())
+	}
+	return pinned, record, nil
+}
+
+func removePinnedRuntimeAttachment(
+	pinned *pinnedTaskRuntimeDirectory,
+	record runtimeAttachmentIdentityRecord,
+) error {
+	return removePinnedTaskRuntimeDirectory(pinned, record)
 }
 
 func removePinnedTaskRuntimeDirectory(
 	pinned *pinnedTaskRuntimeDirectory,
 	record runtimeAttachmentIdentityRecord,
 ) error {
-	_, _, socketFound, err := readPinnedRuntimeSocketIdentity(pinned.taskDescriptor)
+	if err := reporter.QuarantineRuntimePath(
+		pinned.taskDescriptor, "attachment.sock", record.Socket, reporter.RuntimePathSocket, 0o600,
+	); err != nil && !errors.Is(err, reporter.ErrRuntimePathMissing) {
+		return errors.New("task runtime attachment cannot be removed")
+	}
+	if !runtimeAttachmentPathAbsent(pinned.taskDescriptor, "attachment.sock") {
+		return errors.New("task runtime attachment replacement was preserved")
+	}
+	current, err := stagePinnedRuntimeAttachmentDirectory(pinned, record)
 	if err != nil {
 		return err
-	}
-	if socketFound {
-		if err := reporter.QuarantineRuntimePath(
-			pinned.taskDescriptor, "attachment.sock", record.Socket, reporter.RuntimePathSocket, 0o600,
-		); err != nil && !errors.Is(err, reporter.ErrRuntimePathMissing) {
-			return errors.New("task runtime attachment cannot be removed")
-		}
-	}
-	if err := unix.Fsync(pinned.taskDescriptor); err != nil {
-		return errors.New("task runtime directory update cannot be synchronized")
-	}
-	current, err := runtimeAttachmentDescriptorIdentity(pinned.taskDescriptor)
-	if err != nil || !sameRuntimeAttachmentNode(current, pinned.taskIdentity) {
-		return errors.New("task runtime directory identity is unavailable")
 	}
 	if err := reporter.QuarantineRuntimePath(
 		pinned.runtimeRootDescriptor, pinned.taskHandle, current, reporter.RuntimePathDirectory, 0o700,
 	); err != nil {
 		return errors.New("task runtime directory is not empty or unavailable")
 	}
+	if !runtimeAttachmentPathAbsent(pinned.runtimeRootDescriptor, pinned.taskHandle) {
+		return errors.New("task runtime directory replacement was preserved")
+	}
 	return nil
+}
+
+func stagePinnedRuntimeAttachmentDirectory(
+	pinned *pinnedTaskRuntimeDirectory,
+	record runtimeAttachmentIdentityRecord,
+) (reporter.RuntimeSocketIdentity, error) {
+	if err := unix.Fsync(pinned.taskDescriptor); err != nil {
+		return reporter.RuntimeSocketIdentity{}, errors.New("task runtime directory update cannot be synchronized")
+	}
+	current, err := runtimeAttachmentDescriptorIdentity(pinned.taskDescriptor)
+	if err != nil || !sameRuntimeAttachmentNode(current, pinned.taskIdentity) {
+		return reporter.RuntimeSocketIdentity{}, errors.New("task runtime directory identity is unavailable")
+	}
+	staged := record
+	staged.Task = current
+	if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, staged, record.Task, nil); err != nil {
+		return reporter.RuntimeSocketIdentity{}, errors.New("task runtime directory identity cannot be staged")
+	}
+	return current, nil
+}
+
+func runtimeAttachmentPathAbsent(directoryDescriptor int, name string) bool {
+	var stat unix.Stat_t
+	return errors.Is(unix.Fstatat(directoryDescriptor, name, &stat, unix.AT_SYMLINK_NOFOLLOW), unix.ENOENT)
 }
 
 func sameRuntimeAttachmentNode(left, right reporter.RuntimeSocketIdentity) bool {

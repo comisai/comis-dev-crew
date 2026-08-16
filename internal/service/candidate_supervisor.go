@@ -182,6 +182,9 @@ func (supervisor *candidateSupervisor) ValidateTask(
 	if reconciled && !candidateMatchesReconciledSnapshot(task, snapshot, reconciledSnapshot) {
 		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: Git evidence differs from reconciliation authority")
 	}
+	if candidateRequiresUnverifiedEvidence(task, snapshot) {
+		return supervisor.commitUnverifiedCandidate(ctx, task, profile, snapshot, openDecisions)
+	}
 	receipts, requiredLocal, err := supervisor.runLocalChecks(ctx, task, profile, snapshot)
 	if err != nil {
 		return domain.Task{}, domain.CandidateJudgment{}, err
@@ -189,6 +192,9 @@ func (supervisor *candidateSupervisor) ValidateTask(
 	afterChecks, err := supervisor.config.Git.InspectCandidate(ctx, devgit.CandidateSnapshotRequest{
 		TaskHandle: taskHandle, RepositoryID: task.RepositoryID, WorktreePath: preparation.RequestedWorkspaceRoot,
 	})
+	if err == nil && afterChecks != snapshot && candidateRequiresUnverifiedEvidence(task, afterChecks) {
+		return supervisor.commitUnverifiedCandidate(ctx, task, profile, afterChecks, openDecisions)
+	}
 	if err != nil || afterChecks != snapshot {
 		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: Git evidence changed during validation")
 	}

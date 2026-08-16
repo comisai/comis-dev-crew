@@ -163,7 +163,8 @@ func (bundle DeliveryEvidenceBundle) validate() error {
 	if bundle.WorktreeCleanliness != WorktreeClean && bundle.WorktreeCleanliness != WorktreeDirty && bundle.WorktreeCleanliness != WorktreeUnknown {
 		return errors.New("seal delivery evidence: worktree posture is invalid")
 	}
-	if len(bundle.ValidationReceipts) == 0 || len(bundle.ValidationReceipts) > 64 {
+	if len(bundle.ValidationReceipts) > 64 ||
+		(len(bundle.ValidationReceipts) == 0 && bundle.WorktreeCleanliness == WorktreeClean && bundle.HeadRevision != bundle.BaseRevision) {
 		return errors.New("seal delivery evidence: validation receipts are invalid")
 	}
 	receipts := make(map[string]struct{}, len(bundle.ValidationReceipts))

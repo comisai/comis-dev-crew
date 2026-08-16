@@ -561,6 +561,34 @@ func TestGitHubAdapter_TreatsMalformedCheckStateConservatively(t *testing.T) {
 	}
 }
 
+func TestGitHubAdapter_TreatsMalformedCheckNameAsUnknownTruth(t *testing.T) {
+	head := strings.Repeat("9", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path != "/repos/comisai/fixture/commits/"+head+"/check-runs" {
+			http.NotFound(response, request)
+			return
+		}
+		_, _ = response.Write([]byte(`{"total_count":2,"check_runs":[` +
+			`{"id":41,"name":"ci/unit","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"},` +
+			`{"id":42,"name":42,"status":"queued","conclusion":null,"started_at":"2026-08-14T20:05:00Z"}` +
+			`]}`))
+	}))
+	defer server.Close()
+	adapter, err := NewGitHubAdapter(validGitHubConfig(server))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks, err := adapter.readChecks(context.Background(), "read-token", head, []string{"ci/unit"})
+	if err != nil {
+		t.Fatalf("readChecks(malformed name) error = %v", err)
+	}
+	want := []domain.ForgeCheckEvidence{{Name: "ci/unit", Conclusion: domain.CheckUnknown}}
+	if !reflect.DeepEqual(checks, want) {
+		t.Fatalf("readChecks(malformed name) = %#v, want %#v", checks, want)
+	}
+}
+
 type staticCredentialSource struct{ credential Credential }
 
 func (source staticCredentialSource) Resolve(context.Context) (Credential, error) {

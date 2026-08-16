@@ -192,7 +192,7 @@ type githubChecks struct {
 	TotalCount json.RawMessage `json:"total_count"`
 	Runs       []struct {
 		ID         json.RawMessage `json:"id"`
-		Name       string          `json:"name"`
+		Name       json.RawMessage `json:"name"`
 		Status     json.RawMessage `json:"status"`
 		Conclusion json.RawMessage `json:"conclusion"`
 		StartedAt  json.RawMessage `json:"started_at"`
@@ -259,23 +259,24 @@ func (adapter *GitHubAdapter) readChecks(
 	seenIDs := make(map[int64]string, len(response.Runs))
 	poisoned := make(map[string]struct{})
 	for _, run := range response.Runs {
-		if run.Name == "" || len(run.Name) > 128 || strings.TrimSpace(run.Name) != run.Name {
-			return nil, errors.New("deliver GitHub pull request: check identity is invalid")
+		name, nameKnown := parseGitHubCheckName(run.Name)
+		if !nameKnown {
+			return unknownRequiredChecks(required), nil
 		}
 		id, identityKnown := parseGitHubCheckID(run.ID)
 		if !identityKnown {
-			poisoned[run.Name] = struct{}{}
+			poisoned[name] = struct{}{}
 			continue
 		}
 		if priorName, duplicate := seenIDs[id]; duplicate {
 			poisoned[priorName] = struct{}{}
-			poisoned[run.Name] = struct{}{}
+			poisoned[name] = struct{}{}
 			continue
 		}
-		seenIDs[id] = run.Name
+		seenIDs[id] = name
 		status, rawConclusion, stateKnown := parseGitHubCheckState(run.Status, run.Conclusion)
 		if !stateKnown {
-			poisoned[run.Name] = struct{}{}
+			poisoned[name] = struct{}{}
 			continue
 		}
 		startedAt, recencyKnown := parseGitHubCheckRecency(run.StartedAt)
@@ -283,17 +284,17 @@ func (adapter *GitHubAdapter) readChecks(
 		if !recencyKnown {
 			conclusion = domain.CheckUnknown
 		}
-		current, exists := observed[run.Name]
+		current, exists := observed[name]
 		if exists && (!current.recencyKnown || !recencyKnown) {
 			current.recencyKnown = false
 			current.conclusion = domain.CheckUnknown
-			observed[run.Name] = current
+			observed[name] = current
 			continue
 		}
 		if exists && (startedAt.Before(current.startedAt) || startedAt.Equal(current.startedAt) && id < current.id) {
 			continue
 		}
-		observed[run.Name] = observedCheck{
+		observed[name] = observedCheck{
 			id: id, startedAt: startedAt, recencyKnown: recencyKnown,
 			conclusion: conclusion,
 		}

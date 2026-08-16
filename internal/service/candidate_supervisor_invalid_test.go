@@ -7,6 +7,7 @@ import (
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
 	devgit "github.com/comisai/comis-dev-crew/internal/git"
+	"github.com/comisai/comis-dev-crew/internal/validation"
 )
 
 func TestCandidateSupervisor_PreservesDirtyBaseCandidateWithoutForgeMutation(t *testing.T) {
@@ -33,7 +34,7 @@ func TestCandidateSupervisor_PreservesDirtyBaseCandidateWithoutForgeMutation(t *
 		fixture.store.task.State != domain.TaskValidating {
 		t.Fatalf("Run() task = %#v, judgment = %#v", fixture.store.task, judgment)
 	}
-	if fixture.runner.calls != 1 || fixture.pullRequests.calls != 0 || fixture.store.evidence == nil {
+	if fixture.runner.calls != 0 || fixture.pullRequests.calls != 0 || fixture.store.evidence == nil {
 		t.Fatalf("invalid candidate effects: validation=%d forge=%d evidence=%t",
 			fixture.runner.calls, fixture.pullRequests.calls, fixture.store.evidence != nil)
 	}
@@ -64,7 +65,7 @@ func TestCandidateSupervisor_DoesNotRepeatValidationForUnchangedDirtyCandidate(t
 			t.Fatalf("ValidateTask(attempt %d) judgment = %#v", attempt+1, judgment)
 		}
 	}
-	if fixture.runner.calls != 1 || fixture.pullRequests.calls != 0 {
+	if fixture.runner.calls != 0 || fixture.pullRequests.calls != 0 {
 		t.Fatalf("unchanged dirty candidate effects: validation=%d forge=%d",
 			fixture.runner.calls, fixture.pullRequests.calls)
 	}
@@ -92,10 +93,38 @@ func TestCandidateSupervisor_DoesNotRepeatValidationForUnchangedBaseCandidate(t 
 					t.Fatalf("ValidateTask(attempt %d) judgment = %#v", attempt+1, judgment)
 				}
 			}
-			if fixture.runner.calls != 1 || fixture.pullRequests.calls != 0 || fixture.artifact.calls != 0 {
+			if fixture.runner.calls != 0 || fixture.pullRequests.calls != 0 || fixture.artifact.calls != 0 {
 				t.Fatalf("unchanged base candidate effects: validation=%d forge=%d artifact=%d",
 					fixture.runner.calls, fixture.pullRequests.calls, fixture.artifact.calls)
 			}
 		})
+	}
+}
+
+func TestCandidateSupervisor_CommitsDirtyPostureBeforeUnavailableValidation(t *testing.T) {
+	fixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	fixture.snapshot.Cleanliness = devgit.CandidateDirty
+	fixture.git.snapshots = []devgit.CandidateSnapshot{fixture.snapshot}
+	fixture.runner.receipt = validation.Receipt{}
+	fixture.runner.err = errors.New("validation unavailable")
+	supervisor, err := newCandidateSupervisor(fixture.config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	fixture.store.onCommit = cancel
+	if err := supervisor.Run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context.Canceled after durable unverified evidence", err)
+	}
+	if fixture.runner.calls != 0 || fixture.store.evidence == nil {
+		t.Fatalf("dirty candidate effects: validation=%d evidence=%t", fixture.runner.calls, fixture.store.evidence != nil)
+	}
+	judgment := domain.JudgeCandidate(domain.CandidateJudgeInput{
+		Task: fixture.task, Evidence: fixture.store.evidence,
+		RequiredLocalChecks: fixture.store.requiredLocalChecks,
+		RequiredForgeChecks: fixture.store.requiredForgeChecks, Now: fixture.store.judgedAt,
+	})
+	if judgment.Outcome != domain.CandidateUnknown || judgment.Reason != domain.CandidateWorktreeUnverified {
+		t.Fatalf("dirty candidate judgment = %#v", judgment)
 	}
 }

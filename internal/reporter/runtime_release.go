@@ -18,12 +18,16 @@ type RuntimeSocketIdentity struct {
 	Inode      uint64
 	ChangeSec  int64
 	ChangeNsec int64
+	BirthSec   int64
+	BirthNsec  int64
 }
 
 // Valid reports whether an identity can bind later removal authority.
 func (identity RuntimeSocketIdentity) Valid() bool {
 	return identity.Device != 0 && identity.Inode != 0 && identity.ChangeSec > 0 &&
-		identity.ChangeNsec >= 0 && identity.ChangeNsec < int64(time.Second)
+		identity.ChangeNsec >= 0 && identity.ChangeNsec < int64(time.Second) &&
+		((identity.BirthSec == 0 && identity.BirthNsec == 0) ||
+			(identity.BirthSec > 0 && identity.BirthNsec >= 0 && identity.BirthNsec < int64(time.Second)))
 }
 
 // SocketIdentity returns the immutable identity captured when listening began.
@@ -129,9 +133,11 @@ func runtimeSocketFileNode(info os.FileInfo) (uint64, uint64, error) {
 }
 
 func runtimeSocketStatIdentity(stat unix.Stat_t) (RuntimeSocketIdentity, error) {
+	birthSec, birthNsec := runtimeStatBirthTime(stat)
 	identity := RuntimeSocketIdentity{
 		Device: uint64(stat.Dev), Inode: stat.Ino,
 		ChangeSec: stat.Ctim.Sec, ChangeNsec: stat.Ctim.Nsec,
+		BirthSec: birthSec, BirthNsec: birthNsec,
 	}
 	if !identity.Valid() {
 		return RuntimeSocketIdentity{}, errors.New("runtime attachment socket identity is invalid")

@@ -144,7 +144,7 @@ func (coordinator *runtimeAttachmentCoordinator) PrepareRuntimeAttachment(
 	if err := attachment.Validate(); err != nil || len([]byte(attachment.SourcePath)) > 100 {
 		return application.PreparedRuntimeAttachment{}, errors.New("prepare runtime attachment: socket path exceeds the Unix bound")
 	}
-	entry, err := coordinator.listenRuntimeAttachment(request, attachment)
+	entry, err := coordinator.listenRuntimeAttachment(request, attachment, nil)
 	if err != nil {
 		return application.PreparedRuntimeAttachment{}, err
 	}
@@ -167,42 +167,6 @@ func (coordinator *runtimeAttachmentCoordinator) PrepareRuntimeAttachment(
 		delete(coordinator.entries, request.TaskHandle)
 		return application.PreparedRuntimeAttachment{}, errors.Join(ctx.Err(), entry.server.Close())
 	}
-}
-
-func (coordinator *runtimeAttachmentCoordinator) listenRuntimeAttachment(
-	request application.RuntimeAttachmentPreparationRequest,
-	attachment application.PreparedRuntimeAttachment,
-) (*runtimeAttachmentEntry, error) {
-	credential, err := coordinator.newCredential()
-	if err != nil {
-		return nil, errors.New("prepare runtime attachment: credential source failed")
-	}
-	endpoint, err := reporter.NewEndpoint(reporter.EndpointConfig{
-		TaskHandle: request.TaskHandle, BriefRevision: request.BriefRevision,
-		BriefRevisionHash: request.BriefRevisionHash, Credential: credential, Sink: coordinator.reportSink,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("prepare runtime attachment endpoint: %w", err)
-	}
-	client, err := reporter.NewClient(endpoint, credential)
-	if err != nil {
-		return nil, fmt.Errorf("prepare runtime attachment client: %w", err)
-	}
-	server, err := reporter.ListenRuntime(reporter.RuntimeServerConfig{
-		SocketPath: attachment.SourcePath, Brief: request.Brief, Reporter: client,
-		AttentionResponses: coordinator, NewAttentionOperationID: coordinator.newAttentionOperationID,
-	})
-	if err != nil {
-		return nil, err
-	}
-	identity, err := server.SocketIdentity()
-	if err != nil {
-		return nil, errors.Join(err, server.Close())
-	}
-	if err := coordinator.persistRuntimeAttachmentIdentity(request.TaskHandle, identity); err != nil {
-		return nil, errors.Join(err, server.Close())
-	}
-	return &runtimeAttachmentEntry{request: request, attachment: attachment, server: server}, nil
 }
 
 func (coordinator *runtimeAttachmentCoordinator) BindRuntimeAttachment(
@@ -334,10 +298,17 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeAttachments(ctx c
 		if err := validateRuntimeAttachmentPreparation(request); err != nil {
 			return nil, errors.Join(fmt.Errorf("recover runtime attachments: %w", err), closeRuntimeServers(servers))
 		}
+		if err := coordinator.removeTaskRuntimeDirectory(task.Handle); err != nil {
+			return nil, errors.Join(errors.New("recover runtime attachments: prior attachment cannot be released"), err, closeRuntimeServers(servers))
+		}
+		priorTaskIdentity, err := coordinator.runtimeAttachmentReplacementAuthority(task.Handle)
+		if err != nil {
+			return nil, errors.Join(err, closeRuntimeServers(servers))
+		}
 		if err := ensureTaskRuntimeDirectory(filepath.Dir(expectedSource)); err != nil {
 			return nil, errors.Join(err, closeRuntimeServers(servers))
 		}
-		entry, err := coordinator.listenRuntimeAttachment(request, preparation.RequestedAttachment)
+		entry, err := coordinator.listenRuntimeAttachment(request, preparation.RequestedAttachment, priorTaskIdentity)
 		if err != nil {
 			return nil, errors.Join(fmt.Errorf("recover runtime attachments: %w", err), closeRuntimeServers(servers))
 		}
@@ -415,7 +386,7 @@ func (coordinator *runtimeAttachmentCoordinator) stopServers(
 	resultErr error,
 ) error {
 	for server := range active {
-		resultErr = errors.Join(resultErr, server.Close())
+		resultErr = errors.Join(resultErr, coordinator.closeRuntimeServerForShutdown(server))
 	}
 	for range active {
 		result := <-results
@@ -424,6 +395,33 @@ func (coordinator *runtimeAttachmentCoordinator) stopServers(
 		}
 	}
 	return resultErr
+}
+
+func (coordinator *runtimeAttachmentCoordinator) closeRuntimeServerForShutdown(server *reporter.RuntimeServer) error {
+	coordinator.mu.Lock()
+	var taskHandle string
+	for handle, entry := range coordinator.entries {
+		if entry.server == server {
+			taskHandle = handle
+			break
+		}
+	}
+	var pinned *pinnedTaskRuntimeDirectory
+	var record runtimeAttachmentIdentityRecord
+	var pinErr error
+	if taskHandle != "" {
+		pinned, record, pinErr = coordinator.pinRuntimeAttachmentRelease(taskHandle)
+	}
+	coordinator.mu.Unlock()
+	closeErr := server.Close()
+	if pinErr != nil {
+		return errors.Join(pinErr, closeErr)
+	}
+	if pinned == nil {
+		return closeErr
+	}
+	_, stageErr := stagePinnedRuntimeAttachmentDirectory(pinned, record)
+	return errors.Join(closeErr, stageErr, pinned.close())
 }
 
 func validateRuntimeAttachmentPreparation(request application.RuntimeAttachmentPreparationRequest) error {

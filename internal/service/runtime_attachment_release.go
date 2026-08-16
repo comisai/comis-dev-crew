@@ -30,12 +30,27 @@ func (coordinator *runtimeAttachmentCoordinator) ReleaseRuntimeAttachment(ctx co
 		return recoveryErr
 	}
 	entry := coordinator.entries[taskHandle]
+	var pinned *pinnedTaskRuntimeDirectory
+	var record runtimeAttachmentIdentityRecord
+	if entry != nil {
+		var pinErr error
+		pinned, record, pinErr = coordinator.pinRuntimeAttachmentRelease(taskHandle)
+		if pinErr != nil {
+			coordinator.mu.Unlock()
+			return errors.New("release runtime attachment: task runtime directory identity is unavailable")
+		}
+	}
 	delete(coordinator.entries, taskHandle)
 	coordinator.mu.Unlock()
 	if entry != nil {
 		if err := entry.server.Close(); err != nil {
-			return err
+			return errors.Join(err, pinned.close())
 		}
+		removeErr := removePinnedRuntimeAttachment(pinned, record)
+		if err := errors.Join(removeErr, pinned.close()); err != nil {
+			return errors.New("release runtime attachment: task runtime directory is not empty or unavailable")
+		}
+		return nil
 	}
 	if err := coordinator.removeTaskRuntimeDirectory(taskHandle); err != nil {
 		return errors.New("release runtime attachment: task runtime directory is not empty or unavailable")

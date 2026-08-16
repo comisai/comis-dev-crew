@@ -1,7 +1,6 @@
 package reporter
 
 import (
-	"bytes"
 	"errors"
 	"net"
 	"os"
@@ -32,8 +31,11 @@ func TestQuarantineRuntimePathPreservesConcurrentReplacement(t *testing.T) {
 	var replacementInfo os.FileInfo
 	err = quarantineRuntimePath(
 		pinned.descriptors[len(pinned.descriptors)-1], filepath.Base(socketPath), expected,
-		RuntimePathSocket, 0o600, bytes.NewReader(bytes.Repeat([]byte{1}, 16)),
-		func() error {
+		RuntimePathSocket, 0o600,
+		func(pinnedIdentity RuntimeSocketIdentity) error {
+			if !runtimeSocketIdentityMatches(pinnedIdentity, expected) {
+				return errors.New("quarantine target was not pinned")
+			}
 			replacement = listenRuntimeQuarantineSocket(t, socketPath)
 			var statErr error
 			replacementInfo, statErr = os.Lstat(socketPath)
@@ -123,8 +125,8 @@ func TestQuarantineRuntimeDirectoryPreservesConcurrentReplacement(t *testing.T) 
 	var replacementInfo os.FileInfo
 	err = quarantineRuntimePath(
 		pinned.descriptors[len(pinned.descriptors)-1], filepath.Base(taskPath), expected,
-		RuntimePathDirectory, 0o700, bytes.NewReader(bytes.Repeat([]byte{2}, 16)),
-		func() error {
+		RuntimePathDirectory, 0o700,
+		func(RuntimeSocketIdentity) error {
 			if err := os.Mkdir(taskPath, 0o700); err != nil {
 				return err
 			}
@@ -139,6 +141,45 @@ func TestQuarantineRuntimeDirectoryPreservesConcurrentReplacement(t *testing.T) 
 	current, err := os.Lstat(taskPath)
 	if err != nil || replacementInfo == nil || !os.SameFile(current, replacementInfo) {
 		t.Fatalf("concurrent directory replacement was not preserved: %#v, %v", current, err)
+	}
+}
+
+func TestQuarantineRuntimePathReconcilesStrandedExactIdentity(t *testing.T) {
+	root := boundaryRuntimeDirectory(t)
+	socketPath := filepath.Join(root, "attachment.sock")
+	listener := listenRuntimeQuarantineSocket(t, socketPath)
+	t.Cleanup(func() { _ = listener.Close() })
+	info, err := os.Lstat(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err := captureRuntimeSocketIdentity(socketPath, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := pinRuntimeMountDirectory(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pinned.close()
+	directoryDescriptor := pinned.descriptors[len(pinned.descriptors)-1]
+	quarantine := runtimePathQuarantineName(filepath.Base(socketPath), expected, RuntimePathSocket, 0o600)
+	if err := renameRuntimePathNoReplace(directoryDescriptor, filepath.Base(socketPath), quarantine); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Fsync(directoryDescriptor); err != nil {
+		t.Fatal(err)
+	}
+	if err := QuarantineRuntimePath(
+		directoryDescriptor, filepath.Base(socketPath), expected, RuntimePathSocket, 0o600,
+	); err != nil {
+		t.Fatalf("QuarantineRuntimePath(stranded identity) error = %v", err)
+	}
+	if _, err := os.Lstat(socketPath); !os.IsNotExist(err) {
+		t.Fatalf("original path after reconciliation error = %v, want not exist", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, quarantine)); !os.IsNotExist(err) {
+		t.Fatalf("quarantine path after reconciliation error = %v, want not exist", err)
 	}
 }
 
