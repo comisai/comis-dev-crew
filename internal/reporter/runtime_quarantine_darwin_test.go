@@ -37,8 +37,11 @@ func TestQuarantineRuntimePathReconcilesOriginalDarwinAnchor(t *testing.T) {
 	if err := QuarantineRuntimePath(directory, name, expected, RuntimePathSocket, 0o600); err != nil {
 		t.Fatalf("QuarantineRuntimePath(stranded Darwin anchor) error = %v", err)
 	}
-	if _, err := os.Lstat(quarantinePath); !os.IsNotExist(err) {
-		t.Fatalf("Darwin isolation error = %v, want not exist", err)
+	if info, err := os.Lstat(filepath.Join(quarantinePath, runtimePathIsolationTarget)); err != nil || info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("Darwin isolated target = %#v, %v", info, err)
+	}
+	if info, err := os.Lstat(filepath.Join(quarantinePath, anchor)); err != nil || info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("Darwin isolated anchor = %#v, %v", info, err)
 	}
 }
 
@@ -66,7 +69,7 @@ func TestQuarantineRuntimePathReconcilesDarwinAnchorAfterTargetRemoval(t *testin
 	if err := QuarantineRuntimePath(directory, name, expected, RuntimePathSocket, 0o600); err != nil {
 		t.Fatalf("QuarantineRuntimePath(stranded Darwin anchor only) error = %v", err)
 	}
-	if _, err := os.Lstat(quarantinePath); !os.IsNotExist(err) {
-		t.Fatalf("Darwin anchor-only isolation error = %v, want not exist", err)
+	if info, err := os.Lstat(filepath.Join(quarantinePath, anchor)); err != nil || info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("Darwin anchor-only isolation = %#v, %v", info, err)
 	}
 }

@@ -39,7 +39,8 @@ func (coordinator *runtimeAttachmentCoordinator) ReleaseRuntimeAttachment(ctx co
 			coordinator.mu.Unlock()
 			return errors.New("release runtime attachment: task runtime directory identity is unavailable")
 		}
-		if pinErr = preparePinnedRuntimeAttachmentClose(coordinator, pinned, record, entry.server); pinErr != nil {
+		record, pinErr = preparePinnedRuntimeAttachmentClose(coordinator, pinned, record, entry.server)
+		if pinErr != nil {
 			coordinator.mu.Unlock()
 			return errors.Join(pinErr, pinned.close())
 		}

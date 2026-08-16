@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,6 +121,57 @@ func TestOpenRecordedRuntimeReleasePreservesIsolatedDirectoryWithoutUnrecyclable
 		t.Fatalf("isolated release was not preserved: %#v, %v", info, statErr)
 	}
 	_ = closeRuntimeRootDescriptor(rootDescriptor)
+}
+
+func TestRuntimeAttachmentReleaseBindsPostRenameIdentityWithoutBirthTime(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, &runtimeAttachmentRecoveryStore{}, time.Now().UTC())
+	taskHandle := "task-runtime-release-post-rename"
+	taskRoot := filepath.Join(runtimeRoot, taskHandle)
+	if err := os.Mkdir(taskRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	socketPath := filepath.Join(taskRoot, "attachment.sock")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	listener.SetUnlinkOnClose(false)
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	socketIdentity, err := runtimeAttachmentPathIdentity(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, missing, err := coordinator.pinTaskRuntimeDirectory(taskHandle)
+	if err != nil || missing {
+		t.Fatalf("pinTaskRuntimeDirectory() = %#v, %t, %v", pinned, missing, err)
+	}
+	record := runtimeAttachmentIdentityRecord{
+		Stage: runtimeAttachmentReleaseIntent, Task: pinned.taskIdentity, Socket: socketIdentity,
+		RelaySeed: runtimeRelaySeedForTest(0x2a),
+	}
+	record.Task.BirthSec, record.Task.BirthNsec = 0, 0
+	if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, record, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	pinned.taskIdentity = record.Task
+	updated, err := isolatePinnedRuntimeAttachmentRelease(pinned, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Stage != runtimeAttachmentReleasing || updated.Task == record.Task ||
+		!sameRuntimeAttachmentNode(updated.Task, record.Task) {
+		t.Fatalf("post-rename release record = %#v", updated)
+	}
+	stored, _, found, err := readRuntimeAttachmentIdentityRecord(pinned.runtimeRootDescriptor, taskHandle)
+	if err != nil || !found || stored != updated {
+		t.Fatalf("stored post-rename release record = %#v, %t, %v", stored, found, err)
+	}
+	_ = pinned.close()
 }
 
 func TestOpenRecordedRuntimeReleaseRejectsDifferentAvailableBirthIdentity(t *testing.T) {
@@ -340,6 +392,17 @@ func (store *runtimeTransitionStore) ListTasks(context.Context) ([]domain.Task, 
 
 func (*runtimeTransitionStore) ListTaskPreparationIntents(context.Context) ([]application.TaskPreparationIntent, error) {
 	return nil, nil
+}
+
+func (*runtimeTransitionStore) ListRuntimeRelayIdentityUpgrades(context.Context) ([]application.RuntimeRelayIdentityUpgrade, error) {
+	return nil, nil
+}
+
+func (*runtimeTransitionStore) CompleteRuntimeRelayIdentityUpgrade(
+	context.Context,
+	application.RuntimeRelayIdentityUpgrade,
+) error {
+	return nil
 }
 
 func (store *runtimeTransitionStore) GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error) {

@@ -61,6 +61,10 @@ func closeRuntimeRemovalPin(pin *runtimeRemovalPin) error {
 	return unix.Close(pin.descriptor)
 }
 
+func preserveRuntimeRemovalPin(pin *runtimeRemovalPin, _ RuntimePathKind) error {
+	return unix.Close(pin.descriptor)
+}
+
 func reconcileRuntimeRemovalAnchor(
 	int,
 	string,

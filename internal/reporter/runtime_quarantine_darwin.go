@@ -99,6 +99,13 @@ func closeRuntimeRemovalPin(pin *runtimeRemovalPin) error {
 	return errors.Join(unlinkErr, syncErr)
 }
 
+func preserveRuntimeRemovalPin(pin *runtimeRemovalPin, kind RuntimePathKind) error {
+	if kind == RuntimePathSocket && pin.descriptor < 0 {
+		return nil
+	}
+	return unix.Close(pin.descriptor)
+}
+
 func runtimeRemovalAnchorName(name string, expected RuntimeSocketIdentity) string {
 	encoded := runtimePathQuarantineName(name, expected, RuntimePathSocket, 0o600)
 	digest := sha256.Sum256([]byte(encoded))

@@ -231,7 +231,8 @@ func parseRuntimeAttachmentIdentityRecord(encoded string) (runtimeAttachmentIden
 		record.Socket == (reporter.RuntimeSocketIdentity{}) ||
 		record.Stage == runtimeAttachmentCreating && record.Task.Valid() &&
 			(record.Socket == (reporter.RuntimeSocketIdentity{}) || record.Socket.Valid()) ||
-		(record.Stage == runtimeAttachmentActive || record.Stage == runtimeAttachmentReleasing) &&
+		(record.Stage == runtimeAttachmentActive || record.Stage == runtimeAttachmentReleaseIntent ||
+			record.Stage == runtimeAttachmentReleasing) &&
 			record.Task.Valid() && record.Socket.Valid()
 	valid = valid && seedNonzero != 0
 	if !valid {

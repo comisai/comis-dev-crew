@@ -19,10 +19,11 @@ const runtimeAttachmentIdentitySuffix = ".attachment.identity"
 type runtimeAttachmentIdentityStage uint8
 
 const (
-	runtimeAttachmentCreatingIntent runtimeAttachmentIdentityStage = iota + 1
-	runtimeAttachmentCreating
-	runtimeAttachmentActive
-	runtimeAttachmentReleasing
+	runtimeAttachmentCreatingIntent runtimeAttachmentIdentityStage = 1
+	runtimeAttachmentCreating       runtimeAttachmentIdentityStage = 2
+	runtimeAttachmentActive         runtimeAttachmentIdentityStage = 3
+	runtimeAttachmentReleasing      runtimeAttachmentIdentityStage = 4
+	runtimeAttachmentReleaseIntent  runtimeAttachmentIdentityStage = 5
 )
 
 type runtimeAttachmentIdentityRecord struct {
@@ -291,7 +292,7 @@ func openRecordedTaskRuntimeDirectory(
 	names := []string{taskHandle}
 	if record.Stage == runtimeAttachmentCreating {
 		names = append(names, runtimeAttachmentCreationName(taskHandle))
-	} else if record.Stage == runtimeAttachmentReleasing {
+	} else if record.Stage == runtimeAttachmentReleaseIntent || record.Stage == runtimeAttachmentReleasing {
 		names = append(names, runtimeAttachmentReleaseName(taskHandle))
 	}
 	var pinned *pinnedTaskRuntimeDirectory
@@ -310,7 +311,10 @@ func openRecordedTaskRuntimeDirectory(
 		}
 		isolatedRelease := record.Stage == runtimeAttachmentReleasing &&
 			name == runtimeAttachmentReleaseName(taskHandle) && sameRuntimeAttachmentStableNode(identity, record.Task)
-		if record.Task != identity && !isolatedRelease &&
+		isolatedIntent := record.Stage == runtimeAttachmentReleaseIntent &&
+			name == runtimeAttachmentReleaseName(taskHandle) && sameRuntimeAttachmentNode(identity, record.Task) &&
+			runtimeAttachmentSocketMatches(descriptor, record.Socket)
+		if record.Task != identity && !isolatedRelease && !isolatedIntent &&
 			(record.Stage == runtimeAttachmentActive || !sameRuntimeAttachmentStableNode(identity, record.Task)) {
 			_ = unix.Close(descriptor)
 			return nil, false, errors.New("task runtime directory identity differs; path preserved")
@@ -366,14 +370,16 @@ func removePinnedTaskRuntimeDirectory(
 	}
 	if record.Stage == runtimeAttachmentActive {
 		staged := record
-		staged.Stage = runtimeAttachmentReleasing
+		staged.Stage = runtimeAttachmentReleaseIntent
 		if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, staged, &record, nil); err != nil {
 			return errors.New("task runtime attachment release cannot be staged")
 		}
 		record = staged
 	}
-	if record.Stage == runtimeAttachmentReleasing {
-		if err := isolatePinnedRuntimeAttachmentRelease(pinned, record); err != nil {
+	if record.Stage == runtimeAttachmentReleaseIntent || record.Stage == runtimeAttachmentReleasing {
+		var err error
+		record, err = isolatePinnedRuntimeAttachmentRelease(pinned, record)
+		if err != nil {
 			return err
 		}
 	}
@@ -398,6 +404,11 @@ func removePinnedTaskRuntimeDirectory(
 		return errors.New("task runtime directory replacement was preserved")
 	}
 	return nil
+}
+
+func runtimeAttachmentSocketMatches(descriptor int, expected reporter.RuntimeSocketIdentity) bool {
+	current, mode, found, err := readPinnedRuntimeSocketIdentity(descriptor)
+	return err == nil && found && current == expected && mode&unix.S_IFMT == unix.S_IFSOCK && mode&0o777 == 0o600
 }
 
 func stagePinnedRuntimeAttachmentDirectory(

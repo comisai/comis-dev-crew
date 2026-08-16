@@ -393,17 +393,19 @@ func getManagedRunPreparation(ctx context.Context, source queryer, task domain.T
 	const query = `SELECT external_run_ref, registration_nonce, expires_at,
 		requested_workspace_root, requested_attachment_kind, requested_attachment_source_path,
 		requested_attachment_relay_identity,
-		state, abandon_reason, disposition, closed_at
+		state, abandon_reason, disposition, closed_at,
+		EXISTS(SELECT 1 FROM runtime_relay_identity_upgrades u WHERE u.task_handle = task_preparations.task_handle)
         FROM task_preparations WHERE task_handle = ?`
 	var preparation application.ManagedRunPreparation
 	var expiresAt string
 	var closedAt sql.NullString
+	var relayUpgradePending bool
 	if err := source.QueryRowContext(ctx, query, task.Handle).Scan(
 		&preparation.ExternalRunRef, &preparation.RegistrationNonce, &expiresAt,
 		&preparation.RequestedWorkspaceRoot, &preparation.RequestedAttachment.Kind,
 		&preparation.RequestedAttachment.SourcePath, &preparation.RequestedAttachment.RelayIdentity,
 		&preparation.State, &preparation.AbandonReason,
-		&preparation.Disposition, &closedAt,
+		&preparation.Disposition, &closedAt, &relayUpgradePending,
 	); err != nil {
 		return application.ManagedRunPreparation{}, err
 	}
@@ -419,7 +421,7 @@ func getManagedRunPreparation(ctx context.Context, source queryer, task domain.T
 		}
 		preparation.ClosedAt = &parsed
 	}
-	if err := preparation.Validate(task.CreatedAt); err != nil || preparation.ExternalRunRef != task.Handle {
+	if err := preparation.Validate(task.CreatedAt); err != nil || preparation.ExternalRunRef != task.Handle || relayUpgradePending {
 		return application.ManagedRunPreparation{}, errors.New("stored managed-run preparation is invalid")
 	}
 	return preparation, nil

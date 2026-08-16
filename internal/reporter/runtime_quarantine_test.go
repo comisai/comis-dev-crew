@@ -58,7 +58,7 @@ func TestQuarantineRuntimePathPreservesConcurrentReplacement(t *testing.T) {
 	}
 }
 
-func TestQuarantineRuntimePathPreservesReplacementBeforeFinalRemoval(t *testing.T) {
+func TestQuarantineRuntimePathKeepsPinnedTargetOutOfMutableUnlink(t *testing.T) {
 	root := boundaryRuntimeDirectory(t)
 	socketPath := filepath.Join(root, "attachment.sock")
 	original := listenRuntimeQuarantineSocket(t, socketPath)
@@ -66,39 +66,18 @@ func TestQuarantineRuntimePathPreservesReplacementBeforeFinalRemoval(t *testing.
 	expected := runtimePathTestIdentity(t, socketPath)
 	directory := runtimePathTestDirectoryDescriptor(t, root)
 	defer unix.Close(directory)
-	var replacement *net.UnixListener
-	var replacementInfo os.FileInfo
-	err := quarantineRuntimePathWithHooks(
-		directory, filepath.Base(socketPath), expected, RuntimePathSocket, 0o600,
-		runtimePathMutationHooks{beforeUnlink: func(isolationDescriptor int, target string) error {
-			isolationIdentity, identityErr := runtimeDescriptorIdentity(isolationDescriptor)
-			if identityErr != nil {
-				return identityErr
-			}
-			isolationPath, pathErr := runtimePinnedDirectoryPath(isolationDescriptor, isolationIdentity)
-			if pathErr != nil {
-				return pathErr
-			}
-			originalName := "pinned-original"
-			if err := unix.Renameat(isolationDescriptor, target, isolationDescriptor, originalName); err != nil {
-				return err
-			}
-			replacement = listenRuntimeQuarantineSocket(t, filepath.Join(isolationPath, target))
-			var statErr error
-			replacementInfo, statErr = os.Lstat(filepath.Join(isolationPath, target))
-			return statErr
-		}}, nil,
-	)
-	if !errors.Is(err, ErrRuntimePathIdentity) {
-		t.Fatalf("quarantineRuntimePathWithHooks(final replacement) error = %v", err)
-	}
-	if replacement != nil {
-		defer replacement.Close()
+	err := QuarantineRuntimePath(directory, filepath.Base(socketPath), expected, RuntimePathSocket, 0o600)
+	if err != nil {
+		t.Fatalf("QuarantineRuntimePath(preserved target) error = %v", err)
 	}
 	isolationName := runtimePathQuarantineName(filepath.Base(socketPath), expected, RuntimePathSocket, 0o600)
-	current, statErr := os.Lstat(filepath.Join(root, isolationName, runtimePathIsolationTarget))
-	if statErr != nil || replacementInfo == nil || !os.SameFile(current, replacementInfo) {
-		t.Fatalf("final replacement was not preserved: %#v, %v", current, statErr)
+	isolated := filepath.Join(root, isolationName, runtimePathIsolationTarget)
+	current, statErr := os.Lstat(isolated)
+	if statErr != nil || current.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("pinned target was not preserved in quarantine: %#v, %v", current, statErr)
+	}
+	if _, statErr := os.Lstat(socketPath); !os.IsNotExist(statErr) {
+		t.Fatalf("authoritative socket path error = %v, want absent", statErr)
 	}
 }
 
@@ -247,8 +226,8 @@ func TestQuarantineRuntimePathReconcilesStrandedExactIdentity(t *testing.T) {
 	if _, err := os.Lstat(socketPath); !os.IsNotExist(err) {
 		t.Fatalf("original path after reconciliation error = %v, want not exist", err)
 	}
-	if _, err := os.Lstat(quarantinePath); !os.IsNotExist(err) {
-		t.Fatalf("quarantine path after reconciliation error = %v, want not exist", err)
+	if info, err := os.Lstat(filepath.Join(quarantinePath, runtimePathIsolationTarget)); err != nil || info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("quarantined identity after reconciliation = %#v, %v", info, err)
 	}
 }
 

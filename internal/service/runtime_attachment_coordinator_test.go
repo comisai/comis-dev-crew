@@ -738,6 +738,17 @@ func (*runtimeAttachmentRecoveryStore) ListTaskPreparationIntents(context.Contex
 	return nil, nil
 }
 
+func (*runtimeAttachmentRecoveryStore) ListRuntimeRelayIdentityUpgrades(context.Context) ([]application.RuntimeRelayIdentityUpgrade, error) {
+	return nil, nil
+}
+
+func (*runtimeAttachmentRecoveryStore) CompleteRuntimeRelayIdentityUpgrade(
+	context.Context,
+	application.RuntimeRelayIdentityUpgrade,
+) error {
+	return nil
+}
+
 func (store *runtimeAttachmentRecoveryStore) GetManagedRunPreparation(
 	context.Context,
 	string,

@@ -16,6 +16,8 @@ import (
 
 type runtimeAttachmentStore interface {
 	application.ReportMutationStore
+	ListRuntimeRelayIdentityUpgrades(context.Context) ([]application.RuntimeRelayIdentityUpgrade, error)
+	CompleteRuntimeRelayIdentityUpgrade(context.Context, application.RuntimeRelayIdentityUpgrade) error
 	ListTaskPreparationIntents(context.Context) ([]application.TaskPreparationIntent, error)
 	ListTasks(context.Context) ([]domain.Task, error)
 	GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error)
@@ -244,6 +246,9 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeAttachments(ctx c
 	if len(coordinator.entries) != 0 {
 		return nil, errors.New("recover runtime attachments: coordinator is already populated")
 	}
+	if err := coordinator.recoverRuntimeRelayIdentityUpgrades(ctx); err != nil {
+		return nil, err
+	}
 	if err := coordinator.recoverTaskPreparationIntents(ctx); err != nil {
 		return nil, err
 	}
@@ -412,7 +417,7 @@ func (coordinator *runtimeAttachmentCoordinator) closeRuntimeServerForShutdown(s
 	if taskHandle != "" {
 		pinned, record, pinErr = coordinator.pinRuntimeAttachmentRelease(taskHandle)
 		if pinErr == nil {
-			pinErr = preparePinnedRuntimeAttachmentClose(coordinator, pinned, record, server)
+			record, pinErr = preparePinnedRuntimeAttachmentClose(coordinator, pinned, record, server)
 		}
 	}
 	coordinator.mu.Unlock()

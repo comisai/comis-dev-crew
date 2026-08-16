@@ -18,7 +18,8 @@ func (coordinator *runtimeAttachmentCoordinator) pinRuntimeAttachmentRelease(
 	}
 	record, _, found, err := readRuntimeAttachmentIdentityRecord(runtimeRootDescriptor, taskHandle)
 	if err != nil || !found ||
-		(record.Stage != runtimeAttachmentActive && record.Stage != runtimeAttachmentReleasing) {
+		(record.Stage != runtimeAttachmentActive && record.Stage != runtimeAttachmentReleaseIntent &&
+			record.Stage != runtimeAttachmentReleasing) {
 		return nil, runtimeAttachmentIdentityRecord{}, errors.Join(
 			errors.New("task runtime directory identity differs; path preserved"),
 			closeRuntimeRootDescriptor(runtimeRootDescriptor),
@@ -33,7 +34,7 @@ func (coordinator *runtimeAttachmentCoordinator) pinRuntimeAttachmentRelease(
 	}
 	if record.Stage == runtimeAttachmentActive {
 		staged := record
-		staged.Stage = runtimeAttachmentReleasing
+		staged.Stage = runtimeAttachmentReleaseIntent
 		if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, staged, &record, nil); err != nil {
 			return nil, runtimeAttachmentIdentityRecord{}, errors.Join(
 				errors.New("task runtime attachment release cannot be staged"), pinned.close(),
@@ -49,40 +50,59 @@ func preparePinnedRuntimeAttachmentClose(
 	pinned *pinnedTaskRuntimeDirectory,
 	record runtimeAttachmentIdentityRecord,
 	server *reporter.RuntimeServer,
-) error {
-	if err := isolatePinnedRuntimeAttachmentRelease(pinned, record); err != nil {
-		return err
+) (runtimeAttachmentIdentityRecord, error) {
+	updated, err := isolatePinnedRuntimeAttachmentRelease(pinned, record)
+	if err != nil {
+		return runtimeAttachmentIdentityRecord{}, err
 	}
 	if err := server.RelocateSocket(filepath.Join(
 		coordinator.runtimeRoot, pinned.directoryName, "attachment.sock",
 	)); err != nil {
-		return errors.New("task runtime attachment release socket cannot be isolated")
+		return runtimeAttachmentIdentityRecord{}, errors.New("task runtime attachment release socket cannot be isolated")
 	}
-	return nil
+	return updated, nil
 }
 
 func isolatePinnedRuntimeAttachmentRelease(
 	pinned *pinnedTaskRuntimeDirectory,
 	record runtimeAttachmentIdentityRecord,
-) error {
-	if pinned == nil || record.Stage != runtimeAttachmentReleasing {
-		return errors.New("task runtime attachment release namespace is invalid")
+) (runtimeAttachmentIdentityRecord, error) {
+	if pinned == nil || (record.Stage != runtimeAttachmentReleaseIntent && record.Stage != runtimeAttachmentReleasing) {
+		return runtimeAttachmentIdentityRecord{}, errors.New("task runtime attachment release namespace is invalid")
 	}
 	releaseName := runtimeAttachmentReleaseName(pinned.taskHandle)
-	if pinned.directoryName == releaseName {
-		return nil
+	if pinned.directoryName != releaseName && pinned.directoryName != pinned.taskHandle {
+		return runtimeAttachmentIdentityRecord{}, errors.New("task runtime attachment release location is ambiguous")
 	}
-	if pinned.directoryName != pinned.taskHandle {
-		return errors.New("task runtime attachment release location is ambiguous")
+	if pinned.directoryName == releaseName && record.Stage == runtimeAttachmentReleasing {
+		return record, nil
 	}
-	if err := reporter.PublishRuntimeDirectory(
-		pinned.runtimeRootDescriptor, pinned.directoryName, releaseName,
-		pinned.taskIdentity, 0o700,
-	); err != nil {
-		return errors.New("task runtime attachment release cannot be isolated")
+	current := pinned.taskIdentity
+	if pinned.directoryName != releaseName {
+		var err error
+		current, err = reporter.PublishRuntimeDirectoryIdentity(
+			pinned.runtimeRootDescriptor, pinned.directoryName, releaseName, pinned.taskIdentity, 0o700,
+		)
+		if err != nil {
+			return runtimeAttachmentIdentityRecord{}, errors.New("task runtime attachment release cannot be isolated")
+		}
+		pinned.directoryName = releaseName
+	} else {
+		var err error
+		current, err = runtimeAttachmentDescriptorIdentity(pinned.taskDescriptor)
+		if err != nil || !sameRuntimeAttachmentNode(current, record.Task) ||
+			!runtimeAttachmentSocketMatches(pinned.taskDescriptor, record.Socket) {
+			return runtimeAttachmentIdentityRecord{}, errors.New("task runtime attachment release identity differs")
+		}
 	}
-	pinned.directoryName = releaseName
-	return nil
+	staged := record
+	staged.Stage = runtimeAttachmentReleasing
+	staged.Task = current
+	if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, staged, &record, nil); err != nil {
+		return runtimeAttachmentIdentityRecord{}, errors.New("task runtime attachment release identity cannot be bound")
+	}
+	pinned.taskIdentity = current
+	return staged, nil
 }
 
 func runtimeAttachmentReleaseName(taskHandle string) string {

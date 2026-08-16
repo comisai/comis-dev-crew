@@ -24,9 +24,79 @@ func PublishRuntimeDirectory(
 	expected RuntimeSocketIdentity,
 	permissions os.FileMode,
 ) error {
-	return publishRuntimePathKind(
-		directoryDescriptor, temporaryName, destinationName, expected, RuntimePathDirectory, permissions, nil,
+	_, err := PublishRuntimeDirectoryIdentity(
+		directoryDescriptor, temporaryName, destinationName, expected, permissions,
 	)
+	return err
+}
+
+// PublishRuntimeDirectoryIdentity moves one exact directory and returns its pinned post-rename identity.
+func PublishRuntimeDirectoryIdentity(
+	directoryDescriptor int,
+	temporaryName, destinationName string,
+	expected RuntimeSocketIdentity,
+	permissions os.FileMode,
+) (RuntimeSocketIdentity, error) {
+	if directoryDescriptor < 0 || !validRuntimeRemovalName(temporaryName) || !validRuntimeRemovalName(destinationName) ||
+		temporaryName == destinationName || !expected.Valid() || permissions.Perm() != permissions {
+		return RuntimeSocketIdentity{}, errors.New("runtime directory publication authority is invalid")
+	}
+	targetDescriptor, err := pinExpectedRuntimePath(
+		directoryDescriptor, temporaryName, expected, RuntimePathDirectory, permissions,
+	)
+	if err != nil {
+		return RuntimeSocketIdentity{}, errors.New("runtime directory publication source differs")
+	}
+	if err := renameRuntimePathNoReplace(directoryDescriptor, temporaryName, destinationName); err != nil {
+		return RuntimeSocketIdentity{}, errors.Join(
+			errors.New("runtime directory cannot be published"), closeRuntimeRemovalPin(targetDescriptor),
+		)
+	}
+	identity, err := verifyPublishedRuntimeDirectory(
+		directoryDescriptor, destinationName, targetDescriptor, expected, permissions,
+	)
+	if err != nil {
+		return RuntimeSocketIdentity{}, restoreMovedRuntimePath(
+			directoryDescriptor, destinationName, temporaryName, temporaryName, RuntimePathDirectory, permissions,
+			errors.Join(errors.New("runtime directory publication identity differs"), err,
+				closeRuntimeRemovalPin(targetDescriptor)),
+		)
+	}
+	if err := unix.Fsync(directoryDescriptor); err != nil {
+		return RuntimeSocketIdentity{}, restoreMovedRuntimePath(
+			directoryDescriptor, destinationName, temporaryName, temporaryName, RuntimePathDirectory, permissions,
+			errors.Join(errors.New("runtime directory publication cannot be synchronized"), err,
+				closeRuntimeRemovalPin(targetDescriptor)),
+		)
+	}
+	if err := closeRuntimeRemovalPin(targetDescriptor); err != nil {
+		return RuntimeSocketIdentity{}, errors.New("runtime directory publication cannot be synchronized")
+	}
+	return identity, nil
+}
+
+func verifyPublishedRuntimeDirectory(
+	directoryDescriptor int,
+	name string,
+	targetDescriptor *runtimeRemovalPin,
+	expected RuntimeSocketIdentity,
+	permissions os.FileMode,
+) (RuntimeSocketIdentity, error) {
+	var pinnedStat unix.Stat_t
+	var currentStat unix.Stat_t
+	if statRuntimeRemovalPin(targetDescriptor, &pinnedStat) != nil ||
+		unix.Fstatat(directoryDescriptor, name, &currentStat, unix.AT_SYMLINK_NOFOLLOW) != nil ||
+		!runtimeStatsSameStableObject(pinnedStat, currentStat) ||
+		!runtimePathModeMatches(uint32(currentStat.Mode), RuntimePathDirectory, permissions) {
+		return RuntimeSocketIdentity{}, ErrRuntimePathIdentity
+	}
+	identity, err := runtimeRemovalPinIdentity(targetDescriptor, pinnedStat)
+	if err != nil || identity.Device != expected.Device || identity.Inode != expected.Inode ||
+		(expected.BirthSec != 0 || expected.BirthNsec != 0) &&
+			(identity.BirthSec != expected.BirthSec || identity.BirthNsec != expected.BirthNsec) {
+		return RuntimeSocketIdentity{}, ErrRuntimePathIdentity
+	}
+	return identity, nil
 }
 
 func publishRuntimePath(

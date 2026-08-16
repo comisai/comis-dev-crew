@@ -359,9 +359,11 @@ func (store *Store) migrate(ctx context.Context) error {
 	if err := store.applyVersionedMigration(ctx, 17, taskCandidateReconciliationMigration); err != nil {
 		return err
 	}
-	return store.applyTaskPreparationMigrations(ctx)
+	if err := store.applyTaskPreparationMigrations(ctx); err != nil {
+		return err
+	}
+	return store.applyRuntimeRelayUpgradeMigration(ctx)
 }
-
 func (store *Store) applyComisReportOutboxMigration(ctx context.Context) error {
 	var applied int
 	if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations WHERE version = 7").Scan(&applied); err != nil {
