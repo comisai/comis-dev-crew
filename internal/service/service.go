@@ -65,7 +65,7 @@ type Config struct {
 	Ready                    func()
 	candidateGit             candidateGitInspector
 	workspaceInspector       application.WorkspaceInspector
-	reconciliationInspector  application.ReconciliationWorkspaceInspector
+	reconciliationInspector  application.ReconciliationWorkspaceManager
 	validationCatalog        *validation.Catalog
 	validationMaxOutputBytes int64
 	validationPollInterval   time.Duration

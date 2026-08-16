@@ -73,6 +73,77 @@ func gitPredicate(ctx context.Context, executable string, arguments ...string) (
 }
 
 func executeGit(ctx context.Context, executable string, arguments ...string) ([]byte, int, error) {
+	return executeGitWithEnvironment(ctx, executable, nil, arguments...)
+}
+
+type gitWorkspaceEnvironment struct {
+	gitDir      string
+	gitWorkTree string
+	gitIndex    string
+}
+
+func runGitInWorkspace(
+	ctx context.Context,
+	executable string,
+	environment gitWorkspaceEnvironment,
+	arguments ...string,
+) (string, error) {
+	output, exitCode, err := executeGitWithEnvironment(ctx, executable, &environment, arguments...)
+	if err != nil {
+		return "", err
+	}
+	if exitCode != 0 {
+		return "", errors.New("git workspace inspection command failed")
+	}
+	result := strings.TrimSuffix(string(output), "\n")
+	if result == "" || strings.ContainsAny(result, "\r\n\x00") {
+		return "", errors.New("git workspace inspection returned an invalid single-line result")
+	}
+	return result, nil
+}
+
+func runGitBytesInWorkspace(
+	ctx context.Context,
+	executable string,
+	environment gitWorkspaceEnvironment,
+	arguments ...string,
+) ([]byte, error) {
+	output, exitCode, err := executeGitWithEnvironment(ctx, executable, &environment, arguments...)
+	if err != nil {
+		return nil, err
+	}
+	if exitCode != 0 {
+		return nil, errors.New("git workspace machine command failed")
+	}
+	return output, nil
+}
+
+func gitPredicateInWorkspace(
+	ctx context.Context,
+	executable string,
+	environment gitWorkspaceEnvironment,
+	arguments ...string,
+) (bool, error) {
+	_, exitCode, err := executeGitWithEnvironment(ctx, executable, &environment, arguments...)
+	if err != nil {
+		return false, err
+	}
+	switch exitCode {
+	case 0:
+		return true, nil
+	case 1:
+		return false, nil
+	default:
+		return false, errors.New("git workspace predicate command failed")
+	}
+}
+
+func executeGitWithEnvironment(
+	ctx context.Context,
+	executable string,
+	workspace *gitWorkspaceEnvironment,
+	arguments ...string,
+) ([]byte, int, error) {
 	if ctx == nil {
 		return nil, -1, errors.New("git command context is required")
 	}
@@ -83,8 +154,16 @@ func executeGit(ctx context.Context, executable string, arguments ...string) ([]
 	command.Env = []string{
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_NO_REPLACE_OBJECTS=1",
 		"GIT_OPTIONAL_LOCKS=0",
 		"LC_ALL=C",
+	}
+	if workspace != nil {
+		command.Env = append(command.Env,
+			"GIT_DIR="+workspace.gitDir,
+			"GIT_WORK_TREE="+workspace.gitWorkTree,
+			"GIT_INDEX_FILE="+workspace.gitIndex,
+		)
 	}
 	command.WaitDelay = time.Second
 	stdout := &boundedBuffer{limit: maximumGitOutputBytes}

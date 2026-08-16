@@ -353,15 +353,18 @@ func createLeasePrivateCandidate(
 		t.Fatal(err)
 	}
 	gitEnvironment := []string{
-		"GIT_DIR=" + privateWorktree,
+		"GIT_DIR=" + privateCommon,
 		"GIT_WORK_TREE=" + prepared.CanonicalPath,
-		"GIT_COMMON_DIR=" + privateCommon,
+		"GIT_INDEX_FILE=" + filepath.Join(privateWorktree, "index"),
 	}
 	gitOutputWithEnvironment(t, fixture.gitExecutable, gitEnvironment, "add", "candidate.txt")
 	gitOutputWithEnvironment(t, fixture.gitExecutable, gitEnvironment,
 		"-c", "user.name=DevCrew Fixture", "-c", "user.email=fixture@example.invalid",
 		"commit", "-m", "private candidate")
 	head := gitOutputWithEnvironment(t, fixture.gitExecutable, gitEnvironment, "rev-parse", "HEAD")
+	if parent := gitOutputWithEnvironment(t, fixture.gitExecutable, gitEnvironment, "rev-parse", head+"^"); parent != prepared.BaseRevision {
+		t.Fatalf("private candidate parent = %q, want base %q", parent, prepared.BaseRevision)
+	}
 	return leasePrivateCandidate{
 		root: privateRoot, common: privateCommon, worktree: privateWorktree, gitDir: gitDir, head: head,
 	}

@@ -120,6 +120,13 @@ func (serviceReconciliationInspector) InspectReconciliationCandidate(
 	return application.WorkspaceSnapshot{}, errors.New("unexpected reconciliation inspection")
 }
 
+func (serviceReconciliationInspector) PromoteReconciliationCandidate(
+	context.Context,
+	application.ReconciliationWorkspaceRequest,
+) (application.WorkspaceSnapshot, error) {
+	return application.WorkspaceSnapshot{}, errors.New("unexpected reconciliation promotion")
+}
+
 type serviceRepositoryCatalog struct{}
 
 func (serviceRepositoryCatalog) ValidateRepository(context.Context, string) error { return nil }

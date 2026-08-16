@@ -149,7 +149,10 @@ action is `validate-clean-candidate`; caller input contains no repository, path,
 branch, head, run, lease, terminal, or attachment authority.
 
 The service combines durable preparation and terminal bindings with a fresh Git
-inspection, then atomically records reconciliation evidence and advances
+inspection. When Comis confinement produced a clean commit in lease-private Git
+administration, read-only diagnostics recognize that exact candidate and the
+reconciliation mutation explicitly hands it into the prepared host branch. The
+service then atomically records reconciliation evidence and advances
 `unknown` through `reconciling` into `validating`. It neither synthesizes a worker
 report nor increments the report cursor. Exact operation replay remains bound to
 the original result reference and may project only a monotonically newer state of
@@ -165,6 +168,15 @@ After successful recovery validation, the two exact server-owned evidence
 publications drive the task to `delivered`; the service does not create a worker
 report merely to close the state machine. Incomplete recovery history remains
 unresolved after restart and refuses a second reconciliation record.
+
+The private Git handoff is a high-risk boundary. Paths come only from the
+registered worktree and its canonical Git administration, and the source record,
+generated configuration, copied worktree controls, branch, clean index, and base
+ancestry must all match. Symlinks, executable Git configuration, alternate object
+indirection, dirty content, or shared/private head drift are refused before any
+host branch mutation. Promotion imports no tags or submodules, advances the exact
+branch with an old-head compare-and-swap, and synchronizes only the worktree index;
+it never replaces workspace files. Replay re-verifies the same clean head.
 
 `ExplainTask` combines durable terminal posture, current host connectivity, and
 fresh registered-worktree inspection. Its closed recovery reasons distinguish a

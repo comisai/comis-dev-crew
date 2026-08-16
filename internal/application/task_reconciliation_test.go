@@ -41,7 +41,7 @@ func TestTaskCandidateReconciler_ValidatesCleanUnknownCandidateWithoutWorkerRepo
 		BaseRevision: authority.Task.BaseRevision,
 	}
 	if inspector.calls != 1 || inspector.request != wantRequest {
-		t.Fatalf("workspace inspection = %d/%#v, want %#v", inspector.calls, inspector.request, wantRequest)
+		t.Fatalf("workspace promotion = %d/%#v, want %#v", inspector.calls, inspector.request, wantRequest)
 	}
 	mutation := store.mutation
 	if store.commitCalls != 1 || mutation.OperationID != command.OperationID ||
@@ -348,6 +348,17 @@ func (inspector *taskReconciliationInspector) InspectReconciliationCandidate(
 	_ context.Context,
 	request ReconciliationWorkspaceRequest,
 ) (WorkspaceSnapshot, error) {
+	return inspector.observe(request)
+}
+
+func (inspector *taskReconciliationInspector) PromoteReconciliationCandidate(
+	_ context.Context,
+	request ReconciliationWorkspaceRequest,
+) (WorkspaceSnapshot, error) {
+	return inspector.observe(request)
+}
+
+func (inspector *taskReconciliationInspector) observe(request ReconciliationWorkspaceRequest) (WorkspaceSnapshot, error) {
 	inspector.calls++
 	inspector.request = request
 	return inspector.snapshot, inspector.err

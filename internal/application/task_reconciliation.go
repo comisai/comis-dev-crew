@@ -56,6 +56,19 @@ type ReconciliationWorkspaceInspector interface {
 	InspectReconciliationCandidate(context.Context, ReconciliationWorkspaceRequest) (WorkspaceSnapshot, error)
 }
 
+// ReconciliationWorkspacePromoter performs the server-owned Git handoff for a
+// candidate already confined to lease-private Git administration.
+type ReconciliationWorkspacePromoter interface {
+	PromoteReconciliationCandidate(context.Context, ReconciliationWorkspaceRequest) (WorkspaceSnapshot, error)
+}
+
+// ReconciliationWorkspaceManager combines read-only recovery diagnostics with
+// the explicit mutation used only by ReconcileTask.
+type ReconciliationWorkspaceManager interface {
+	ReconciliationWorkspaceInspector
+	ReconciliationWorkspacePromoter
+}
+
 // TaskCandidateReconciliationMutation is the complete atomic recovery input.
 // It records fresh evidence but never creates a worker report.
 type TaskCandidateReconciliationMutation struct {
@@ -82,7 +95,7 @@ type TaskCandidateReconciliationStore interface {
 // TaskCandidateReconcilerConfig supplies durable and fresh Git authority.
 type TaskCandidateReconcilerConfig struct {
 	Store      TaskCandidateReconciliationStore
-	Workspaces ReconciliationWorkspaceInspector
+	Workspaces ReconciliationWorkspaceManager
 	Clock      Clock
 }
 
@@ -90,7 +103,7 @@ type TaskCandidateReconcilerConfig struct {
 // inferring success from terminal exit or synthesizing a worker report.
 type TaskCandidateReconciler struct {
 	store      TaskCandidateReconciliationStore
-	workspaces ReconciliationWorkspaceInspector
+	workspaces ReconciliationWorkspaceManager
 	clock      Clock
 }
 
@@ -146,7 +159,7 @@ func (reconciler *TaskCandidateReconciler) ReconcileTask(
 	if err := validateTaskReconciliationAuthority(authority, command.TaskHandle); err != nil {
 		return MutationResult{}, err
 	}
-	snapshot, err := reconciler.workspaces.InspectReconciliationCandidate(ctx, ReconciliationWorkspaceRequest{
+	snapshot, err := reconciler.workspaces.PromoteReconciliationCandidate(ctx, ReconciliationWorkspaceRequest{
 		PreparationOperationID: authority.PreparationOperationID,
 		TaskHandle:             authority.Task.Handle, RepositoryID: authority.Task.RepositoryID,
 		WorktreePath: authority.Preparation.RequestedWorkspaceRoot,

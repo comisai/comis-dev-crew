@@ -11,8 +11,9 @@ import (
 
 var repositoryIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,63}$`)
 
-// Registry is an immutable map from operator-owned IDs to verified repository
-// identities. It performs no Git mutation and launches no worker.
+// Registry maps operator-owned IDs to verified repository identities. Its Git
+// mutations are limited to explicit worktree lifecycle and candidate handoff
+// methods; it never launches a worker.
 type Registry struct {
 	gitExecutable string
 	repositories  map[string]Repository
