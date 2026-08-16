@@ -324,7 +324,7 @@ func createLeasePrivateCandidate(
 		t.Fatal(err)
 	}
 	writeTestFile(t, filepath.Join(privateWorktree, "index"), sharedIndex)
-	writeTestFile(t, filepath.Join(privateCommon, "config"), []byte("[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n"))
+	writeTestFile(t, filepath.Join(privateCommon, "config"), []byte("[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n[user]\n\tname = DevCrew Fixture\n\temail = fixture@example.invalid\n"))
 	quotedWorkspace, err := json.Marshal(prepared.CanonicalPath)
 	if err != nil {
 		t.Fatal(err)
