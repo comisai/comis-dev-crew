@@ -117,6 +117,39 @@ func TestListenRuntimePreservesReplacementWhenIdentityCaptureFails(t *testing.T)
 	}
 }
 
+func TestRuntimeServerServePropagatesCloseIdentityFailure(t *testing.T) {
+	root := boundaryRuntimeDirectory(t)
+	socketPath := filepath.Join(root, "attachment.sock")
+	server, err := ListenRuntime(RuntimeServerConfig{
+		SocketPath: socketPath, Brief: boundaryBrief("task-runtime-close-error"), Reporter: &Client{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(ctx) }()
+	if err := os.Remove(socketPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(socketPath, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		_ = server.Close()
+		_ = os.Remove(socketPath)
+	})
+	cancel()
+	if err := <-done; err == nil {
+		t.Fatal("Serve() identity failure error = nil")
+	}
+	contents, err := os.ReadFile(socketPath)
+	if err != nil || string(contents) != "replacement" {
+		t.Fatalf("Serve removed ambiguous replacement: %q, %v", contents, err)
+	}
+}
+
 type blockedRuntimeAttentionReceiver struct {
 	entered  chan struct{}
 	canceled chan struct{}

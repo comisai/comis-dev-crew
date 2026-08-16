@@ -669,9 +669,13 @@ func startBoundaryRuntime(t *testing.T, client *Client) (*RuntimeServer, string,
 		}
 		stopped = true
 		cancel()
-		_ = server.Close()
-		if err := <-done; err != nil {
-			t.Errorf("Serve stop = %v", err)
+		closeErr := server.Close()
+		serveErr := <-done
+		if closeErr == nil && serveErr != nil {
+			t.Errorf("Serve stop = %v", serveErr)
+		}
+		if closeErr != nil && serveErr == nil {
+			t.Errorf("Serve stop omitted close error %v", closeErr)
 		}
 	}
 	t.Cleanup(stop)

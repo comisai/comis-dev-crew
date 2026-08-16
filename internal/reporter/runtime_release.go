@@ -170,25 +170,27 @@ func removeRuntimeSocket(path string, original os.FileInfo, expected RuntimeSock
 		}
 		return errors.New("close runtime attachment: socket identity is ambiguous; path preserved")
 	}
-	var stat unix.Stat_t
-	if err := unix.Fstatat(pinned.descriptors[len(pinned.descriptors)-1], filepath.Base(path), &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-		if errors.Is(err, unix.ENOENT) {
-			return pinned.close()
-		}
-		return errors.Join(errors.New("close runtime attachment: socket identity is ambiguous; path preserved"), pinned.close())
-	}
-	current, identityErr := runtimeSocketStatIdentity(stat)
+	directoryDescriptor := pinned.descriptors[len(pinned.descriptors)-1]
 	if !expected.Valid() {
+		var stat unix.Stat_t
+		if err := unix.Fstatat(directoryDescriptor, filepath.Base(path), &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			if errors.Is(err, unix.ENOENT) {
+				return pinned.close()
+			}
+			return errors.Join(errors.New("close runtime attachment: socket identity is ambiguous; path preserved"), pinned.close())
+		}
+		current, identityErr := runtimeSocketStatIdentity(stat)
 		device, inode, nodeErr := runtimeSocketFileNode(original)
 		if nodeErr == nil && identityErr == nil && device == current.Device && inode == current.Inode {
 			expected = current
 		}
 	}
-	if identityErr != nil || current != expected || stat.Mode&unix.S_IFMT != unix.S_IFSOCK {
-		return errors.Join(errors.New("close runtime attachment: socket identity is ambiguous; path preserved"), pinned.close())
+	removeErr := QuarantineRuntimePath(directoryDescriptor, filepath.Base(path), expected, RuntimePathSocket, 0o600)
+	if errors.Is(removeErr, ErrRuntimePathMissing) {
+		return pinned.close()
 	}
-	if err := unix.Unlinkat(pinned.descriptors[len(pinned.descriptors)-1], filepath.Base(path), 0); err != nil {
-		return errors.Join(errors.New("close runtime attachment: remove socket failed"), pinned.close())
+	if removeErr != nil {
+		return errors.Join(errors.New("close runtime attachment: socket identity is ambiguous; path preserved"), pinned.close())
 	}
 	return pinned.close()
 }

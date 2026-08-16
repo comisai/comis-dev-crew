@@ -474,6 +474,39 @@ func TestGitHubAdapter_TreatsMalformedCompetingCheckIDsConservatively(t *testing
 	}
 }
 
+func TestGitHubAdapter_TreatsMalformedCheckStateConservatively(t *testing.T) {
+	head := strings.Repeat("c", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path != "/repos/comisai/fixture/commits/"+head+"/check-runs" {
+			http.NotFound(response, request)
+			return
+		}
+		_, _ = response.Write([]byte(`{"check_runs":[` +
+			`{"id":31,"name":"ci/status","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"},` +
+			`{"id":32,"name":"ci/status","status":42,"conclusion":null,"started_at":"2026-08-14T20:05:00Z"},` +
+			`{"id":33,"name":"ci/conclusion","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"},` +
+			`{"id":34,"name":"ci/conclusion","status":"completed","conclusion":{},"started_at":"2026-08-14T20:05:00Z"}` +
+			`]}`))
+	}))
+	defer server.Close()
+	adapter, err := NewGitHubAdapter(validGitHubConfig(server))
+	if err != nil {
+		t.Fatalf("NewGitHubAdapter() error = %v", err)
+	}
+	checks, err := adapter.readChecks(context.Background(), "read-token", head, []string{"ci/status", "ci/conclusion"})
+	if err != nil {
+		t.Fatalf("readChecks(malformed state) error = %v", err)
+	}
+	want := []domain.ForgeCheckEvidence{
+		{Name: "ci/status", Conclusion: domain.CheckUnknown},
+		{Name: "ci/conclusion", Conclusion: domain.CheckUnknown},
+	}
+	if !reflect.DeepEqual(checks, want) {
+		t.Fatalf("readChecks(malformed state) = %#v, want %#v", checks, want)
+	}
+}
+
 type staticCredentialSource struct{ credential Credential }
 
 func (source staticCredentialSource) Resolve(context.Context) (Credential, error) {

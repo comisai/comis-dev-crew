@@ -195,9 +195,7 @@ func (server *RuntimeServer) Serve(ctx context.Context) (resultErr error) {
 		close(stopCancellation)
 		<-cancellationDone
 		closeErr := server.Close()
-		if resultErr != nil {
-			resultErr = errors.Join(resultErr, closeErr)
-		}
+		resultErr = errors.Join(resultErr, closeErr)
 	}()
 	for {
 		if !server.beginAccept() {

@@ -192,8 +192,8 @@ type githubChecks struct {
 	Runs []struct {
 		ID         json.RawMessage `json:"id"`
 		Name       string          `json:"name"`
-		Status     string          `json:"status"`
-		Conclusion *string         `json:"conclusion"`
+		Status     json.RawMessage `json:"status"`
+		Conclusion json.RawMessage `json:"conclusion"`
 		StartedAt  json.RawMessage `json:"started_at"`
 	} `json:"check_runs"`
 }
@@ -269,8 +269,13 @@ func (adapter *GitHubAdapter) readChecks(
 			continue
 		}
 		seenIDs[id] = run.Name
+		status, rawConclusion, stateKnown := parseGitHubCheckState(run.Status, run.Conclusion)
+		if !stateKnown {
+			poisoned[run.Name] = struct{}{}
+			continue
+		}
 		startedAt, recencyKnown := parseGitHubCheckRecency(run.StartedAt)
-		conclusion := githubCheckConclusion(run.Status, run.Conclusion)
+		conclusion := githubCheckConclusion(status, rawConclusion)
 		if !recencyKnown {
 			conclusion = domain.CheckUnknown
 		}
