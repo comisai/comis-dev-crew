@@ -14,7 +14,7 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/application"
 )
 
-func TestBaseRuntimeRelayIdentityUpgradeUsesExactBaseArtifact(t *testing.T) {
+func TestBaseRuntimeRelayIdentityUpgradePreservesUnprovenSocket(t *testing.T) {
 	root := shortTempDir(t)
 	runtimeRoot := filepath.Join(root, "runtime")
 	taskHandle := "task-runtime-relay-base-upgrade"
@@ -40,37 +40,29 @@ func TestBaseRuntimeRelayIdentityUpgradeUsesExactBaseArtifact(t *testing.T) {
 		TaskHandle: taskHandle, RelaySeed: seed,
 		RelayIdentity: hex.EncodeToString(privateKey.Public().(ed25519.PublicKey)),
 	}}
+	if err := coordinator.recoverRuntimeRelayIdentityUpgrades(context.Background()); err == nil {
+		t.Fatal("recoverRuntimeRelayIdentityUpgrades(unproven socket) error = nil")
+	}
+	if len(store.completed) != 0 {
+		t.Fatalf("completed upgrades = %#v", store.completed)
+	}
+	if info, err := os.Lstat(socketPath); err != nil || info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("unproven base socket was not preserved: %#v, %v", info, err)
+	}
 	descriptor, err := coordinator.pinRuntimeRoot()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := upgradeBaseRuntimeAttachmentIdentity(descriptor, store.upgrades[0]); err != nil {
-		t.Fatalf("upgradeBaseRuntimeAttachmentIdentity() error = %v", err)
-	}
-	if err := closeRuntimeRootDescriptor(descriptor); err != nil {
-		t.Fatal(err)
-	}
-	if err := coordinator.recoverRuntimeRelayIdentityUpgrades(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if len(store.completed) != 1 || store.completed[0] != store.upgrades[0] {
-		t.Fatalf("completed upgrades = %#v", store.completed)
-	}
-	descriptor, err = coordinator.pinRuntimeRoot()
-	if err != nil {
-		t.Fatal(err)
-	}
-	record, _, found, err := readRuntimeAttachmentIdentityRecord(descriptor, taskHandle)
-	if err != nil || !found || record.Stage != runtimeAttachmentActive || record.RelaySeed != seed ||
-		!record.Task.Valid() || !record.Socket.Valid() {
-		t.Fatalf("base runtime identity = %#v, %t, %v", record, found, err)
+	_, _, found, err := readRuntimeAttachmentIdentityRecord(descriptor, taskHandle)
+	if err != nil || found {
+		t.Fatalf("unproven base socket identity found = %t, %v", found, err)
 	}
 	if err := closeRuntimeRootDescriptor(descriptor); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestBaseRuntimeRelayIdentityUpgradeUsesEmptyBaseDirectory(t *testing.T) {
+func TestBaseRuntimeRelayIdentityUpgradePreservesUnprovenEmptyDirectory(t *testing.T) {
 	root := shortTempDir(t)
 	runtimeRoot := filepath.Join(root, "runtime")
 	taskHandle := "task-runtime-relay-base-empty"
@@ -85,17 +77,53 @@ func TestBaseRuntimeRelayIdentityUpgradeUsesEmptyBaseDirectory(t *testing.T) {
 		TaskHandle: taskHandle, RelaySeed: seed,
 		RelayIdentity: hex.EncodeToString(privateKey.Public().(ed25519.PublicKey)),
 	}}
+	if err := coordinator.recoverRuntimeRelayIdentityUpgrades(context.Background()); err == nil {
+		t.Fatal("recoverRuntimeRelayIdentityUpgrades(unproven directory) error = nil")
+	}
+	if len(store.completed) != 0 {
+		t.Fatalf("completed upgrades = %#v", store.completed)
+	}
+	if info, err := os.Lstat(filepath.Join(runtimeRoot, taskHandle)); err != nil || !info.IsDir() {
+		t.Fatalf("unproven base directory was not preserved: %#v, %v", info, err)
+	}
+	descriptor, err := coordinator.pinRuntimeRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, found, err := readRuntimeAttachmentIdentityRecord(descriptor, taskHandle)
+	if err != nil || found {
+		t.Fatalf("unproven base directory identity found = %t, %v", found, err)
+	}
+	if err := closeRuntimeRootDescriptor(descriptor); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBaseRuntimeRelayIdentityUpgradeStartsOnlyWhenPathsAreAbsent(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	taskHandle := "task-runtime-relay-base-absent"
+	store := &runtimeRelayUpgradeStore{}
+	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, store, time.Now().UTC())
+	seed := runtimeRelaySeedForTest(0x39)
+	privateKey := ed25519.NewKeyFromSeed(seed[:])
+	store.upgrades = []application.RuntimeRelayIdentityUpgrade{{
+		TaskHandle: taskHandle, RelaySeed: seed,
+		RelayIdentity: hex.EncodeToString(privateKey.Public().(ed25519.PublicKey)),
+	}}
 	if err := coordinator.recoverRuntimeRelayIdentityUpgrades(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if len(store.completed) != 1 || store.completed[0] != store.upgrades[0] {
+		t.Fatalf("completed upgrades = %#v", store.completed)
 	}
 	descriptor, err := coordinator.pinRuntimeRoot()
 	if err != nil {
 		t.Fatal(err)
 	}
 	record, _, found, err := readRuntimeAttachmentIdentityRecord(descriptor, taskHandle)
-	if err != nil || !found || record.Stage != runtimeAttachmentCreating || record.RelaySeed != seed ||
-		!record.Task.Valid() || record.Socket.Valid() {
-		t.Fatalf("empty base runtime identity = %#v, %t, %v", record, found, err)
+	if err != nil || !found || record.Stage != runtimeAttachmentCreatingIntent || record.RelaySeed != seed {
+		t.Fatalf("absent base runtime identity = %#v, %t, %v", record, found, err)
 	}
 	if err := closeRuntimeRootDescriptor(descriptor); err != nil {
 		t.Fatal(err)

@@ -23,18 +23,45 @@ func (coordinator *runtimeAttachmentCoordinator) ReleaseRuntimeAttachment(ctx co
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	coordinator.mu.Lock()
-	if coordinator.recoveryErr != nil {
-		recoveryErr := coordinator.recoveryErr
-		coordinator.mu.Unlock()
-		return recoveryErr
-	}
-	entry := coordinator.entries[taskHandle]
-	var pinned *pinnedTaskRuntimeDirectory
-	var record runtimeAttachmentIdentityRecord
-	if entry != nil {
-		var pinErr error
-		pinned, record, pinErr = coordinator.pinRuntimeAttachmentRelease(taskHandle)
+	for {
+		coordinator.mu.Lock()
+		if coordinator.recoveryErr != nil {
+			recoveryErr := coordinator.recoveryErr
+			coordinator.mu.Unlock()
+			return recoveryErr
+		}
+		entry := coordinator.entries[taskHandle]
+		if entry == nil {
+			coordinator.mu.Unlock()
+			if err := coordinator.removeTaskRuntimeDirectory(taskHandle); err != nil {
+				return errors.New("release runtime attachment: task runtime directory is not empty or unavailable")
+			}
+			return nil
+		}
+		switch entry.state {
+		case runtimeAttachmentEntryPending:
+			done := entry.registrationDone
+			coordinator.mu.Unlock()
+			<-done
+			continue
+		case runtimeAttachmentEntryReleasing:
+			done := entry.releaseDone
+			observed := coordinator.runtimeAttachmentReleaseReplayObserved
+			coordinator.mu.Unlock()
+			if observed != nil {
+				observed()
+			}
+			<-done
+			coordinator.mu.Lock()
+			resultErr := runtimeAttachmentReleaseResult(entry)
+			coordinator.mu.Unlock()
+			return resultErr
+		case runtimeAttachmentEntryReady:
+		default:
+			coordinator.mu.Unlock()
+			return errors.New("release runtime attachment: task attachment state is invalid")
+		}
+		pinned, record, pinErr := coordinator.pinRuntimeAttachmentRelease(taskHandle)
 		if pinErr != nil {
 			coordinator.mu.Unlock()
 			return errors.New("release runtime attachment: task runtime directory identity is unavailable")
@@ -44,28 +71,33 @@ func (coordinator *runtimeAttachmentCoordinator) ReleaseRuntimeAttachment(ctx co
 			coordinator.mu.Unlock()
 			return errors.Join(pinErr, pinned.close())
 		}
+		entry.state = runtimeAttachmentEntryReleasing
+		entry.releaseDone = make(chan struct{})
+		coordinator.mu.Unlock()
+		resultErr := coordinator.releaseRegisteredRuntimeAttachment(entry, pinned, record)
+		coordinator.completeRuntimeAttachmentRelease(taskHandle, entry, resultErr)
+		return resultErr
 	}
-	delete(coordinator.entries, taskHandle)
-	coordinator.mu.Unlock()
-	if entry != nil {
-		if err := coordinator.releaseRuntimeServer(entry.server); err != nil {
-			return errors.Join(err, entry.server.Close(), pinned.close())
-		}
-		if err := entry.server.Close(); err != nil {
+}
+
+func (coordinator *runtimeAttachmentCoordinator) releaseRegisteredRuntimeAttachment(
+	entry *runtimeAttachmentEntry,
+	pinned *pinnedTaskRuntimeDirectory,
+	record runtimeAttachmentIdentityRecord,
+) error {
+	if err := coordinator.releaseRuntimeServer(entry.server); err != nil {
+		return errors.Join(err, entry.server.Close(), pinned.close())
+	}
+	if err := entry.server.Close(); err != nil {
+		return errors.Join(err, pinned.close())
+	}
+	if coordinator.afterRuntimeAttachmentClose != nil {
+		if err := coordinator.afterRuntimeAttachmentClose(); err != nil {
 			return errors.Join(err, pinned.close())
 		}
-		if coordinator.afterRuntimeAttachmentClose != nil {
-			if err := coordinator.afterRuntimeAttachmentClose(); err != nil {
-				return errors.Join(err, pinned.close())
-			}
-		}
-		removeErr := removePinnedRuntimeAttachment(pinned, record)
-		if err := errors.Join(removeErr, pinned.close()); err != nil {
-			return errors.New("release runtime attachment: task runtime directory is not empty or unavailable")
-		}
-		return nil
 	}
-	if err := coordinator.removeTaskRuntimeDirectory(taskHandle); err != nil {
+	removeErr := removePinnedRuntimeAttachment(pinned, record)
+	if err := errors.Join(removeErr, pinned.close()); err != nil {
 		return errors.New("release runtime attachment: task runtime directory is not empty or unavailable")
 	}
 	return nil

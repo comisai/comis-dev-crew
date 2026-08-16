@@ -47,33 +47,28 @@ type runtimeAttachmentResult struct {
 	err    error
 }
 
-type runtimeAttachmentEntry struct {
-	request    application.RuntimeAttachmentPreparationRequest
-	attachment application.PreparedRuntimeAttachment
-	server     *reporter.RuntimeServer
-	binding    *application.RuntimeAttachmentBindingRequest
-}
-
 type runtimeAttachmentCoordinator struct {
-	runtimeRoot                   string
-	runtimeRootIdentity           reporter.RuntimeSocketIdentity
-	store                         runtimeAttachmentStore
-	reportSink                    *application.ReportSink
-	newCredential                 func() (string, error)
-	newAttentionOperationID       func() (string, error)
-	registrations                 chan runtimeAttachmentRegistration
-	releases                      chan runtimeAttachmentRelease
-	recoveryReady                 chan struct{}
-	runDone                       chan struct{}
-	mu                            sync.Mutex
-	entries                       map[string]*runtimeAttachmentEntry
-	acknowledger                  application.WorkerLaunchAcknowledger
-	attentionResponses            comiswire.AttentionResponseReceiver
-	releasedServerStopped         func(*reporter.RuntimeServer)
-	afterRuntimeAttachmentClose   func() error
-	afterRuntimeDirectoryCreation func() error
-	afterRuntimeDirectoryPublish  func() error
-	recoveryErr                   error
+	runtimeRoot                            string
+	runtimeRootIdentity                    reporter.RuntimeSocketIdentity
+	store                                  runtimeAttachmentStore
+	reportSink                             *application.ReportSink
+	newCredential                          func() (string, error)
+	newAttentionOperationID                func() (string, error)
+	registrations                          chan runtimeAttachmentRegistration
+	releases                               chan runtimeAttachmentRelease
+	recoveryReady                          chan struct{}
+	runDone                                chan struct{}
+	mu                                     sync.Mutex
+	entries                                map[string]*runtimeAttachmentEntry
+	acknowledger                           application.WorkerLaunchAcknowledger
+	attentionResponses                     comiswire.AttentionResponseReceiver
+	releasedServerStopped                  func(*reporter.RuntimeServer)
+	afterRuntimeAttachmentClose            func() error
+	afterRuntimeDirectoryCreation          func() error
+	afterRuntimeDirectoryPublish           func() error
+	runtimeAttachmentReplayObserved        func()
+	runtimeAttachmentReleaseReplayObserved func()
+	recoveryErr                            error
 }
 
 func newRuntimeAttachmentCoordinator(config runtimeAttachmentCoordinatorConfig) (*runtimeAttachmentCoordinator, error) {
@@ -146,6 +141,27 @@ func (coordinator *runtimeAttachmentCoordinator) PrepareRuntimeAttachment(
 			coordinator.mu.Unlock()
 			return application.PreparedRuntimeAttachment{}, errors.New("prepare runtime attachment: task binding conflicts")
 		}
+		if existing.state == runtimeAttachmentEntryPending {
+			done := existing.registrationDone
+			observed := coordinator.runtimeAttachmentReplayObserved
+			coordinator.mu.Unlock()
+			if observed != nil {
+				observed()
+			}
+			<-done
+			coordinator.mu.Lock()
+			attachment, resultErr := runtimeAttachmentRegistrationResult(existing)
+			coordinator.mu.Unlock()
+			return attachment, resultErr
+		}
+		if existing.state != runtimeAttachmentEntryReady {
+			state := existing.state
+			coordinator.mu.Unlock()
+			return application.PreparedRuntimeAttachment{}, errors.Join(
+				errors.New("prepare runtime attachment: task attachment is unavailable"),
+				runtimeAttachmentEntryUnavailable(state),
+			)
+		}
 		coordinator.mu.Unlock()
 		return existing.attachment, nil
 	}
@@ -168,44 +184,36 @@ func (coordinator *runtimeAttachmentCoordinator) PrepareRuntimeAttachment(
 			errors.New("prepare runtime attachment: relay identity is invalid"), entry.server.Close(),
 		)
 	}
+	entry.state = runtimeAttachmentEntryPending
+	entry.registrationDone = make(chan struct{})
 	coordinator.entries[request.TaskHandle] = entry
 	coordinator.mu.Unlock()
-	registration := runtimeAttachmentRegistration{server: entry.server, ready: make(chan error, 1)}
+	registrationErr := coordinator.registerRuntimeAttachment(ctx, entry.server)
+	if registrationErr != nil {
+		registrationErr = errors.Join(registrationErr, entry.server.Close())
+	}
+	coordinator.completeRuntimeAttachmentRegistration(request.TaskHandle, entry, registrationErr)
+	return runtimeAttachmentRegistrationResult(entry)
+}
+
+func (coordinator *runtimeAttachmentCoordinator) registerRuntimeAttachment(
+	ctx context.Context,
+	server *reporter.RuntimeServer,
+) error {
+	registration := runtimeAttachmentRegistration{server: server, ready: make(chan error, 1)}
 	select {
 	case coordinator.registrations <- registration:
 	case <-ctx.Done():
-		coordinator.discardRuntimeAttachmentEntry(request.TaskHandle, entry)
-		return application.PreparedRuntimeAttachment{}, errors.Join(ctx.Err(), entry.server.Close())
+		return ctx.Err()
 	case <-coordinator.runDone:
-		coordinator.discardRuntimeAttachmentEntry(request.TaskHandle, entry)
-		return application.PreparedRuntimeAttachment{}, errors.Join(
-			errors.New("prepare runtime attachment: coordinator stopped"), entry.server.Close(),
-		)
+		return errors.New("prepare runtime attachment: coordinator stopped")
 	}
 	select {
 	case err := <-registration.ready:
-		if err != nil {
-			coordinator.discardRuntimeAttachmentEntry(request.TaskHandle, entry)
-			return application.PreparedRuntimeAttachment{}, errors.Join(err, entry.server.Close())
-		}
-		return entry.attachment, nil
+		return err
 	case <-coordinator.runDone:
-		coordinator.discardRuntimeAttachmentEntry(request.TaskHandle, entry)
-		return application.PreparedRuntimeAttachment{}, errors.Join(
-			errors.New("prepare runtime attachment: coordinator stopped"), entry.server.Close(),
-		)
+		return errors.New("prepare runtime attachment: coordinator stopped")
 	}
-}
-
-func (coordinator *runtimeAttachmentCoordinator) discardRuntimeAttachmentEntry(
-	taskHandle string,
-	entry *runtimeAttachmentEntry,
-) {
-	coordinator.mu.Lock()
-	if coordinator.entries[taskHandle] == entry {
-		delete(coordinator.entries, taskHandle)
-	}
-	coordinator.mu.Unlock()
 }
 
 func (coordinator *runtimeAttachmentCoordinator) BindRuntimeAttachment(
@@ -229,7 +237,7 @@ func (coordinator *runtimeAttachmentCoordinator) BindRuntimeAttachment(
 	coordinator.mu.Lock()
 	defer coordinator.mu.Unlock()
 	entry := coordinator.entries[request.TaskHandle]
-	if entry == nil {
+	if entry == nil || entry.state != runtimeAttachmentEntryReady {
 		return errors.New("bind runtime attachment: prepared socket is unavailable")
 	}
 	return bindRuntimeAttachmentEntry(entry, request)
@@ -459,7 +467,7 @@ func (coordinator *runtimeAttachmentCoordinator) closeRuntimeServerForShutdown(s
 	coordinator.mu.Lock()
 	var taskHandle string
 	for handle, entry := range coordinator.entries {
-		if entry.server == server {
+		if entry.server == server && entry.state != runtimeAttachmentEntryReleasing {
 			taskHandle = handle
 			break
 		}

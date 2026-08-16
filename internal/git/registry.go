@@ -206,7 +206,10 @@ func inspectGitWorktree(ctx context.Context, executable, path string) (string, s
 		return "", "", errors.New("inspect git worktree root: configured path is not the worktree root")
 	}
 	bare, err := runGit(ctx, executable, "--no-optional-locks", "-C", path, "rev-parse", "--is-bare-repository")
-	if err != nil || bare != "false" {
+	if err != nil {
+		return "", "", fmt.Errorf("inspect git worktree repository: %w", err)
+	}
+	if bare != "false" {
 		return "", "", errors.New("inspect git worktree root: bare or unreadable repository")
 	}
 	commonDirectory, err := runGit(ctx, executable, "--no-optional-locks", "-C", path,
@@ -219,7 +222,7 @@ func inspectGitWorktree(ctx context.Context, executable, path string) (string, s
 	}
 	identity, err := commonDirectoryIdentity(commonDirectory)
 	if err != nil {
-		return "", "", errors.New("inspect git common directory: identity unavailable")
+		return "", "", fmt.Errorf("inspect git common directory: identity unavailable: %w", err)
 	}
 	return commonDirectory, identity, nil
 }

@@ -64,6 +64,10 @@ func TestRuntimeAttachmentReleaseRecoversAfterCloseBeforeDirectoryStage(t *testi
 	}
 	crash := errors.New("simulated process stop")
 	coordinator.afterRuntimeAttachmentClose = func() error { return crash }
+	go func() {
+		release := <-coordinator.releases
+		release.ready <- nil
+	}()
 	if err := coordinator.ReleaseRuntimeAttachment(context.Background(), task.Handle); !errors.Is(err, crash) {
 		t.Fatalf("ReleaseRuntimeAttachment(simulated stop) error = %v", err)
 	}

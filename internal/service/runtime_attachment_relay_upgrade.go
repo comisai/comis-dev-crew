@@ -64,72 +64,22 @@ func upgradeBaseRuntimeAttachmentIdentity(
 	if err != nil {
 		return err
 	}
-	if missing {
-		record := runtimeAttachmentIdentityRecord{
-			Stage: runtimeAttachmentCreatingIntent, RelaySeed: upgrade.RelaySeed,
-		}
-		_, err := publishRuntimeAttachmentIdentity(
-			runtimeRootDescriptor, upgrade.TaskHandle, record, nil, nil,
+	if !missing {
+		return errors.Join(
+			errors.New("base runtime relay identity artifact is unproven"),
+			unix.Close(taskDescriptor),
 		)
-		return err
 	}
-	closeTask := func(resultErr error) error {
-		return errors.Join(resultErr, unix.Close(taskDescriptor))
-	}
-	if err := unix.Fsync(taskDescriptor); err != nil {
-		return closeTask(errors.New("base runtime relay identity artifact cannot be synchronized"))
-	}
-	taskIdentity, err = runtimeAttachmentDescriptorIdentity(taskDescriptor)
-	if err != nil {
-		return closeTask(err)
-	}
-	socketIdentity, mode, socketFound, err := readPinnedRuntimeSocketIdentity(taskDescriptor)
-	if err != nil {
-		return closeTask(err)
+	if taskIdentity != (reporter.RuntimeSocketIdentity{}) {
+		return errors.New("base runtime relay identity absence is ambiguous")
 	}
 	record := runtimeAttachmentIdentityRecord{
-		Stage: runtimeAttachmentCreating, Task: taskIdentity, RelaySeed: upgrade.RelaySeed,
-	}
-	if socketFound {
-		if mode&unix.S_IFMT != unix.S_IFSOCK || mode&0o777 != 0o600 {
-			return closeTask(errors.New("base runtime relay identity socket is unsafe"))
-		}
-		if !runtimeAttachmentDirectoryContainsOnly(taskDescriptor, "attachment.sock") {
-			return closeTask(errors.New("base runtime relay identity directory is ambiguous"))
-		}
-		record.Stage = runtimeAttachmentActive
-		record.Socket = socketIdentity
-	} else if !runtimeAttachmentDirectoryEmpty(taskDescriptor) {
-		return closeTask(errors.New("base runtime relay identity artifact is ambiguous"))
+		Stage: runtimeAttachmentCreatingIntent, RelaySeed: upgrade.RelaySeed,
 	}
 	_, err = publishRuntimeAttachmentIdentity(
 		runtimeRootDescriptor, upgrade.TaskHandle, record, nil, nil,
 	)
-	return closeTask(err)
-}
-
-func runtimeAttachmentDirectoryContainsOnly(descriptor int, expected string) bool {
-	duplicate, err := unix.Dup(descriptor)
-	if err != nil {
-		return false
-	}
-	directory := os.NewFile(uintptr(duplicate), "base-runtime-attachment-directory")
-	if directory == nil {
-		_ = unix.Close(duplicate)
-		return false
-	}
-	var names []string
-	var readErr error
-	for len(names) < 2 {
-		var batch []string
-		batch, readErr = directory.Readdirnames(2 - len(names))
-		names = append(names, batch...)
-		if readErr != nil || len(batch) == 0 {
-			break
-		}
-	}
-	closeErr := directory.Close()
-	return len(names) == 1 && names[0] == expected && errors.Is(readErr, io.EOF) && closeErr == nil
+	return err
 }
 
 func upgradeLegacyRuntimeAttachmentIdentity(
