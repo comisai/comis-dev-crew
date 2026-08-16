@@ -393,13 +393,15 @@ func (manifest Manifest) validateTasksAndOperations() error {
 	operationIDs := make(map[string]struct{}, len(manifest.Operations))
 	commandsByTask := make(map[string]map[string]int, len(tasks))
 	for _, operation := range manifest.Operations {
-		if err := domain.ValidateOperationID(operation.OperationID); err != nil {
-			return fmt.Errorf("invalid operation ID: %w", err)
+		if operation.OperationID != "" {
+			if err := domain.ValidateOperationID(operation.OperationID); err != nil {
+				return fmt.Errorf("invalid operation ID: %w", err)
+			}
+			if _, exists := operationIDs[operation.OperationID]; exists {
+				return errors.New("operation IDs must be distinct")
+			}
+			operationIDs[operation.OperationID] = struct{}{}
 		}
-		if _, exists := operationIDs[operation.OperationID]; exists {
-			return errors.New("operation IDs must be distinct")
-		}
-		operationIDs[operation.OperationID] = struct{}{}
 		if _, exists := tasks[operation.TaskHandle]; !exists {
 			return errors.New("operation task handle must select one manifest task")
 		}
@@ -421,6 +423,20 @@ func (manifest Manifest) validateTasksAndOperations() error {
 		if !task.ExpectReconciliation && commandsByTask[handle]["HandbackTask"] != 1 {
 			return fmt.Errorf("non-recovered task %s requires exactly one HandbackTask operation", handle)
 		}
+	}
+	return nil
+}
+
+func (manifest Manifest) requireResolvedOperationIdentities() error {
+	seen := make(map[string]struct{}, len(manifest.Operations))
+	for _, operation := range manifest.Operations {
+		if err := domain.ValidateOperationID(operation.OperationID); err != nil {
+			return fmt.Errorf("live campaign operation identity is unresolved: %w", err)
+		}
+		if _, exists := seen[operation.OperationID]; exists {
+			return errors.New("live campaign operation identities are not distinct")
+		}
+		seen[operation.OperationID] = struct{}{}
 	}
 	return nil
 }

@@ -187,3 +187,51 @@ func TestRequireHandbackSiblingWorkingRejectsStoppedSibling(t *testing.T) {
 		t.Fatalf("expected stopped-sibling refusal, got %v", err)
 	}
 }
+
+func TestResolveOperationIdentityUsesDurableTaskEvidenceForEachMutation(t *testing.T) {
+	manifest := validManifest()
+	detail := acceptedTask(manifest.Tasks[0])
+	detail.Evidence.Candidate.ReconciliationOperationID = "operation-reconcile-observed"
+	detail.Evidence.Activity.ReportKind = domain.ReportCandidateComplete
+	detail.Evidence.Activity.ReportID = "operation-handback-observed"
+	detail.Evidence.Cleanup.OperationID = "operation-cleanup-observed"
+	executor := fixedOutputExecutor{output: mustMarshalJSON(t, detail)}
+	runner := CampaignRunner{Executor: &executor}
+	for command, expected := range map[string]string{
+		"ReconcileTask": "operation-reconcile-observed",
+		"HandbackTask":  "operation-handback-observed",
+		"CleanupTask":   "operation-cleanup-observed",
+	} {
+		operationID, err := runner.resolveOperationIdentity(context.Background(), manifest, detail.Summary.TaskHandle, command)
+		if err != nil || operationID != expected {
+			t.Fatalf("resolveOperationIdentity(%s) = %q, %v", command, operationID, err)
+		}
+	}
+}
+
+func TestBindTaskOperationIdentityRefusesDriftAndDuplicateAuthority(t *testing.T) {
+	manifest := validManifest()
+	for index := range manifest.Operations {
+		manifest.Operations[index].OperationID = ""
+	}
+	first := manifest.Operations[0]
+	if err := bindTaskOperationIdentity(&manifest, first.TaskHandle, first.Command, "operation-observed-1"); err != nil {
+		t.Fatalf("bindTaskOperationIdentity() error = %v", err)
+	}
+	if err := bindTaskOperationIdentity(&manifest, first.TaskHandle, first.Command, "operation-drifted"); err == nil {
+		t.Fatal("bindTaskOperationIdentity(drift) error = nil")
+	}
+	second := manifest.Operations[1]
+	if err := bindTaskOperationIdentity(&manifest, second.TaskHandle, second.Command, "operation-observed-1"); err == nil {
+		t.Fatal("bindTaskOperationIdentity(duplicate) error = nil")
+	}
+}
+
+func mustMarshalJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	contents, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return contents
+}

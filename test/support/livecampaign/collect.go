@@ -54,6 +54,9 @@ func Collect(
 	if err := manifest.validate(); err != nil {
 		return Verdict{}, fmt.Errorf("collect live closeout: %w", err)
 	}
+	if err := manifest.requireResolvedOperationIdentities(); err != nil {
+		return Verdict{}, fmt.Errorf("collect live closeout: %w", err)
+	}
 	if err := VerifyResourceObservation(manifest, resources); err != nil {
 		return Verdict{}, fmt.Errorf("collect live closeout: resource observation refused: %w", err)
 	}

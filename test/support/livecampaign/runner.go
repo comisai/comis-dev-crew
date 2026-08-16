@@ -66,7 +66,11 @@ func (runner CampaignRunner) Run(ctx context.Context, manifest Manifest, evidenc
 	if err != nil {
 		return Verdict{}, err
 	}
-	if err := runner.waitOperationAfterCheckpoint(ctx, manifest, "HandbackTask", handbackCheckpoint.EpochMs); err != nil {
+	handbackOperationID, err := runner.waitOperationAfterCheckpoint(ctx, manifest, "HandbackTask", handbackCheckpoint.EpochMs)
+	if err != nil {
+		return Verdict{}, err
+	}
+	if err := bindOperationIdentity(&manifest, "HandbackTask", handbackOperationID); err != nil {
 		return Verdict{}, err
 	}
 	if err := runner.requireHandbackSiblingWorking(ctx, manifest); err != nil {
@@ -77,7 +81,11 @@ func (runner CampaignRunner) Run(ctx context.Context, manifest Manifest, evidenc
 	if err != nil {
 		return Verdict{}, err
 	}
-	if err := runner.waitOperationAfterCheckpoint(ctx, manifest, "ReconcileTask", reconcileCheckpoint.EpochMs); err != nil {
+	reconcileOperationID, err := runner.waitOperationAfterCheckpoint(ctx, manifest, "ReconcileTask", reconcileCheckpoint.EpochMs)
+	if err != nil {
+		return Verdict{}, err
+	}
+	if err := bindOperationIdentity(&manifest, "ReconcileTask", reconcileOperationID); err != nil {
 		return Verdict{}, err
 	}
 	if _, err := runner.waitCheckpoint(ctx, manifest, "devcrew_restart_ready", manifest.StartedAtMs); err != nil {
@@ -117,6 +125,18 @@ func (runner CampaignRunner) Run(ctx context.Context, manifest Manifest, evidenc
 		return fleetHasExactTaskState(manifest, fleet, domain.TaskCleaned), nil
 	}); err != nil {
 		return Verdict{}, err
+	}
+	for _, task := range manifest.Tasks {
+		cleanupOperationID, resolveErr := runner.resolveOperationIdentity(ctx, manifest, task.TaskHandle, "CleanupTask")
+		if resolveErr != nil {
+			return Verdict{}, resolveErr
+		}
+		if err := bindTaskOperationIdentity(&manifest, task.TaskHandle, "CleanupTask", cleanupOperationID); err != nil {
+			return Verdict{}, err
+		}
+	}
+	if err := manifest.requireResolvedOperationIdentities(); err != nil {
+		return Verdict{}, fmt.Errorf("run protected live campaign: %w", err)
 	}
 	if err := runner.wait(ctx, "one-hour resource observation", func() (bool, error) {
 		return runner.NowMs()-resourceStarted.CapturedAtMs >= minimumResourceObservationMs, nil
@@ -198,22 +218,115 @@ func (runner CampaignRunner) waitOperationAfterCheckpoint(
 	manifest Manifest,
 	command string,
 	minimumEpochMs int64,
-) error {
+) (string, error) {
 	operation, found := operationForCommand(manifest, command)
 	if !found {
-		return fmt.Errorf("run protected live campaign: %s operation is absent from the manifest", command)
+		return "", fmt.Errorf("run protected live campaign: %s operation is absent from the manifest", command)
 	}
 	stage := strings.TrimSuffix(strings.ToLower(command), "task") + " operation after Telegram checkpoint"
-	return runner.wait(ctx, stage, func() (bool, error) {
-		view, err := runner.readOperation(ctx, manifest, operation.OperationID)
+	resolvedOperationID := operation.OperationID
+	err := runner.wait(ctx, stage, func() (bool, error) {
+		if resolvedOperationID == "" {
+			var err error
+			resolvedOperationID, err = runner.resolveOperationIdentity(ctx, manifest, operation.TaskHandle, command)
+			if err != nil {
+				return false, nil
+			}
+		}
+		view, err := runner.readOperation(ctx, manifest, resolvedOperationID)
 		if err != nil {
 			return false, nil
 		}
-		if err := VerifyOperation(operation, view); err != nil {
+		resolved := operation
+		resolved.OperationID = resolvedOperationID
+		if err := VerifyOperation(resolved, view); err != nil {
 			return false, nil
 		}
 		return view.UpdatedAtMs >= minimumEpochMs, nil
 	})
+	return resolvedOperationID, err
+}
+
+func (runner CampaignRunner) resolveOperationIdentity(
+	ctx context.Context,
+	manifest Manifest,
+	taskHandle string,
+	command string,
+) (string, error) {
+	detail, err := runner.readTaskDetail(ctx, manifest, taskHandle)
+	if err != nil {
+		return "", err
+	}
+	operationID := ""
+	switch command {
+	case "ReconcileTask":
+		operationID = detail.Evidence.Candidate.ReconciliationOperationID
+	case "HandbackTask":
+		if detail.Evidence.Activity.ReportKind == domain.ReportCandidateComplete {
+			operationID = detail.Evidence.Activity.ReportID
+		}
+	case "CleanupTask":
+		operationID = detail.Evidence.Cleanup.OperationID
+	default:
+		return "", errors.New("resolve DevCrew operation identity: command is outside the live catalog")
+	}
+	if err := domain.ValidateOperationID(operationID); err != nil {
+		return "", errors.New("resolve DevCrew operation identity: task evidence is not ready")
+	}
+	return operationID, nil
+}
+
+func (runner CampaignRunner) readTaskDetail(
+	ctx context.Context,
+	manifest Manifest,
+	taskHandle string,
+) (application.TaskDetail, error) {
+	output, err := runner.Executor.Run(ctx, Command{
+		Path: manifest.DevCrew.CLIPath,
+		Args: []string{"--socket", manifest.DevCrew.SocketPath, "task", "show", taskHandle, "--format", "json"},
+	})
+	if err != nil || len(output) == 0 || len(output) > maximumCommandOutputBytes {
+		return application.TaskDetail{}, errors.New("read DevCrew task detail: report unavailable")
+	}
+	var detail application.TaskDetail
+	if err := json.Unmarshal(output, &detail); err != nil {
+		return application.TaskDetail{}, errors.New("read DevCrew task detail: report is malformed")
+	}
+	if detail.SchemaVersion != 1 || detail.Completeness != application.CompletenessComplete ||
+		detail.Summary.TaskHandle != taskHandle {
+		return application.TaskDetail{}, errors.New("read DevCrew task detail: report is incomplete or mismatched")
+	}
+	return detail, nil
+}
+
+func bindOperationIdentity(manifest *Manifest, command string, operationID string) error {
+	for _, operation := range manifest.Operations {
+		if operation.Command == command {
+			return bindTaskOperationIdentity(manifest, operation.TaskHandle, command, operationID)
+		}
+	}
+	return fmt.Errorf("bind DevCrew operation identity: %s operation is absent", command)
+}
+
+func bindTaskOperationIdentity(manifest *Manifest, taskHandle string, command string, operationID string) error {
+	if err := domain.ValidateOperationID(operationID); err != nil {
+		return errors.New("bind DevCrew operation identity: resolved identity is invalid")
+	}
+	for index := range manifest.Operations {
+		operation := &manifest.Operations[index]
+		if operation.TaskHandle != taskHandle || operation.Command != command {
+			if operation.OperationID == operationID {
+				return errors.New("bind DevCrew operation identity: resolved identity is not distinct")
+			}
+			continue
+		}
+		if operation.OperationID != "" && operation.OperationID != operationID {
+			return errors.New("bind DevCrew operation identity: durable identity differs from the manifest")
+		}
+		operation.OperationID = operationID
+		return nil
+	}
+	return errors.New("bind DevCrew operation identity: task command is absent from the manifest")
 }
 
 func (runner CampaignRunner) readOperation(
