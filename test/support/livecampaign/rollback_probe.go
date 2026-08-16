@@ -54,13 +54,18 @@ func RealRollbackServiceProbe(
 				output, err := (RealExecutor{}).Run(ctx, Command{
 					Path: cliPath, Args: []string{"--socket", socketPath, "service", "status"},
 				})
-				if err != nil || !strings.Contains(string(output), "healthy") || !strings.Contains(string(output), "complete") {
+				if err != nil || !rollbackServiceStatusAccepted(output) {
 					return errors.New("rollback service probe status is not healthy and complete")
 				}
 				return nil
 			}
 		}
 	}
+}
+
+func rollbackServiceStatusAccepted(output []byte) bool {
+	status := string(output)
+	return strings.Contains(status, "healthy") && strings.Contains(status, "complete")
 }
 
 func stopRollbackProbe(command *exec.Cmd) {
