@@ -414,7 +414,7 @@ func TestCandidateSupervisor_RunRecoversFromTemporaryGitHubStatusEndToEnd(t *tes
 				fixture.snapshot.HeadRevision, fixture.snapshot.Branch)
 		case "/repos/comisai/fixture/commits/" + fixture.snapshot.HeadRevision + "/check-runs":
 			_, _ = fmt.Fprintf(response,
-				`{"check_runs":[{"id":17,"name":"ci/unit","status":"completed","conclusion":"success","started_at":%q}]}`,
+				`{"total_count":1,"check_runs":[{"id":17,"name":"ci/unit","status":"completed","conclusion":"success","started_at":%q}]}`,
 				fixture.now.Add(-time.Minute).Format(time.RFC3339),
 			)
 		default:

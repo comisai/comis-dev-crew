@@ -185,6 +185,10 @@ func (identity runtimePathIdentity) sameNode(other runtimePathIdentity) bool {
 	return identity.device == other.device && identity.inode == other.inode && identity.mode == other.mode
 }
 
+func (identity runtimePathIdentity) sameObject(other runtimePathIdentity) bool {
+	return identity.sameNode(other) && identity.changeSec == other.changeSec && identity.changeNsec == other.changeNsec
+}
+
 func pinnedRuntimeSocketIdentity(pinned *pinnedRuntimeMount, targetName string) (runtimePathIdentity, error) {
 	var stat unix.Stat_t
 	if err := unix.Fstatat(pinned.descriptors[len(pinned.descriptors)-1], targetName, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
@@ -228,7 +232,7 @@ func (client *RuntimeClient) dialMountedRuntimeSocket() (net.Conn, error) {
 		client.afterMountPin()
 	}
 	currentSocket, socketErr := pinnedRuntimeSocketIdentity(pinned, client.mountTargetName)
-	if socketErr != nil || !client.mountedSocketIdentity.sameNode(currentSocket) {
+	if socketErr != nil || !client.mountedSocketIdentity.sameObject(currentSocket) {
 		return nil, closePinnedRuntimeMount(pinned, errors.New("call runtime attachment: socket identity changed"))
 	}
 	dialPath, err := pinned.targetPath(client.mountTargetName)
@@ -240,7 +244,7 @@ func (client *RuntimeClient) dialMountedRuntimeSocket() (net.Conn, error) {
 		return nil, closePinnedRuntimeMount(pinned, errors.New("call runtime attachment: socket is unavailable"))
 	}
 	currentSocket, socketErr = pinnedRuntimeSocketIdentity(pinned, client.mountTargetName)
-	stable := socketErr == nil && client.mountedSocketIdentity.sameNode(currentSocket) &&
+	stable := socketErr == nil && client.mountedSocketIdentity.sameObject(currentSocket) &&
 		pinned.unchanged() && pinned.matchesPath(client.mountDirectory)
 	closeErr := pinned.close()
 	if stable && closeErr == nil {

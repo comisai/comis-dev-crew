@@ -309,7 +309,7 @@ func TestRuntimeAttachmentCoordinator_RecoversPreparedTaskSocketAfterRestart(t *
 	}
 }
 
-func TestRuntimeAttachmentCoordinator_SkipsCleanedTaskAfterWorkspaceRemoval(t *testing.T) {
+func TestRuntimeAttachmentCoordinator_PreservesUnprovenCleanedTaskDirectory(t *testing.T) {
 	root := shortTempDir(t)
 	runtimeRoot := filepath.Join(root, "runtime")
 	now := time.Date(2026, time.August, 10, 16, 45, 0, 0, time.UTC)
@@ -340,14 +340,14 @@ func TestRuntimeAttachmentCoordinator_SkipsCleanedTaskAfterWorkspaceRemoval(t *t
 		t.Fatal(err)
 	}
 	servers, err := coordinator.recoverRuntimeAttachments(context.Background())
-	if err != nil || len(servers) != 0 {
+	if err == nil || len(servers) != 0 {
 		t.Fatalf("recoverRuntimeAttachments(cleaned) = %d servers, %v", len(servers), err)
 	}
 	if store.preparationReads != 0 {
 		t.Fatalf("cleaned task preparation reads = %d, want 0", store.preparationReads)
 	}
-	if _, err := os.Lstat(cleanedRuntimeRoot); !os.IsNotExist(err) {
-		t.Fatalf("cleaned task runtime root error = %v, want not exist", err)
+	if info, err := os.Lstat(cleanedRuntimeRoot); err != nil || !info.IsDir() {
+		t.Fatalf("unproven cleaned task runtime root was not preserved: %#v, %v", info, err)
 	}
 }
 

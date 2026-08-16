@@ -68,6 +68,38 @@ func TestMountedRuntimeClientBindsDialToPinnedDirectoryIdentity(t *testing.T) {
 	}
 }
 
+func TestMountedRuntimeClientRejectsReusedSocketNodeWithDifferentChangeTime(t *testing.T) {
+	const targetName = "attachment-0123456789abcdef0123456789abcdef.sock"
+	root := shortBoundaryDirectory(t)
+	mountDirectory := filepath.Join(root, "run", "comis", "attachments")
+	if err := os.MkdirAll(mountDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	listener, connected := trackedRuntimeSocket(t, filepath.Join(mountDirectory, targetName))
+	client, err := newMountedRuntimeClient(filepath.Join(mountDirectory, targetName), targetName, mountDirectory, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.mountedSocketIdentity.changeNsec == 0 {
+		client.mountedSocketIdentity.changeNsec = 1
+	} else {
+		client.mountedSocketIdentity.changeNsec--
+	}
+	connection, callErr := client.dialMountedRuntimeSocket()
+	if connection != nil {
+		_ = connection.Close()
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if callErr == nil {
+		t.Fatal("mounted runtime client accepted a reused socket node with different change time")
+	}
+	if <-connected {
+		t.Fatal("mounted runtime client connected to a socket with different change time")
+	}
+}
+
 func trackedRuntimeSocket(t *testing.T, socketPath string) (*net.UnixListener, <-chan bool) {
 	t.Helper()
 	address, err := net.ResolveUnixAddr("unix", socketPath)

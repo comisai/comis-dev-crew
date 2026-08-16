@@ -163,6 +163,9 @@ func TestDevcrewReportBriefProbeConnectsThroughAssignedMountedTarget(t *testing.
 	if _, err := client.Brief(context.Background()); err == nil {
 		t.Fatal("mounted runtime client ignored a changed protected mount posture")
 	}
+	if err := os.Chmod(mountRoot, 0o711); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestMountedRuntimeClientRejectsIntermediateSymlinkReplacementOnCall(t *testing.T) {
@@ -214,6 +217,12 @@ func TestMountedRuntimeClientRejectsIntermediateSymlinkReplacementOnCall(t *test
 	}
 	if _, err := client.Brief(context.Background()); err == nil {
 		t.Fatal("mounted runtime client accepted an intermediate symlink replacement")
+	}
+	if err := os.Remove(runDirectory); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(originalRunDirectory, runDirectory); err != nil {
+		t.Fatal(err)
 	}
 }
 

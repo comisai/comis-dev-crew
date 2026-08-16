@@ -189,7 +189,8 @@ type githubPull struct {
 }
 
 type githubChecks struct {
-	Runs []struct {
+	TotalCount json.RawMessage `json:"total_count"`
+	Runs       []struct {
 		ID         json.RawMessage `json:"id"`
 		Name       string          `json:"name"`
 		Status     json.RawMessage `json:"status"`
@@ -241,9 +242,12 @@ func (adapter *GitHubAdapter) readChecks(
 	secret, head string,
 	required []string,
 ) ([]domain.ForgeCheckEvidence, error) {
-	var response githubChecks
-	if err := adapter.requestJSON(ctx, secret, http.MethodGet, adapter.repositoryPath("commits", head, "check-runs"), nil, nil, &response); err != nil {
+	response, complete, err := adapter.readAllCheckRuns(ctx, secret, head)
+	if err != nil {
 		return nil, err
+	}
+	if !complete {
+		return unknownRequiredChecks(required), nil
 	}
 	type observedCheck struct {
 		id           int64
@@ -304,26 +308,6 @@ func (adapter *GitHubAdapter) readChecks(
 		evidence = append(evidence, domain.ForgeCheckEvidence{Name: name, Conclusion: conclusion})
 	}
 	return evidence, nil
-}
-
-func githubCheckConclusion(status string, conclusion *string) domain.CheckConclusion {
-	if status != "completed" {
-		if status == "queued" || status == "in_progress" || status == "pending" {
-			return domain.CheckPending
-		}
-		return domain.CheckUnknown
-	}
-	if conclusion == nil {
-		return domain.CheckUnknown
-	}
-	switch *conclusion {
-	case "success", "neutral", "skipped":
-		return domain.CheckPassed
-	case "failure", "cancelled", "timed_out", "action_required", "startup_failure":
-		return domain.CheckFailed
-	default:
-		return domain.CheckUnknown
-	}
 }
 
 func (adapter *GitHubAdapter) requestJSON(
