@@ -676,12 +676,16 @@ func (store *candidateSupervisorStore) CommitCandidateEvidence(
 
 type candidateSupervisorGit struct {
 	snapshots []devgit.CandidateSnapshot
+	errors    []error
 	calls     int
 }
 
 func (git *candidateSupervisorGit) InspectCandidate(context.Context, devgit.CandidateSnapshotRequest) (devgit.CandidateSnapshot, error) {
 	index := git.calls
 	git.calls++
+	if index < len(git.errors) && git.errors[index] != nil {
+		return devgit.CandidateSnapshot{}, git.errors[index]
+	}
 	if index >= len(git.snapshots) {
 		return devgit.CandidateSnapshot{}, errors.New("snapshot unavailable")
 	}

@@ -189,14 +189,16 @@ type githubPull struct {
 }
 
 type githubChecks struct {
-	TotalCount json.RawMessage `json:"total_count"`
-	Runs       []struct {
-		ID         json.RawMessage `json:"id"`
-		Name       json.RawMessage `json:"name"`
-		Status     json.RawMessage `json:"status"`
-		Conclusion json.RawMessage `json:"conclusion"`
-		StartedAt  json.RawMessage `json:"started_at"`
-	} `json:"check_runs"`
+	TotalCount json.RawMessage   `json:"total_count"`
+	Runs       []json.RawMessage `json:"check_runs"`
+}
+
+type githubCheckRun struct {
+	ID         json.RawMessage `json:"id"`
+	Name       json.RawMessage `json:"name"`
+	Status     json.RawMessage `json:"status"`
+	Conclusion json.RawMessage `json:"conclusion"`
+	StartedAt  json.RawMessage `json:"started_at"`
 }
 
 func (adapter *GitHubAdapter) resolvePullRequest(ctx context.Context, secret string, request PullRequestRequest) (int, error) {
@@ -258,7 +260,11 @@ func (adapter *GitHubAdapter) readChecks(
 	observed := make(map[string]observedCheck, len(response.Runs))
 	seenIDs := make(map[int64]string, len(response.Runs))
 	poisoned := make(map[string]struct{})
-	for _, run := range response.Runs {
+	for _, encodedRun := range response.Runs {
+		var run githubCheckRun
+		if len(encodedRun) == 0 || json.Unmarshal(encodedRun, &run) != nil {
+			return unknownRequiredChecks(required), nil
+		}
 		name, nameKnown := parseGitHubCheckName(run.Name)
 		if !nameKnown {
 			return unknownRequiredChecks(required), nil

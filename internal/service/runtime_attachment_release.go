@@ -46,6 +46,11 @@ func (coordinator *runtimeAttachmentCoordinator) ReleaseRuntimeAttachment(ctx co
 		if err := entry.server.Close(); err != nil {
 			return errors.Join(err, pinned.close())
 		}
+		if coordinator.afterRuntimeAttachmentClose != nil {
+			if err := coordinator.afterRuntimeAttachmentClose(); err != nil {
+				return errors.Join(err, pinned.close())
+			}
+		}
 		removeErr := removePinnedRuntimeAttachment(pinned, record)
 		if err := errors.Join(removeErr, pinned.close()); err != nil {
 			return errors.New("release runtime attachment: task runtime directory is not empty or unavailable")

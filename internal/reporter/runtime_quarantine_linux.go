@@ -22,7 +22,7 @@ func exchangeRuntimePaths(directoryDescriptor int, left, right string) error {
 
 func openRuntimeRemovalPath(
 	directoryDescriptor int,
-	name string,
+	name, _ string,
 	_ RuntimeSocketIdentity,
 	_ RuntimePathKind,
 	_ os.FileMode,

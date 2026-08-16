@@ -1,7 +1,9 @@
 package service
 
 import (
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +15,16 @@ import (
 
 const runtimeAttachmentIdentitySuffix = ".attachment.identity"
 
+type runtimeAttachmentIdentityStage uint8
+
+const (
+	runtimeAttachmentCreating runtimeAttachmentIdentityStage = iota + 1
+	runtimeAttachmentActive
+	runtimeAttachmentReleasing
+)
+
 type runtimeAttachmentIdentityRecord struct {
+	Stage  runtimeAttachmentIdentityStage
 	Task   reporter.RuntimeSocketIdentity
 	Socket reporter.RuntimeSocketIdentity
 }
@@ -22,6 +33,7 @@ type pinnedTaskRuntimeDirectory struct {
 	runtimeRootDescriptor int
 	taskDescriptor        int
 	taskHandle            string
+	directoryName         string
 	taskIdentity          reporter.RuntimeSocketIdentity
 }
 
@@ -70,7 +82,16 @@ func runtimeAttachmentDescriptorIdentity(descriptor int) (reporter.RuntimeSocket
 	if err := unix.Fstat(descriptor, &stat); err != nil {
 		return reporter.RuntimeSocketIdentity{}, errors.New("runtime attachment filesystem identity is unavailable")
 	}
-	return runtimeAttachmentStatIdentity(stat)
+	identity, err := runtimeAttachmentStatIdentity(stat)
+	if err != nil {
+		return reporter.RuntimeSocketIdentity{}, err
+	}
+	birthSec, birthNsec := runtimeAttachmentDescriptorBirthTime(descriptor)
+	if birthSec != 0 || birthNsec != 0 {
+		identity.BirthSec = birthSec
+		identity.BirthNsec = birthNsec
+	}
+	return identity, nil
 }
 
 func runtimeAttachmentPathIdentity(path string) (reporter.RuntimeSocketIdentity, error) {
@@ -149,7 +170,7 @@ func (coordinator *runtimeAttachmentCoordinator) pinTaskRuntimeDirectory(
 	}
 	return &pinnedTaskRuntimeDirectory{
 		runtimeRootDescriptor: runtimeRootDescriptor, taskDescriptor: taskDescriptor,
-		taskHandle: taskHandle, taskIdentity: taskIdentity,
+		taskHandle: taskHandle, directoryName: taskHandle, taskIdentity: taskIdentity,
 	}, false, nil
 }
 
@@ -166,14 +187,6 @@ func (coordinator *runtimeAttachmentCoordinator) persistRuntimeAttachmentIdentit
 	taskHandle string,
 	identity reporter.RuntimeSocketIdentity,
 ) error {
-	return coordinator.persistRuntimeAttachmentIdentityWithPrior(taskHandle, identity, nil)
-}
-
-func (coordinator *runtimeAttachmentCoordinator) persistRuntimeAttachmentIdentityWithPrior(
-	taskHandle string,
-	identity reporter.RuntimeSocketIdentity,
-	priorTaskIdentity *reporter.RuntimeSocketIdentity,
-) error {
 	if !identity.Valid() {
 		return errors.New("persist runtime attachment identity: identity is invalid")
 	}
@@ -181,32 +194,9 @@ func (coordinator *runtimeAttachmentCoordinator) persistRuntimeAttachmentIdentit
 	if err != nil || missing {
 		return errors.New("persist runtime attachment identity: task directory is unavailable")
 	}
-	record := runtimeAttachmentIdentityRecord{Task: pinned.taskIdentity, Socket: identity}
-	var resultErr error
-	if priorTaskIdentity == nil {
-		resultErr = persistPinnedRuntimeAttachmentIdentity(pinned, record, nil)
-	} else {
-		_, resultErr = publishPinnedRuntimeAttachmentIdentity(pinned, record, *priorTaskIdentity, nil)
-	}
+	record := runtimeAttachmentIdentityRecord{Stage: runtimeAttachmentActive, Task: pinned.taskIdentity, Socket: identity}
+	resultErr := persistPinnedRuntimeAttachmentIdentity(pinned, record, nil)
 	return errors.Join(resultErr, pinned.close())
-}
-
-func (coordinator *runtimeAttachmentCoordinator) runtimeAttachmentReplacementAuthority(
-	taskHandle string,
-) (*reporter.RuntimeSocketIdentity, error) {
-	runtimeRootDescriptor, err := coordinator.pinRuntimeRoot()
-	if err != nil {
-		return nil, err
-	}
-	record, _, found, readErr := readRuntimeAttachmentIdentityRecord(runtimeRootDescriptor, taskHandle)
-	closeErr := closeRuntimeRootDescriptor(runtimeRootDescriptor)
-	if readErr != nil || closeErr != nil {
-		return nil, errors.New("runtime attachment replacement authority is unavailable")
-	}
-	if !found {
-		return nil, nil
-	}
-	return &record.Task, nil
 }
 
 func readPinnedRuntimeSocketIdentity(
@@ -234,13 +224,9 @@ func (coordinator *runtimeAttachmentCoordinator) removeTaskRuntimeDirectory(task
 	if err != nil {
 		return errors.Join(err, closeRuntimeRootDescriptor(runtimeRootDescriptor))
 	}
-	taskDescriptor, taskIdentity, taskMissing, err := openTaskRuntimeDirectory(runtimeRootDescriptor, taskHandle)
-	if err != nil {
-		return errors.Join(err, closeRuntimeRootDescriptor(runtimeRootDescriptor))
-	}
 	if !identityFound {
-		if !taskMissing {
-			_ = unix.Close(taskDescriptor)
+		if !runtimeAttachmentPathAbsent(runtimeRootDescriptor, taskHandle) ||
+			!runtimeAttachmentPathAbsent(runtimeRootDescriptor, runtimeAttachmentCreationName(taskHandle)) {
 			return errors.Join(
 				errors.New("task runtime directory identity is unproven; path preserved"),
 				closeRuntimeRootDescriptor(runtimeRootDescriptor),
@@ -248,27 +234,65 @@ func (coordinator *runtimeAttachmentCoordinator) removeTaskRuntimeDirectory(task
 		}
 		return closeRuntimeRootDescriptor(runtimeRootDescriptor)
 	}
-	if taskMissing {
-		removeErr := reporter.QuarantineRuntimePath(
-			runtimeRootDescriptor, taskHandle, record.Task, reporter.RuntimePathDirectory, 0o700,
-		)
-		if errors.Is(removeErr, reporter.ErrRuntimePathMissing) {
-			removeErr = nil
-		}
-		if removeErr == nil && !runtimeAttachmentPathAbsent(runtimeRootDescriptor, taskHandle) {
-			removeErr = errors.New("task runtime directory replacement was preserved")
-		}
-		return errors.Join(removeErr, closeRuntimeRootDescriptor(runtimeRootDescriptor))
+	pinned, missing, err := openRecordedTaskRuntimeDirectory(runtimeRootDescriptor, taskHandle, record)
+	if err != nil {
+		return errors.Join(err, closeRuntimeRootDescriptor(runtimeRootDescriptor))
 	}
-	pinned := &pinnedTaskRuntimeDirectory{
-		runtimeRootDescriptor: runtimeRootDescriptor, taskDescriptor: taskDescriptor,
-		taskHandle: taskHandle, taskIdentity: taskIdentity,
-	}
-	if record.Task != taskIdentity {
-		return errors.Join(errors.New("task runtime directory identity differs; path preserved"), pinned.close())
+	if missing {
+		return closeRuntimeRootDescriptor(runtimeRootDescriptor)
 	}
 	resultErr := removePinnedRuntimeAttachment(pinned, record)
 	return errors.Join(resultErr, pinned.close())
+}
+
+func openRecordedTaskRuntimeDirectory(
+	runtimeRootDescriptor int,
+	taskHandle string,
+	record runtimeAttachmentIdentityRecord,
+) (*pinnedTaskRuntimeDirectory, bool, error) {
+	names := []string{taskHandle}
+	if record.Stage == runtimeAttachmentCreating {
+		names = append(names, runtimeAttachmentCreationName(taskHandle))
+	}
+	var pinned *pinnedTaskRuntimeDirectory
+	for _, name := range names {
+		descriptor, identity, missing, err := openTaskRuntimeDirectory(runtimeRootDescriptor, name)
+		if err != nil {
+			return nil, false, err
+		}
+		if missing {
+			continue
+		}
+		if pinned != nil {
+			_ = unix.Close(descriptor)
+			_ = unix.Close(pinned.taskDescriptor)
+			return nil, false, errors.New("task runtime directory location is ambiguous; paths preserved")
+		}
+		if record.Task != identity &&
+			(record.Stage == runtimeAttachmentActive || !sameRuntimeAttachmentStableNode(identity, record.Task)) {
+			_ = unix.Close(descriptor)
+			return nil, false, errors.New("task runtime directory identity differs; path preserved")
+		}
+		pinned = &pinnedTaskRuntimeDirectory{
+			runtimeRootDescriptor: runtimeRootDescriptor, taskDescriptor: descriptor,
+			taskHandle: taskHandle, directoryName: name, taskIdentity: identity,
+		}
+	}
+	if pinned != nil {
+		return pinned, false, nil
+	}
+	for _, name := range names {
+		err := reporter.QuarantineRuntimePath(
+			runtimeRootDescriptor, name, record.Task, reporter.RuntimePathDirectory, 0o700,
+		)
+		if err == nil {
+			return nil, true, nil
+		}
+		if !errors.Is(err, reporter.ErrRuntimePathMissing) {
+			return nil, false, errors.New("task runtime directory quarantine is ambiguous; path preserved")
+		}
+	}
+	return nil, true, nil
 }
 
 func (coordinator *runtimeAttachmentCoordinator) pinRuntimeAttachmentRelease(
@@ -280,9 +304,21 @@ func (coordinator *runtimeAttachmentCoordinator) pinRuntimeAttachmentRelease(
 			errors.New("task runtime directory identity is unavailable")
 	}
 	record, _, found, err := readRuntimeAttachmentIdentityRecord(pinned.runtimeRootDescriptor, taskHandle)
-	if err != nil || !found || record.Task != pinned.taskIdentity {
+	if err != nil || !found ||
+		(record.Stage == runtimeAttachmentActive && record.Task != pinned.taskIdentity) ||
+		(record.Stage == runtimeAttachmentReleasing && !sameRuntimeAttachmentStableNode(record.Task, pinned.taskIdentity)) ||
+		(record.Stage != runtimeAttachmentActive && record.Stage != runtimeAttachmentReleasing) {
 		return nil, runtimeAttachmentIdentityRecord{},
 			errors.Join(errors.New("task runtime directory identity differs; path preserved"), pinned.close())
+	}
+	if record.Stage == runtimeAttachmentActive {
+		staged := record
+		staged.Stage = runtimeAttachmentReleasing
+		if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, staged, &record, nil); err != nil {
+			return nil, runtimeAttachmentIdentityRecord{},
+				errors.Join(errors.New("task runtime attachment release cannot be staged"), pinned.close())
+		}
+		record = staged
 	}
 	return pinned, record, nil
 }
@@ -298,6 +334,14 @@ func removePinnedTaskRuntimeDirectory(
 	pinned *pinnedTaskRuntimeDirectory,
 	record runtimeAttachmentIdentityRecord,
 ) error {
+	if record.Stage == runtimeAttachmentActive {
+		staged := record
+		staged.Stage = runtimeAttachmentReleasing
+		if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, staged, &record, nil); err != nil {
+			return errors.New("task runtime attachment release cannot be staged")
+		}
+		record = staged
+	}
 	if err := reporter.QuarantineRuntimePath(
 		pinned.taskDescriptor, "attachment.sock", record.Socket, reporter.RuntimePathSocket, 0o600,
 	); err != nil && !errors.Is(err, reporter.ErrRuntimePathMissing) {
@@ -311,11 +355,11 @@ func removePinnedTaskRuntimeDirectory(
 		return err
 	}
 	if err := reporter.QuarantineRuntimePath(
-		pinned.runtimeRootDescriptor, pinned.taskHandle, current, reporter.RuntimePathDirectory, 0o700,
+		pinned.runtimeRootDescriptor, pinned.directoryName, current, reporter.RuntimePathDirectory, 0o700,
 	); err != nil {
 		return errors.New("task runtime directory is not empty or unavailable")
 	}
-	if !runtimeAttachmentPathAbsent(pinned.runtimeRootDescriptor, pinned.taskHandle) {
+	if !runtimeAttachmentPathAbsent(pinned.runtimeRootDescriptor, pinned.directoryName) {
 		return errors.New("task runtime directory replacement was preserved")
 	}
 	return nil
@@ -329,12 +373,12 @@ func stagePinnedRuntimeAttachmentDirectory(
 		return reporter.RuntimeSocketIdentity{}, errors.New("task runtime directory update cannot be synchronized")
 	}
 	current, err := runtimeAttachmentDescriptorIdentity(pinned.taskDescriptor)
-	if err != nil || !sameRuntimeAttachmentNode(current, pinned.taskIdentity) {
+	if err != nil || !sameRuntimeAttachmentStableNode(current, pinned.taskIdentity) {
 		return reporter.RuntimeSocketIdentity{}, errors.New("task runtime directory identity is unavailable")
 	}
 	staged := record
 	staged.Task = current
-	if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, staged, record.Task, nil); err != nil {
+	if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, staged, &record, nil); err != nil {
 		return reporter.RuntimeSocketIdentity{}, errors.New("task runtime directory identity cannot be staged")
 	}
 	return current, nil
@@ -347,6 +391,21 @@ func runtimeAttachmentPathAbsent(directoryDescriptor int, name string) bool {
 
 func sameRuntimeAttachmentNode(left, right reporter.RuntimeSocketIdentity) bool {
 	return left.Device == right.Device && left.Inode == right.Inode
+}
+
+func sameRuntimeAttachmentStableNode(left, right reporter.RuntimeSocketIdentity) bool {
+	if !sameRuntimeAttachmentNode(left, right) {
+		return false
+	}
+	if left.BirthSec != 0 || left.BirthNsec != 0 || right.BirthSec != 0 || right.BirthNsec != 0 {
+		return left.BirthSec == right.BirthSec && left.BirthNsec == right.BirthNsec
+	}
+	return left.ChangeSec == right.ChangeSec && left.ChangeNsec == right.ChangeNsec
+}
+
+func runtimeAttachmentCreationName(taskHandle string) string {
+	digest := sha256.Sum256([]byte(taskHandle))
+	return fmt.Sprintf(".dc-%x", digest[:8])
 }
 
 func closeRuntimeRootDescriptor(descriptor int) error {

@@ -3,6 +3,7 @@ package git
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 )
 
@@ -27,7 +28,10 @@ func (registry *Registry) InspectCandidate(ctx context.Context, request Candidat
 		return CandidateSnapshot{}, errors.New("inspect task candidate: worktree does not match task root")
 	}
 	if _, err := registry.ValidateWorktree(ctx, request.RepositoryID, request.WorktreePath); err != nil {
-		return CandidateSnapshot{}, errors.New("inspect task candidate: worktree identity is invalid")
+		if ctx.Err() != nil {
+			return CandidateSnapshot{}, ctx.Err()
+		}
+		return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: worktree identity is invalid: %w", ErrCandidateWorktreeUnverified)
 	}
 	entries, err := registry.worktreeEntries(ctx, repository)
 	if err != nil {
@@ -35,22 +39,31 @@ func (registry *Registry) InspectCandidate(ctx context.Context, request Candidat
 	}
 	entry, found := findWorktreeEntry(entries, request.WorktreePath)
 	if !found || entry.locked || entry.prunable || entry.branch == "" || !gitRevisionPattern.MatchString(entry.head) {
-		return CandidateSnapshot{}, errors.New("inspect task candidate: worktree inventory is ambiguous")
+		return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: worktree inventory is ambiguous: %w", ErrCandidateWorktreeUnverified)
 	}
 	branch, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.WorktreePath,
 		"symbolic-ref", "--quiet", "--short", "HEAD")
 	if err != nil || branch != entry.branch {
-		return CandidateSnapshot{}, errors.New("inspect task candidate: branch identity differs")
+		if ctx.Err() != nil {
+			return CandidateSnapshot{}, ctx.Err()
+		}
+		return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: branch identity differs: %w", ErrCandidateWorktreeUnverified)
 	}
 	head, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.WorktreePath,
 		"rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil || head != entry.head {
-		return CandidateSnapshot{}, errors.New("inspect task candidate: head identity differs")
+		if ctx.Err() != nil {
+			return CandidateSnapshot{}, ctx.Err()
+		}
+		return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: head identity differs: %w", ErrCandidateWorktreeUnverified)
 	}
 	status, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.WorktreePath,
 		"status", "--porcelain=v2", "-z", "--untracked-files=all")
 	if err != nil {
-		return CandidateSnapshot{}, errors.New("inspect task candidate: worktree status is unavailable")
+		if ctx.Err() != nil {
+			return CandidateSnapshot{}, ctx.Err()
+		}
+		return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: worktree status is unavailable: %w", ErrCandidateWorktreeUnverified)
 	}
 	cleanliness := CandidateClean
 	if len(status) != 0 {

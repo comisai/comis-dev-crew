@@ -1,0 +1,158 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
+	"github.com/comisai/comis-dev-crew/internal/reporter"
+)
+
+func TestRuntimeAttachmentReleaseRecoversAfterCloseBeforeDirectoryStage(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	now := time.Date(2026, time.August, 16, 13, 0, 0, 0, time.UTC)
+	task := runtimeAttachmentCleanupHeldTask(t, now, "task-runtime-release-transition")
+	store := &runtimeAttachmentRecoveryStore{
+		tasks: []domain.Task{task}, cleanupFound: true,
+		cleanupRecord: application.TaskCleanupRecord{TaskHandle: task.Handle, Stage: application.CleanupHostReleased},
+	}
+	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, store, now)
+	close(coordinator.recoveryReady)
+	taskRoot := filepath.Join(runtimeRoot, task.Handle)
+	if err := os.Mkdir(taskRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	brief, err := task.RenderWorkerBrief()
+	if err != nil {
+		t.Fatal(err)
+	}
+	socketPath := filepath.Join(taskRoot, "attachment.sock")
+	server, err := reporter.ListenRuntime(reporter.RuntimeServerConfig{
+		SocketPath: socketPath, Brief: brief, Reporter: &reporter.Client{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := server.SocketIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinator.persistRuntimeAttachmentIdentity(task.Handle, identity); err != nil {
+		t.Fatal(err)
+	}
+	coordinator.entries[task.Handle] = &runtimeAttachmentEntry{
+		attachment: application.PreparedRuntimeAttachment{Kind: application.RuntimeAttachmentUnixSocket, SourcePath: socketPath},
+		server:     server,
+	}
+	crash := errors.New("simulated process stop")
+	coordinator.afterRuntimeAttachmentClose = func() error { return crash }
+	if err := coordinator.ReleaseRuntimeAttachment(context.Background(), task.Handle); !errors.Is(err, crash) {
+		t.Fatalf("ReleaseRuntimeAttachment(simulated stop) error = %v", err)
+	}
+	restarted := runtimeTransitionCoordinator(t, runtimeRoot, store, now)
+	servers, err := restarted.recoverRuntimeAttachments(context.Background())
+	if err != nil || len(servers) != 0 {
+		t.Fatalf("recoverRuntimeAttachments(after release stop) = %d, %v", len(servers), err)
+	}
+	if _, err := os.Lstat(taskRoot); !os.IsNotExist(err) {
+		t.Fatalf("released task directory error = %v, want not exist", err)
+	}
+}
+
+func TestRuntimeAttachmentRecoveryReplaysPublishedReplacementDirectory(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.August, 16, 13, 10, 0, 0, time.UTC)
+	task := runtimeAttachmentRecoverableTask(t, now, "task-runtime-create-transition")
+	taskRoot := filepath.Join(runtimeRoot, task.Handle)
+	socketPath := filepath.Join(taskRoot, "attachment.sock")
+	store := &runtimeTransitionStore{
+		task: task,
+		preparation: application.ManagedRunPreparation{
+			RequestedWorkspaceRoot: workspace,
+			RequestedAttachment: application.PreparedRuntimeAttachment{
+				Kind: application.RuntimeAttachmentUnixSocket, SourcePath: socketPath,
+			},
+		},
+	}
+	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, store, now)
+	coordinator.afterRuntimeDirectoryPublish = func() error { return errors.New("simulated process stop") }
+	if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err == nil || len(servers) != 0 {
+		t.Fatalf("recoverRuntimeAttachments(publish stop) = %d, %v", len(servers), err)
+	}
+	restarted := runtimeTransitionCoordinator(t, runtimeRoot, store, now)
+	servers, err := restarted.recoverRuntimeAttachments(context.Background())
+	if err != nil || len(servers) != 1 {
+		t.Fatalf("recoverRuntimeAttachments(publish replay) = %d, %v", len(servers), err)
+	}
+	if err := servers[0].Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runtimeTransitionCoordinator(
+	t *testing.T,
+	runtimeRoot string,
+	store runtimeAttachmentStore,
+	now time.Time,
+) *runtimeAttachmentCoordinator {
+	t.Helper()
+	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+		RuntimeRoot: runtimeRoot, Store: store, Clock: func() time.Time { return now },
+		NewCredential:           func() (string, error) { return "transition-credential-0123456789abcdef", nil },
+		NewAttentionOperationID: runtimeAttentionOperationID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return coordinator
+}
+
+func runtimeAttachmentRecoverableTask(t *testing.T, now time.Time, handle string) domain.Task {
+	t.Helper()
+	task := domain.Task{
+		SchemaVersion: 1, Handle: handle, State: domain.TaskPrepared,
+		ServiceInstanceID: "service-instance-runtime-transition", Shape: domain.ShapeScout,
+		RepositoryID: "product-api", BaseRevision: strings.Repeat("a", 40), BriefRevision: 1,
+		AcceptanceCriteria: []string{"Recover the reporter attachment."}, ValidationProfile: "go-default",
+		DeliveryMode: domain.DeliveryReport, WorkerProfileID: "codex-reviewed",
+		StateVersion: 1, CreatedAt: now, UpdatedAt: now,
+	}
+	pinned, err := task.PinBriefRevision()
+	if err != nil || pinned.Validate() != nil {
+		t.Fatalf("recoverable task = %#v, %v", pinned, err)
+	}
+	return pinned
+}
+
+type runtimeTransitionStore struct {
+	task        domain.Task
+	preparation application.ManagedRunPreparation
+}
+
+func (store *runtimeTransitionStore) ListTasks(context.Context) ([]domain.Task, error) {
+	return []domain.Task{store.task}, nil
+}
+
+func (store *runtimeTransitionStore) GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error) {
+	return store.preparation, nil
+}
+
+func (*runtimeTransitionStore) GetTaskCleanupRecord(context.Context, string) (application.TaskCleanupRecord, bool, error) {
+	return application.TaskCleanupRecord{}, false, nil
+}
+
+func (*runtimeTransitionStore) CommitReport(context.Context, application.ReportMutation) (domain.ReportReceipt, error) {
+	return domain.ReportReceipt{}, nil
+}

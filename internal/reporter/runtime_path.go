@@ -258,17 +258,9 @@ func (client *RuntimeClient) dialMountedRuntimeSocket() (net.Conn, error) {
 }
 
 func (pinned *pinnedRuntimeMount) unchanged() bool {
-	changeStart := len(pinned.identities) - 3
-	if changeStart < 0 {
-		changeStart = 0
-	}
 	for index, descriptor := range pinned.descriptors {
 		current, err := runtimeDescriptorIdentity(descriptor)
 		if err != nil || !pinned.identities[index].sameNode(current) {
-			return false
-		}
-		if index >= changeStart &&
-			(pinned.identities[index].changeSec != current.changeSec || pinned.identities[index].changeNsec != current.changeNsec) {
 			return false
 		}
 	}

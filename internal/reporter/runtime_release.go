@@ -47,6 +47,30 @@ func (server *RuntimeServer) SocketIdentity() (RuntimeSocketIdentity, error) {
 	return server.socketIdentity, nil
 }
 
+// RelocateSocket rebinds an unopened server to the same socket after its
+// containing directory is atomically published.
+func (server *RuntimeServer) RelocateSocket(path string) error {
+	if server == nil || invalidRuntimeSocketPath(path) {
+		return errors.New("relocate runtime attachment: server and path are required")
+	}
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 {
+		return errors.New("relocate runtime attachment: socket is unavailable")
+	}
+	identity, err := captureRuntimeSocketIdentity(path, info)
+	if err != nil || !runtimeSocketIdentityMatches(identity, server.socketIdentity) {
+		return errors.New("relocate runtime attachment: socket identity differs")
+	}
+	server.connectionMu.Lock()
+	defer server.connectionMu.Unlock()
+	if server.closing {
+		return errors.New("relocate runtime attachment: server is closing")
+	}
+	server.socketPath = path
+	server.socketInfo = info
+	return nil
+}
+
 func (server *RuntimeServer) initializeLifecycle() {
 	server.lifecycleOnce.Do(func() {
 		server.lifecycleContext, server.cancelLifecycle = context.WithCancel(context.Background())

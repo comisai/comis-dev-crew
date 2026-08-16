@@ -27,7 +27,7 @@ func exchangeRuntimePaths(directoryDescriptor int, left, right string) error {
 
 func openRuntimeRemovalPath(
 	directoryDescriptor int,
-	name string,
+	name, anchorName string,
 	expected RuntimeSocketIdentity,
 	kind RuntimePathKind,
 	permissions os.FileMode,
@@ -39,7 +39,7 @@ func openRuntimeRemovalPath(
 		}
 		return &runtimeRemovalPin{descriptor: descriptor}, nil
 	}
-	anchor := runtimeRemovalAnchorName(name, expected)
+	anchor := runtimeRemovalAnchorName(anchorName, expected)
 	var original unix.Stat_t
 	if err := unix.Fstatat(directoryDescriptor, name, &original, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return nil, err

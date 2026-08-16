@@ -46,7 +46,7 @@ func TestPersistRuntimeAttachmentIdentityPreservesRacedHardLink(t *testing.T) {
 		t.Fatalf("pinTaskRuntimeDirectory() = %#v, missing=%t, %v", pinned, missing, err)
 	}
 	defer pinned.close()
-	record := runtimeAttachmentIdentityRecord{Task: pinned.taskIdentity, Socket: socketIdentity}
+	record := runtimeAttachmentIdentityRecord{Stage: runtimeAttachmentActive, Task: pinned.taskIdentity, Socket: socketIdentity}
 	sentinelPath := filepath.Join(root, "sentinel")
 	sentinelContents := []byte("preserve hard-linked content")
 	if err := os.WriteFile(sentinelPath, sentinelContents, 0o600); err != nil {

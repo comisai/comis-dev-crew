@@ -165,8 +165,8 @@ func TestRegistry_InspectCandidateReturnsExactHeadBranchAndCleanliness(t *testin
 	}
 	if _, err := registry.InspectCandidate(context.Background(), devgit.CandidateSnapshotRequest{
 		TaskHandle: request.TaskHandle, RepositoryID: request.RepositoryID, WorktreePath: prepared.CanonicalPath,
-	}); err == nil {
-		t.Fatal("InspectCandidate(missing marker) error = nil")
+	}); !errors.Is(err, devgit.ErrCandidateWorktreeUnverified) {
+		t.Fatalf("InspectCandidate(missing marker) error = %v", err)
 	}
 	if err := os.Rename(savedMarker, gitMarker); err != nil {
 		t.Fatalf("restore worktree marker: %v", err)
@@ -174,15 +174,15 @@ func TestRegistry_InspectCandidateReturnsExactHeadBranchAndCleanliness(t *testin
 	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary, "worktree", "lock", prepared.CanonicalPath)
 	if _, err := registry.InspectCandidate(context.Background(), devgit.CandidateSnapshotRequest{
 		TaskHandle: request.TaskHandle, RepositoryID: request.RepositoryID, WorktreePath: prepared.CanonicalPath,
-	}); err == nil {
-		t.Fatal("InspectCandidate(locked) error = nil")
+	}); !errors.Is(err, devgit.ErrCandidateWorktreeUnverified) {
+		t.Fatalf("InspectCandidate(locked) error = %v", err)
 	}
 	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary, "worktree", "unlock", prepared.CanonicalPath)
 	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath, "checkout", "--detach")
 	if _, err := registry.InspectCandidate(context.Background(), devgit.CandidateSnapshotRequest{
 		TaskHandle: request.TaskHandle, RepositoryID: request.RepositoryID, WorktreePath: prepared.CanonicalPath,
-	}); err == nil {
-		t.Fatal("InspectCandidate(detached) error = nil")
+	}); !errors.Is(err, devgit.ErrCandidateWorktreeUnverified) {
+		t.Fatalf("InspectCandidate(detached) error = %v", err)
 	}
 }
 

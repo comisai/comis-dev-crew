@@ -49,20 +49,22 @@ type runtimeAttachmentEntry struct {
 }
 
 type runtimeAttachmentCoordinator struct {
-	runtimeRoot             string
-	runtimeRootIdentity     reporter.RuntimeSocketIdentity
-	store                   runtimeAttachmentStore
-	reportSink              *application.ReportSink
-	newCredential           func() (string, error)
-	newAttentionOperationID func() (string, error)
-	registrations           chan runtimeAttachmentRegistration
-	recoveryReady           chan struct{}
-	mu                      sync.Mutex
-	entries                 map[string]*runtimeAttachmentEntry
-	acknowledger            application.WorkerLaunchAcknowledger
-	attentionResponses      comiswire.AttentionResponseReceiver
-	releasedServerStopped   func(*reporter.RuntimeServer)
-	recoveryErr             error
+	runtimeRoot                  string
+	runtimeRootIdentity          reporter.RuntimeSocketIdentity
+	store                        runtimeAttachmentStore
+	reportSink                   *application.ReportSink
+	newCredential                func() (string, error)
+	newAttentionOperationID      func() (string, error)
+	registrations                chan runtimeAttachmentRegistration
+	recoveryReady                chan struct{}
+	mu                           sync.Mutex
+	entries                      map[string]*runtimeAttachmentEntry
+	acknowledger                 application.WorkerLaunchAcknowledger
+	attentionResponses           comiswire.AttentionResponseReceiver
+	releasedServerStopped        func(*reporter.RuntimeServer)
+	afterRuntimeAttachmentClose  func() error
+	afterRuntimeDirectoryPublish func() error
+	recoveryErr                  error
 }
 
 func newRuntimeAttachmentCoordinator(config runtimeAttachmentCoordinatorConfig) (*runtimeAttachmentCoordinator, error) {
@@ -135,16 +137,13 @@ func (coordinator *runtimeAttachmentCoordinator) PrepareRuntimeAttachment(
 		return existing.attachment, nil
 	}
 	taskRoot := filepath.Join(coordinator.runtimeRoot, request.TaskHandle)
-	if err := ensureTaskRuntimeDirectory(taskRoot); err != nil {
-		return application.PreparedRuntimeAttachment{}, err
-	}
 	attachment := application.PreparedRuntimeAttachment{
 		Kind: application.RuntimeAttachmentUnixSocket, SourcePath: filepath.Join(taskRoot, "attachment.sock"),
 	}
 	if err := attachment.Validate(); err != nil || len([]byte(attachment.SourcePath)) > 100 {
 		return application.PreparedRuntimeAttachment{}, errors.New("prepare runtime attachment: socket path exceeds the Unix bound")
 	}
-	entry, err := coordinator.listenRuntimeAttachment(request, attachment, nil)
+	entry, err := coordinator.listenRuntimeAttachment(request, attachment)
 	if err != nil {
 		return application.PreparedRuntimeAttachment{}, err
 	}
@@ -301,14 +300,7 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeAttachments(ctx c
 		if err := coordinator.removeTaskRuntimeDirectory(task.Handle); err != nil {
 			return nil, errors.Join(errors.New("recover runtime attachments: prior attachment cannot be released"), err, closeRuntimeServers(servers))
 		}
-		priorTaskIdentity, err := coordinator.runtimeAttachmentReplacementAuthority(task.Handle)
-		if err != nil {
-			return nil, errors.Join(err, closeRuntimeServers(servers))
-		}
-		if err := ensureTaskRuntimeDirectory(filepath.Dir(expectedSource)); err != nil {
-			return nil, errors.Join(err, closeRuntimeServers(servers))
-		}
-		entry, err := coordinator.listenRuntimeAttachment(request, preparation.RequestedAttachment, priorTaskIdentity)
+		entry, err := coordinator.listenRuntimeAttachment(request, preparation.RequestedAttachment)
 		if err != nil {
 			return nil, errors.Join(fmt.Errorf("recover runtime attachments: %w", err), closeRuntimeServers(servers))
 		}

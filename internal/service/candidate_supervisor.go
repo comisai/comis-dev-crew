@@ -170,6 +170,23 @@ func (supervisor *candidateSupervisor) ValidateTask(
 		TaskHandle: taskHandle, RepositoryID: task.RepositoryID, WorktreePath: preparation.RequestedWorkspaceRoot,
 	})
 	if err != nil {
+		if errors.Is(err, devgit.ErrCandidateWorktreeUnverified) {
+			unverified := devgit.CandidateSnapshot{
+				RepositoryID: task.RepositoryID, WorktreePath: preparation.RequestedWorkspaceRoot,
+				HeadRevision: task.BaseRevision,
+			}
+			latestEvidence, latestJudgment, latestErr := supervisor.config.Store.LatestCandidateEvidence(ctx, taskHandle)
+			if latestErr == nil && unchangedInvalidCandidate(task, unverified, latestEvidence, latestJudgment) {
+				return task, latestJudgment, nil
+			}
+			if latestErr != nil && !errors.Is(latestErr, application.ErrNotFound) {
+				return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: prior evidence is unavailable")
+			}
+			return supervisor.commitUnverifiedCandidate(ctx, task, profile, unverified, openDecisions)
+		}
+		if ctx.Err() != nil {
+			return domain.Task{}, domain.CandidateJudgment{}, ctx.Err()
+		}
 		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: Git evidence is unavailable")
 	}
 	latestEvidence, latestJudgment, latestErr := supervisor.config.Store.LatestCandidateEvidence(ctx, taskHandle)

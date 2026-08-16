@@ -7,6 +7,10 @@ import "errors"
 // ErrRepositoryNotFound means an opaque repository ID is not configured.
 var ErrRepositoryNotFound = errors.New("repository is not configured")
 
+// ErrCandidateWorktreeUnverified identifies task-scoped structural Git evidence
+// that cannot safely be treated as a candidate snapshot.
+var ErrCandidateWorktreeUnverified = errors.New("candidate worktree is unverified")
+
 // RegistryConfig is the complete operator-owned repository registry input.
 type RegistryConfig struct {
 	GitExecutable string
