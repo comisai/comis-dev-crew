@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"os"
@@ -75,12 +74,21 @@ type RuntimeServer struct {
 	listener                *net.UnixListener
 	socketPath              string
 	socketInfo              os.FileInfo
+	socketIdentity          RuntimeSocketIdentity
 	brief                   domain.WorkerBrief
 	reporter                *Client
 	attentionResponses      AttentionResponseReceiver
 	newAttentionOperationID func() (string, error)
 	launchMu                sync.RWMutex
 	launch                  *RuntimeLaunchConfig
+	lifecycleOnce           sync.Once
+	lifecycleContext        context.Context
+	cancelLifecycle         context.CancelFunc
+	connectionMu            sync.Mutex
+	connections             map[*net.UnixConn]struct{}
+	connectionCloseErr      error
+	acceptWaitGroup         sync.WaitGroup
+	closing                 bool
 	closeOnce               sync.Once
 	closeErr                error
 	waitGroup               sync.WaitGroup
@@ -118,6 +126,12 @@ func ListenRuntime(config RuntimeServerConfig) (*RuntimeServer, error) {
 		brief: config.Brief, reporter: config.Reporter,
 		attentionResponses: config.AttentionResponses, newAttentionOperationID: config.NewAttentionOperationID,
 	}
+	server.initializeLifecycle()
+	identity, err := captureRuntimeSocketIdentity(config.SocketPath, info)
+	if err != nil {
+		return nil, errors.Join(err, listener.Close(), os.Remove(config.SocketPath))
+	}
+	server.socketIdentity = identity
 	if config.LaunchOperationID != "" {
 		if err := server.BindLaunch(RuntimeLaunchConfig{
 			OperationID: config.LaunchOperationID, Expected: config.ExpectedLaunch,
@@ -159,6 +173,7 @@ func (server *RuntimeServer) Serve(ctx context.Context) (resultErr error) {
 	if server == nil || server.listener == nil {
 		return errors.New("serve runtime attachment: server is unavailable")
 	}
+	server.initializeLifecycle()
 	stopCancellation := make(chan struct{})
 	cancellationDone := make(chan struct{})
 	go func() {
@@ -172,21 +187,23 @@ func (server *RuntimeServer) Serve(ctx context.Context) (resultErr error) {
 	defer func() {
 		close(stopCancellation)
 		<-cancellationDone
-		server.waitGroup.Wait()
+		resultErr = errors.Join(resultErr, server.Close())
 	}()
 	for {
+		if !server.beginAccept() {
+			return nil
+		}
 		connection, err := server.listener.AcceptUnix()
 		if err != nil {
+			server.finishAccept(nil)
 			if errors.Is(err, net.ErrClosed) || ctx.Err() != nil {
 				return nil
 			}
 			return errors.New("serve runtime attachment: accept failed")
 		}
-		server.waitGroup.Add(1)
-		go func() {
-			defer server.waitGroup.Done()
-			_ = server.serveConnection(ctx, connection)
-		}()
+		if server.finishAccept(connection) {
+			go server.serveTrackedConnection(connection)
+		}
 	}
 }
 
@@ -195,12 +212,9 @@ func (server *RuntimeServer) Close() error {
 	if server == nil || server.listener == nil {
 		return nil
 	}
+	server.initializeLifecycle()
 	server.closeOnce.Do(func() {
-		var closeErr error
-		if err := server.listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-			closeErr = errors.New("close runtime attachment: listener close failed")
-		}
-		server.closeErr = errors.Join(closeErr, removeRuntimeSocket(server.socketPath, server.socketInfo))
+		server.closeErr = server.closeRuntimeServer()
 	})
 	return server.closeErr
 }
@@ -457,20 +471,6 @@ func validateRuntimeSocketTarget(path string) error {
 	}
 	if _, err := os.Lstat(path); err == nil || !os.IsNotExist(err) {
 		return errors.New("listen runtime attachment: socket target already exists or is ambiguous")
-	}
-	return nil
-}
-
-func removeRuntimeSocket(path string, original os.FileInfo) error {
-	current, err := os.Lstat(path)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil || original == nil || !os.SameFile(original, current) || current.Mode()&os.ModeSocket == 0 {
-		return errors.New("close runtime attachment: socket identity is ambiguous; path preserved")
-	}
-	if err := os.Remove(path); err != nil {
-		return fmt.Errorf("close runtime attachment: remove socket: %w", err)
 	}
 	return nil
 }

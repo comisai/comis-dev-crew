@@ -50,6 +50,13 @@ func TestRuntimeAttachmentCoordinator_DoesNotRestoreDurablyReleasedAttachment(t 
 			if err := os.Chmod(socketPath, 0o600); err != nil {
 				t.Fatal(err)
 			}
+			identity, err := runtimeAttachmentPathIdentity(socketPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := coordinator.persistRuntimeAttachmentIdentity(task.Handle, identity); err != nil {
+				t.Fatal(err)
+			}
 			if err := listener.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -65,6 +72,109 @@ func TestRuntimeAttachmentCoordinator_DoesNotRestoreDurablyReleasedAttachment(t 
 				t.Fatalf("released task runtime root error = %v, want not exist", err)
 			}
 		})
+	}
+}
+
+func TestRuntimeAttachmentCoordinator_PreservesReplacementSocketAfterReleaseRestart(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	now := time.Date(2026, time.August, 16, 12, 20, 0, 0, time.UTC)
+	task := runtimeAttachmentCleanupHeldTask(t, now, "task-runtime-cleanup-replaced")
+	store := &runtimeAttachmentRecoveryStore{
+		tasks: []domain.Task{task}, cleanupFound: true,
+		cleanupRecord: application.TaskCleanupRecord{TaskHandle: task.Handle, Stage: application.CleanupHostReleased},
+	}
+	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+		RuntimeRoot: runtimeRoot, Store: store, Clock: func() time.Time { return now },
+		NewCredential:           func() (string, error) { return "unused-replaced-credential-0123456789", nil },
+		NewAttentionOperationID: runtimeAttentionOperationID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskRoot := filepath.Join(runtimeRoot, task.Handle)
+	if err := os.Mkdir(taskRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	socketPath := filepath.Join(taskRoot, "attachment.sock")
+	original, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original.SetUnlinkOnClose(false)
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalIdentity, err := runtimeAttachmentPathIdentity(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinator.persistRuntimeAttachmentIdentity(task.Handle, originalIdentity); err != nil {
+		t.Fatal(err)
+	}
+	if err := original.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(socketPath); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement.SetUnlinkOnClose(false)
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := replacement.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err == nil || len(servers) != 0 {
+		t.Fatalf("recoverRuntimeAttachments(replacement) = %d servers, %v", len(servers), err)
+	}
+	if info, err := os.Lstat(socketPath); err != nil || info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("replacement socket was not preserved: %#v, %v", info, err)
+	}
+}
+
+func TestRuntimeAttachmentCoordinator_PreservesSocketWithoutPersistedIdentity(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	now := time.Date(2026, time.August, 16, 12, 25, 0, 0, time.UTC)
+	task := runtimeAttachmentCleanupHeldTask(t, now, "task-runtime-cleanup-unproven")
+	store := &runtimeAttachmentRecoveryStore{
+		tasks: []domain.Task{task}, cleanupFound: true,
+		cleanupRecord: application.TaskCleanupRecord{TaskHandle: task.Handle, Stage: application.CleanupHostReleased},
+	}
+	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+		RuntimeRoot: runtimeRoot, Store: store, Clock: func() time.Time { return now },
+		NewCredential:           func() (string, error) { return "unused-unproven-credential-0123456789", nil },
+		NewAttentionOperationID: runtimeAttentionOperationID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskRoot := filepath.Join(runtimeRoot, task.Handle)
+	if err := os.Mkdir(taskRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	socketPath := filepath.Join(taskRoot, "attachment.sock")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.SetUnlinkOnClose(false)
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err == nil || len(servers) != 0 {
+		t.Fatalf("recoverRuntimeAttachments(unproven socket) = %d servers, %v", len(servers), err)
+	}
+	if info, err := os.Lstat(socketPath); err != nil || info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("unproven socket was not preserved: %#v, %v", info, err)
 	}
 }
 

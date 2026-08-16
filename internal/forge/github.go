@@ -190,7 +190,7 @@ type githubPull struct {
 
 type githubChecks struct {
 	Runs []struct {
-		ID         int64           `json:"id"`
+		ID         json.RawMessage `json:"id"`
 		Name       string          `json:"name"`
 		Status     string          `json:"status"`
 		Conclusion *string         `json:"conclusion"`
@@ -252,18 +252,23 @@ func (adapter *GitHubAdapter) readChecks(
 		conclusion   domain.CheckConclusion
 	}
 	observed := make(map[string]observedCheck, len(response.Runs))
-	seenIDs := make(map[int64]struct{}, len(response.Runs))
+	seenIDs := make(map[int64]string, len(response.Runs))
+	poisoned := make(map[string]struct{})
 	for _, run := range response.Runs {
 		if run.Name == "" || len(run.Name) > 128 || strings.TrimSpace(run.Name) != run.Name {
 			return nil, errors.New("deliver GitHub pull request: check identity is invalid")
 		}
-		if run.ID < 1 {
-			return nil, errors.New("deliver GitHub pull request: check identity is invalid")
+		id, identityKnown := parseGitHubCheckID(run.ID)
+		if !identityKnown {
+			poisoned[run.Name] = struct{}{}
+			continue
 		}
-		if _, duplicate := seenIDs[run.ID]; duplicate {
-			return nil, errors.New("deliver GitHub pull request: check identity is duplicated")
+		if priorName, duplicate := seenIDs[id]; duplicate {
+			poisoned[priorName] = struct{}{}
+			poisoned[run.Name] = struct{}{}
+			continue
 		}
-		seenIDs[run.ID] = struct{}{}
+		seenIDs[id] = run.Name
 		startedAt, recencyKnown := parseGitHubCheckRecency(run.StartedAt)
 		conclusion := githubCheckConclusion(run.Status, run.Conclusion)
 		if !recencyKnown {
@@ -276,11 +281,11 @@ func (adapter *GitHubAdapter) readChecks(
 			observed[run.Name] = current
 			continue
 		}
-		if exists && (startedAt.Before(current.startedAt) || startedAt.Equal(current.startedAt) && run.ID < current.id) {
+		if exists && (startedAt.Before(current.startedAt) || startedAt.Equal(current.startedAt) && id < current.id) {
 			continue
 		}
 		observed[run.Name] = observedCheck{
-			id: run.ID, startedAt: startedAt, recencyKnown: recencyKnown,
+			id: id, startedAt: startedAt, recencyKnown: recencyKnown,
 			conclusion: conclusion,
 		}
 	}
@@ -288,7 +293,7 @@ func (adapter *GitHubAdapter) readChecks(
 	for _, name := range required {
 		check, exists := observed[name]
 		conclusion := check.conclusion
-		if !exists {
+		if _, unknown := poisoned[name]; !exists || unknown {
 			conclusion = domain.CheckUnknown
 		}
 		evidence = append(evidence, domain.ForgeCheckEvidence{Name: name, Conclusion: conclusion})

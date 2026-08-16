@@ -19,3 +19,14 @@ func parseGitHubCheckRecency(raw json.RawMessage) (time.Time, bool) {
 	}
 	return startedAt, true
 }
+
+func parseGitHubCheckID(raw json.RawMessage) (int64, bool) {
+	if len(raw) == 0 {
+		return 0, false
+	}
+	var identity int64
+	if err := json.Unmarshal(raw, &identity); err != nil || identity < 1 {
+		return 0, false
+	}
+	return identity, true
+}

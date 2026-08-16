@@ -534,7 +534,7 @@ func TestRuntimeClientAndCloseDetectIdentityChanges(t *testing.T) {
 	}
 	stop()
 
-	if err := removeRuntimeSocket(filepath.Join(boundaryRuntimeDirectory(t), "attachment.sock"), nil); err != nil {
+	if err := removeRuntimeSocket(filepath.Join(boundaryRuntimeDirectory(t), "attachment.sock"), nil, RuntimeSocketIdentity{}); err != nil {
 		t.Fatalf("removeRuntimeSocket(missing) = %v", err)
 	}
 	left, right := net.Pipe()

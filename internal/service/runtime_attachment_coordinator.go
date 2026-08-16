@@ -50,6 +50,7 @@ type runtimeAttachmentEntry struct {
 
 type runtimeAttachmentCoordinator struct {
 	runtimeRoot             string
+	runtimeRootIdentity     reporter.RuntimeSocketIdentity
 	store                   runtimeAttachmentStore
 	reportSink              *application.ReportSink
 	newCredential           func() (string, error)
@@ -72,12 +73,17 @@ func newRuntimeAttachmentCoordinator(config runtimeAttachmentCoordinatorConfig) 
 	if err != nil {
 		return nil, err
 	}
+	runtimeRootIdentity, err := runtimeAttachmentDirectoryIdentity(runtimeRoot)
+	if err != nil {
+		return nil, err
+	}
 	sink, err := application.NewReportSink(application.ReportSinkConfig{Store: config.Store, Clock: config.Clock})
 	if err != nil {
 		return nil, fmt.Errorf("create runtime attachment coordinator report sink: %w", err)
 	}
 	return &runtimeAttachmentCoordinator{
-		runtimeRoot: runtimeRoot, store: config.Store, reportSink: sink, newCredential: config.NewCredential,
+		runtimeRoot: runtimeRoot, runtimeRootIdentity: runtimeRootIdentity,
+		store: config.Store, reportSink: sink, newCredential: config.NewCredential,
 		newAttentionOperationID: config.NewAttentionOperationID,
 		registrations:           make(chan runtimeAttachmentRegistration), recoveryReady: make(chan struct{}),
 		entries: make(map[string]*runtimeAttachmentEntry),
@@ -188,6 +194,13 @@ func (coordinator *runtimeAttachmentCoordinator) listenRuntimeAttachment(
 	})
 	if err != nil {
 		return nil, err
+	}
+	identity, err := server.SocketIdentity()
+	if err != nil {
+		return nil, errors.Join(err, server.Close())
+	}
+	if err := coordinator.persistRuntimeAttachmentIdentity(request.TaskHandle, identity); err != nil {
+		return nil, errors.Join(err, server.Close())
 	}
 	return &runtimeAttachmentEntry{request: request, attachment: attachment, server: server}, nil
 }
@@ -343,14 +356,6 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeAttachments(ctx c
 		servers = append(servers, entry.server)
 	}
 	return servers, nil
-}
-
-func closeRuntimeServers(servers []*reporter.RuntimeServer) error {
-	var resultErr error
-	for _, server := range servers {
-		resultErr = errors.Join(resultErr, server.Close())
-	}
-	return resultErr
 }
 
 func (coordinator *runtimeAttachmentCoordinator) Run(ctx context.Context) error {

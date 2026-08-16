@@ -433,6 +433,47 @@ func TestGitHubAdapter_TreatsMissingOrMalformedCheckRecencyConservatively(t *tes
 	}
 }
 
+func TestGitHubAdapter_TreatsMalformedCompetingCheckIDsConservatively(t *testing.T) {
+	head := strings.Repeat("d", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path != "/repos/comisai/fixture/commits/"+head+"/check-runs" {
+			http.NotFound(response, request)
+			return
+		}
+		_, _ = response.Write([]byte(`{"check_runs":[` +
+			`{"id":21,"name":"ci/missing","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"},` +
+			`{"name":"ci/missing","status":"queued","conclusion":null,"started_at":"2026-08-14T20:05:00Z"},` +
+			`{"id":22,"name":"ci/null","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"},` +
+			`{"id":null,"name":"ci/null","status":"queued","conclusion":null,"started_at":"2026-08-14T20:05:00Z"},` +
+			`{"id":23,"name":"ci/string","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"},` +
+			`{"id":"24","name":"ci/string","status":"queued","conclusion":null,"started_at":"2026-08-14T20:05:00Z"},` +
+			`{"id":25,"name":"ci/object","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"},` +
+			`{"id":{},"name":"ci/object","status":"queued","conclusion":null,"started_at":"2026-08-14T20:05:00Z"}` +
+			`]}`))
+	}))
+	defer server.Close()
+	adapter, err := NewGitHubAdapter(validGitHubConfig(server))
+	if err != nil {
+		t.Fatalf("NewGitHubAdapter() error = %v", err)
+	}
+	checks, err := adapter.readChecks(context.Background(), "read-token", head, []string{
+		"ci/missing", "ci/null", "ci/string", "ci/object",
+	})
+	if err != nil {
+		t.Fatalf("readChecks(malformed competing IDs) error = %v", err)
+	}
+	want := []domain.ForgeCheckEvidence{
+		{Name: "ci/missing", Conclusion: domain.CheckUnknown},
+		{Name: "ci/null", Conclusion: domain.CheckUnknown},
+		{Name: "ci/string", Conclusion: domain.CheckUnknown},
+		{Name: "ci/object", Conclusion: domain.CheckUnknown},
+	}
+	if !reflect.DeepEqual(checks, want) {
+		t.Fatalf("readChecks(malformed competing IDs) = %#v, want %#v", checks, want)
+	}
+}
+
 type staticCredentialSource struct{ credential Credential }
 
 func (source staticCredentialSource) Resolve(context.Context) (Credential, error) {
