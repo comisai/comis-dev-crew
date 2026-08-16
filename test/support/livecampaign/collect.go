@@ -20,10 +20,11 @@ import (
 const maximumCommandOutputBytes = 4 << 20
 
 type Command struct {
-	Path           string
-	Args           []string
-	Env            map[string]string
-	UseGitHubToken bool
+	Path                 string
+	Args                 []string
+	Env                  map[string]string
+	UseGitHubToken       bool
+	UseComisGatewayToken bool
 }
 
 type Executor interface {
@@ -368,7 +369,10 @@ func (instance *collector) collectSecretPosture() error {
 	residencyEnv["RIG_MODE"] = "local"
 	residencyEnv["COMIS_SRC"] = instance.manifest.Comis.CodeRoot
 	var residency residencyReport
-	if err := instance.runJSON(Command{Path: instance.manifest.Comis.NodePath, Args: args, Env: residencyEnv}, &residency); err != nil {
+	if err := instance.runJSON(Command{
+		Path: instance.manifest.Comis.NodePath, Args: args, Env: residencyEnv,
+		UseComisGatewayToken: true,
+	}, &residency); err != nil {
 		return fmt.Errorf("collect live closeout: count-only secret residency oracle unavailable: %w", err)
 	}
 	if residency.SchemaVersion != 1 || residency.ScannedFiles <= 0 || len(residency.ReadErrors) != 0 ||

@@ -73,6 +73,7 @@ func verifyBackupSecretResidency(
 	var report residencyReport
 	output, err := executor.Run(ctx, Command{
 		Path: manifest.Comis.NodePath, Args: args,
+		UseComisGatewayToken: true,
 		Env: map[string]string{
 			"RIG_MODE": "local", "COMIS_SRC": manifest.Comis.CodeRoot,
 			"COMIS_DATA_DIR":     filepath.Join(backupRoot, "comis-data"),

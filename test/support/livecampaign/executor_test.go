@@ -98,6 +98,11 @@ func TestRealExecutorScopesGatewayCredentialToRequestedCommand(t *testing.T) {
 	if err != nil || string(output) != "gateway=true" {
 		t.Fatalf("Run(gateway credential) = %q, %v", output, err)
 	}
+	t.Setenv("COMIS_GATEWAY_TOKEN", "")
+	if _, err := (RealExecutor{}).Run(context.Background(), command); err == nil ||
+		!strings.Contains(err.Error(), "gateway credential is unavailable") {
+		t.Fatalf("Run(missing gateway credential) error = %v", err)
+	}
 }
 
 func TestLiveCampaignExecutorHelperProcess(t *testing.T) {

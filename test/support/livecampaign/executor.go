@@ -39,7 +39,9 @@ func (RealExecutor) Run(ctx context.Context, command Command) ([]byte, error) {
 			return nil, errors.New("execute protected command: environment override is invalid")
 		}
 	}
-	environment, err := protectedCommandEnvironment(command.Env, command.UseGitHubToken)
+	environment, err := protectedCommandEnvironment(
+		command.Env, command.UseGitHubToken, command.UseComisGatewayToken,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -358,7 +360,11 @@ func allowedCommandEnvironmentOverride(name string) bool {
 	return found
 }
 
-func protectedCommandEnvironment(overrides map[string]string, useGitHubToken bool) ([]string, error) {
+func protectedCommandEnvironment(
+	overrides map[string]string,
+	useGitHubToken bool,
+	useComisGatewayToken bool,
+) ([]string, error) {
 	values := make(map[string]string)
 	for _, name := range inheritedCommandEnvironment {
 		if value, found := os.LookupEnv(name); found {
@@ -374,6 +380,13 @@ func protectedCommandEnvironment(overrides map[string]string, useGitHubToken boo
 			return nil, errors.New("execute protected command: GitHub credential is unavailable")
 		}
 		values["GH_TOKEN"] = token
+	}
+	if useComisGatewayToken {
+		token := os.Getenv("COMIS_GATEWAY_TOKEN")
+		if token == "" {
+			return nil, errors.New("execute protected command: Comis gateway credential is unavailable")
+		}
+		values["COMIS_GATEWAY_TOKEN"] = token
 	}
 	names := make([]string, 0, len(values))
 	for name := range values {
