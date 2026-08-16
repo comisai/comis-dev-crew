@@ -159,7 +159,7 @@ func (adapter *CodexAdapter) BuildLaunchDescriptor(
 	arguments := append([]string(nil), base.Arguments...)
 	arguments = append(arguments,
 		"--strict-config", "--ignore-user-config", "--ignore-rules", "--ephemeral",
-		"--color", "never", "--model", base.Model, "--sandbox", "workspace-write",
+		"--color", "never", "--model", base.Model, "--dangerously-bypass-approvals-and-sandbox",
 		"-c", fmt.Sprintf("model_reasoning_effort=%q", base.Effort),
 		"--cd", request.WorkingDirectory, codexBootstrapPrompt,
 	)
