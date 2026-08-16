@@ -174,7 +174,7 @@ func TestBaseRuntimeRelayIdentityUpgradePreservesAmbiguousArtifact(t *testing.T)
 	}
 }
 
-func TestIntermediateRuntimeRelayIdentityFormatIsRejected(t *testing.T) {
+func TestIntermediateRuntimeRelayIdentityFormatIsRefused(t *testing.T) {
 	root := shortTempDir(t)
 	runtimeRoot := filepath.Join(root, "runtime")
 	store := &runtimeRelayUpgradeStore{}
@@ -217,10 +217,10 @@ func TestIntermediateRuntimeRelayIdentityFormatIsRejected(t *testing.T) {
 		TaskHandle: taskHandle, RelaySeed: seed,
 		RelayIdentity: hex.EncodeToString(privateKey.Public().(ed25519.PublicKey)),
 	}}
-	if err := coordinator.recoverRuntimeRelayIdentityUpgrades(context.Background()); err == nil {
-		t.Fatal("recoverRuntimeRelayIdentityUpgrades(intermediate format) error = nil")
+	if err := coordinator.recoverRuntimeRelayIdentityUpgrades(context.Background()); err != nil {
+		t.Fatalf("recoverRuntimeRelayIdentityUpgrades(intermediate format) error = %v", err)
 	}
-	if len(store.completed) != 0 || len(store.refusals) != 0 {
+	if len(store.completed) != 0 || len(store.refusals) != 1 || store.refusals[0].TaskHandle != taskHandle {
 		t.Fatalf("intermediate format outcomes: completed=%#v refusals=%#v", store.completed, store.refusals)
 	}
 	stored, err := os.ReadFile(filepath.Join(runtimeRoot, name))
@@ -228,6 +228,43 @@ func TestIntermediateRuntimeRelayIdentityFormatIsRejected(t *testing.T) {
 		t.Fatalf("intermediate identity record changed = %q, %v", stored, err)
 	}
 	_ = pinned.close()
+}
+
+func TestRuntimeRelayIdentityUpgradeRefusesSpecialRecord(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	store := &runtimeRelayUpgradeStore{}
+	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, store, time.Now().UTC())
+	taskHandle := "task-runtime-relay-special-record"
+	seed := runtimeRelaySeedForTest(0x52)
+	privateKey := ed25519.NewKeyFromSeed(seed[:])
+	store.upgrades = []application.RuntimeRelayIdentityUpgrade{{
+		TaskHandle: taskHandle, RelaySeed: seed,
+		RelayIdentity: hex.EncodeToString(privateKey.Public().(ed25519.PublicKey)),
+	}}
+	name, err := runtimeAttachmentIdentityName(taskHandle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordPath := filepath.Join(runtimeRoot, name)
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: recordPath, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.SetUnlinkOnClose(false)
+	t.Cleanup(func() { _ = listener.Close() })
+	if err := os.Chmod(recordPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinator.recoverRuntimeRelayIdentityUpgrades(context.Background()); err != nil {
+		t.Fatalf("recoverRuntimeRelayIdentityUpgrades(special record) error = %v", err)
+	}
+	if len(store.completed) != 0 || len(store.refusals) != 1 || store.refusals[0].TaskHandle != taskHandle {
+		t.Fatalf("special record outcomes: completed=%#v refusals=%#v", store.completed, store.refusals)
+	}
+	if info, err := os.Lstat(recordPath); err != nil || info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("special relay record = %#v, %v", info, err)
+	}
 }
 
 func formatIntermediateRuntimeIdentity(record runtimeAttachmentIdentityRecord) string {

@@ -191,6 +191,95 @@ func TestReplaceRuntimePathPreservesAmbiguousExchangedMappings(t *testing.T) {
 	}
 }
 
+func TestRuntimePathPublicationPreservesIdentityConflictCauses(t *testing.T) {
+	t.Run("file source", func(t *testing.T) {
+		root := boundaryRuntimeDirectory(t)
+		temporary := filepath.Join(root, "record.new")
+		if err := os.WriteFile(temporary, []byte("prepared"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		expected := runtimePathTestIdentity(t, temporary)
+		if err := os.Rename(temporary, temporary+".saved"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(temporary, []byte("replacement"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		err := PublishRuntimePath(
+			runtimePathTestDirectoryDescriptor(t, root), filepath.Base(temporary), "record", expected, 0o600,
+		)
+		if !errors.Is(err, ErrRuntimePathIdentity) {
+			t.Fatalf("PublishRuntimePath(replaced source) error = %v", err)
+		}
+	})
+
+	t.Run("occupied destination", func(t *testing.T) {
+		root := boundaryRuntimeDirectory(t)
+		temporary := filepath.Join(root, "record.new")
+		if err := os.WriteFile(temporary, []byte("prepared"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "record"), []byte("existing"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		err := PublishRuntimePath(
+			runtimePathTestDirectoryDescriptor(t, root), filepath.Base(temporary), "record",
+			runtimePathTestIdentity(t, temporary), 0o600,
+		)
+		if !errors.Is(err, ErrRuntimePathIdentity) {
+			t.Fatalf("PublishRuntimePath(occupied destination) error = %v", err)
+		}
+	})
+
+	t.Run("replacement destination", func(t *testing.T) {
+		root := boundaryRuntimeDirectory(t)
+		temporary := filepath.Join(root, "record.new")
+		destination := filepath.Join(root, "record")
+		if err := os.WriteFile(temporary, []byte("prepared"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(destination, []byte("prior"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		temporaryIdentity := runtimePathTestIdentity(t, temporary)
+		destinationIdentity := runtimePathTestIdentity(t, destination)
+		if err := os.Rename(destination, destination+".saved"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(destination, []byte("replacement"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		err := ReplaceRuntimePath(
+			runtimePathTestDirectoryDescriptor(t, root), filepath.Base(temporary), filepath.Base(destination),
+			temporaryIdentity, destinationIdentity, 0o600,
+		)
+		if !errors.Is(err, ErrRuntimePathIdentity) {
+			t.Fatalf("ReplaceRuntimePath(replaced destination) error = %v", err)
+		}
+	})
+
+	t.Run("directory source", func(t *testing.T) {
+		root := boundaryRuntimeDirectory(t)
+		temporary := filepath.Join(root, "runtime.new")
+		if err := os.Mkdir(temporary, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		expected := runtimePathTestIdentity(t, temporary)
+		if err := os.Rename(temporary, temporary+".saved"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(temporary, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		_, err := PublishRuntimeDirectoryIdentity(
+			runtimePathTestDirectoryDescriptor(t, root), filepath.Base(temporary), "runtime", expected, 0o700,
+		)
+		if !errors.Is(err, ErrRuntimePathIdentity) {
+			t.Fatalf("PublishRuntimeDirectoryIdentity(replaced source) error = %v", err)
+		}
+	})
+}
+
 func TestMovedRuntimePathFailurePreservesExactMapping(t *testing.T) {
 	root := boundaryRuntimeDirectory(t)
 	temporary := filepath.Join(root, "record.new")

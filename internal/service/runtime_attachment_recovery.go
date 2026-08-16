@@ -42,7 +42,11 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeAttachments(ctx c
 					coordinator.runtimeAttachmentRefusals[task.Handle] = struct{}{}
 					continue
 				}
-				return nil, errors.Join(errors.New("recover runtime attachments: cleaned task runtime directory remains"), err)
+				return nil, errors.Join(
+					errors.New("recover runtime attachments: cleaned task runtime directory remains"),
+					err,
+					closeRuntimeServers(servers),
+				)
 			}
 			continue
 		}

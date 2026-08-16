@@ -45,11 +45,12 @@ func PublishRuntimeDirectoryIdentity(
 		directoryDescriptor, temporaryName, expected, RuntimePathDirectory, permissions,
 	)
 	if err != nil {
-		return RuntimeSocketIdentity{}, errors.New("runtime directory publication source differs")
+		return RuntimeSocketIdentity{}, runtimePathMutationFailure("runtime directory publication source differs", err)
 	}
 	if err := renameRuntimePathNoReplace(directoryDescriptor, temporaryName, destinationName); err != nil {
 		return RuntimeSocketIdentity{}, errors.Join(
-			errors.New("runtime directory cannot be published"), closeRuntimeRemovalPin(targetDescriptor),
+			runtimePathMutationFailure("runtime directory cannot be published", err),
+			closeRuntimeRemovalPin(targetDescriptor),
 		)
 	}
 	identity, err := verifyPublishedRuntimeDirectory(
@@ -125,7 +126,7 @@ func publishRuntimePathKind(
 		directoryDescriptor, temporaryName, expected, kind, permissions,
 	)
 	if err != nil {
-		return errors.New("runtime path publication source differs")
+		return runtimePathMutationFailure("runtime path publication source differs", err)
 	}
 	if afterPin != nil {
 		if err := afterPin(); err != nil {
@@ -133,7 +134,10 @@ func publishRuntimePathKind(
 		}
 	}
 	if err := renameRuntimePathNoReplace(directoryDescriptor, temporaryName, destinationName); err != nil {
-		return errors.Join(errors.New("runtime path cannot be published"), closeRuntimeRemovalPin(targetDescriptor))
+		return errors.Join(
+			runtimePathMutationFailure("runtime path cannot be published", err),
+			closeRuntimeRemovalPin(targetDescriptor),
+		)
 	}
 	if err := verifyPinnedRuntimePath(
 		directoryDescriptor, destinationName, targetDescriptor, kind, permissions,
@@ -186,13 +190,16 @@ func replaceRuntimePath(
 		directoryDescriptor, temporaryName, temporaryIdentity, RuntimePathRegular, permissions,
 	)
 	if err != nil {
-		return errors.New("runtime path replacement source differs")
+		return runtimePathMutationFailure("runtime path replacement source differs", err)
 	}
 	destinationDescriptor, err := pinExpectedRuntimePath(
 		directoryDescriptor, destinationName, destinationIdentity, RuntimePathRegular, permissions,
 	)
 	if err != nil {
-		return errors.Join(errors.New("runtime path replacement destination differs"), closeRuntimeRemovalPin(temporaryDescriptor))
+		return errors.Join(
+			runtimePathMutationFailure("runtime path replacement destination differs", err),
+			closeRuntimeRemovalPin(temporaryDescriptor),
+		)
 	}
 	if afterPins != nil {
 		if err := afterPins(); err != nil {
@@ -200,7 +207,7 @@ func replaceRuntimePath(
 		}
 	}
 	if err := exchangeRuntimePaths(directoryDescriptor, temporaryName, destinationName); err != nil {
-		return errors.Join(errors.New("runtime paths cannot be exchanged"),
+		return errors.Join(runtimePathMutationFailure("runtime paths cannot be exchanged", err),
 			closeRuntimeRemovalPin(temporaryDescriptor), closeRuntimeRemovalPin(destinationDescriptor))
 	}
 	temporaryErr := verifyPinnedRuntimePath(
@@ -228,6 +235,16 @@ func replaceRuntimePath(
 		return errors.New("runtime path replacement cannot be synchronized")
 	}
 	return nil
+}
+
+func runtimePathMutationFailure(message string, err error) error {
+	result := errors.Join(errors.New(message), err)
+	if errors.Is(err, ErrRuntimePathIdentity) || errors.Is(err, ErrRuntimePathMissing) ||
+		errors.Is(err, unix.EEXIST) || errors.Is(err, unix.ENOENT) ||
+		errors.Is(err, unix.ENOTDIR) || errors.Is(err, unix.ELOOP) || errors.Is(err, unix.ENOTEMPTY) {
+		return errors.Join(result, ErrRuntimePathIdentity)
+	}
+	return result
 }
 
 func preserveRuntimePathExchangeFailure(

@@ -234,7 +234,7 @@ func removePinnedTaskRuntimeDirectory(
 		staged := record
 		staged.Stage = runtimeAttachmentReleaseIntent
 		if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, staged, &record, nil); err != nil {
-			return errors.New("task runtime attachment release cannot be staged")
+			return classifyRuntimeAttachmentCleanupPathError("task runtime attachment release cannot be staged", err)
 		}
 		record = staged
 	}
@@ -301,7 +301,9 @@ func stagePinnedRuntimeAttachmentDirectory(
 	staged := record
 	staged.Task = current
 	if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, staged, &record, nil); err != nil {
-		return reporter.RuntimeSocketIdentity{}, errors.New("task runtime directory identity cannot be staged")
+		return reporter.RuntimeSocketIdentity{}, classifyRuntimeAttachmentCleanupPathError(
+			"task runtime directory identity cannot be staged", err,
+		)
 	}
 	return current, nil
 }

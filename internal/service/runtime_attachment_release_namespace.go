@@ -40,7 +40,8 @@ func (coordinator *runtimeAttachmentCoordinator) pinRuntimeAttachmentRelease(
 		staged.Stage = runtimeAttachmentReleaseIntent
 		if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, staged, &record, nil); err != nil {
 			return nil, runtimeAttachmentIdentityRecord{}, errors.Join(
-				errors.New("task runtime attachment release cannot be staged"), pinned.close(),
+				classifyRuntimeAttachmentCleanupPathError("task runtime attachment release cannot be staged", err),
+				pinned.close(),
 			)
 		}
 		record = staged
@@ -119,7 +120,9 @@ func isolatePinnedRuntimeAttachmentRelease(
 	staged.Stage = runtimeAttachmentReleasing
 	staged.Task = current
 	if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, staged, &record, nil); err != nil {
-		return runtimeAttachmentIdentityRecord{}, errors.New("task runtime attachment release identity cannot be bound")
+		return runtimeAttachmentIdentityRecord{}, classifyRuntimeAttachmentCleanupPathError(
+			"task runtime attachment release identity cannot be bound", err,
+		)
 	}
 	pinned.taskIdentity = current
 	return staged, nil

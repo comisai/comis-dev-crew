@@ -155,8 +155,12 @@ func (coordinator *runtimeAttachmentCoordinator) releaseRegisteredRuntimeAttachm
 		}
 	}
 	removeErr := removePinnedRuntimeAttachment(pinned, record)
-	if err := errors.Join(removeErr, pinned.close()); err != nil {
-		return errors.New("release runtime attachment: task runtime directory is not empty or unavailable")
+	if closeErr := pinned.close(); removeErr != nil || closeErr != nil {
+		return errors.Join(
+			errors.New("release runtime attachment: task runtime directory is not empty or unavailable"),
+			removeErr,
+			closeErr,
+		)
 	}
 	return nil
 }

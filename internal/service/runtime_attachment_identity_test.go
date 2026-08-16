@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/comisai/comis-dev-crew/internal/reporter"
 	"golang.org/x/sys/unix"
 )
 
@@ -211,6 +212,9 @@ func TestPersistRuntimeAttachmentIdentityPreservesRacedHardLink(t *testing.T) {
 	})
 	if publishErr == nil {
 		t.Fatal("persistPinnedRuntimeAttachmentIdentity(raced hard link) error = nil")
+	}
+	if !errors.Is(publishErr, reporter.ErrRuntimePathIdentity) {
+		t.Fatalf("persistPinnedRuntimeAttachmentIdentity(raced hard link) error = %v", publishErr)
 	}
 	contents, err := os.ReadFile(sentinelPath)
 	if err != nil || string(contents) != string(sentinelContents) {

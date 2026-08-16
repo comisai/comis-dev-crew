@@ -87,7 +87,10 @@ func publishRuntimeAttachmentIdentity(
 		return reporter.RuntimeSocketIdentity{}, err
 	}
 	if existingFound != (priorRecord != nil) || existingFound && existingRecord != *priorRecord {
-		return reporter.RuntimeSocketIdentity{}, errors.New("persist runtime attachment identity: prior record differs")
+		return reporter.RuntimeSocketIdentity{}, errors.Join(
+			errors.New("persist runtime attachment identity: prior record differs"),
+			reporter.ErrRuntimePathIdentity,
+		)
 	}
 	if existingFound && existingRecord == record && beforePublish == nil {
 		return existingIdentity, nil
@@ -118,24 +121,38 @@ func publishRuntimeAttachmentIdentity(
 		if err := reporter.ReplaceRuntimePath(
 			runtimeRootDescriptor, temporaryName, name, temporaryIdentity, existingIdentity, 0o600,
 		); err != nil {
-			return reporter.RuntimeSocketIdentity{}, cleanupTemporary(errors.New("persist runtime attachment identity: prior record changed"))
+			return reporter.RuntimeSocketIdentity{}, cleanupTemporary(errors.Join(
+				errors.New("persist runtime attachment identity: prior record changed"), err,
+			))
 		}
 		cleanupErr := reporter.QuarantineRuntimePath(
 			runtimeRootDescriptor, temporaryName, existingIdentity, reporter.RuntimePathRegular, 0o600,
 		)
 		if cleanupErr != nil && !errors.Is(cleanupErr, reporter.ErrRuntimePathMissing) {
-			return reporter.RuntimeSocketIdentity{}, errors.New("persist runtime attachment identity: prior record cleanup failed")
+			return reporter.RuntimeSocketIdentity{}, errors.Join(
+				errors.New("persist runtime attachment identity: prior record cleanup failed"), cleanupErr,
+			)
 		}
 	} else if err := reporter.PublishRuntimePath(
 		runtimeRootDescriptor, temporaryName, name, temporaryIdentity, 0o600,
 	); err != nil {
-		return reporter.RuntimeSocketIdentity{}, cleanupTemporary(errors.New("persist runtime attachment identity: record publication failed"))
+		return reporter.RuntimeSocketIdentity{}, cleanupTemporary(errors.Join(
+			errors.New("persist runtime attachment identity: record publication failed"), err,
+		))
 	}
 	published, publishedIdentity, found, err := readRuntimeAttachmentIdentityRecord(
 		runtimeRootDescriptor, taskHandle,
 	)
-	if err != nil || !found || published != record {
-		return reporter.RuntimeSocketIdentity{}, errors.New("persist runtime attachment identity: published record differs")
+	if err != nil {
+		return reporter.RuntimeSocketIdentity{}, errors.Join(
+			errors.New("persist runtime attachment identity: published record differs"), err,
+		)
+	}
+	if !found || published != record {
+		return reporter.RuntimeSocketIdentity{}, errors.Join(
+			errors.New("persist runtime attachment identity: published record differs"),
+			reporter.ErrRuntimePathIdentity,
+		)
 	}
 	return publishedIdentity, nil
 }
@@ -319,6 +336,9 @@ func readRuntimeAttachmentIdentityRecord(
 }
 
 func runtimeAttachmentRecordOpenFailureIsUnsafe(runtimeRootDescriptor int, name string, openErr error) bool {
+	if runtimeAttachmentOpenFailureIsInfrastructure(openErr) {
+		return false
+	}
 	if errors.Is(openErr, unix.ELOOP) || errors.Is(openErr, unix.EACCES) || errors.Is(openErr, unix.EPERM) ||
 		errors.Is(openErr, unix.ENXIO) || errors.Is(openErr, unix.ENODEV) || errors.Is(openErr, unix.EOPNOTSUPP) {
 		return true

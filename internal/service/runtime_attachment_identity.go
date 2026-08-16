@@ -155,16 +155,63 @@ func openTaskRuntimeDirectory(
 		return -1, reporter.RuntimeSocketIdentity{}, true, nil
 	}
 	if err != nil {
-		return -1, reporter.RuntimeSocketIdentity{}, false, errors.New("task runtime directory identity is unavailable")
+		if runtimeAttachmentDirectoryOpenFailureIsUnsafe(runtimeRootDescriptor, taskHandle, err) {
+			return -1, reporter.RuntimeSocketIdentity{}, false,
+				runtimeAttachmentOwnershipUnproven("task runtime directory is unsafe; path preserved")
+		}
+		return -1, reporter.RuntimeSocketIdentity{}, false,
+			errors.Join(errors.New("task runtime directory identity is unavailable"), err)
 	}
-	identity, identityErr := runtimeAttachmentDescriptorIdentity(taskDescriptor)
 	var stat unix.Stat_t
 	statErr := unix.Fstat(taskDescriptor, &stat)
-	if identityErr != nil || statErr != nil || stat.Mode&unix.S_IFMT != unix.S_IFDIR || stat.Mode&0o777 != 0o700 {
-		_ = unix.Close(taskDescriptor)
-		return -1, reporter.RuntimeSocketIdentity{}, false, errors.New("task runtime directory is unsafe")
+	if statErr != nil {
+		return -1, reporter.RuntimeSocketIdentity{}, false, errors.Join(
+			errors.New("task runtime directory identity is unavailable"), statErr, unix.Close(taskDescriptor),
+		)
+	}
+	identity, identityErr := runtimeAttachmentStatIdentity(stat)
+	if identityErr != nil || stat.Mode&unix.S_IFMT != unix.S_IFDIR || stat.Mode&0o777 != 0o700 ||
+		stat.Uid != uint32(unix.Geteuid()) {
+		if closeErr := unix.Close(taskDescriptor); closeErr != nil {
+			return -1, reporter.RuntimeSocketIdentity{}, false, errors.Join(
+				errors.New("task runtime directory identity is unavailable"), closeErr,
+			)
+		}
+		return -1, reporter.RuntimeSocketIdentity{}, false,
+			runtimeAttachmentOwnershipUnproven("task runtime directory is unsafe; path preserved")
+	}
+	birthSec, birthNsec := runtimeAttachmentDescriptorBirthTime(taskDescriptor)
+	if birthSec != 0 || birthNsec != 0 {
+		identity.BirthSec = birthSec
+		identity.BirthNsec = birthNsec
 	}
 	return taskDescriptor, identity, false, nil
+}
+
+func runtimeAttachmentDirectoryOpenFailureIsUnsafe(runtimeRootDescriptor int, name string, openErr error) bool {
+	if runtimeAttachmentOpenFailureIsInfrastructure(openErr) {
+		return false
+	}
+	if errors.Is(openErr, unix.ELOOP) || errors.Is(openErr, unix.ENOTDIR) ||
+		errors.Is(openErr, unix.EACCES) || errors.Is(openErr, unix.EPERM) ||
+		errors.Is(openErr, unix.ENXIO) || errors.Is(openErr, unix.ENODEV) ||
+		errors.Is(openErr, unix.EOPNOTSUPP) {
+		return true
+	}
+	var stat unix.Stat_t
+	if unix.Fstatat(runtimeRootDescriptor, name, &stat, unix.AT_SYMLINK_NOFOLLOW) != nil {
+		return false
+	}
+	_, identityErr := runtimeAttachmentStatIdentity(stat)
+	return identityErr != nil || stat.Mode&unix.S_IFMT != unix.S_IFDIR ||
+		stat.Mode&0o777 != 0o700 || stat.Uid != uint32(unix.Geteuid())
+}
+
+func runtimeAttachmentOpenFailureIsInfrastructure(err error) bool {
+	return errors.Is(err, unix.EBADF) || errors.Is(err, unix.EINTR) ||
+		errors.Is(err, unix.EIO) || errors.Is(err, unix.EMFILE) ||
+		errors.Is(err, unix.ENFILE) || errors.Is(err, unix.ENOMEM) ||
+		errors.Is(err, unix.ENOSPC) || errors.Is(err, unix.ETIMEDOUT)
 }
 
 func (coordinator *runtimeAttachmentCoordinator) pinTaskRuntimeDirectory(
