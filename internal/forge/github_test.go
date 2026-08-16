@@ -389,7 +389,7 @@ func TestGitHubAdapter_SelectsNewestCheckRunForRepeatedName(t *testing.T) {
 	}
 }
 
-func TestGitHubAdapter_TreatsMissingRepeatedCheckRecencyAsUnknown(t *testing.T) {
+func TestGitHubAdapter_TreatsMissingOrMalformedCheckRecencyConservatively(t *testing.T) {
 	head := strings.Repeat("e", 40)
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
@@ -400,7 +400,8 @@ func TestGitHubAdapter_TreatsMissingRepeatedCheckRecencyAsUnknown(t *testing.T) 
 		_, _ = response.Write([]byte(`{"check_runs":[` +
 			`{"id":13,"name":"ci/unit","status":"queued","conclusion":null,"started_at":null},` +
 			`{"id":12,"name":"ci/unit","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"},` +
-			`{"id":14,"name":"ci/lint","status":"queued","conclusion":null,"started_at":null}` +
+			`{"id":14,"name":"ci/lint","status":"queued","conclusion":null,"started_at":null},` +
+			`{"id":15,"name":"ci/security","status":"completed","conclusion":"success","started_at":"invalid"}` +
 			`]}`))
 	}))
 	defer server.Close()
@@ -408,13 +409,14 @@ func TestGitHubAdapter_TreatsMissingRepeatedCheckRecencyAsUnknown(t *testing.T) 
 	if err != nil {
 		t.Fatalf("NewGitHubAdapter() error = %v", err)
 	}
-	checks, err := adapter.readChecks(context.Background(), "read-token", head, []string{"ci/unit", "ci/lint"})
+	checks, err := adapter.readChecks(context.Background(), "read-token", head, []string{"ci/unit", "ci/lint", "ci/security"})
 	if err != nil {
 		t.Fatalf("readChecks(nullable recency) error = %v", err)
 	}
 	want := []domain.ForgeCheckEvidence{
 		{Name: "ci/unit", Conclusion: domain.CheckUnknown},
 		{Name: "ci/lint", Conclusion: domain.CheckPending},
+		{Name: "ci/security", Conclusion: domain.CheckUnknown},
 	}
 	if !reflect.DeepEqual(checks, want) {
 		t.Fatalf("readChecks(nullable recency) = %#v, want %#v", checks, want)

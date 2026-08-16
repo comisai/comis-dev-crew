@@ -266,11 +266,13 @@ func (adapter *GitHubAdapter) readChecks(
 		seenIDs[run.ID] = struct{}{}
 		startedAt := time.Time{}
 		recencyKnown := run.StartedAt != ""
+		conclusion := githubCheckConclusion(run.Status, run.Conclusion)
 		if recencyKnown {
 			var err error
 			startedAt, err = time.Parse(time.RFC3339, run.StartedAt)
 			if err != nil || startedAt.IsZero() {
-				return nil, errors.New("deliver GitHub pull request: check recency is invalid")
+				recencyKnown = false
+				conclusion = domain.CheckUnknown
 			}
 		}
 		current, exists := observed[run.Name]
@@ -285,7 +287,7 @@ func (adapter *GitHubAdapter) readChecks(
 		}
 		observed[run.Name] = observedCheck{
 			id: run.ID, startedAt: startedAt, recencyKnown: recencyKnown,
-			conclusion: githubCheckConclusion(run.Status, run.Conclusion),
+			conclusion: conclusion,
 		}
 	}
 	evidence := make([]domain.ForgeCheckEvidence, 0, len(required))

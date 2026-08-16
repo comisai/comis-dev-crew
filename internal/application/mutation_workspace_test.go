@@ -18,6 +18,7 @@ func TestMutations_PrepareAllocatesOperationBoundWorkspaceBeforeDurableComisPrep
 	var taskOperation string
 	mutations, err := NewMutations(MutationConfig{
 		Store: store, Repositories: &repositoryCatalog{}, Workspaces: workspaces, RuntimeAttachments: attachments,
+		WorkerProfiles: acceptingWorkerProfile, ValidationProfiles: acceptingValidationProfile,
 		TaskIDs: func(operationID string) (string, error) {
 			taskOperation = operationID
 			return "task-stable-0001", nil
@@ -64,6 +65,8 @@ func TestMutations_PrepareRefusesWorkspaceFailureBeforeNonceOrStoreCommit(t *tes
 	nonceCalls := 0
 	mutations, err := NewMutations(MutationConfig{
 		Store: store, Repositories: &repositoryCatalog{},
+		WorkerProfiles:     acceptingWorkerProfile,
+		ValidationProfiles: acceptingValidationProfile,
 		Workspaces:         &workspacePreparer{err: privateFailure},
 		RuntimeAttachments: &runtimeAttachmentCoordinator{},
 		TaskIDs:            func(string) (string, error) { return "task-stable-0001", nil },

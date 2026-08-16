@@ -60,6 +60,7 @@ type runtimeAttachmentCoordinator struct {
 	entries                 map[string]*runtimeAttachmentEntry
 	acknowledger            application.WorkerLaunchAcknowledger
 	attentionResponses      comiswire.AttentionResponseReceiver
+	releasedServerStopped   func(*reporter.RuntimeServer)
 	recoveryErr             error
 }
 
@@ -388,6 +389,9 @@ func (coordinator *runtimeAttachmentCoordinator) Run(ctx context.Context) error 
 			if ctx.Err() == nil {
 				if coordinator.hasRuntimeServer(result.server) {
 					return coordinator.stopServers(active, results, errors.Join(errors.New("runtime attachment server stopped"), result.err))
+				}
+				if coordinator.releasedServerStopped != nil {
+					coordinator.releasedServerStopped(result.server)
 				}
 				continue
 			}

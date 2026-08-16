@@ -48,6 +48,7 @@ func TestRuntimeAttachmentCoordinator_PreparesServingTaskSocketUnderOwnedRoot(t 
 	})
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: serviceRepositoryCatalog{},
+		WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string) error { return nil },
 		Workspaces: serviceWorkspacePreparer{root: workspace}, RuntimeAttachments: coordinator,
 		TaskIDs:            func(string) (string, error) { return "task-runtime-owned-0001", nil },
 		RegistrationNonces: func() (string, error) { return "registration-nonce_runtime_owned", nil },
@@ -207,6 +208,7 @@ func TestRuntimeAttachmentCoordinator_RecoversPreparedTaskSocketAfterRestart(t *
 	newMutations := func(coordinator *runtimeAttachmentCoordinator) *application.Mutations {
 		mutations, err := application.NewMutations(application.MutationConfig{
 			Store: store, Repositories: serviceRepositoryCatalog{},
+			WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string) error { return nil },
 			Workspaces: serviceWorkspacePreparer{root: workspace}, RuntimeAttachments: coordinator,
 			TaskIDs:            func(string) (string, error) { return "task-runtime-restart-0001", nil },
 			RegistrationNonces: func() (string, error) { return "registration-nonce_runtime_restart", nil },
@@ -369,6 +371,10 @@ func TestRuntimeAttachmentCoordinator_ReleasesOneLiveSocketWithoutStoppingSuperv
 	if err != nil {
 		t.Fatal(err)
 	}
+	releasedServerStopped := make(chan *reporter.RuntimeServer, 1)
+	coordinator.releasedServerStopped = func(server *reporter.RuntimeServer) {
+		releasedServerStopped <- server
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	consumed := false
@@ -395,6 +401,14 @@ func TestRuntimeAttachmentCoordinator_ReleasesOneLiveSocketWithoutStoppingSuperv
 	if err := coordinator.ReleaseRuntimeAttachment(context.Background(), firstRequest.TaskHandle); err != nil {
 		t.Fatalf("ReleaseRuntimeAttachment() error = %v", err)
 	}
+	select {
+	case <-releasedServerStopped:
+	case runErr := <-done:
+		consumed = true
+		t.Fatalf("runtime coordinator stopped after exact release: %v", runErr)
+	case <-time.After(time.Second):
+		t.Fatal("runtime coordinator did not process released server stop")
+	}
 	if err := coordinator.ReleaseRuntimeAttachment(context.Background(), firstRequest.TaskHandle); err != nil {
 		t.Fatalf("ReleaseRuntimeAttachment(replay) error = %v", err)
 	}
@@ -410,13 +424,6 @@ func TestRuntimeAttachmentCoordinator_ReleasesOneLiveSocketWithoutStoppingSuperv
 	}
 	if _, err := client.Brief(context.Background()); err != nil {
 		t.Fatalf("retained sibling brief error = %v", err)
-	}
-	time.Sleep(20 * time.Millisecond)
-	select {
-	case runErr := <-done:
-		consumed = true
-		t.Fatalf("runtime coordinator stopped after exact release: %v", runErr)
-	default:
 	}
 }
 

@@ -24,6 +24,7 @@ func TestFixtureSupervisor_ConsumesPinnedReadyTaskExactlyOnce(t *testing.T) {
 	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: serviceRepositoryCatalog{},
+		WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string) error { return nil },
 		Workspaces:         serviceWorkspacePreparer{root: "/private/worktrees/managed-run-fixture"},
 		RuntimeAttachments: serviceRuntimeAttachments{},
 		TaskIDs:            func(string) (string, error) { return "task-fixture-supervised", nil },

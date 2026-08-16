@@ -86,6 +86,7 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 	t.Cleanup(func() { _ = store.Close() })
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: configured.Repositories, Workspaces: configured.Workspaces,
+		WorkerProfiles: configured.WorkerProfiles, ValidationProfiles: configured.ValidationProfiles,
 		RuntimeAttachments: serviceRuntimeAttachments{},
 		TaskIDs:            configured.TaskIDs, RegistrationNonces: configured.RegistrationNonces,
 		PreparationTTL: configured.PreparationTTL, Clock: func() time.Time { return time.Now().UTC() },
@@ -267,6 +268,7 @@ func TestComposeMutations_RejectsIncompleteMCPAndAuthorityConfiguration(t *testi
 	}
 	configuration := Config{
 		Repositories: serviceRepositoryCatalog{}, Workspaces: serviceWorkspacePreparer{root: "/approved/worktrees/task-composition"},
+		WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string) error { return nil },
 		RuntimeAttachments: serviceRuntimeAttachments{},
 		TaskIDs:            func(string) (string, error) { return "task-composition", nil },
 		RegistrationNonces: func() (string, error) { return "registration-nonce_composition", nil },
