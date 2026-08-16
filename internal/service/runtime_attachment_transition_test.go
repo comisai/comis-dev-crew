@@ -12,6 +12,7 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 	"github.com/comisai/comis-dev-crew/internal/reporter"
+	"github.com/comisai/comis-dev-crew/internal/store/sqlite"
 )
 
 func TestRuntimeAttachmentReleaseRecoversAfterCloseBeforeDirectoryStage(t *testing.T) {
@@ -56,6 +57,9 @@ func TestRuntimeAttachmentReleaseRecoversAfterCloseBeforeDirectoryStage(t *testi
 	if err := coordinator.ReleaseRuntimeAttachment(context.Background(), task.Handle); !errors.Is(err, crash) {
 		t.Fatalf("ReleaseRuntimeAttachment(simulated stop) error = %v", err)
 	}
+	if _, err := os.Lstat(taskRoot); !os.IsNotExist(err) {
+		t.Fatalf("canonical released task directory error = %v, want isolated", err)
+	}
 	restarted := runtimeTransitionCoordinator(t, runtimeRoot, store, now)
 	servers, err := restarted.recoverRuntimeAttachments(context.Background())
 	if err != nil || len(servers) != 0 {
@@ -63,6 +67,46 @@ func TestRuntimeAttachmentReleaseRecoversAfterCloseBeforeDirectoryStage(t *testi
 	}
 	if _, err := os.Lstat(taskRoot); !os.IsNotExist(err) {
 		t.Fatalf("released task directory error = %v, want not exist", err)
+	}
+}
+
+func TestOpenRecordedRuntimeReleaseAcceptsIsolatedDirectoryAfterCtimeChange(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, &runtimeAttachmentRecoveryStore{}, time.Now().UTC())
+	taskHandle := "task-runtime-release-no-birthtime"
+	taskRoot := filepath.Join(runtimeRoot, taskHandle)
+	if err := os.Mkdir(taskRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pinned, missing, err := coordinator.pinTaskRuntimeDirectory(taskHandle)
+	if err != nil || missing {
+		t.Fatalf("pinTaskRuntimeDirectory() = %#v, %t, %v", pinned, missing, err)
+	}
+	record := runtimeAttachmentIdentityRecord{Stage: runtimeAttachmentReleasing, Task: pinned.taskIdentity}
+	record.Task.BirthSec = 0
+	record.Task.BirthNsec = 0
+	releaseName := runtimeAttachmentReleaseName(taskHandle)
+	if err := os.Rename(taskRoot, filepath.Join(runtimeRoot, releaseName)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeRoot, releaseName, "changed"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(runtimeRoot, releaseName, "changed")); err != nil {
+		t.Fatal(err)
+	}
+	_ = pinned.close()
+	rootDescriptor, err := coordinator.pinRuntimeRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened, missing, err := openRecordedTaskRuntimeDirectory(rootDescriptor, taskHandle, record)
+	if err != nil || missing || reopened.directoryName != releaseName {
+		t.Fatalf("openRecordedTaskRuntimeDirectory() = %#v, %t, %v", reopened, missing, err)
+	}
+	if err := reopened.close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -144,6 +188,58 @@ func TestRuntimeAttachmentRecoveryReplaysCreationIntent(t *testing.T) {
 	}
 }
 
+func TestRuntimeAttachmentRecoveryRemovesUncommittedPreparationPublication(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := sqlite.Open(context.Background(), filepath.Join(root, "state", "devcrew.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Date(2026, time.August, 16, 15, 10, 0, 0, time.UTC)
+	task := runtimeAttachmentRecoverableTask(t, now, "task-runtime-uncommitted-intent")
+	intent := application.TaskPreparationIntent{
+		OperationID: "operation-runtime-uncommitted-intent", TaskHandle: task.Handle,
+		SubjectDigest: strings.Repeat("a", 64), CreatedAt: now,
+	}
+	if _, err := store.RecordTaskPreparationIntent(context.Background(), intent); err != nil {
+		t.Fatal(err)
+	}
+	first := runtimeTransitionCoordinator(t, runtimeRoot, store, now)
+	brief, err := task.RenderWorkerBrief()
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment := application.PreparedRuntimeAttachment{
+		Kind:       application.RuntimeAttachmentUnixSocket,
+		SourcePath: filepath.Join(runtimeRoot, task.Handle, "attachment.sock"),
+	}
+	entry, err := first.listenRuntimeAttachment(application.RuntimeAttachmentPreparationRequest{
+		OperationID: intent.OperationID, TaskHandle: task.Handle,
+		BriefRevision: task.BriefRevision, BriefRevisionHash: task.BriefRevisionHash,
+		Brief: brief, WorkingDirectory: workspace,
+	}, attachment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.entries[task.Handle] = entry
+	if err := first.closeRuntimeServerForShutdown(entry.server); err != nil {
+		t.Fatal(err)
+	}
+	restarted := runtimeTransitionCoordinator(t, runtimeRoot, store, now)
+	servers, err := restarted.recoverRuntimeAttachments(context.Background())
+	if err != nil || len(servers) != 0 {
+		t.Fatalf("recoverRuntimeAttachments(uncommitted intent) = %d, %v", len(servers), err)
+	}
+	if _, err := os.Lstat(filepath.Join(runtimeRoot, task.Handle)); !os.IsNotExist(err) {
+		t.Fatalf("uncommitted runtime publication error = %v, want absent", err)
+	}
+}
+
 func runtimeTransitionCoordinator(
 	t *testing.T,
 	runtimeRoot string,
@@ -186,6 +282,10 @@ type runtimeTransitionStore struct {
 
 func (store *runtimeTransitionStore) ListTasks(context.Context) ([]domain.Task, error) {
 	return []domain.Task{store.task}, nil
+}
+
+func (*runtimeTransitionStore) ListTaskPreparationIntents(context.Context) ([]application.TaskPreparationIntent, error) {
+	return nil, nil
 }
 
 func (store *runtimeTransitionStore) GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error) {

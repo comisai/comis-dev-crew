@@ -18,6 +18,7 @@ import (
 
 type runtimeAttachmentStore interface {
 	application.ReportMutationStore
+	ListTaskPreparationIntents(context.Context) ([]application.TaskPreparationIntent, error)
 	ListTasks(context.Context) ([]domain.Task, error)
 	GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error)
 	GetTaskCleanupRecord(context.Context, string) (application.TaskCleanupRecord, bool, error)
@@ -240,6 +241,9 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeAttachments(ctx c
 	if len(coordinator.entries) != 0 {
 		return nil, errors.New("recover runtime attachments: coordinator is already populated")
 	}
+	if err := coordinator.recoverTaskPreparationIntents(ctx); err != nil {
+		return nil, err
+	}
 	tasks, err := coordinator.store.ListTasks(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("recover runtime attachments: list tasks: %w", err)
@@ -342,7 +346,7 @@ func (coordinator *runtimeAttachmentCoordinator) Run(ctx context.Context) error 
 	for _, server := range recovered {
 		active[server] = struct{}{}
 		go func(recoveredServer *reporter.RuntimeServer) {
-			results <- runtimeAttachmentResult{server: recoveredServer, err: recoveredServer.Serve(ctx)}
+			results <- runtimeAttachmentResult{server: recoveredServer, err: recoveredServer.Serve(context.WithoutCancel(ctx))}
 		}(server)
 	}
 	for {
@@ -350,7 +354,7 @@ func (coordinator *runtimeAttachmentCoordinator) Run(ctx context.Context) error 
 		case registration := <-coordinator.registrations:
 			active[registration.server] = struct{}{}
 			go func(server *reporter.RuntimeServer) {
-				results <- runtimeAttachmentResult{server: server, err: server.Serve(ctx)}
+				results <- runtimeAttachmentResult{server: server, err: server.Serve(context.WithoutCancel(ctx))}
 			}(registration.server)
 			registration.ready <- nil
 		case result := <-results:
@@ -404,6 +408,9 @@ func (coordinator *runtimeAttachmentCoordinator) closeRuntimeServerForShutdown(s
 	var pinErr error
 	if taskHandle != "" {
 		pinned, record, pinErr = coordinator.pinRuntimeAttachmentRelease(taskHandle)
+		if pinErr == nil {
+			pinErr = preparePinnedRuntimeAttachmentClose(coordinator, pinned, record, server)
+		}
 	}
 	coordinator.mu.Unlock()
 	closeErr := server.Close()

@@ -173,7 +173,6 @@ func (supervisor *candidateSupervisor) ValidateTask(
 		if errors.Is(err, devgit.ErrCandidateWorktreeUnverified) {
 			unverified := devgit.CandidateSnapshot{
 				RepositoryID: task.RepositoryID, WorktreePath: preparation.RequestedWorkspaceRoot,
-				HeadRevision: task.BaseRevision,
 			}
 			latestEvidence, latestJudgment, latestErr := supervisor.config.Store.LatestCandidateEvidence(ctx, taskHandle)
 			if latestErr == nil && unchangedInvalidCandidate(task, unverified, latestEvidence, latestJudgment) {
@@ -212,7 +211,6 @@ func (supervisor *candidateSupervisor) ValidateTask(
 	if errors.Is(err, devgit.ErrCandidateWorktreeUnverified) {
 		return supervisor.commitUnverifiedCandidate(ctx, task, profile, devgit.CandidateSnapshot{
 			RepositoryID: task.RepositoryID, WorktreePath: preparation.RequestedWorkspaceRoot,
-			HeadRevision: task.BaseRevision,
 		}, openDecisions)
 	}
 	if err != nil {

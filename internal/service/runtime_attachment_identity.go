@@ -289,6 +289,8 @@ func openRecordedTaskRuntimeDirectory(
 	names := []string{taskHandle}
 	if record.Stage == runtimeAttachmentCreating {
 		names = append(names, runtimeAttachmentCreationName(taskHandle))
+	} else if record.Stage == runtimeAttachmentReleasing {
+		names = append(names, runtimeAttachmentReleaseName(taskHandle))
 	}
 	var pinned *pinnedTaskRuntimeDirectory
 	for _, name := range names {
@@ -304,7 +306,9 @@ func openRecordedTaskRuntimeDirectory(
 			_ = unix.Close(pinned.taskDescriptor)
 			return nil, false, errors.New("task runtime directory location is ambiguous; paths preserved")
 		}
-		if record.Task != identity &&
+		isolatedRelease := record.Stage == runtimeAttachmentReleasing &&
+			name == runtimeAttachmentReleaseName(taskHandle) && sameRuntimeAttachmentNode(identity, record.Task)
+		if record.Task != identity && !isolatedRelease &&
 			(record.Stage == runtimeAttachmentActive || !sameRuntimeAttachmentStableNode(identity, record.Task)) {
 			_ = unix.Close(descriptor)
 			return nil, false, errors.New("task runtime directory identity differs; path preserved")
@@ -329,34 +333,6 @@ func openRecordedTaskRuntimeDirectory(
 		}
 	}
 	return nil, true, nil
-}
-
-func (coordinator *runtimeAttachmentCoordinator) pinRuntimeAttachmentRelease(
-	taskHandle string,
-) (*pinnedTaskRuntimeDirectory, runtimeAttachmentIdentityRecord, error) {
-	pinned, missing, err := coordinator.pinTaskRuntimeDirectory(taskHandle)
-	if err != nil || missing {
-		return nil, runtimeAttachmentIdentityRecord{},
-			errors.New("task runtime directory identity is unavailable")
-	}
-	record, _, found, err := readRuntimeAttachmentIdentityRecord(pinned.runtimeRootDescriptor, taskHandle)
-	if err != nil || !found ||
-		(record.Stage == runtimeAttachmentActive && record.Task != pinned.taskIdentity) ||
-		(record.Stage == runtimeAttachmentReleasing && !sameRuntimeAttachmentStableNode(record.Task, pinned.taskIdentity)) ||
-		(record.Stage != runtimeAttachmentActive && record.Stage != runtimeAttachmentReleasing) {
-		return nil, runtimeAttachmentIdentityRecord{},
-			errors.Join(errors.New("task runtime directory identity differs; path preserved"), pinned.close())
-	}
-	if record.Stage == runtimeAttachmentActive {
-		staged := record
-		staged.Stage = runtimeAttachmentReleasing
-		if _, err := publishPinnedRuntimeAttachmentIdentity(pinned, staged, &record, nil); err != nil {
-			return nil, runtimeAttachmentIdentityRecord{},
-				errors.Join(errors.New("task runtime attachment release cannot be staged"), pinned.close())
-		}
-		record = staged
-	}
-	return pinned, record, nil
 }
 
 func removePinnedRuntimeAttachment(
@@ -394,6 +370,11 @@ func removePinnedTaskRuntimeDirectory(
 		}
 		record = staged
 	}
+	if record.Stage == runtimeAttachmentReleasing {
+		if err := isolatePinnedRuntimeAttachmentRelease(pinned, record); err != nil {
+			return err
+		}
+	}
 	if err := reporter.QuarantineRuntimePath(
 		pinned.taskDescriptor, "attachment.sock", record.Socket, reporter.RuntimePathSocket, 0o600,
 	); err != nil && !errors.Is(err, reporter.ErrRuntimePathMissing) {
@@ -425,7 +406,7 @@ func stagePinnedRuntimeAttachmentDirectory(
 		return reporter.RuntimeSocketIdentity{}, errors.New("task runtime directory update cannot be synchronized")
 	}
 	current, err := runtimeAttachmentDescriptorIdentity(pinned.taskDescriptor)
-	if err != nil || !sameRuntimeAttachmentStableNode(current, pinned.taskIdentity) {
+	if err != nil || !sameRuntimeAttachmentNode(current, pinned.taskIdentity) {
 		return reporter.RuntimeSocketIdentity{}, errors.New("task runtime directory identity is unavailable")
 	}
 	staged := record

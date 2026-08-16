@@ -32,7 +32,7 @@ func TestCandidateSupervisorPersistsStructuralWorktreeFailureOnce(t *testing.T) 
 		t.Fatalf("structural worktree effects: commits=%d validation=%d forge=%d", commits, fixture.runner.calls, fixture.pullRequests.calls)
 	}
 	bundle := fixture.store.evidence.Bundle()
-	if bundle.HeadRevision != fixture.task.BaseRevision || bundle.WorktreeCleanliness != domain.WorktreeUnknown {
+	if bundle.HeadRevision != "" || bundle.WorktreeCleanliness != domain.WorktreeUnknown {
 		t.Fatalf("structural worktree evidence = %#v", bundle)
 	}
 }

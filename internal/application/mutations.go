@@ -95,6 +95,24 @@ func (mutations *Mutations) PrepareTask(ctx context.Context, command PrepareTask
 	if err := mutations.validationProfiles(command.ValidationProfile, command.Shape); err != nil {
 		return MutationResult{}, mutationValidationFailure("validation profile is unavailable")
 	}
+	intent, err := mutations.store.RecordTaskPreparationIntent(ctx, TaskPreparationIntent{
+		OperationID: command.OperationID, TaskHandle: task.Handle,
+		SubjectDigest: subjectDigest, CreatedAt: now,
+	})
+	if err != nil {
+		return MutationResult{}, &dependencyFailure{message: "task preparation intent failed", cause: err}
+	}
+	if intent.Validate() != nil || intent.OperationID != command.OperationID || intent.SubjectDigest != subjectDigest {
+		return MutationResult{}, &dependencyFailure{message: "task preparation intent differs"}
+	}
+	task.Handle = intent.TaskHandle
+	task.CreatedAt = intent.CreatedAt
+	task.UpdatedAt = intent.CreatedAt
+	now = intent.CreatedAt
+	task, err = task.PinBriefRevision()
+	if err != nil {
+		return MutationResult{}, mutationValidationFailure("task preparation intent is invalid")
+	}
 	workspace, err := mutations.workspaces.PrepareWorkspace(ctx, WorkspacePreparationRequest{
 		OperationID: command.OperationID, TaskHandle: task.Handle,
 		RepositoryID: command.RepositoryID, BaseRevision: command.BaseRevision,

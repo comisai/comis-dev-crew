@@ -59,3 +59,43 @@ func TestGitHubAdapterTreatsDuplicateCheckRunFieldsAsUnknown(t *testing.T) {
 		t.Fatalf("readChecks(duplicate fields) = %#v, want %#v", checks, want)
 	}
 }
+
+func TestGitHubAdapterTreatsMalformedResponseEnvelopeAsUnknown(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "duplicate check runs",
+			body: `{"total_count":1,"check_runs":[{"id":71,"name":"ci/unit","status":"completed","conclusion":"failure","started_at":"2026-08-14T20:00:00Z"}],` +
+				`"check_runs":[{"id":72,"name":"ci/unit","status":"completed","conclusion":"success","started_at":"2026-08-14T20:01:00Z"}]}`,
+		},
+		{
+			name: "duplicate total",
+			body: `{"total_count":2,"total_count":1,"check_runs":[{"id":73,"name":"ci/unit","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"}]}`,
+		},
+		{name: "wrong check runs type", body: `{"total_count":1,"check_runs":{"id":74}}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			head := strings.Repeat("6", 40)
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				response.Header().Set("Content-Type", "application/json")
+				_, _ = response.Write([]byte(test.body))
+			}))
+			defer server.Close()
+			adapter, err := NewGitHubAdapter(validGitHubConfig(server))
+			if err != nil {
+				t.Fatal(err)
+			}
+			checks, err := adapter.readChecks(context.Background(), "read-token", head, []string{"ci/unit"})
+			if err != nil {
+				t.Fatalf("readChecks(malformed response envelope) error = %v", err)
+			}
+			want := []domain.ForgeCheckEvidence{{Name: "ci/unit", Conclusion: domain.CheckUnknown}}
+			if !reflect.DeepEqual(checks, want) {
+				t.Fatalf("readChecks(malformed response envelope) = %#v, want %#v", checks, want)
+			}
+		})
+	}
+}

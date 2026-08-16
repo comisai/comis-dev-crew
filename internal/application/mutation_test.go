@@ -508,6 +508,7 @@ func testRuntimeAttachments() *runtimeAttachmentCoordinator {
 }
 
 type mutationStore struct {
+	intent        TaskPreparationIntent
 	prepared      PreparedTaskMutation
 	activation    ManagedRunActivationMutation
 	abandon       ManagedRunAbandonMutation
@@ -520,6 +521,17 @@ type mutationStore struct {
 	replayErr     error
 	activationErr error
 	abandonErr    error
+}
+
+func (store *mutationStore) RecordTaskPreparationIntent(
+	_ context.Context,
+	intent TaskPreparationIntent,
+) (TaskPreparationIntent, error) {
+	if store.intent.OperationID != "" {
+		return store.intent, nil
+	}
+	store.intent = intent
+	return intent, nil
 }
 
 func (store *mutationStore) ReplayMutation(context.Context, string, string, string) (MutationResult, bool, error) {

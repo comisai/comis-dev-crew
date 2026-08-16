@@ -732,6 +732,10 @@ func (store *runtimeAttachmentRecoveryStore) ListTasks(context.Context) ([]domai
 	return append([]domain.Task(nil), store.tasks...), nil
 }
 
+func (*runtimeAttachmentRecoveryStore) ListTaskPreparationIntents(context.Context) ([]application.TaskPreparationIntent, error) {
+	return nil, nil
+}
+
 func (store *runtimeAttachmentRecoveryStore) GetManagedRunPreparation(
 	context.Context,
 	string,

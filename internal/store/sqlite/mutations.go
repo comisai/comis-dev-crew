@@ -13,9 +13,7 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
-// ReplayMutation returns the original atomic task outcome for an identical
-// operation subject before callers mint any new local identity. Commit methods
-// repeat this check inside their write transaction to close the race window.
+// ReplayMutation returns the original atomic outcome for an identical operation subject.
 func (store *Store) ReplayMutation(
 	ctx context.Context,
 	operationID, command, subjectDigest string,
@@ -59,6 +57,9 @@ func (store *Store) CommitPreparedTask(ctx context.Context, mutation application
 		return application.MutationResult{}, commitReplayConflict(transaction, err)
 	} else if found {
 		return replayResult(ctx, transaction, replay)
+	}
+	if err := consumeTaskPreparationIntent(ctx, transaction, mutation); err != nil {
+		return application.MutationResult{}, err
 	}
 	stateVersion, err := nextMutationStateVersion(ctx, transaction)
 	if err != nil {

@@ -155,9 +155,11 @@ func (sealed *SealedDeliveryEvidence) Bundle() DeliveryEvidenceBundle {
 }
 
 func (bundle DeliveryEvidenceBundle) validate() error {
+	validHead := revisionPattern.MatchString(bundle.HeadRevision) ||
+		(bundle.WorktreeCleanliness == WorktreeUnknown && bundle.HeadRevision == "")
 	if bundle.SchemaVersion != 1 || validateOpaqueID("taskHandle", bundle.TaskHandle) != nil ||
 		validateOpaqueID("repositoryIdentity", bundle.RepositoryIdentity) != nil ||
-		!revisionPattern.MatchString(bundle.BaseRevision) || !revisionPattern.MatchString(bundle.HeadRevision) {
+		!revisionPattern.MatchString(bundle.BaseRevision) || !validHead {
 		return errors.New("seal delivery evidence: bundle identity is invalid")
 	}
 	if bundle.WorktreeCleanliness != WorktreeClean && bundle.WorktreeCleanliness != WorktreeDirty && bundle.WorktreeCleanliness != WorktreeUnknown {

@@ -15,6 +15,12 @@ func TestMutations_PrepareAllocatesOperationBoundWorkspaceBeforeDurableComisPrep
 	attachments := &runtimeAttachmentCoordinator{prepared: PreparedRuntimeAttachment{
 		Kind: RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/task-stable-0001/attachment.sock",
 	}}
+	attachments.beforePrepare = func() error {
+		if store.intent.OperationID == "" {
+			return errors.New("task preparation intent is not durable")
+		}
+		return nil
+	}
 	var taskOperation string
 	mutations, err := NewMutations(MutationConfig{
 		Store: store, Repositories: &repositoryCatalog{}, Workspaces: workspaces, RuntimeAttachments: attachments,
@@ -42,6 +48,10 @@ func TestMutations_PrepareAllocatesOperationBoundWorkspaceBeforeDurableComisPrep
 	}
 	if workspaces.calls != 1 || workspaces.request != wantRequest {
 		t.Fatalf("workspace preparation = %d / %#v, want %#v", workspaces.calls, workspaces.request, wantRequest)
+	}
+	if store.intent.OperationID != command.OperationID || store.intent.TaskHandle != "task-stable-0001" ||
+		store.intent.SubjectDigest == "" {
+		t.Fatalf("task preparation intent = %#v", store.intent)
 	}
 	if got := store.prepared.Preparation.RequestedWorkspaceRoot; got != workspaces.prepared.CanonicalRoot {
 		t.Fatalf("requested workspace root = %q, want %q", got, workspaces.prepared.CanonicalRoot)
@@ -168,6 +178,7 @@ type runtimeAttachmentCoordinator struct {
 	prepareCalls   int
 	bindCalls      int
 	err            error
+	beforePrepare  func() error
 }
 
 func (coordinator *runtimeAttachmentCoordinator) PrepareRuntimeAttachment(
@@ -176,6 +187,11 @@ func (coordinator *runtimeAttachmentCoordinator) PrepareRuntimeAttachment(
 ) (PreparedRuntimeAttachment, error) {
 	coordinator.prepareCalls++
 	coordinator.prepareRequest = request
+	if coordinator.beforePrepare != nil {
+		if err := coordinator.beforePrepare(); err != nil {
+			return PreparedRuntimeAttachment{}, err
+		}
+	}
 	return coordinator.prepared, coordinator.err
 }
 

@@ -2,10 +2,32 @@ package application
 
 import (
 	"context"
+	"encoding/hex"
+	"errors"
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
+
+// TaskPreparationIntent durably binds a preparation operation to one task
+// identity before workspace or runtime attachment publication.
+type TaskPreparationIntent struct {
+	OperationID   string
+	TaskHandle    string
+	SubjectDigest string
+	CreatedAt     time.Time
+}
+
+// Validate rejects incomplete or non-canonical preparation authority.
+func (intent TaskPreparationIntent) Validate() error {
+	digest, err := hex.DecodeString(intent.SubjectDigest)
+	if domain.ValidateOperationID(intent.OperationID) != nil || domain.ValidateTaskHandle(intent.TaskHandle) != nil ||
+		err != nil || len(digest) != 32 || hex.EncodeToString(digest) != intent.SubjectDigest ||
+		intent.CreatedAt.IsZero() || intent.CreatedAt.Location() != time.UTC {
+		return errors.New("task preparation intent is invalid")
+	}
+	return nil
+}
 
 const (
 	commandPrepareTask             = "PrepareTask"
@@ -176,6 +198,7 @@ type MutationResult struct {
 // MutationStore is the service-owned transactional mutation port.
 type MutationStore interface {
 	ReplayMutation(context.Context, string, string, string) (MutationResult, bool, error)
+	RecordTaskPreparationIntent(context.Context, TaskPreparationIntent) (TaskPreparationIntent, error)
 	CommitPreparedTask(context.Context, PreparedTaskMutation) (MutationResult, error)
 	CommitManagedRunActivation(context.Context, ManagedRunActivationMutation) (MutationResult, error)
 	CommitManagedRunAbandon(context.Context, ManagedRunAbandonMutation) (MutationResult, error)

@@ -1,14 +1,58 @@
 package forge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
+
+func (checks *githubChecks) UnmarshalJSON(encoded []byte) error {
+	*checks = githubChecks{}
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	valid := true
+	for decoder.More() {
+		keyToken, keyErr := decoder.Token()
+		key, ok := keyToken.(string)
+		if keyErr != nil || !ok {
+			return nil
+		}
+		if _, duplicate := seen[key]; duplicate {
+			valid = false
+		}
+		seen[key] = struct{}{}
+		var value json.RawMessage
+		if decoder.Decode(&value) != nil {
+			return nil
+		}
+		switch key {
+		case "total_count":
+			checks.TotalCount = value
+		case "check_runs":
+			if json.Unmarshal(value, &checks.Runs) != nil {
+				valid = false
+			}
+		}
+	}
+	if token, err = decoder.Token(); err != nil || token != json.Delim('}') || decoder.Decode(&struct{}{}) != io.EOF {
+		return nil
+	}
+	_, totalFound := seen["total_count"]
+	_, runsFound := seen["check_runs"]
+	checks.Valid = valid && totalFound && runsFound
+	return nil
+}
 
 const (
 	githubCheckRunsPerPage  = 100
@@ -30,7 +74,13 @@ func (adapter *GitHubAdapter) readAllCheckRuns(
 		if err := adapter.requestJSON(
 			ctx, secret, http.MethodGet, adapter.repositoryPath("commits", head, "check-runs"), query, nil, &response,
 		); err != nil {
+			if errors.Is(err, errGitHubResponseMalformed) {
+				return githubChecks{}, false, nil
+			}
 			return githubChecks{}, false, err
+		}
+		if !response.Valid {
+			return githubChecks{}, false, nil
 		}
 		total, valid := parseGitHubCheckTotal(response.TotalCount)
 		if !valid || total > githubCheckRunsPerPage*maximumGitHubCheckPages || len(response.Runs) > githubCheckRunsPerPage {

@@ -29,6 +29,7 @@ var (
 	revisionPattern            = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 	pullRequestPattern         = regexp.MustCompile(`^github-pr-[1-9][0-9]{0,9}$`)
 	errPullRequestTruthDiffers = errors.New("pull-request truth differs")
+	errGitHubResponseMalformed = errors.New("GitHub response is malformed")
 )
 
 // GitHubConfig supplies one fixed repository and separate non-merge identities.
@@ -191,6 +192,7 @@ type githubPull struct {
 type githubChecks struct {
 	TotalCount json.RawMessage   `json:"total_count"`
 	Runs       []json.RawMessage `json:"check_runs"`
+	Valid      bool              `json:"-"`
 }
 
 type githubCheckRun struct {
@@ -418,17 +420,17 @@ func (adapter *GitHubAdapter) requestJSON(
 		return errors.New("GitHub response could not be read")
 	}
 	if len(contents) == 0 || len(contents) > maximumForgeResponseBytes {
-		return errors.New("GitHub response is invalid or exceeds its bound")
+		return fmt.Errorf("GitHub response is invalid or exceeds its bound: %w", errGitHubResponseMalformed)
 	}
 	if destination == nil {
 		return nil
 	}
 	decoder := json.NewDecoder(bytes.NewReader(contents))
 	if err := decoder.Decode(destination); err != nil {
-		return errors.New("GitHub response is malformed")
+		return errGitHubResponseMalformed
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errors.New("GitHub response has trailing content")
+		return fmt.Errorf("GitHub response has trailing content: %w", errGitHubResponseMalformed)
 	}
 	return nil
 }

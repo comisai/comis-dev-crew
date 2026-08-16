@@ -12,14 +12,10 @@ import (
 func TestQueriesExplainUnknownWorktreeWithoutInventingGitFacts(t *testing.T) {
 	task := queryTask("task-candidate-unknown-worktree", domain.TaskValidating, 8)
 	bundle := queryCandidateEvidence(t, task, time.Now().UTC()).Bundle()
-	bundle.HeadRevision = task.BaseRevision
+	bundle.HeadRevision = ""
 	bundle.WorktreeCleanliness = domain.WorktreeUnknown
-	for index := range bundle.ValidationReceipts {
-		bundle.ValidationReceipts[index].HeadRevision = task.BaseRevision
-	}
-	if bundle.ForgeEvidence != nil {
-		bundle.ForgeEvidence.HeadRevision = task.BaseRevision
-	}
+	bundle.ValidationReceipts = nil
+	bundle.ForgeEvidence = nil
 	sealed, err := domain.SealDeliveryEvidence(bundle)
 	if err != nil {
 		t.Fatal(err)
@@ -42,5 +38,8 @@ func TestQueriesExplainUnknownWorktreeWithoutInventingGitFacts(t *testing.T) {
 	if !strings.Contains(cause, "unknown") || strings.Contains(cause, "not clean") ||
 		strings.Contains(cause, "equals the pinned base") {
 		t.Fatalf("ExplainTask(unknown worktree) root cause = %q", explanation.LikelyRootCause)
+	}
+	if explanation.Summary.Head != "unknown" {
+		t.Fatalf("ExplainTask(unknown worktree) head = %q, want unknown", explanation.Summary.Head)
 	}
 }

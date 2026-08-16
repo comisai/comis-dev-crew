@@ -369,7 +369,9 @@ func (queries *Queries) projectTask(
 	if bundle.TaskHandle != task.Handle || bundle.RepositoryIdentity != task.RepositoryID || bundle.BaseRevision != task.BaseRevision {
 		return TaskSummary{}, TaskEvidenceView{}, translateReadError(ErrPrecondition, "candidate evidence identity")
 	}
-	summary.Head = bundle.HeadRevision
+	if bundle.HeadRevision != "" {
+		summary.Head = bundle.HeadRevision
+	}
 	summary.Validation = string(judgment.Outcome)
 	return summary, TaskEvidenceView{}, nil
 }
