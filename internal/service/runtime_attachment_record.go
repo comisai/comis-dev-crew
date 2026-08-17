@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -203,6 +204,17 @@ func formatRuntimeAttachmentIdentityRecord(record runtimeAttachmentIdentityRecor
 	)
 }
 
+// runtimeAttachmentSignedTime reverses the two's-complement encoding that
+// formatRuntimeAttachmentIdentityRecord writes for signed timestamps. Values at or
+// above the signed maximum are reinterpreted through an explicitly bounded
+// subtraction so no conversion can silently truncate.
+func runtimeAttachmentSignedTime(value uint64) int64 {
+	if value > math.MaxInt64 {
+		return math.MinInt64 + int64(value-(1<<63))
+	}
+	return int64(value)
+}
+
 func parseRuntimeAttachmentIdentityRecord(encoded string) (runtimeAttachmentIdentityRecord, error) {
 	if len(encoded) != 407 || encoded[len(encoded)-1] != '\n' {
 		return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
@@ -230,19 +242,31 @@ func parseRuntimeAttachmentIdentityRecord(encoded string) (runtimeAttachmentIden
 		}
 		values[index] = value
 	}
+	if values[0] > math.MaxUint8 {
+		return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
+	}
 	record := runtimeAttachmentIdentityRecord{
 		Stage: runtimeAttachmentIdentityStage(values[0]),
 		Task: reporter.RuntimeSocketIdentity{
-			Device: values[1], Inode: values[2], ChangeSec: int64(values[3]), ChangeNsec: int64(values[4]),
-			BirthSec: int64(values[5]), BirthNsec: int64(values[6]),
+			Device: values[1], Inode: values[2],
+			ChangeSec:  runtimeAttachmentSignedTime(values[3]),
+			ChangeNsec: runtimeAttachmentSignedTime(values[4]),
+			BirthSec:   runtimeAttachmentSignedTime(values[5]),
+			BirthNsec:  runtimeAttachmentSignedTime(values[6]),
 		},
 		Socket: reporter.RuntimeSocketIdentity{
-			Device: values[7], Inode: values[8], ChangeSec: int64(values[9]), ChangeNsec: int64(values[10]),
-			BirthSec: int64(values[11]), BirthNsec: int64(values[12]),
+			Device: values[7], Inode: values[8],
+			ChangeSec:  runtimeAttachmentSignedTime(values[9]),
+			ChangeNsec: runtimeAttachmentSignedTime(values[10]),
+			BirthSec:   runtimeAttachmentSignedTime(values[11]),
+			BirthNsec:  runtimeAttachmentSignedTime(values[12]),
 		},
 		Generation: reporter.RuntimeSocketIdentity{
-			Device: values[13], Inode: values[14], ChangeSec: int64(values[15]), ChangeNsec: int64(values[16]),
-			BirthSec: int64(values[17]), BirthNsec: int64(values[18]),
+			Device: values[13], Inode: values[14],
+			ChangeSec:  runtimeAttachmentSignedTime(values[15]),
+			ChangeNsec: runtimeAttachmentSignedTime(values[16]),
+			BirthSec:   runtimeAttachmentSignedTime(values[17]),
+			BirthNsec:  runtimeAttachmentSignedTime(values[18]),
 		},
 	}
 	generationID, err := hex.DecodeString(parts[19])
