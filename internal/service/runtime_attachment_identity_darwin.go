@@ -16,6 +16,14 @@ func runtimeAttachmentDescriptorBirthTime(descriptor int) (int64, int64) {
 	return runtimeAttachmentStatBirthTime(stat)
 }
 
+func runtimeAttachmentPathBirthTime(string) (int64, int64) {
+	return 0, 0
+}
+
+func runtimeAttachmentChildBirthTime(int, string) (int64, int64) {
+	return 0, 0
+}
+
 func runtimeAttachmentDescriptorMountID(descriptor int) (uint64, error) {
 	var stat unix.Statfs_t
 	if err := unix.Fstatfs(descriptor, &stat); err != nil {

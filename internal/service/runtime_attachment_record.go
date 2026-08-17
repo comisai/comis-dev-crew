@@ -179,7 +179,7 @@ func prepareRuntimeAttachmentIdentityTemporary(
 	syncErr := file.Sync()
 	var stat unix.Stat_t
 	statErr := unix.Fstat(descriptor, &stat)
-	identity, identityErr := runtimeAttachmentStatIdentity(stat)
+	identity, identityErr := runtimeAttachmentDescriptorIdentity(descriptor)
 	closeErr := file.Close()
 	if writeErr != nil || written != len(encoded) || syncErr != nil || statErr != nil || identityErr != nil ||
 		stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o777 != 0o600 || stat.Nlink != 1 || closeErr != nil {
@@ -305,7 +305,7 @@ func readRuntimeAttachmentIdentityRecord(
 		_ = unix.Close(descriptor)
 		return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, errors.New("runtime attachment identity record is unavailable")
 	}
-	recordIdentity, recordIdentityErr := runtimeAttachmentStatIdentity(stat)
+	recordIdentity, recordIdentityErr := runtimeAttachmentDescriptorIdentity(descriptor)
 	if recordIdentityErr != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o777 != 0o600 || stat.Nlink != 1 {
 		if err := unix.Close(descriptor); err != nil {
 			return runtimeAttachmentIdentityRecord{}, reporter.RuntimeSocketIdentity{}, false, errors.New("runtime attachment identity record is unavailable")

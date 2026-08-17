@@ -108,7 +108,16 @@ func runtimeAttachmentPathIdentity(path string) (reporter.RuntimeSocketIdentity,
 	if err := unix.Lstat(path, &stat); err != nil {
 		return reporter.RuntimeSocketIdentity{}, errors.New("runtime attachment filesystem identity is unavailable")
 	}
-	return runtimeAttachmentStatIdentity(stat)
+	identity, err := runtimeAttachmentStatIdentity(stat)
+	if err != nil {
+		return reporter.RuntimeSocketIdentity{}, err
+	}
+	birthSec, birthNsec := runtimeAttachmentPathBirthTime(path)
+	if birthSec != 0 || birthNsec != 0 {
+		identity.BirthSec = birthSec
+		identity.BirthNsec = birthNsec
+	}
+	return identity, nil
 }
 
 func runtimeAttachmentStatIdentity(stat unix.Stat_t) (reporter.RuntimeSocketIdentity, error) {
@@ -279,6 +288,11 @@ func readPinnedRuntimeSocketIdentity(
 		return reporter.RuntimeSocketIdentity{}, 0, false, errors.New("task runtime attachment is unavailable")
 	}
 	identity, err := runtimeAttachmentStatIdentity(stat)
+	birthSec, birthNsec := runtimeAttachmentChildBirthTime(taskDescriptor, "attachment.sock")
+	if birthSec != 0 || birthNsec != 0 {
+		identity.BirthSec = birthSec
+		identity.BirthNsec = birthNsec
+	}
 	return identity, uint32(stat.Mode), true, err
 }
 
