@@ -14,6 +14,14 @@ import (
 type recoveryExecutorFixture struct {
 	manifest Manifest
 	calls    []Command
+	// unavailableResidencyRuns rejects that many leading secret-residency invocations the way a
+	// restarted service does before its authenticated RPC accepts requests.
+	unavailableResidencyRuns int
+	// malformedResidencyRuns returns that many leading truncated payloads after the rejections.
+	malformedResidencyRuns int
+	// residencyReport overrides the successful count-only report payload.
+	residencyReport string
+	residencyRuns   int
 }
 
 func (executor *recoveryExecutorFixture) Run(_ context.Context, command Command) ([]byte, error) {
@@ -29,6 +37,18 @@ func (executor *recoveryExecutorFixture) Run(_ context.Context, command Command)
 	}
 	if command.Path == manifest.Comis.NodePath && len(command.Args) > 0 &&
 		command.Args[0] == manifest.Comis.SecretResidencyScript {
+		executor.residencyRuns++
+		if executor.unavailableResidencyRuns > 0 {
+			executor.unavailableResidencyRuns--
+			return nil, errors.New("execute protected command: process exited with status 1")
+		}
+		if executor.malformedResidencyRuns > 0 {
+			executor.malformedResidencyRuns--
+			return []byte(`{"schemaVersion":1,"scannedFiles":`), nil
+		}
+		if executor.residencyReport != "" {
+			return []byte(executor.residencyReport), nil
+		}
 		return []byte(`{"schemaVersion":1,"scannedFiles":8,"readErrors":[],"totalMatches":0,"secrets":{"TELEGRAM_BOT_TOKEN":{"retrieved":true,"totalMatches":0},"GITHUB_TOKEN":{"retrieved":true,"totalMatches":0}}}`), nil
 	}
 	if command.Path == manifest.Comis.NodePath && len(command.Args) >= 3 &&
@@ -121,6 +141,52 @@ func TestCreateAndRestoreRecoveryBackupPreservesStateWithoutPlaintextEnvironment
 	if !rollback.Passed || !rollback.PreviousArtifactsVerified || !rollback.ComisConfigValidated ||
 		!rollback.DevCrewServiceOpened || rollback.SQLiteFiles < 3 || !probe.called {
 		t.Fatalf("rollback evidence = %#v, probe=%#v", rollback, probe)
+	}
+}
+
+func TestCreateRecoveryBackupWaitsForRestartedSecretResidencyOracleReadiness(t *testing.T) {
+	manifest := recoveryManifestFixture(t)
+	executor := &recoveryExecutorFixture{manifest: manifest, unavailableResidencyRuns: 2, malformedResidencyRuns: 1}
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := CreateRecoveryBackup(
+		context.Background(), manifest, filepath.Join(parent, "backup"), executor, manifest.EndedAtMs,
+	)
+	if err != nil {
+		t.Fatalf("CreateRecoveryBackup() error = %v", err)
+	}
+	if !backup.Passed || !backup.SecretResidencyPassed {
+		t.Fatalf("backup evidence = %#v", backup)
+	}
+	if executor.residencyRuns != 4 {
+		t.Fatalf("residency runs = %d, want 4", executor.residencyRuns)
+	}
+}
+
+func TestCreateRecoveryBackupRefusesParsedPlaintextSecretResidencyWithoutRetrying(t *testing.T) {
+	manifest := recoveryManifestFixture(t)
+	executor := &recoveryExecutorFixture{
+		manifest: manifest,
+		residencyReport: `{"schemaVersion":1,"scannedFiles":8,"readErrors":[],"totalMatches":1,` +
+			`"secrets":{"TELEGRAM_BOT_TOKEN":{"retrieved":true,"totalMatches":1},` +
+			`"GITHUB_TOKEN":{"retrieved":true,"totalMatches":0}}}`,
+	}
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	backupRoot := filepath.Join(parent, "backup")
+	_, err := CreateRecoveryBackup(context.Background(), manifest, backupRoot, executor, manifest.EndedAtMs)
+	if err == nil || !strings.Contains(err.Error(), "incomplete or found plaintext") {
+		t.Fatalf("expected immediate plaintext refusal, got %v", err)
+	}
+	if executor.residencyRuns != 1 {
+		t.Fatalf("residency runs = %d, want 1", executor.residencyRuns)
+	}
+	if _, err := os.Lstat(backupRoot); !os.IsNotExist(err) {
+		t.Fatalf("refused backup root was retained: %v", err)
 	}
 }
 
