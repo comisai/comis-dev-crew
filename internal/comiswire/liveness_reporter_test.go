@@ -53,6 +53,10 @@ func (stub *stubHeartbeatSender) observed() []comiswire.HeartbeatRequestParams {
 	return append([]comiswire.HeartbeatRequestParams(nil), stub.sent...)
 }
 
+// Returned through a function so the nil is not a literal argument at the call
+// site, matching how the package's own tests exercise this guard.
+func nilLivenessContext() context.Context { return nil }
+
 func livenessTask(handle string, state domain.TaskState, managedRunID string) domain.Task {
 	return domain.Task{Handle: handle, State: state, ManagedRunID: managedRunID}
 }
@@ -165,4 +169,70 @@ func TestLivenessReporter_WhenDependenciesAreIncomplete_RefusesConstruction(t *t
 			t.Errorf("%s: expected construction to be refused", name)
 		}
 	}
+}
+
+func TestLivenessReporter_WhenTaskStateCannotBeRead_StopsSupervising(t *testing.T) {
+	// Losing the task store is different from a refused beat: the reporter no
+	// longer knows which runs it is meant to be proving, so continuing would
+	// mean silently beating for nothing while runs go dark.
+	tasks := &stubLivenessTasks{err: errors.New("store unavailable")}
+	reporter, err := comiswire.NewLivenessReporter(comiswire.LivenessReporterConfig{
+		Tasks: tasks, Sender: &stubHeartbeatSender{},
+		Clock: time.Now, Interval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("new liveness reporter: %v", err)
+	}
+
+	if err := reporter.Run(context.Background()); err == nil {
+		t.Fatal("expected the reporter to stop when task state is unreadable")
+	}
+}
+
+func TestLivenessReporter_WhenTheContextIsAbsentOrAlreadyDone_RefusesToRun(t *testing.T) {
+	reporter, err := comiswire.NewLivenessReporter(comiswire.LivenessReporterConfig{
+		Tasks: &stubLivenessTasks{}, Sender: &stubHeartbeatSender{},
+		Clock: time.Now, Interval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("new liveness reporter: %v", err)
+	}
+	if err := reporter.Run(nilLivenessContext()); err == nil {
+		t.Error("Run(nil) error = nil")
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := reporter.Run(cancelled); !errors.Is(err, context.Canceled) {
+		t.Errorf("Run(cancelled) error = %v", err)
+	}
+}
+
+func TestLivenessReporter_WhenShutdownRacesABeat_ReportsCancellationNotFailure(t *testing.T) {
+	// Shutdown cancels the beat in flight. That is not the host refusing the run
+	// and must not be reported as one, or a clean stop would look like a fault.
+	tasks := &stubLivenessTasks{tasks: []domain.Task{
+		livenessTask("task_a", domain.TaskWorking, "managed-run_a"),
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	sender := &cancellingHeartbeatSender{cancel: cancel}
+	reporter, err := comiswire.NewLivenessReporter(comiswire.LivenessReporterConfig{
+		Tasks: tasks, Sender: sender, Clock: time.Now, Interval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("new liveness reporter: %v", err)
+	}
+
+	if err := reporter.Run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run during shutdown error = %v", err)
+	}
+}
+
+type cancellingHeartbeatSender struct{ cancel context.CancelFunc }
+
+func (sender *cancellingHeartbeatSender) Heartbeat(
+	_ context.Context,
+	_ comiswire.HeartbeatRequestParams,
+) (comiswire.HeartbeatResponseResult, error) {
+	sender.cancel()
+	return comiswire.HeartbeatResponseResult{}, errors.New("connection closed")
 }

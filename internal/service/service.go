@@ -21,9 +21,12 @@ const (
 	comisReportMinimumBackoff = 100 * time.Millisecond
 	comisReportMaximumBackoff = 5 * time.Second
 	comisRequestTimeout       = 5 * time.Second
-	comisMinimumBackoff       = 100 * time.Millisecond
-	comisMaximumBackoff       = time.Second
-	fixturePollInterval       = 25 * time.Millisecond
+	// Well inside the host's own staleness bound, so one missed sweep — a slow
+	// store read, a reconnect — never makes a healthy service look departed.
+	comisLivenessInterval = 60 * time.Second
+	comisMinimumBackoff   = 100 * time.Millisecond
+	comisMaximumBackoff   = time.Second
+	fixturePollInterval   = 25 * time.Millisecond
 )
 
 // ComisControl is the single persistent authenticated connection supervised
@@ -31,6 +34,7 @@ const (
 type ComisControl interface {
 	comiswire.ReportSender
 	comiswire.EvidenceSender
+	comiswire.HeartbeatSender
 	comiswire.AttentionResponseReceiver
 	application.ManagedRunReleaser
 	application.HostIntegrationStatus
@@ -374,10 +378,17 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if err != nil {
 		return fmt.Errorf("run service Comis evidence forwarder: %w", err)
 	}
+	liveness, err := comiswire.NewLivenessReporter(comiswire.LivenessReporterConfig{
+		Tasks: store, Sender: control, Clock: clock, Interval: comisLivenessInterval,
+	})
+	if err != nil {
+		return fmt.Errorf("run service Comis liveness reporter: %w", err)
+	}
 	components := []func(context.Context) error{
 		control.Run,
 		evidenceForwarder.Run,
 		forwarder.Run,
+		liveness.Run,
 	}
 	if attachmentSupervisor != nil {
 		components = append(components, attachmentSupervisor.Run)

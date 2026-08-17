@@ -386,6 +386,15 @@ func (control *serviceComisControl) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 
+// Liveness is supervised alongside reporting; the double accepts a beat and
+// records nothing, so a sweep can never affect what a report assertion observes.
+func (control *serviceComisControl) Heartbeat(
+	_ context.Context,
+	params comiswire.HeartbeatRequestParams,
+) (comiswire.HeartbeatResponseResult, error) {
+	return comiswire.HeartbeatResponseResult{ManagedRunID: params.ManagedRunID}, nil
+}
+
 func (control *serviceComisControl) Report(ctx context.Context, request comiswire.ReportRequestParams) (comiswire.ReportResponseResult, error) {
 	control.mu.Lock()
 	control.reportCalls++

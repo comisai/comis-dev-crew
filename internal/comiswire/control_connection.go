@@ -112,6 +112,39 @@ func (connection *ControlConnection) Run(ctx context.Context) error {
 	}
 }
 
+// Heartbeat proves this service still holds one bound run. A failure is the
+// host's answer about that run or a transport fault; either way it is never
+// retried, because the next sweep carries a fresher observation and a stale one
+// would be refused anyway.
+func (connection *ControlConnection) Heartbeat(
+	ctx context.Context,
+	params HeartbeatRequestParams,
+) (HeartbeatResponseResult, error) {
+	if ctx == nil {
+		return HeartbeatResponseResult{}, errors.New("heartbeat to Comis: context is required")
+	}
+	request := HeartbeatRequest{
+		JSONRPC: JSONRPCVersion, ID: params.OperationID,
+		Method: MethodManagedRunsHeartbeat, Params: params,
+	}
+	if err := validateGeneratedDocument(schemaHeartbeatRequest, request); err != nil {
+		return HeartbeatResponseResult{}, fmt.Errorf("heartbeat to Comis: invalid request: %w", err)
+	}
+	session, err := connection.awaitSession(ctx)
+	if err != nil {
+		return HeartbeatResponseResult{}, err
+	}
+	var response HeartbeatResponse
+	authenticated := authenticatedHeartbeatRequest{HeartbeatRequest: request, Bearer: connection.config.Credential}
+	if err := session.call(ctx, authenticated, params.OperationID, &response); err != nil {
+		return HeartbeatResponseResult{}, fmt.Errorf("heartbeat to Comis: outcome uncertain: %w", err)
+	}
+	if response.Result.ManagedRunID != params.ManagedRunID {
+		return HeartbeatResponseResult{}, errors.New("heartbeat to Comis: acknowledgement identity differs")
+	}
+	return response.Result, nil
+}
+
 // Report sends one already-durable report on the current authenticated
 // connection. An error is uncertain and must be reconciled by stable IDs.
 func (connection *ControlConnection) Report(ctx context.Context, params ReportRequestParams) (ReportResponseResult, error) {
