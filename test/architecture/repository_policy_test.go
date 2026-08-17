@@ -3,6 +3,7 @@ package architecture_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -104,16 +105,17 @@ func TestRepositoryPolicy_LiaisonSkillGrantsNoAuthority(t *testing.T) {
 	if !strings.Contains(skill, "grants no capability") {
 		t.Error("the liaison skill must state that it grants no capability")
 	}
-	for _, forbidden := range []string{
-		"devcrew ", // no operator command lines for a model to assemble
-		"sqlite",
-		"credential",
-		"secret://",
-	} {
-		if strings.Contains(strings.ToLower(skill), forbidden) &&
-			!strings.Contains(strings.ToLower(skill), "never "+forbidden) &&
-			!strings.Contains(strings.ToLower(skill), "`"+strings.TrimSpace(forbidden)+"`") {
-			t.Errorf("the liaison skill must not present %q as an available surface", forbidden)
-		}
+	// A model copies what a skill shows it. Naming a hazard in a prohibition is
+	// the point of the skill; rendering an operator command line it could
+	// assemble is the failure, so match invocations rather than vocabulary.
+	if operatorInvocation.MatchString(skill) {
+		t.Error("the liaison skill must not render an operator command line the model could assemble")
+	}
+	if !strings.Contains(skill, "Do not provide a path, command, executable, credential") {
+		t.Error("the liaison skill must forbid sending host authority in tool arguments")
 	}
 }
+
+// Any rendering of the operator binary followed by one of its verbs. The CLI is
+// for humans, scripts, and recovery; the agent surface is the strict tool set.
+var operatorInvocation = regexp.MustCompile(`devcrew(-report)?\s+(service|doctor|status|tasks|task|decisions?|workers|repair|backlog|initiative|events)\b`)

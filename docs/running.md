@@ -233,6 +233,38 @@ green run cannot mask a newer pending or failed rerun. Missing or malformed chec
 identity, recency, or state; duplicate check identities; incomplete pagination;
 and two changing full snapshots all resolve the required checks to `unknown`.
 
+## Liaison installation
+
+The agent-side assets ship in this repository and are installed by the operator
+into exactly one selected agent workspace. They are deliberately not bundled with
+the Comis daemon: its bundled-skill tree auto-seeds into every deployment's data
+directory at boot, which would hand a persona for this service to deployments
+that do not run it.
+
+```text
+skills/dev-crew/SKILL.md            opt-in liaison skill
+skills/dev-crew/references/         procedures loaded per step
+workspace-template/ROLE.md          named-agent policy scaffold
+workspace-template/TOOLS.md         deployment environment notes
+workspace-template/HEARTBEAT.md     periodic-work policy scaffold
+```
+
+Copy `skills/dev-crew/` into the selected agent's workspace skill directory.
+Copy each `workspace-template/` file only when the agent's workspace does not
+already have that file; never overwrite a saved policy, and never install these
+into a shared or default workspace. Each template keeps its `COMIS-TEMPLATE`
+marker until an operator has filled it in and verified the result.
+
+An empty prompt-skill allowlist means allow-all. A deployment that wants
+enforced selectivity must add `dev-crew` to an explicit allowlist on the selected
+agent; copying the skill into one workspace is not by itself an exclusion of the
+others.
+
+The skill recommends procedure only. It grants no tool, credential, or approval,
+and it renders no operator command line: worker credentials, terminal profiles,
+workspace roots, approval gates, forge branch protection, and service scopes
+enforce the boundary in code regardless of what the prose says.
+
 ## Operator CLI surface
 
 ```text

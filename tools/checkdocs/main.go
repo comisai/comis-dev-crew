@@ -56,10 +56,30 @@ func checkMarkdown(path string) ([]string, error) {
 	firstContent := ""
 	scanner := bufio.NewScanner(strings.NewReader(string(contents)))
 	lineNumber := 0
+	// Installed assets carry a mandated machine-parsed preamble ahead of their
+	// prose: a skill manifest opens with YAML frontmatter, and a workspace policy
+	// template opens with the marker that identifies it as unedited. The H1 rule
+	// applies to the prose that follows, so skip the preamble rather than the file.
+	inFrontMatter := false
 	for scanner.Scan() {
 		lineNumber++
 		line := scanner.Text()
-		if firstContent == "" && strings.TrimSpace(line) != "" {
+		trimmed := strings.TrimSpace(line)
+		if firstContent == "" {
+			switch {
+			case inFrontMatter:
+				if trimmed == "---" {
+					inFrontMatter = false
+				}
+				trimmed = ""
+			case lineNumber == 1 && trimmed == "---":
+				inFrontMatter = true
+				trimmed = ""
+			case strings.HasPrefix(trimmed, "<!--") && strings.HasSuffix(trimmed, "-->"):
+				trimmed = ""
+			}
+		}
+		if firstContent == "" && trimmed != "" {
 			firstContent = line
 		}
 		if strings.TrimRight(line, " \t") != line {
