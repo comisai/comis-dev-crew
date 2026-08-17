@@ -215,7 +215,7 @@ func TestQuarantineRuntimePathReconcilesStrandedExactIdentity(t *testing.T) {
 	if err := os.Rename(socketPath, filepath.Join(quarantinePath, runtimePathIsolationTarget)); err != nil {
 		t.Fatal(err)
 	}
-	if err := unix.Fsync(directoryDescriptor); err != nil {
+	if err := syncRuntimeDirectory(directoryDescriptor); err != nil {
 		t.Fatal(err)
 	}
 	if err := QuarantineRuntimePath(

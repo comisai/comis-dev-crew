@@ -182,7 +182,9 @@ func captureRuntimeSocketIdentity(path string, original os.FileInfo) (RuntimeSoc
 	if err != nil || device != uint64(stat.Dev) || inode != stat.Ino || stat.Mode&unix.S_IFMT != unix.S_IFSOCK {
 		return RuntimeSocketIdentity{}, closePinnedRuntimeMount(pinned, errors.New("runtime attachment socket identity is unavailable"))
 	}
-	identity, err := runtimeSocketStatIdentity(stat)
+	identity, err := runtimePinnedStatIdentity(
+		pinned.descriptors[len(pinned.descriptors)-1], filepath.Base(path), stat,
+	)
 	if err != nil {
 		return RuntimeSocketIdentity{}, closePinnedRuntimeMount(pinned, err)
 	}

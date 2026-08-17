@@ -62,7 +62,7 @@ func PublishRuntimeDirectoryIdentity(
 			errors.Join(errors.New("runtime directory publication identity differs"), err),
 		)
 	}
-	if err := unix.Fsync(directoryDescriptor); err != nil {
+	if err := syncRuntimeDirectory(directoryDescriptor); err != nil {
 		return RuntimeSocketIdentity{}, preserveMovedRuntimePathFailure(
 			directoryDescriptor, targetDescriptor, RuntimePathDirectory,
 			errors.Join(errors.New("runtime directory publication cannot be synchronized"), err),
@@ -147,7 +147,7 @@ func publishRuntimePathKind(
 			errors.Join(errors.New("runtime path publication identity differs"), err),
 		)
 	}
-	syncErr := unix.Fsync(directoryDescriptor)
+	syncErr := syncRuntimeDirectory(directoryDescriptor)
 	if syncErr != nil {
 		return preserveMovedRuntimePathFailure(
 			directoryDescriptor, targetDescriptor, kind,
@@ -222,7 +222,7 @@ func replaceRuntimePath(
 			directoryDescriptor, temporaryDescriptor, destinationDescriptor, cause,
 		)
 	}
-	syncErr := unix.Fsync(directoryDescriptor)
+	syncErr := syncRuntimeDirectory(directoryDescriptor)
 	if syncErr != nil {
 		return preserveRuntimePathExchangeFailure(
 			directoryDescriptor, temporaryDescriptor, destinationDescriptor,
@@ -253,6 +253,6 @@ func preserveRuntimePathExchangeFailure(
 	cause error,
 ) error {
 	return errors.Join(cause, ErrRuntimePathIdentity, errors.New("runtime path replacement remains exchanged"),
-		unix.Fsync(directoryDescriptor), preserveRuntimeRemovalPin(temporaryDescriptor, RuntimePathRegular),
+		syncRuntimeDirectory(directoryDescriptor), preserveRuntimeRemovalPin(temporaryDescriptor, RuntimePathRegular),
 		preserveRuntimeRemovalPin(destinationDescriptor, RuntimePathRegular))
 }

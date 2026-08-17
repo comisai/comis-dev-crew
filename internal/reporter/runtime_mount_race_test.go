@@ -201,14 +201,19 @@ func TestMountedRuntimeClientBindsDialToPinnedDirectoryIdentity(t *testing.T) {
 	if err := os.Rename(originalRunDirectory, runDirectory); err != nil {
 		t.Fatal(err)
 	}
+	select {
+	case connected := <-originalConnected:
+		if !connected {
+			t.Fatal("mounted runtime client did not connect through the pinned directory")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("mounted runtime client connection observation timed out")
+	}
 	if err := originalListener.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if err := fakeListener.Close(); err != nil {
 		t.Fatal(err)
-	}
-	if !<-originalConnected {
-		t.Fatal("mounted runtime client did not connect through the pinned directory")
 	}
 	if <-fakeConnected {
 		t.Fatal("mounted runtime client connected through the replacement directory")
@@ -333,14 +338,19 @@ func TestMountedRuntimeClientAllowsSiblingDirectoryActivity(t *testing.T) {
 		_ = connection.Close()
 	}
 	_ = os.Remove(sibling)
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
 	if callErr != nil {
 		t.Fatalf("dialMountedRuntimeSocket(sibling activity) error = %v", callErr)
 	}
-	if !<-connected {
-		t.Fatal("mounted runtime client did not connect after sibling activity")
+	select {
+	case observed := <-connected:
+		if !observed {
+			t.Fatal("mounted runtime client did not connect after sibling activity")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("mounted runtime client connection observation timed out")
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
