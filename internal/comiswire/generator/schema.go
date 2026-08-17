@@ -77,8 +77,11 @@ func loadSchemas(pin bundle.PinnedBundle) ([]schemaSpec, error) {
 		})
 	}
 	sort.Slice(schemas, func(left, right int) bool { return schemas[left].Path < schemas[right].Path })
-	if len(schemas) != 23 {
-		return nil, fmt.Errorf("expected 23 pinned schemas, found %d", len(schemas))
+	// The count is pinned so a bundle that silently gained or lost a schema
+	// fails here rather than producing a client that compiles against a
+	// contract nobody reviewed. Raising it is part of consuming a new bundle.
+	if len(schemas) != pinnedSchemaCount {
+		return nil, fmt.Errorf("expected %d pinned schemas, found %d", pinnedSchemaCount, len(schemas))
 	}
 	return schemas, nil
 }

@@ -10,8 +10,8 @@ The service owns durable SQLite state and a strict owner-only local API. The
 operator CLI provides service, fleet, task, operation, reconciliation, handback, and cleanup
 views and commands. The
 protocol foundation pins the 30-artifact Comis capability-service contract at
-source commit `b0b8065c0b43a29840dcd21fcc15ef37e4b905d4` and bundle digest
-`fff96cf5105d9cda9da5dfd2fbc7e9f15242754f63d7f8155cde4ef874d5c52b`, and generates
+source commit `46bea003df4f28422dcf54a7a42a81e107d2b3c5` and bundle digest
+`86f5f5eb3d8147ccf85200adb475ccfecdbe28f6acdeb5446b8b8a71edfa9b33`, and generates
 a closed Go adapter.
 
 Installed composition supervises the Comis control lane, Codex and Claude Code

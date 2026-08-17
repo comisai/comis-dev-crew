@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	pinnedSourceCommit = "b0b8065c0b43a29840dcd21fcc15ef37e4b905d4"
-	pinnedBundleDigest = "fff96cf5105d9cda9da5dfd2fbc7e9f15242754f63d7f8155cde4ef874d5c52b"
+	pinnedSourceCommit = "46bea003df4f28422dcf54a7a42a81e107d2b3c5"
+	pinnedBundleDigest = "86f5f5eb3d8147ccf85200adb475ccfecdbe28f6acdeb5446b8b8a71edfa9b33"
 )
 
 func TestContractPinsPreparedAttachmentAuthority(t *testing.T) {
@@ -22,7 +22,7 @@ func TestContractPinsPreparedAttachmentAuthority(t *testing.T) {
 	if pinned.Manifest.ProtocolID != "comis.capability-service/1" ||
 		pinned.Manifest.BundleDigest != pinnedBundleDigest ||
 		pinned.Provenance.SourceCommit != pinnedSourceCommit ||
-		len(pinned.Manifest.Artifacts) != 30 {
+		len(pinned.Manifest.Artifacts) != 34 {
 		t.Fatalf("pinned identity = protocol:%q digest:%q source:%q artifacts:%d",
 			pinned.Manifest.ProtocolID, pinned.Manifest.BundleDigest,
 			pinned.Provenance.SourceCommit, len(pinned.Manifest.Artifacts))

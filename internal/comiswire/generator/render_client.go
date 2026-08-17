@@ -13,6 +13,8 @@ func renderClient(manifest bundle.Manifest) (string, error) {
 		"capabilityServices.health":            false,
 		"managedRuns.abandon":                  false,
 		"managedRuns.activate":                 false,
+		"managedRuns.cancel":                   false,
+		"managedRuns.heartbeat":                false,
 		"managedRuns.putEvidence":              false,
 		"managedRuns.receiveAttentionResponse": false,
 		"managedRuns.release":                  false,
