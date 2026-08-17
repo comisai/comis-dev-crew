@@ -1,6 +1,7 @@
 package reporter
 
 import (
+	"context"
 	"errors"
 	"net"
 	"os"
@@ -193,6 +194,42 @@ func TestRuntimeSourceClientRejectsUnavailableTargets(t *testing.T) {
 	}
 	if !errors.Is(closePinnedRuntimeMount(nil, net.ErrClosed), net.ErrClosed) {
 		t.Fatal("nil pinned mount changed the original error")
+	}
+}
+
+func TestRuntimeServerConnectionRejectsClosedAndUnauthenticatedPeers(t *testing.T) {
+	root := boundaryRuntimeDirectory(t)
+	socketPath := filepath.Join(root, "connection-boundary.sock")
+	listener := listenRuntimeQuarantineSocket(t, socketPath)
+	t.Cleanup(func() { _ = listener.Close() })
+	connect := func(t *testing.T) (*net.UnixConn, *net.UnixConn) {
+		t.Helper()
+		client, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: socketPath, Net: "unix"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		server, err := listener.AcceptUnix()
+		if err != nil {
+			_ = client.Close()
+			t.Fatal(err)
+		}
+		return client, server
+	}
+	client, connection := connect(t)
+	if err := connection.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&RuntimeServer{}).serveConnection(context.Background(), connection); err == nil {
+		t.Fatal("closed runtime connection was served")
+	}
+	_ = client.Close()
+
+	client, connection = connect(t)
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&RuntimeServer{}).serveConnection(context.Background(), connection); err == nil {
+		t.Fatal("unauthenticated runtime connection was served")
 	}
 }
 
