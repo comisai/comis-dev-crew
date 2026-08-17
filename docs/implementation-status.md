@@ -92,6 +92,13 @@ The protocol join gate is implemented for protocol
 terminal-event, and execution-attachment control scopes. Public operator mutation transport is not
 claimed.
 
+The pinned bundle also carries `managedRuns.heartbeat` and `managedRuns.cancel`.
+Both are generated into the client and pass the shared corpus, but neither is
+driven yet: the service sends no liveness beat, so a host that requires it from
+this definition holds its runs at `unknown`, and an inbound cancellation is not
+dispatched to a running worker. Those are the next two slices; nothing here
+claims either behavior today.
+
 ## Comis adapter
 
 The adapter contains the supervised persistent bidirectional connection used by
