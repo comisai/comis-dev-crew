@@ -131,7 +131,7 @@ func TestInstalledComposition_JoinsMCPActivationAndReviewedCodexLaunchPlan(t *te
 		},
 	})
 	if err != nil || prepared.IsError {
-		t.Fatalf("installed prepare = %#v, %v, stderr=%q", prepared, err, mcpStderr.String())
+		t.Fatalf("installed prepare = %#v text=%q, %v, stderr=%q", prepared, installedMCPText(prepared), err, mcpStderr.String())
 	}
 	var registration comiswire.MCPManagedRunResult
 	decodeJSON(t, encodeJSON(t, prepared.Meta[mcpadapter.ManagedRunResultMetaKey]), &registration)
@@ -272,6 +272,17 @@ func TestInstalledComposition_JoinsMCPActivationAndReviewedCodexLaunchPlan(t *te
 		}
 	default:
 	}
+}
+
+func installedMCPText(result *mcp.CallToolResult) string {
+	if result == nil || len(result.Content) == 0 {
+		return ""
+	}
+	content, ok := result.Content[0].(*mcp.TextContent)
+	if !ok {
+		return ""
+	}
+	return content.Text
 }
 
 func installedRuntimeRelayIdentity(t *testing.T, databasePath, taskHandle string) string {
@@ -479,6 +490,9 @@ func installedCandidateConfig(t *testing.T, root string) string {
 				"arguments": []map[string]any{{"kind": "literal", "value": "--version"}},
 			}},
 			"forgeChecks": []map[string]any{{"name": "ci/unit", "required": true}},
+			"artifactRules": []map[string]any{{
+				"kind": "regular_file", "relativePath": "report.md", "mediaType": "text/markdown", "maxBytes": 16384,
+			}},
 		}},
 		"maxOutputBytes": 65536, "pollInterval": "250ms",
 		"forge": map[string]any{
