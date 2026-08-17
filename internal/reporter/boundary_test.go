@@ -144,6 +144,7 @@ func TestDevcrewReportBriefProbeConnectsThroughAssignedMountedTarget(t *testing.
 		listener: listener, socketPath: socketPath, socketInfo: info,
 		brief: brief, reporter: &Client{},
 	}
+	configureBoundaryRuntimeRelay(t, server)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(ctx) }()
@@ -154,7 +155,6 @@ func TestDevcrewReportBriefProbeConnectsThroughAssignedMountedTarget(t *testing.
 			t.Errorf("mounted runtime probe stop = %v", err)
 		}
 	})
-	configureBoundaryRuntimeRelay(t, server)
 	client, err := newMountedRuntimeClient(socketPath, targetName, mountRoot, server.RelayIdentity(), time.Second)
 	if err != nil {
 		t.Fatalf("open assigned mounted target: %v", err)
