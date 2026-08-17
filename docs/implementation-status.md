@@ -93,11 +93,15 @@ terminal-event, and execution-attachment control scopes. Public operator mutatio
 claimed.
 
 The pinned bundle also carries `managedRuns.heartbeat` and `managedRuns.cancel`.
-Both are generated into the client and pass the shared corpus, but neither is
-driven yet: the service sends no liveness beat, so a host that requires it from
-this definition holds its runs at `unknown`, and an inbound cancellation is not
-dispatched to a running worker. Those are the next two slices; nothing here
-claims either behavior today.
+A supervised liveness reporter now drives the first: it sweeps durable task
+state and beats for every run that is both bound and unsettled, so a host that
+requires liveness from this definition can tell quiet work from a departed
+service. Each beat carries its own deadline, because the control connection
+waits for an authenticated session and a beat delayed past the host's staleness
+bound proves nothing.
+
+Inbound `managedRuns.cancel` is generated and passes the corpus but is not
+dispatched to a running worker yet. Nothing here claims that behavior.
 
 ## Comis adapter
 
