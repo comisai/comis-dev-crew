@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -63,11 +64,16 @@ func RealRollbackServiceProbe(
 	}
 }
 
+// rollbackServiceStatusAccepted reads the rendered SERVICE, HEALTH, COMPLETENESS, and STATE
+// VERSION columns and accepts only a healthy service row in database-only or complete mode.
 func rollbackServiceStatusAccepted(output []byte) bool {
 	for _, line := range strings.Split(string(output), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) == 3 && fields[0] == "devcrew-service" && fields[1] == "healthy" &&
-			(fields[2] == "partial" || fields[2] == "complete") {
+		if len(fields) != 4 || fields[0] != "devcrew-service" || fields[1] != "healthy" ||
+			(fields[2] != "partial" && fields[2] != "complete") {
+			continue
+		}
+		if stateVersion, err := strconv.ParseInt(fields[3], 10, 64); err == nil && stateVersion >= 0 {
 			return true
 		}
 	}

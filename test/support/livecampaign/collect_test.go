@@ -32,7 +32,7 @@ func (executor *fixtureExecutor) Run(_ context.Context, command Command) ([]byte
 	if command.Path == manifest.DevCrew.CLIPath {
 		switch {
 		case args == "--socket "+manifest.DevCrew.SocketPath+" service status":
-			return []byte("SERVICE HEALTH COMPLETENESS\ndevcrew-service healthy complete\n"), nil
+			return []byte("SERVICE          HEALTH   COMPLETENESS  STATE VERSION\ndevcrew-service  healthy  complete      12\n"), nil
 		case args == "--socket "+manifest.DevCrew.SocketPath+" doctor --format json":
 			return encode(application.DiagnosticReport{SchemaVersion: 1, CapturedAtMs: manifest.EndedAtMs, StateVersion: 20, Completeness: application.CompletenessComplete, ServiceHealth: application.HealthHealthy, ComisHealth: application.HealthHealthy})
 		case args == "--socket "+manifest.DevCrew.SocketPath+" status --format json":
