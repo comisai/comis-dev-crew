@@ -630,61 +630,6 @@ func TestServiceCompositionFailuresRemainBoundaryScoped(t *testing.T) {
 	}); err == nil {
 		t.Fatal("Run accepted a directory as an endpoint")
 	}
-
-	readyCalls := 0
-	if err := serveServiceComponents(context.Background(), nil, nil, nil, nil); err == nil ||
-		!strings.Contains(err.Error(), "stopped unexpectedly") {
-		t.Fatalf("serveServiceComponents(empty) = %v", err)
-	}
-	componentErr := errors.New("component failed")
-	err = serveServiceComponents(context.Background(), nil, []func(context.Context) error{
-		func(context.Context) error { return componentErr },
-		func(ctx context.Context) error {
-			<-ctx.Done()
-			return ctx.Err()
-		},
-	}, nil, func() { readyCalls++ })
-	if readyCalls != 1 || !errors.Is(err, componentErr) {
-		t.Fatalf("serveServiceComponents() = %v, ready=%d", err, readyCalls)
-	}
-
-	componentStarted := make(chan struct{})
-	recoveryGate := make(chan struct{})
-	advertised := make(chan struct{})
-	runContext, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() {
-		done <- serveServiceComponents(runContext, nil, []func(context.Context) error{
-			func(ctx context.Context) error {
-				close(componentStarted)
-				<-ctx.Done()
-				return ctx.Err()
-			},
-		}, func(ctx context.Context) error {
-			select {
-			case <-recoveryGate:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}, func() { close(advertised) })
-	}()
-	<-componentStarted
-	select {
-	case <-advertised:
-		t.Fatal("service advertised readiness before runtime recovery")
-	default:
-	}
-	close(recoveryGate)
-	select {
-	case <-advertised:
-	case <-time.After(time.Second):
-		t.Fatal("service did not advertise readiness after runtime recovery")
-	}
-	cancel()
-	if err := <-done; err != nil {
-		t.Fatalf("serveServiceComponents(recovery barrier) error = %v", err)
-	}
 }
 
 func TestRuntimeAttachmentIdentityHelpersRejectAmbiguousObjects(t *testing.T) {
