@@ -578,3 +578,71 @@ type failingWriter struct{}
 func (failingWriter) Write([]byte) (int, error) {
 	return 0, errors.New("write failed")
 }
+
+// One task contract, reused by the input-source cases below.
+const cliPrepareContract = `{"shape":"scout","repositoryId":"product-api","baseRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","acceptanceCriteria":["Return one report."],"constraints":["Do not deliver."],"validationProfile":"go-default","deliveryMode":"report","workerProfileId":"fixture-worker"}`
+
+type cliStringFile struct{ *strings.Reader }
+
+func (cliStringFile) Close() error { return nil }
+
+func TestRun_PrepareTaskReadsAContractFromAFileSource(t *testing.T) {
+	client := fixtureClient()
+	config := testConfig(client)
+	var opened string
+	config.OpenInput = func(path string) (io.ReadCloser, error) {
+		opened = path
+		return cliStringFile{strings.NewReader(cliPrepareContract)}, nil
+	}
+	var stdout, stderr bytes.Buffer
+
+	exitCode := Run(context.Background(), []string{
+		"task", "prepare", "--input", "/tmp/contract.json",
+		"--operation", "operation-prepare-file", "--format", "json",
+	}, &stdout, &stderr, config)
+
+	if exitCode != ExitSuccess {
+		t.Fatalf("Run() exit = %d, stderr = %q", exitCode, stderr.String())
+	}
+	if opened != "/tmp/contract.json" {
+		t.Errorf("opened %q, want the exact requested path", opened)
+	}
+}
+
+func TestRun_PrepareTaskRefusesUnreadableAndUnboundedInput(t *testing.T) {
+	// Each case must fail before the client is reached: a contract the CLI
+	// could not read in full is not a contract, and guessing at a truncated one
+	// would prepare work nobody described.
+	for name, mutate := range map[string]func(*Config){
+		"no file access": func(config *Config) { config.OpenInput = nil },
+		"open fails": func(config *Config) {
+			config.OpenInput = func(string) (io.ReadCloser, error) { return nil, errors.New("denied") }
+		},
+		"no reader": func(config *Config) {
+			config.OpenInput = func(string) (io.ReadCloser, error) { return cliStringFile{strings.NewReader("")}, nil }
+			config.Stdin = nil
+		},
+		"over the request bound": func(config *Config) {
+			oversized := strings.Repeat("x", localapi.MaxRequestBytes+1)
+			config.OpenInput = func(string) (io.ReadCloser, error) {
+				return cliStringFile{strings.NewReader(oversized)}, nil
+			}
+		},
+	} {
+		client := fixtureClient()
+		config := testConfig(client)
+		mutate(&config)
+		var stdout, stderr bytes.Buffer
+
+		exitCode := Run(context.Background(), []string{
+			"task", "prepare", "--input", "/tmp/contract.json", "--operation", "operation-prepare-bad",
+		}, &stdout, &stderr, config)
+
+		if exitCode == ExitSuccess {
+			t.Errorf("%s: Run() succeeded on unreadable input", name)
+		}
+		if len(client.calls) != 0 {
+			t.Errorf("%s: reached the service with %v", name, client.calls)
+		}
+	}
+}

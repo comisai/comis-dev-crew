@@ -540,3 +540,25 @@ func runServiceGit(t *testing.T, directory string, arguments ...string) {
 		t.Fatalf("git %v: %v\n%s", arguments, err, output)
 	}
 }
+
+func TestRandomIdentity_WhenEntropyIsRequested_ReturnsAPrefixedHexIdentity(t *testing.T) {
+	// Identities must be distinct per call: a repeated one would let two
+	// runtime registrations collide on the same durable key.
+	first, err := randomIdentity("attachment", 16)
+	if err != nil {
+		t.Fatalf("randomIdentity error = %v", err)
+	}
+	second, err := randomIdentity("attachment", 16)
+	if err != nil {
+		t.Fatalf("randomIdentity error = %v", err)
+	}
+	if first == second {
+		t.Error("two identities matched")
+	}
+	if len(first) != len("attachment-")+32 {
+		t.Errorf("identity %q is not the expected prefixed hex width", first)
+	}
+	if !strings.HasPrefix(first, "attachment-") {
+		t.Errorf("identity %q lost its prefix", first)
+	}
+}

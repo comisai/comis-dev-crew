@@ -362,27 +362,25 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		}
 		return serveLocalEndpoints(ctx, servers)
 	}
-	forwarder, err := comiswire.NewReportForwarder(comiswire.ReportForwarderConfig{
+	// One failure path for the three control-plane components. Each constructor
+	// only refuses a dependency this composition supplies as a constant, so a
+	// separate branch per component is three unreachable returns saying the same
+	// thing: the control plane could not be built.
+	forwarder, forwarderErr := comiswire.NewReportForwarder(comiswire.ReportForwarderConfig{
 		Outbox: store, Sender: control, Clock: clock,
 		PollInterval: comisReportPollInterval, MinimumBackoff: comisReportMinimumBackoff,
 		MaximumBackoff: comisReportMaximumBackoff,
 	})
-	if err != nil {
-		return fmt.Errorf("run service Comis report forwarder: %w", err)
-	}
-	evidenceForwarder, err := comiswire.NewEvidenceForwarder(comiswire.EvidenceForwarderConfig{
+	evidenceForwarder, evidenceErr := comiswire.NewEvidenceForwarder(comiswire.EvidenceForwarderConfig{
 		Outbox: store, Sender: control, Clock: clock,
 		PollInterval: comisReportPollInterval, MinimumBackoff: comisReportMinimumBackoff,
 		MaximumBackoff: comisReportMaximumBackoff,
 	})
-	if err != nil {
-		return fmt.Errorf("run service Comis evidence forwarder: %w", err)
-	}
-	liveness, err := comiswire.NewLivenessReporter(comiswire.LivenessReporterConfig{
+	liveness, livenessErr := comiswire.NewLivenessReporter(comiswire.LivenessReporterConfig{
 		Tasks: store, Sender: control, Clock: clock, Interval: comisLivenessInterval,
 	})
-	if err != nil {
-		return fmt.Errorf("run service Comis liveness reporter: %w", err)
+	if err := errors.Join(forwarderErr, evidenceErr, livenessErr); err != nil {
+		return fmt.Errorf("run service Comis control components: %w", err)
 	}
 	components := []func(context.Context) error{
 		control.Run,
