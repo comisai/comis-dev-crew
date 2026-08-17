@@ -223,30 +223,24 @@ func parseRuntimeAttachmentIdentityRecord(encoded string) (runtimeAttachmentIden
 	if len(parts) != 21 || len(parts[0]) != 2 || len(parts[19]) != 32 || len(parts[20]) != 64 {
 		return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
 	}
+	stageValue, err := strconv.ParseUint(parts[0], 16, 8)
+	if err != nil || stageValue > math.MaxUint8 {
+		return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
+	}
+	stage := runtimeAttachmentIdentityStage(stageValue)
 	values := make([]uint64, 19)
-	for index, part := range parts[:19] {
-		if index == 0 {
-			value, err := strconv.ParseUint(part, 16, 8)
-			if err != nil {
-				return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
-			}
-			values[index] = value
-			continue
-		}
+	for index, part := range parts[1:19] {
 		if len(part) != 16 {
 			return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
 		}
-		value, err := strconv.ParseUint(part, 16, 64)
-		if err != nil {
+		value, parseErr := strconv.ParseUint(part, 16, 64)
+		if parseErr != nil {
 			return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
 		}
-		values[index] = value
-	}
-	if values[0] > math.MaxUint8 {
-		return runtimeAttachmentIdentityRecord{}, errors.New("runtime attachment identity record is invalid")
+		values[index+1] = value
 	}
 	record := runtimeAttachmentIdentityRecord{
-		Stage: runtimeAttachmentIdentityStage(values[0]),
+		Stage: stage,
 		Task: reporter.RuntimeSocketIdentity{
 			Device: values[1], Inode: values[2],
 			ChangeSec:  runtimeAttachmentSignedTime(values[3]),
