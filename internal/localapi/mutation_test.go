@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,8 +91,11 @@ func TestServerClient_PrepareTaskUsesCanonicalMutationAndPrivateRegistration(t *
 	now := time.Now().UTC()
 	preparation := application.ManagedRunPreparation{
 		ExternalRunRef: "task-0001", RegistrationNonce: "registration-nonce_localapi",
-		RequestedAttachment: application.PreparedRuntimeAttachment{Kind: application.RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/task-0001/attachment.sock"},
-		ExpiresAt:           now.Add(time.Hour), State: application.PreparationOpen,
+		RequestedAttachment: application.PreparedRuntimeAttachment{
+			Kind: application.RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/task-0001/attachment.sock",
+			RelayIdentity: strings.Repeat("ab", 32),
+		},
+		ExpiresAt: now.Add(time.Hour), State: application.PreparationOpen,
 	}
 	mutations := &apiMutations{result: application.MutationResult{
 		Task:        domain.Task{Handle: "task-0001", State: domain.TaskPrepared, StateVersion: 8},

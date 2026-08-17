@@ -98,7 +98,8 @@ func TestClaudeAdapterBuildsConfinedProtectedLaunchWithoutAuthorityLeak(t *testi
 	if descriptor.EnvironmentBindings["CLAUDE_CONFIG_DIR"] != configDirectory ||
 		descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT"] != request.Attachment.MountSocketPath ||
 		descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT_TARGET_NAME"] != request.Attachment.AttachmentTargetName ||
-		len(descriptor.EnvironmentBindings) != 3 ||
+		descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT_IDENTITY"] != request.Attachment.RelayIdentity ||
+		len(descriptor.EnvironmentBindings) != 4 ||
 		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "devcrew-report acknowledge") ||
 		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "devcrew-report brief") ||
 		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "If either command fails, stop without reading or changing the workspace") ||
@@ -245,6 +246,7 @@ func TestClaudeAdapterRejectsUnsafeConfigurationAndLaunchAuthority(t *testing.T)
 		func(value *application.WorkerLaunchRequest) {
 			value.Attachment.MountSocketPath = "/run/comis/attachments/other.sock"
 		},
+		func(value *application.WorkerLaunchRequest) { value.Attachment.RelayIdentity = "bad" },
 	} {
 		invalid := request
 		mutate(&invalid)
@@ -277,9 +279,12 @@ func availableClaudeProfile(executable, id string) workers.StaticProfile {
 		ID: id, Harness: workers.HarnessClaude, AllowedShapes: []domain.TaskShape{domain.ShapeShip, domain.ShapeScout},
 		Model: "claude-opus-4-6", Effort: "high", TerminalAllowEntry: "claude-confined",
 		Network: workers.NetworkRestricted, ConcurrencyLimit: 2, Executable: executable,
-		Arguments:       []string{"-p"},
-		EnvironmentKeys: []string{"COMIS_EXECUTION_ATTACHMENT", "COMIS_EXECUTION_ATTACHMENT_TARGET_NAME", "CLAUDE_CONFIG_DIR", "PATH"},
-		Availability:    workers.AvailabilityAvailable,
+		Arguments: []string{"-p"},
+		EnvironmentKeys: []string{
+			"COMIS_EXECUTION_ATTACHMENT", "COMIS_EXECUTION_ATTACHMENT_TARGET_NAME",
+			"COMIS_EXECUTION_ATTACHMENT_IDENTITY", "CLAUDE_CONFIG_DIR", "PATH",
+		},
+		Availability: workers.AvailabilityAvailable,
 	}
 }
 
@@ -290,7 +295,10 @@ func probedClaudeProfile(t *testing.T, id string) workers.StaticProfile {
 	profile.Model = "claude-opus-4-6"
 	profile.TerminalAllowEntry = "claude-confined"
 	profile.Arguments = []string{"-p"}
-	profile.EnvironmentKeys = []string{"COMIS_EXECUTION_ATTACHMENT", "COMIS_EXECUTION_ATTACHMENT_TARGET_NAME", "CLAUDE_CONFIG_DIR", "PATH"}
+	profile.EnvironmentKeys = []string{
+		"COMIS_EXECUTION_ATTACHMENT", "COMIS_EXECUTION_ATTACHMENT_TARGET_NAME",
+		"COMIS_EXECUTION_ATTACHMENT_IDENTITY", "CLAUDE_CONFIG_DIR", "PATH",
+	}
 	return profile
 }
 
@@ -315,6 +323,7 @@ func validClaudeLaunchRequest(t *testing.T, profileID string) application.Worker
 			ExecutionAttachmentID: "execution-attachment-secret-0001",
 			AttachmentTargetName:  attachmentTarget,
 			MountSocketPath:       "/run/comis/attachments/" + attachmentTarget,
+			RelayIdentity:         strings.Repeat("ab", 32),
 		},
 	}
 }

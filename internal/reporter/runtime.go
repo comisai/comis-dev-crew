@@ -3,9 +3,9 @@ package reporter
 import (
 	"bufio"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"os"
@@ -60,6 +60,7 @@ type RuntimeServerConfig struct {
 	LaunchAcknowledger      application.WorkerLaunchAcknowledger
 	AttentionResponses      AttentionResponseReceiver
 	NewAttentionOperationID func() (string, error)
+	RelaySeed               []byte
 }
 
 // RuntimeLaunchConfig binds activation-returned authority to an already-open
@@ -75,12 +76,23 @@ type RuntimeServer struct {
 	listener                *net.UnixListener
 	socketPath              string
 	socketInfo              os.FileInfo
+	socketIdentity          RuntimeSocketIdentity
 	brief                   domain.WorkerBrief
 	reporter                *Client
 	attentionResponses      AttentionResponseReceiver
 	newAttentionOperationID func() (string, error)
 	launchMu                sync.RWMutex
 	launch                  *RuntimeLaunchConfig
+	lifecycleOnce           sync.Once
+	lifecycleContext        context.Context
+	cancelLifecycle         context.CancelFunc
+	connectionMu            sync.Mutex
+	connections             map[*net.UnixConn]struct{}
+	connectionCloseErr      error
+	relayPrivateKey         ed25519.PrivateKey
+	relayIdentity           string
+	acceptWaitGroup         sync.WaitGroup
+	closing                 bool
 	closeOnce               sync.Once
 	closeErr                error
 	waitGroup               sync.WaitGroup
@@ -88,11 +100,19 @@ type RuntimeServer struct {
 
 // ListenRuntime creates a new attachment without replacing an existing path.
 func ListenRuntime(config RuntimeServerConfig) (*RuntimeServer, error) {
+	return listenRuntime(config, nil)
+}
+
+func listenRuntime(config RuntimeServerConfig, afterSocketInfo func()) (*RuntimeServer, error) {
 	if err := config.Brief.Validate(); err != nil || config.Reporter == nil {
 		return nil, errors.New("listen runtime attachment: pinned brief and reporter are required")
 	}
 	if err := validateRuntimeLaunchConfig(config); err != nil {
 		return nil, err
+	}
+	relayIdentity, relayPrivateKey, err := runtimeRelayIdentity(config.RelaySeed)
+	if err != nil {
+		return nil, errors.New("listen runtime attachment: relay identity is required")
 	}
 	if err := validateRuntimeSocketTarget(config.SocketPath); err != nil {
 		return nil, err
@@ -107,17 +127,27 @@ func ListenRuntime(config RuntimeServerConfig) (*RuntimeServer, error) {
 	}
 	listener.SetUnlinkOnClose(false)
 	if err := os.Chmod(config.SocketPath, 0o600); err != nil {
-		return nil, errors.Join(errors.New("listen runtime attachment: socket mode cannot be secured"), listener.Close(), os.Remove(config.SocketPath))
+		return nil, errors.Join(errors.New("listen runtime attachment: socket mode cannot be secured"), listener.Close())
 	}
 	info, err := os.Lstat(config.SocketPath)
 	if err != nil || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 {
-		return nil, errors.Join(errors.New("listen runtime attachment: socket identity is unavailable"), listener.Close(), os.Remove(config.SocketPath))
+		return nil, errors.Join(errors.New("listen runtime attachment: socket identity is unavailable"), listener.Close())
+	}
+	if afterSocketInfo != nil {
+		afterSocketInfo()
 	}
 	server := &RuntimeServer{
 		listener: listener, socketPath: config.SocketPath, socketInfo: info,
 		brief: config.Brief, reporter: config.Reporter,
 		attentionResponses: config.AttentionResponses, newAttentionOperationID: config.NewAttentionOperationID,
+		relayPrivateKey: relayPrivateKey, relayIdentity: relayIdentity,
 	}
+	server.initializeLifecycle()
+	identity, err := captureRuntimeSocketIdentity(config.SocketPath, info)
+	if err != nil {
+		return nil, errors.Join(err, listener.Close())
+	}
+	server.socketIdentity = identity
 	if config.LaunchOperationID != "" {
 		if err := server.BindLaunch(RuntimeLaunchConfig{
 			OperationID: config.LaunchOperationID, Expected: config.ExpectedLaunch,
@@ -159,6 +189,7 @@ func (server *RuntimeServer) Serve(ctx context.Context) (resultErr error) {
 	if server == nil || server.listener == nil {
 		return errors.New("serve runtime attachment: server is unavailable")
 	}
+	server.initializeLifecycle()
 	stopCancellation := make(chan struct{})
 	cancellationDone := make(chan struct{})
 	go func() {
@@ -172,21 +203,24 @@ func (server *RuntimeServer) Serve(ctx context.Context) (resultErr error) {
 	defer func() {
 		close(stopCancellation)
 		<-cancellationDone
-		server.waitGroup.Wait()
+		closeErr := server.Close()
+		resultErr = errors.Join(resultErr, closeErr)
 	}()
 	for {
+		if !server.beginAccept() {
+			return nil
+		}
 		connection, err := server.listener.AcceptUnix()
 		if err != nil {
+			server.finishAccept(nil)
 			if errors.Is(err, net.ErrClosed) || ctx.Err() != nil {
 				return nil
 			}
 			return errors.New("serve runtime attachment: accept failed")
 		}
-		server.waitGroup.Add(1)
-		go func() {
-			defer server.waitGroup.Done()
-			_ = server.serveConnection(ctx, connection)
-		}()
+		if server.finishAccept(connection) {
+			go server.serveTrackedConnection(connection)
+		}
 	}
 }
 
@@ -195,12 +229,9 @@ func (server *RuntimeServer) Close() error {
 	if server == nil || server.listener == nil {
 		return nil
 	}
+	server.initializeLifecycle()
 	server.closeOnce.Do(func() {
-		var closeErr error
-		if err := server.listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-			closeErr = errors.New("close runtime attachment: listener close failed")
-		}
-		server.closeErr = errors.Join(closeErr, removeRuntimeSocket(server.socketPath, server.socketInfo))
+		server.closeErr = server.closeRuntimeServer()
 	})
 	return server.closeErr
 }
@@ -210,20 +241,23 @@ func (server *RuntimeServer) serveConnection(ctx context.Context, connection *ne
 	if err := connection.SetDeadline(time.Now().Add(runtimeDeadline)); err != nil {
 		return errors.New("serve runtime attachment: connection deadline failed")
 	}
-	reader := bufio.NewReaderSize(connection, maximumRuntimeRequestBytes+1)
-	line, err := reader.ReadSlice('\n')
-	if errors.Is(err, bufio.ErrBufferFull) || len(line) > maximumRuntimeRequestBytes {
-		return writeRuntimeOutcome(connection, runtimeRejected("request_too_large"))
+	reader := bufio.NewReaderSize(connection, runtimeFrameBufferSize(maximumRuntimeRequestBytes))
+	session, err := authenticateRuntimeServerConnection(connection, reader, server.relayPrivateKey)
+	if err != nil {
+		return err
+	}
+	line, err := readRuntimeFrame(reader, session, runtimeRequestDirection, maximumRuntimeRequestBytes)
+	if errors.Is(err, errRuntimeFrameTooLarge) {
+		return writeRuntimeOutcome(connection, session, runtimeRejected("request_too_large"))
 	}
 	if err != nil || len(line) < 2 {
-		return writeRuntimeOutcome(connection, runtimeRejected("malformed_request"))
+		return writeRuntimeOutcome(connection, session, runtimeRejected("malformed_request"))
 	}
-	line = line[:len(line)-1]
 	decoder := json.NewDecoder(strings.NewReader(string(line)))
 	decoder.DisallowUnknownFields()
 	var request runtimeRequest
 	if err := decoder.Decode(&request); err != nil || decoder.Decode(&struct{}{}) != io.EOF || request.Version != runtimeProtocolVersion {
-		return writeRuntimeOutcome(connection, runtimeRejected("malformed_request"))
+		return writeRuntimeOutcome(connection, session, runtimeRejected("malformed_request"))
 	}
 	var outcome RuntimeOutcome
 	switch request.Kind {
@@ -259,7 +293,7 @@ func (server *RuntimeServer) serveConnection(ctx context.Context, connection *ne
 	default:
 		outcome = runtimeRejected("unknown_request")
 	}
-	return writeRuntimeOutcome(connection, outcome)
+	return writeRuntimeOutcome(connection, session, outcome)
 }
 
 func (server *RuntimeServer) acknowledgeLaunch(ctx context.Context, request runtimeRequest, launch *RuntimeLaunchConfig) RuntimeOutcome {
@@ -279,11 +313,17 @@ func (server *RuntimeServer) acknowledgeLaunch(ctx context.Context, request runt
 
 // RuntimeClient is the worker-side narrow brief/read and report/append client.
 type RuntimeClient struct {
-	socketPath     string
-	socketInfo     os.FileInfo
-	mountDirectory string
-	mountInfo      os.FileInfo
-	timeout        time.Duration
+	socketPath            string
+	socketInfo            os.FileInfo
+	mountDirectory        string
+	mountTargetName       string
+	mountIdentity         runtimePathIdentity
+	mountedSocketIdentity runtimePathIdentity
+	relayPublicKey        ed25519.PublicKey
+	afterMountPin         func()
+	beforeMountedDial     func()
+	afterMountedDial      func()
+	timeout               time.Duration
 }
 
 // Brief fetches the exact pinned task brief from the socket capability.
@@ -370,22 +410,24 @@ func (client *RuntimeClient) call(ctx context.Context, request runtimeRequest) (
 	if err := ctx.Err(); err != nil {
 		return RuntimeOutcome{}, err
 	}
-	if client == nil || client.socketInfo == nil {
+	if client == nil || client.socketInfo == nil && client.mountDirectory == "" {
 		return RuntimeOutcome{}, errors.New("call runtime attachment: client is unavailable")
 	}
-	if client.mountInfo != nil {
-		currentMount, mountErr := os.Lstat(client.mountDirectory)
-		if mountErr != nil || !os.SameFile(client.mountInfo, currentMount) || !currentMount.IsDir() ||
-			currentMount.Mode()&os.ModeSymlink != 0 || currentMount.Mode().Perm()&0o077 != 0 {
-			return RuntimeOutcome{}, errors.New("call runtime attachment: protected mount identity changed")
+	var connection net.Conn
+	var err error
+	if client.mountDirectory != "" {
+		connection, err = client.dialMountedRuntimeSocket()
+	} else {
+		current, identityErr := os.Lstat(client.socketPath)
+		if identityErr != nil || !os.SameFile(client.socketInfo, current) {
+			return RuntimeOutcome{}, errors.New("call runtime attachment: socket identity changed")
 		}
+		connection, err = net.DialTimeout("unix", client.socketPath, client.timeout)
 	}
-	current, err := os.Lstat(client.socketPath)
-	if err != nil || !os.SameFile(client.socketInfo, current) {
-		return RuntimeOutcome{}, errors.New("call runtime attachment: socket identity changed")
-	}
-	connection, err := net.DialTimeout("unix", client.socketPath, client.timeout)
 	if err != nil {
+		if client.mountDirectory != "" {
+			return RuntimeOutcome{}, err
+		}
 		return RuntimeOutcome{}, errors.New("call runtime attachment: socket is unavailable")
 	}
 	defer connection.Close()
@@ -396,15 +438,19 @@ func (client *RuntimeClient) call(ctx context.Context, request runtimeRequest) (
 	if err := connection.SetDeadline(deadline); err != nil {
 		return RuntimeOutcome{}, errors.New("call runtime attachment: deadline failed")
 	}
-	if err := json.NewEncoder(connection).Encode(request); err != nil {
+	session, err := authenticateRuntimeClientConnection(connection, client.relayPublicKey)
+	if err != nil {
+		return RuntimeOutcome{}, err
+	}
+	encodedRequest, err := json.Marshal(request)
+	if err != nil || writeRuntimeFrame(connection, session, runtimeRequestDirection, encodedRequest) != nil {
 		return RuntimeOutcome{}, errors.New("call runtime attachment: request write failed")
 	}
-	reader := bufio.NewReaderSize(connection, maximumRuntimeResponseBytes+1)
-	line, err := reader.ReadSlice('\n')
-	if errors.Is(err, bufio.ErrBufferFull) || len(line) > maximumRuntimeResponseBytes || err != nil || len(line) < 2 {
+	reader := bufio.NewReaderSize(connection, runtimeFrameBufferSize(maximumRuntimeResponseBytes))
+	line, err := readRuntimeFrame(reader, session, runtimeResponseDirection, maximumRuntimeResponseBytes)
+	if err != nil || len(line) < 2 {
 		return RuntimeOutcome{}, errors.New("call runtime attachment: response is invalid")
 	}
-	line = line[:len(line)-1]
 	decoder := json.NewDecoder(strings.NewReader(string(line)))
 	decoder.DisallowUnknownFields()
 	var outcome RuntimeOutcome
@@ -414,27 +460,12 @@ func (client *RuntimeClient) call(ctx context.Context, request runtimeRequest) (
 	return outcome, nil
 }
 
-func writeRuntimeOutcome(connection net.Conn, outcome RuntimeOutcome) error {
-	if err := json.NewEncoder(connection).Encode(outcome); err != nil {
+func writeRuntimeOutcome(connection net.Conn, session *runtimeSession, outcome RuntimeOutcome) error {
+	encoded, err := json.Marshal(outcome)
+	if err != nil || writeRuntimeFrame(connection, session, runtimeResponseDirection, encoded) != nil {
 		return errors.New("serve runtime attachment: response write failed")
 	}
 	return nil
-}
-
-func runtimeRejected(code string) RuntimeOutcome {
-	return RuntimeOutcome{Version: runtimeProtocolVersion, Error: &RuntimeError{Code: code}}
-}
-
-func validLaunchAcknowledgementResult(
-	result application.MutationResult,
-	operationID string,
-	expected application.LaunchAcknowledgement,
-) bool {
-	return result.Operation.ID == operationID && result.Operation.Status == domain.OperationCompleted &&
-		(result.Task.State == domain.TaskLaunching || result.Task.State == domain.TaskWorking) &&
-		result.Task.Handle == expected.TaskHandle && result.Task.ManagedRunID == expected.ManagedRunID &&
-		result.Task.WorkspaceLeaseID == expected.WorkspaceLeaseID && result.Task.BriefRevision == expected.BriefRevision &&
-		result.Task.BriefRevisionHash == expected.BriefRevisionHash
 }
 
 func validateRuntimeSocketTarget(path string) error {
@@ -452,20 +483,6 @@ func validateRuntimeSocketTarget(path string) error {
 	}
 	if _, err := os.Lstat(path); err == nil || !os.IsNotExist(err) {
 		return errors.New("listen runtime attachment: socket target already exists or is ambiguous")
-	}
-	return nil
-}
-
-func removeRuntimeSocket(path string, original os.FileInfo) error {
-	current, err := os.Lstat(path)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil || original == nil || !os.SameFile(original, current) || current.Mode()&os.ModeSocket == 0 {
-		return errors.New("close runtime attachment: socket identity is ambiguous; path preserved")
-	}
-	if err := os.Remove(path); err != nil {
-		return fmt.Errorf("close runtime attachment: remove socket: %w", err)
 	}
 	return nil
 }

@@ -10,10 +10,10 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
@@ -21,12 +21,14 @@ import (
 const maximumForgeResponseBytes = 1 << 20
 
 var (
-	githubNamePattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$`)
-	forgeIDPattern     = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,63}$`)
-	operationIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,127}$`)
-	branchPattern      = regexp.MustCompile(`^devcrew/[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$`)
-	revisionPattern    = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
-	pullRequestPattern = regexp.MustCompile(`^github-pr-[1-9][0-9]{0,9}$`)
+	githubNamePattern          = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$`)
+	forgeIDPattern             = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,63}$`)
+	operationIDPattern         = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,127}$`)
+	branchPattern              = regexp.MustCompile(`^devcrew/[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$`)
+	revisionPattern            = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
+	pullRequestPattern         = regexp.MustCompile(`^github-pr-[1-9][0-9]{0,9}$`)
+	errPullRequestTruthDiffers = errors.New("pull-request truth differs")
+	errGitHubResponseMalformed = errors.New("GitHub response is malformed")
 )
 
 // GitHubConfig supplies one fixed repository and separate non-merge identities.
@@ -151,7 +153,7 @@ func (adapter *GitHubAdapter) VerifyPullRequest(
 	}
 	if pull.State != "open" || pull.Head.SHA != request.HeadRevision || pull.Head.Ref != request.Branch ||
 		pull.Base.Ref != adapter.config.BaseBranch {
-		return PullRequestTruth{}, errors.New("verify GitHub pull request: re-read identity differs")
+		return PullRequestTruth{}, fmt.Errorf("verify GitHub pull request: %w", errPullRequestTruthDiffers)
 	}
 	if err := validatePullRequestURL(pull.HTMLURL); err != nil {
 		return PullRequestTruth{}, err
@@ -187,11 +189,17 @@ type githubPull struct {
 }
 
 type githubChecks struct {
-	Runs []struct {
-		Name       string  `json:"name"`
-		Status     string  `json:"status"`
-		Conclusion *string `json:"conclusion"`
-	} `json:"check_runs"`
+	TotalCount json.RawMessage   `json:"total_count"`
+	Runs       []json.RawMessage `json:"check_runs"`
+	Valid      bool              `json:"-"`
+}
+
+type githubCheckRun struct {
+	ID         json.RawMessage `json:"id"`
+	Name       json.RawMessage `json:"name"`
+	Status     json.RawMessage `json:"status"`
+	Conclusion json.RawMessage `json:"conclusion"`
+	StartedAt  json.RawMessage `json:"started_at"`
 }
 
 func (adapter *GitHubAdapter) resolvePullRequest(ctx context.Context, secret string, request PullRequestRequest) (int, error) {
@@ -237,24 +245,70 @@ func (adapter *GitHubAdapter) readChecks(
 	secret, head string,
 	required []string,
 ) ([]domain.ForgeCheckEvidence, error) {
-	var response githubChecks
-	if err := adapter.requestJSON(ctx, secret, http.MethodGet, adapter.repositoryPath("commits", head, "check-runs"), nil, nil, &response); err != nil {
+	response, complete, err := adapter.readAllCheckRuns(ctx, secret, head)
+	if err != nil {
 		return nil, err
 	}
-	observed := make(map[string]domain.CheckConclusion, len(response.Runs))
-	for _, run := range response.Runs {
-		if run.Name == "" || len(run.Name) > 128 || strings.TrimSpace(run.Name) != run.Name {
-			return nil, errors.New("deliver GitHub pull request: check identity is invalid")
+	if !complete {
+		return unknownRequiredChecks(required), nil
+	}
+	type observedCheck struct {
+		id           int64
+		startedAt    time.Time
+		recencyKnown bool
+		conclusion   domain.CheckConclusion
+	}
+	observed := make(map[string]observedCheck, len(response.Runs))
+	seenIDs := make(map[int64]string, len(response.Runs))
+	poisoned := make(map[string]struct{})
+	for _, encodedRun := range response.Runs {
+		run, valid := decodeGitHubCheckRun(encodedRun)
+		if !valid {
+			return unknownRequiredChecks(required), nil
 		}
-		if _, exists := observed[run.Name]; exists {
-			return nil, errors.New("deliver GitHub pull request: check identity is duplicated")
+		name, nameKnown := parseGitHubCheckName(run.Name)
+		if !nameKnown {
+			return unknownRequiredChecks(required), nil
 		}
-		observed[run.Name] = githubCheckConclusion(run.Status, run.Conclusion)
+		id, identityKnown := parseGitHubCheckID(run.ID)
+		if !identityKnown {
+			poisoned[name] = struct{}{}
+			continue
+		}
+		if _, duplicate := seenIDs[id]; duplicate {
+			return unknownRequiredChecks(required), nil
+		}
+		seenIDs[id] = name
+		status, rawConclusion, stateKnown := parseGitHubCheckState(run.Status, run.Conclusion)
+		if !stateKnown {
+			poisoned[name] = struct{}{}
+			continue
+		}
+		startedAt, recencyKnown := parseGitHubCheckRecency(run.StartedAt)
+		conclusion := githubCheckConclusion(status, rawConclusion)
+		if !recencyKnown {
+			conclusion = domain.CheckUnknown
+		}
+		current, exists := observed[name]
+		if exists && (!current.recencyKnown || !recencyKnown) {
+			current.recencyKnown = false
+			current.conclusion = domain.CheckUnknown
+			observed[name] = current
+			continue
+		}
+		if exists && (startedAt.Before(current.startedAt) || startedAt.Equal(current.startedAt) && id < current.id) {
+			continue
+		}
+		observed[name] = observedCheck{
+			id: id, startedAt: startedAt, recencyKnown: recencyKnown,
+			conclusion: conclusion,
+		}
 	}
 	evidence := make([]domain.ForgeCheckEvidence, 0, len(required))
 	for _, name := range required {
-		conclusion, exists := observed[name]
-		if !exists {
+		check, exists := observed[name]
+		conclusion := check.conclusion
+		if _, unknown := poisoned[name]; !exists || unknown {
 			conclusion = domain.CheckUnknown
 		}
 		evidence = append(evidence, domain.ForgeCheckEvidence{Name: name, Conclusion: conclusion})
@@ -262,24 +316,48 @@ func (adapter *GitHubAdapter) readChecks(
 	return evidence, nil
 }
 
-func githubCheckConclusion(status string, conclusion *string) domain.CheckConclusion {
-	if status != "completed" {
-		if status == "queued" || status == "in_progress" || status == "pending" {
-			return domain.CheckPending
+func decodeGitHubCheckRun(encoded json.RawMessage) (githubCheckRun, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return githubCheckRun{}, false
+	}
+	seen := make(map[string]struct{})
+	var run githubCheckRun
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		key, ok := keyToken.(string)
+		if err != nil || !ok {
+			return githubCheckRun{}, false
 		}
-		return domain.CheckUnknown
+		if _, duplicate := seen[key]; duplicate {
+			return githubCheckRun{}, false
+		}
+		seen[key] = struct{}{}
+		var value json.RawMessage
+		if decoder.Decode(&value) != nil {
+			return githubCheckRun{}, false
+		}
+		switch key {
+		case "id":
+			run.ID = value
+		case "name":
+			run.Name = value
+		case "status":
+			run.Status = value
+		case "conclusion":
+			run.Conclusion = value
+		case "started_at":
+			run.StartedAt = value
+		}
 	}
-	if conclusion == nil {
-		return domain.CheckUnknown
+	if token, err = decoder.Token(); err != nil || token != json.Delim('}') {
+		return githubCheckRun{}, false
 	}
-	switch *conclusion {
-	case "success", "neutral", "skipped":
-		return domain.CheckPassed
-	case "failure", "cancelled", "timed_out", "action_required", "startup_failure":
-		return domain.CheckFailed
-	default:
-		return domain.CheckUnknown
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return githubCheckRun{}, false
 	}
+	return run, true
 }
 
 func (adapter *GitHubAdapter) requestJSON(
@@ -339,17 +417,17 @@ func (adapter *GitHubAdapter) requestJSON(
 		return errors.New("GitHub response could not be read")
 	}
 	if len(contents) == 0 || len(contents) > maximumForgeResponseBytes {
-		return errors.New("GitHub response is invalid or exceeds its bound")
+		return fmt.Errorf("GitHub response is invalid or exceeds its bound: %w", errGitHubResponseMalformed)
 	}
 	if destination == nil {
 		return nil
 	}
 	decoder := json.NewDecoder(bytes.NewReader(contents))
 	if err := decoder.Decode(destination); err != nil {
-		return errors.New("GitHub response is malformed")
+		return errGitHubResponseMalformed
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errors.New("GitHub response has trailing content")
+		return fmt.Errorf("GitHub response has trailing content: %w", errGitHubResponseMalformed)
 	}
 	return nil
 }
@@ -378,78 +456,4 @@ func retryableGitHubResponse(response *http.Response) bool {
 func (adapter *GitHubAdapter) repositoryPath(parts ...string) string {
 	all := append([]string{"", "repos", adapter.config.Owner, adapter.config.Repository}, parts...)
 	return strings.Join(all, "/")
-}
-
-func validatePullRequestRequest(request PullRequestRequest) error {
-	if !operationIDPattern.MatchString(request.OperationID) || !filepath.IsAbs(request.WorktreePath) ||
-		filepath.Clean(request.WorktreePath) != request.WorktreePath || !branchPattern.MatchString(request.Branch) ||
-		strings.Contains(request.Branch, "..") || !revisionPattern.MatchString(request.HeadRevision) ||
-		request.Title == "" || len(request.Title) > 256 || strings.TrimSpace(request.Title) != request.Title ||
-		strings.ContainsAny(request.Title, "\x00\r\n") || validateRequiredChecks(request.RequiredChecks) != nil {
-		return errors.New("deliver GitHub pull request: request is invalid")
-	}
-	return nil
-}
-
-func validateRequiredChecks(required []string) error {
-	if len(required) == 0 || len(required) > 64 {
-		return errors.New("required checks are invalid")
-	}
-	seen := make(map[string]struct{}, len(required))
-	for _, check := range required {
-		if check == "" || len(check) > 128 || strings.TrimSpace(check) != check || strings.ContainsAny(check, "\x00\r\n") {
-			return errors.New("required check is invalid")
-		}
-		if _, exists := seen[check]; exists {
-			return errors.New("required check is duplicated")
-		}
-		seen[check] = struct{}{}
-	}
-	return nil
-}
-
-func validReadCredential(credential Credential) bool {
-	return credential.Kind == CredentialRead && validSecret(credential.Secret) &&
-		equalScopes(credential.Scopes, []CredentialScope{ScopeContentsRead, ScopePullRequestsRead, ScopeChecksRead})
-}
-
-func validPushCredential(credential Credential) bool {
-	return credential.Kind == CredentialPush && validSecret(credential.Secret) &&
-		equalScopes(credential.Scopes, []CredentialScope{ScopeContentsWrite})
-}
-
-func validSecret(secret string) bool {
-	return secret != "" && len(secret) <= 4096 && !strings.ContainsAny(secret, "\x00\r\n\t ")
-}
-
-func equalScopes(got, want []CredentialScope) bool {
-	if len(got) != len(want) {
-		return false
-	}
-	counts := make(map[CredentialScope]int, len(got))
-	for _, scope := range got {
-		counts[scope]++
-	}
-	for _, scope := range want {
-		if counts[scope] != 1 {
-			return false
-		}
-	}
-	return true
-}
-
-func validatePullRequestURL(value string) error {
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
-		return errors.New("deliver GitHub pull request: pull-request URL is invalid")
-	}
-	return nil
-}
-
-func loopbackHost(host string) bool {
-	if host == "localhost" {
-		return true
-	}
-	address := net.ParseIP(host)
-	return address != nil && address.IsLoopback()
 }

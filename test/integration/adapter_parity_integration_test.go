@@ -242,6 +242,8 @@ func newParityHarnessConfigured(t *testing.T, seedLaunchPlan bool) *parityHarnes
 			DatabasePath: databasePath,
 			SocketPath:   operatorSocket, MCPSocketPath: mcpSocket, ServiceInstanceID: parityServiceID,
 			Repositories:       parityRepositoryCatalog{},
+			WorkerProfiles:     func(string, domain.TaskShape) error { return nil },
+			ValidationProfiles: func(string, domain.TaskShape) error { return nil },
 			Workspaces:         parityWorkspacePreparer{root: filepath.Join(root, "worktrees", "task-parity-0001")},
 			RuntimeAttachments: integrationRuntimeAttachments{},
 			TaskIDs:            func(string) (string, error) { return "task-parity-0001", nil },
@@ -308,6 +310,7 @@ func seedParityLaunchTask(t *testing.T, databasePath, root string, clock applica
 	}()
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: parityRepositoryCatalog{},
+		WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string, domain.TaskShape) error { return nil },
 		Workspaces:         parityWorkspacePreparer{root: filepath.Join(root, "worktrees", parityLaunchTaskHandle)},
 		RuntimeAttachments: integrationRuntimeAttachments{},
 		TaskIDs:            func(string) (string, error) { return parityLaunchTaskHandle, nil },

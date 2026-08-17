@@ -66,7 +66,11 @@ func (runner CampaignRunner) Run(ctx context.Context, manifest Manifest, evidenc
 	if err != nil {
 		return Verdict{}, err
 	}
-	if err := runner.waitOperationAfterCheckpoint(ctx, manifest, "HandbackTask", handbackCheckpoint.EpochMs); err != nil {
+	handbackOperationID, err := runner.waitOperationAfterCheckpoint(ctx, manifest, "HandbackTask", handbackCheckpoint.EpochMs)
+	if err != nil {
+		return Verdict{}, err
+	}
+	if err := bindOperationIdentity(&manifest, "HandbackTask", handbackOperationID); err != nil {
 		return Verdict{}, err
 	}
 	if err := runner.requireHandbackSiblingWorking(ctx, manifest); err != nil {
@@ -77,7 +81,11 @@ func (runner CampaignRunner) Run(ctx context.Context, manifest Manifest, evidenc
 	if err != nil {
 		return Verdict{}, err
 	}
-	if err := runner.waitOperationAfterCheckpoint(ctx, manifest, "ReconcileTask", reconcileCheckpoint.EpochMs); err != nil {
+	reconcileOperationID, err := runner.waitOperationAfterCheckpoint(ctx, manifest, "ReconcileTask", reconcileCheckpoint.EpochMs)
+	if err != nil {
+		return Verdict{}, err
+	}
+	if err := bindOperationIdentity(&manifest, "ReconcileTask", reconcileOperationID); err != nil {
 		return Verdict{}, err
 	}
 	if _, err := runner.waitCheckpoint(ctx, manifest, "devcrew_restart_ready", manifest.StartedAtMs); err != nil {
@@ -117,6 +125,18 @@ func (runner CampaignRunner) Run(ctx context.Context, manifest Manifest, evidenc
 		return fleetHasExactTaskState(manifest, fleet, domain.TaskCleaned), nil
 	}); err != nil {
 		return Verdict{}, err
+	}
+	for _, task := range manifest.Tasks {
+		cleanupOperationID, resolveErr := runner.resolveOperationIdentity(ctx, manifest, task.TaskHandle, "CleanupTask")
+		if resolveErr != nil {
+			return Verdict{}, resolveErr
+		}
+		if err := bindTaskOperationIdentity(&manifest, task.TaskHandle, "CleanupTask", cleanupOperationID); err != nil {
+			return Verdict{}, err
+		}
+	}
+	if err := manifest.requireResolvedOperationIdentities(); err != nil {
+		return Verdict{}, fmt.Errorf("run protected live campaign: %w", err)
 	}
 	if err := runner.wait(ctx, "one-hour resource observation", func() (bool, error) {
 		return runner.NowMs()-resourceStarted.CapturedAtMs >= minimumResourceObservationMs, nil
@@ -191,50 +211,6 @@ func (runner CampaignRunner) waitDevCrewHealthy(ctx context.Context, manifest Ma
 		return report.SchemaVersion == 1 && report.Completeness == application.CompletenessComplete &&
 			report.ServiceHealth == application.HealthHealthy && report.ComisHealth == application.HealthHealthy, nil
 	})
-}
-
-func (runner CampaignRunner) waitOperationAfterCheckpoint(
-	ctx context.Context,
-	manifest Manifest,
-	command string,
-	minimumEpochMs int64,
-) error {
-	operation, found := operationForCommand(manifest, command)
-	if !found {
-		return fmt.Errorf("run protected live campaign: %s operation is absent from the manifest", command)
-	}
-	stage := strings.TrimSuffix(strings.ToLower(command), "task") + " operation after Telegram checkpoint"
-	return runner.wait(ctx, stage, func() (bool, error) {
-		view, err := runner.readOperation(ctx, manifest, operation.OperationID)
-		if err != nil {
-			return false, nil
-		}
-		if err := VerifyOperation(operation, view); err != nil {
-			return false, nil
-		}
-		return view.UpdatedAtMs >= minimumEpochMs, nil
-	})
-}
-
-func (runner CampaignRunner) readOperation(
-	ctx context.Context,
-	manifest Manifest,
-	operationID string,
-) (application.OperationView, error) {
-	output, err := runner.Executor.Run(ctx, Command{
-		Path: manifest.DevCrew.CLIPath,
-		Args: []string{
-			"--socket", manifest.DevCrew.SocketPath, "task", "operation", operationID, "--format", "json",
-		},
-	})
-	if err != nil || len(output) == 0 || len(output) > maximumCommandOutputBytes {
-		return application.OperationView{}, errors.New("read DevCrew operation: report unavailable")
-	}
-	var view application.OperationView
-	if err := json.Unmarshal(output, &view); err != nil {
-		return application.OperationView{}, errors.New("read DevCrew operation: report is malformed")
-	}
-	return view, nil
 }
 
 func (runner CampaignRunner) waitCheckpoint(

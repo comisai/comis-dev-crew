@@ -168,6 +168,7 @@ func (adapter *ClaudeAdapter) BuildLaunchDescriptor(
 	for _, key := range []string{
 		application.RuntimeAttachmentPathEnvironment,
 		application.RuntimeAttachmentTargetEnvironment,
+		application.RuntimeAttachmentIdentityEnvironment,
 		claudeConfigEnvironment,
 	} {
 		if !containsEnvironmentKey(base.EnvironmentKeys, key) {
@@ -191,9 +192,10 @@ func (adapter *ClaudeAdapter) BuildLaunchDescriptor(
 		Arguments: arguments, WorkingDirectory: base.WorkingDirectory,
 		EnvironmentKeys: append([]string(nil), base.EnvironmentKeys...),
 		EnvironmentBindings: map[string]string{
-			application.RuntimeAttachmentPathEnvironment:   request.Attachment.MountSocketPath,
-			application.RuntimeAttachmentTargetEnvironment: request.Attachment.AttachmentTargetName,
-			claudeConfigEnvironment:                        adapter.configDirectory,
+			application.RuntimeAttachmentPathEnvironment:     request.Attachment.MountSocketPath,
+			application.RuntimeAttachmentTargetEnvironment:   request.Attachment.AttachmentTargetName,
+			application.RuntimeAttachmentIdentityEnvironment: request.Attachment.RelayIdentity,
+			claudeConfigEnvironment:                          adapter.configDirectory,
 		},
 		Model: base.Model, Effort: base.Effort, TerminalAllowEntry: base.TerminalAllowEntry,
 		Network: string(base.Network), ConcurrencyLimit: base.ConcurrencyLimit,
@@ -271,7 +273,8 @@ func validateClaudeLaunchBinding(request application.WorkerLaunchRequest) error 
 
 func validateClaudeRuntimeAttachment(attachment application.RuntimeSocketAttachment) error {
 	if domain.ValidateAuthorityReference("executionAttachmentId", attachment.ExecutionAttachmentID) != nil ||
-		domain.ValidateAttachmentTargetName(attachment.AttachmentTargetName) != nil {
+		domain.ValidateAttachmentTargetName(attachment.AttachmentTargetName) != nil ||
+		application.ValidateRuntimeRelayIdentity(attachment.RelayIdentity) != nil {
 		return errors.New("build Claude launch descriptor: runtime attachment authority is invalid")
 	}
 	expectedMount := filepath.Join(application.RuntimeAttachmentMountDirectory, attachment.AttachmentTargetName)

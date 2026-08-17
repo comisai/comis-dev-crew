@@ -3,6 +3,7 @@ package architecture_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -74,3 +75,47 @@ func TestRepositoryPolicy_ProtectedWorkflowSuppliesEveryLiveRecoveryRoot(t *test
 		}
 	}
 }
+
+// The companion owns the operator-installed liaison assets. Comis must not ship
+// them, because its bundled-skill tree auto-seeds into every deployment, so this
+// repository is where the skill and the named-agent policy templates have to be
+// resolvable for an installer to copy.
+func TestRepositoryPolicy_CompanionOwnsOperatorInstalledLiaisonAssets(t *testing.T) {
+	for _, name := range []string{
+		"skills/dev-crew/SKILL.md",
+		"skills/dev-crew/references/task-shapes.md",
+		"skills/dev-crew/references/delegation.md",
+		"skills/dev-crew/references/decisions.md",
+		"skills/dev-crew/references/delivery.md",
+		"skills/dev-crew/references/recovery.md",
+		"workspace-template/ROLE.md",
+		"workspace-template/TOOLS.md",
+		"workspace-template/HEARTBEAT.md",
+	} {
+		if _, err := os.Stat(filepath.Join(repositoryRoot(t), name)); err != nil {
+			t.Errorf("operator-installed liaison asset %s must be present: %v", name, err)
+		}
+	}
+}
+
+// A skill recommends procedure. It can never be the enforcement layer for a
+// credential, an approval, or a capability, so it must not present itself as one.
+func TestRepositoryPolicy_LiaisonSkillGrantsNoAuthority(t *testing.T) {
+	skill := readRepositoryFile(t, "skills/dev-crew/SKILL.md")
+	if !strings.Contains(skill, "grants no capability") {
+		t.Error("the liaison skill must state that it grants no capability")
+	}
+	// A model copies what a skill shows it. Naming a hazard in a prohibition is
+	// the point of the skill; rendering an operator command line it could
+	// assemble is the failure, so match invocations rather than vocabulary.
+	if operatorInvocation.MatchString(skill) {
+		t.Error("the liaison skill must not render an operator command line the model could assemble")
+	}
+	if !strings.Contains(skill, "Do not provide a path, command, executable, credential") {
+		t.Error("the liaison skill must forbid sending host authority in tool arguments")
+	}
+}
+
+// Any rendering of the operator binary followed by one of its verbs. The CLI is
+// for humans, scripts, and recovery; the agent surface is the strict tool set.
+var operatorInvocation = regexp.MustCompile(`devcrew(-report)?\s+(service|doctor|status|tasks|task|decisions?|workers|repair|backlog|initiative|events)\b`)

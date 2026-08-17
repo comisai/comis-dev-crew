@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -77,6 +78,70 @@ func TestRealExecutorDoesNotReturnChildStderr(t *testing.T) {
 	}
 }
 
+func TestRealExecutorScopesGatewayCredentialToRequestedCommand(t *testing.T) {
+	t.Setenv("COMIS_GATEWAY_TOKEN", "gateway-token-must-not-leak")
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := Command{
+		Path: executable,
+		Args: []string{"-test.run=TestLiveCampaignExecutorHelperProcess", "--", "credential"},
+		Env:  map[string]string{"GO_WANT_LIVE_CAMPAIGN_HELPER": "1"},
+	}
+	credentialField := reflect.ValueOf(&command).Elem().FieldByName("UseComisGatewayToken")
+	if !credentialField.IsValid() || !credentialField.CanSet() || credentialField.Kind() != reflect.Bool {
+		t.Fatal("Command.UseComisGatewayToken is unavailable")
+	}
+	credentialField.SetBool(true)
+	output, err := (RealExecutor{}).Run(context.Background(), command)
+	if err != nil || string(output) != "gateway=true" {
+		t.Fatalf("Run(gateway credential) = %q, %v", output, err)
+	}
+	t.Setenv("COMIS_GATEWAY_TOKEN", "")
+	if _, err := (RealExecutor{}).Run(context.Background(), command); err == nil ||
+		!strings.Contains(err.Error(), "gateway credential is unavailable") {
+		t.Fatalf("Run(missing gateway credential) error = %v", err)
+	}
+}
+
+func TestRealExecutorForwardsDeclaredCampaignSecretsToRequestedCommand(t *testing.T) {
+	t.Setenv("TELEGRAM_BOT_TOKEN", "campaign-secret-must-not-leak")
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := Command{
+		Path: executable,
+		Args: []string{"-test.run=TestLiveCampaignExecutorHelperProcess", "--", "residency"},
+		Env:  map[string]string{"GO_WANT_LIVE_CAMPAIGN_HELPER": "1"},
+	}
+	names := reflect.ValueOf(&command).Elem().FieldByName("SecretEnvironmentNames")
+	if !names.IsValid() || !names.CanSet() || names.Kind() != reflect.Slice {
+		t.Fatal("Command.SecretEnvironmentNames is unavailable")
+	}
+	names.Set(reflect.ValueOf([]string{"TELEGRAM_BOT_TOKEN"}))
+	output, err := (RealExecutor{}).Run(context.Background(), command)
+	if err != nil || string(output) != "residency=true" {
+		t.Fatalf("Run(declared campaign secret) = %q, %v", output, err)
+	}
+	names.Set(reflect.ValueOf([]string{"PATH"}))
+	if _, err := (RealExecutor{}).Run(context.Background(), command); err == nil ||
+		!strings.Contains(err.Error(), "secret name is invalid") {
+		t.Fatalf("Run(protected inherited name) error = %v", err)
+	}
+	names.Set(reflect.ValueOf([]string{"telegram.bot.token"}))
+	if _, err := (RealExecutor{}).Run(context.Background(), command); err == nil ||
+		!strings.Contains(err.Error(), "secret name is invalid") {
+		t.Fatalf("Run(non-environment secret name) error = %v", err)
+	}
+	names.Set(reflect.ValueOf([]string{"COMIS_TELEGRAM_ABSENT_TOKEN"}))
+	output, err = (RealExecutor{}).Run(context.Background(), command)
+	if err != nil || string(output) != "residency=false" {
+		t.Fatalf("Run(absent campaign secret) = %q, %v", output, err)
+	}
+}
+
 func TestLiveCampaignExecutorHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_LIVE_CAMPAIGN_HELPER") != "1" {
 		return
@@ -100,6 +165,10 @@ func TestLiveCampaignExecutorHelperProcess(t *testing.T) {
 	case "fail":
 		fmt.Fprint(os.Stderr, "sensitive-child-detail")
 		os.Exit(7)
+	case "credential":
+		fmt.Printf("gateway=%t", os.Getenv("COMIS_GATEWAY_TOKEN") != "")
+	case "residency":
+		fmt.Printf("residency=%t", os.Getenv("TELEGRAM_BOT_TOKEN") != "")
 	default:
 		os.Exit(2)
 	}

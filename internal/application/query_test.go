@@ -274,6 +274,46 @@ func TestQueries_ExplainFailedCandidateFromDurableJudgment(t *testing.T) {
 	}
 }
 
+func TestQueries_ExplainValidatingCandidateWithUnverifiedGitTruth(t *testing.T) {
+	task := queryTask("task-candidate-unverified", domain.TaskValidating, 8)
+	sealed := queryCandidateEvidence(t, task, time.Now().UTC())
+	bundle := sealed.Bundle()
+	bundle.HeadRevision = task.BaseRevision
+	bundle.WorktreeCleanliness = domain.WorktreeDirty
+	for index := range bundle.ValidationReceipts {
+		bundle.ValidationReceipts[index].HeadRevision = task.BaseRevision
+	}
+	if bundle.ForgeEvidence != nil {
+		bundle.ForgeEvidence.HeadRevision = task.BaseRevision
+	}
+	sealed, err := domain.SealDeliveryEvidence(bundle)
+	if err != nil {
+		t.Fatalf("SealDeliveryEvidence() error = %v", err)
+	}
+	repository := &queryRepository{
+		tasks:             []domain.Task{task},
+		candidateEvidence: sealed,
+		candidateJudgment: domain.CandidateJudgment{
+			Outcome: domain.CandidateUnknown,
+			Reason:  domain.CandidateWorktreeUnverified,
+		},
+	}
+	queries, err := NewQueries(QueryConfig{Repository: repository, Clock: time.Now})
+	if err != nil {
+		t.Fatalf("NewQueries() error = %v", err)
+	}
+	explanation, err := queries.ExplainTask(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("ExplainTask() error = %v", err)
+	}
+	if !repository.candidateCalled || explanation.ReasonCode != "candidate_worktree_unverified" ||
+		!strings.Contains(explanation.LikelyRootCause, "not clean") ||
+		!strings.Contains(explanation.LikelyRootCause, "base revision") ||
+		len(explanation.NextSafeActions) != 1 || explanation.NextSafeActions[0] != ActionInspectTask {
+		t.Fatalf("ExplainTask(unverified candidate) = %#v, judgment read = %v", explanation, repository.candidateCalled)
+	}
+}
+
 func TestQueries_ExplainFailedCandidateFallbacksRemainFailClosed(t *testing.T) {
 	task := queryTask("task-candidate-fallback", domain.TaskFailed, 9)
 

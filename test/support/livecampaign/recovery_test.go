@@ -9,11 +9,20 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type recoveryExecutorFixture struct {
 	manifest Manifest
 	calls    []Command
+	// unavailableResidencyRuns rejects that many leading secret-residency invocations the way a
+	// restarted service does before its authenticated RPC accepts requests.
+	unavailableResidencyRuns int
+	// malformedResidencyRuns returns that many leading truncated payloads after the rejections.
+	malformedResidencyRuns int
+	// residencyReport overrides the successful count-only report payload.
+	residencyReport string
+	residencyRuns   int
 }
 
 func (executor *recoveryExecutorFixture) Run(_ context.Context, command Command) ([]byte, error) {
@@ -29,6 +38,18 @@ func (executor *recoveryExecutorFixture) Run(_ context.Context, command Command)
 	}
 	if command.Path == manifest.Comis.NodePath && len(command.Args) > 0 &&
 		command.Args[0] == manifest.Comis.SecretResidencyScript {
+		executor.residencyRuns++
+		if executor.unavailableResidencyRuns > 0 {
+			executor.unavailableResidencyRuns--
+			return nil, errors.New("execute protected command: process exited with status 1")
+		}
+		if executor.malformedResidencyRuns > 0 {
+			executor.malformedResidencyRuns--
+			return []byte(`{"schemaVersion":1,"scannedFiles":`), nil
+		}
+		if executor.residencyReport != "" {
+			return []byte(executor.residencyReport), nil
+		}
 		return []byte(`{"schemaVersion":1,"scannedFiles":8,"readErrors":[],"totalMatches":0,"secrets":{"TELEGRAM_BOT_TOKEN":{"retrieved":true,"totalMatches":0},"GITHUB_TOKEN":{"retrieved":true,"totalMatches":0}}}`), nil
 	}
 	if command.Path == manifest.Comis.NodePath && len(command.Args) >= 3 &&
@@ -121,6 +142,139 @@ func TestCreateAndRestoreRecoveryBackupPreservesStateWithoutPlaintextEnvironment
 	if !rollback.Passed || !rollback.PreviousArtifactsVerified || !rollback.ComisConfigValidated ||
 		!rollback.DevCrewServiceOpened || rollback.SQLiteFiles < 3 || !probe.called {
 		t.Fatalf("rollback evidence = %#v, probe=%#v", rollback, probe)
+	}
+}
+
+func TestCreateRecoveryBackupWaitsForRestartedSecretResidencyOracleReadiness(t *testing.T) {
+	manifest := recoveryManifestFixture(t)
+	executor := &recoveryExecutorFixture{manifest: manifest, unavailableResidencyRuns: 2, malformedResidencyRuns: 1}
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	waits := 0
+	wait := func(ctx context.Context, _ time.Duration) error {
+		waits++
+		return ctx.Err()
+	}
+	backup, err := createRecoveryBackup(
+		context.Background(), manifest, filepath.Join(parent, "backup"), executor, manifest.EndedAtMs, wait,
+	)
+	if err != nil {
+		t.Fatalf("createRecoveryBackup() error = %v", err)
+	}
+	if !backup.Passed || !backup.SecretResidencyPassed {
+		t.Fatalf("backup evidence = %#v", backup)
+	}
+	if executor.residencyRuns != 4 || waits != 3 {
+		t.Fatalf("residency runs = %d and readiness waits = %d, want 4 and 3", executor.residencyRuns, waits)
+	}
+}
+
+func TestCreateRecoveryBackupDeclaresCampaignSecretsForTheResidencyOracle(t *testing.T) {
+	manifest := recoveryManifestFixture(t)
+	executor := &recoveryExecutorFixture{manifest: manifest}
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	wait := func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
+	if _, err := createRecoveryBackup(
+		context.Background(), manifest, filepath.Join(parent, "backup"), executor, manifest.EndedAtMs, wait,
+	); err != nil {
+		t.Fatalf("createRecoveryBackup() error = %v", err)
+	}
+	declared := 0
+	for _, call := range executor.calls {
+		if call.Path != manifest.Comis.NodePath || len(call.Args) == 0 ||
+			call.Args[0] != manifest.Comis.SecretResidencyScript {
+			continue
+		}
+		declared++
+		if !call.UseComisGatewayToken ||
+			strings.Join(call.SecretEnvironmentNames, ",") != strings.Join(manifest.Comis.SecretNames, ",") {
+			t.Fatalf("residency command credentials = %#v", call)
+		}
+	}
+	if declared != 1 {
+		t.Fatalf("residency commands = %d, want 1", declared)
+	}
+}
+
+func TestCreateRecoveryBackupRefusesPermanentlyUnavailableSecretResidencyOracle(t *testing.T) {
+	manifest := recoveryManifestFixture(t)
+	executor := &recoveryExecutorFixture{
+		manifest: manifest, unavailableResidencyRuns: recoverySecretResidencyReadinessAttempts + 5,
+	}
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	backupRoot := filepath.Join(parent, "backup")
+	wait := func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
+	_, err := createRecoveryBackup(context.Background(), manifest, backupRoot, executor, manifest.EndedAtMs, wait)
+	if err == nil || !strings.Contains(err.Error(), "secret residency oracle is unavailable") {
+		t.Fatalf("expected bounded readiness refusal, got %v", err)
+	}
+	if executor.residencyRuns != recoverySecretResidencyReadinessAttempts {
+		t.Fatalf("residency runs = %d, want %d", executor.residencyRuns, recoverySecretResidencyReadinessAttempts)
+	}
+	if _, err := os.Lstat(backupRoot); !os.IsNotExist(err) {
+		t.Fatalf("refused backup root was retained: %v", err)
+	}
+}
+
+func TestCreateRecoveryBackupEndsReadinessWaitWhenTheContextEnds(t *testing.T) {
+	manifest := recoveryManifestFixture(t)
+	executor := &recoveryExecutorFixture{manifest: manifest, unavailableResidencyRuns: 4}
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	wait := func(context.Context, time.Duration) error {
+		cancel()
+		return context.Canceled
+	}
+	_, err := createRecoveryBackup(
+		ctx, manifest, filepath.Join(parent, "backup"), executor, manifest.EndedAtMs, wait,
+	)
+	if err == nil || !strings.Contains(err.Error(), "secret residency oracle is unavailable") {
+		t.Fatalf("expected cancelled readiness refusal, got %v", err)
+	}
+	if executor.residencyRuns != 1 {
+		t.Fatalf("residency runs = %d, want 1", executor.residencyRuns)
+	}
+}
+
+func TestCreateRecoveryBackupRefusesParsedPlaintextSecretResidencyWithoutRetrying(t *testing.T) {
+	manifest := recoveryManifestFixture(t)
+	executor := &recoveryExecutorFixture{
+		manifest: manifest,
+		residencyReport: `{"schemaVersion":1,"scannedFiles":8,"readErrors":[],"totalMatches":1,` +
+			`"secrets":{"TELEGRAM_BOT_TOKEN":{"retrieved":true,"totalMatches":1},` +
+			`"GITHUB_TOKEN":{"retrieved":true,"totalMatches":0}}}`,
+	}
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	backupRoot := filepath.Join(parent, "backup")
+	waits := 0
+	wait := func(ctx context.Context, _ time.Duration) error {
+		waits++
+		return ctx.Err()
+	}
+	_, err := createRecoveryBackup(context.Background(), manifest, backupRoot, executor, manifest.EndedAtMs, wait)
+	if err == nil || !strings.Contains(err.Error(), "incomplete or found plaintext") {
+		t.Fatalf("expected immediate plaintext refusal, got %v", err)
+	}
+	if executor.residencyRuns != 1 || waits != 0 {
+		t.Fatalf("residency runs = %d and readiness waits = %d, want 1 and 0", executor.residencyRuns, waits)
+	}
+	if _, err := os.Lstat(backupRoot); !os.IsNotExist(err) {
+		t.Fatalf("refused backup root was retained: %v", err)
 	}
 }
 

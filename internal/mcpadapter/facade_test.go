@@ -436,8 +436,11 @@ func preparedResult() localapi.PrepareTaskResult {
 		ManagedRun: application.ManagedRunPreparation{
 			ExternalRunRef: "task-0001", RegistrationNonce: "registration-nonce_private",
 			RequestedWorkspaceRoot: "/approved/workspaces/task-0001",
-			RequestedAttachment:    application.PreparedRuntimeAttachment{Kind: application.RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/task-0001/attachment.sock"},
-			ExpiresAt:              time.Date(2026, time.August, 10, 0, 0, 0, 0, time.UTC), State: application.PreparationOpen,
+			RequestedAttachment: application.PreparedRuntimeAttachment{
+				Kind: application.RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/task-0001/attachment.sock",
+				RelayIdentity: strings.Repeat("ab", 32),
+			},
+			ExpiresAt: time.Date(2026, time.August, 10, 0, 0, 0, 0, time.UTC), State: application.PreparationOpen,
 		},
 	}
 }

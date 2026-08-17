@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 const (
@@ -242,6 +244,37 @@ func (catalog *Catalog) ResolveProfile(profileID string) (Profile, error) {
 		return Profile{}, errors.New("resolve validation profile: profile is unavailable")
 	}
 	return cloneProfile(profile), nil
+}
+
+// ResolveProfileForShape returns an isolated complete policy for one task shape.
+func (catalog *Catalog) ResolveProfileForShape(profileID string, shape domain.TaskShape) (Profile, error) {
+	profile, err := catalog.ResolveProfile(profileID)
+	if err != nil {
+		return Profile{}, err
+	}
+	requiredLocal := false
+	for _, check := range profile.LocalChecks {
+		requiredLocal = requiredLocal || check.Required
+	}
+	if !requiredLocal {
+		return Profile{}, errors.New("resolve validation profile: required local check is unavailable")
+	}
+	switch shape {
+	case domain.ShapeShip:
+		for _, check := range profile.ForgeChecks {
+			if check.Required {
+				return profile, nil
+			}
+		}
+		return Profile{}, errors.New("resolve validation profile: required forge check is unavailable")
+	case domain.ShapeScout:
+		if len(profile.ArtifactRules) != 1 {
+			return Profile{}, errors.New("resolve validation profile: report artifact rule is unavailable")
+		}
+		return profile, nil
+	default:
+		return Profile{}, errors.New("resolve validation profile: task shape is invalid")
+	}
 }
 
 // ResolveLocalCheck fills typed server fields without accepting free-form arguments.

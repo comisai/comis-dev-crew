@@ -17,19 +17,6 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/application"
 )
 
-const maximumCommandOutputBytes = 4 << 20
-
-type Command struct {
-	Path           string
-	Args           []string
-	Env            map[string]string
-	UseGitHubToken bool
-}
-
-type Executor interface {
-	Run(context.Context, Command) ([]byte, error)
-}
-
 type collector struct {
 	ctx       context.Context
 	manifest  Manifest
@@ -52,6 +39,9 @@ func Collect(
 		return Verdict{}, errors.New("collect live closeout: context, executor, and capture time are required")
 	}
 	if err := manifest.validate(); err != nil {
+		return Verdict{}, fmt.Errorf("collect live closeout: %w", err)
+	}
+	if err := manifest.requireResolvedOperationIdentities(); err != nil {
 		return Verdict{}, fmt.Errorf("collect live closeout: %w", err)
 	}
 	if err := VerifyResourceObservation(manifest, resources); err != nil {
@@ -365,7 +355,11 @@ func (instance *collector) collectSecretPosture() error {
 	residencyEnv["RIG_MODE"] = "local"
 	residencyEnv["COMIS_SRC"] = instance.manifest.Comis.CodeRoot
 	var residency residencyReport
-	if err := instance.runJSON(Command{Path: instance.manifest.Comis.NodePath, Args: args, Env: residencyEnv}, &residency); err != nil {
+	if err := instance.runJSON(Command{
+		Path: instance.manifest.Comis.NodePath, Args: args, Env: residencyEnv,
+		UseComisGatewayToken:   true,
+		SecretEnvironmentNames: instance.manifest.Comis.SecretNames,
+	}, &residency); err != nil {
 		return fmt.Errorf("collect live closeout: count-only secret residency oracle unavailable: %w", err)
 	}
 	if residency.SchemaVersion != 1 || residency.ScannedFiles <= 0 || len(residency.ReadErrors) != 0 ||

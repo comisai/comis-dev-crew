@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 func TestProfileCatalog_ResolvesOnlyReviewedArgumentTemplates(t *testing.T) {
@@ -52,6 +54,56 @@ func TestProfileCatalog_ResolvesOnlyReviewedArgumentTemplates(t *testing.T) {
 	})
 	if err != nil || again.Arguments[0] != "test" {
 		t.Fatalf("catalog was mutable through resolved profile: %#v, %v", again, err)
+	}
+}
+
+func TestProfileCatalog_ResolvesOnlyShapeCompleteProfiles(t *testing.T) {
+	complete := Profile{
+		ID: "fixture-default",
+		LocalChecks: []LocalCheck{{
+			ID: "unit", ProgramID: "go-test", Timeout: time.Minute, Required: true,
+			Arguments: []ArgumentTemplate{{Kind: ArgumentLiteral, Value: "test"}},
+		}},
+		ForgeChecks:   []ForgeCheck{{Name: "ci/unit", Required: true}},
+		ArtifactRules: []ArtifactRule{{Kind: ArtifactRegularFile, RelativePath: "report.md", MediaType: "text/markdown", MaxBytes: 1024}},
+		EvidenceTTL:   time.Minute,
+	}
+	tests := []struct {
+		name    string
+		shape   domain.TaskShape
+		mutate  func(*Profile)
+		wantErr bool
+	}{
+		{name: "complete ship", shape: domain.ShapeShip},
+		{name: "complete scout", shape: domain.ShapeScout},
+		{name: "ship without required local", shape: domain.ShapeShip, wantErr: true, mutate: func(profile *Profile) {
+			profile.LocalChecks[0].Required = false
+		}},
+		{name: "ship without required forge", shape: domain.ShapeShip, wantErr: true, mutate: func(profile *Profile) {
+			profile.ForgeChecks[0].Required = false
+		}},
+		{name: "scout without artifact", shape: domain.ShapeScout, wantErr: true, mutate: func(profile *Profile) {
+			profile.ArtifactRules = nil
+		}},
+		{name: "unknown shape", shape: domain.TaskShape("initiative"), wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			profile := cloneProfile(complete)
+			if test.mutate != nil {
+				test.mutate(&profile)
+			}
+			catalog, err := NewCatalog(CatalogConfig{
+				Programs: []Program{{ID: "go-test", Executable: "/usr/bin/go"}}, Profiles: []Profile{profile},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = catalog.ResolveProfileForShape(profile.ID, test.shape)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("ResolveProfileForShape(%s) error = %v, want error %t", test.shape, err, test.wantErr)
+			}
+		})
 	}
 }
 

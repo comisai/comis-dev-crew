@@ -31,6 +31,7 @@ func TestRun_ComposesCanonicalMutationOnDedicatedMCPEndpoint(t *testing.T) {
 		done <- Run(ctx, Config{
 			DatabasePath: databasePath, SocketPath: operatorSocket, MCPSocketPath: mcpSocket,
 			ServiceInstanceID: "service-instance_a", Repositories: serviceRepositoryCatalog{},
+			WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string, domain.TaskShape) error { return nil },
 			Workspaces:         serviceWorkspacePreparer{root: "/approved/worktrees/task-service-prepare"},
 			RuntimeAttachments: serviceRuntimeAttachments{},
 			TaskIDs:            func(string) (string, error) { return "task-service-prepare", nil },
@@ -120,6 +121,13 @@ func (serviceReconciliationInspector) InspectReconciliationCandidate(
 	return application.WorkspaceSnapshot{}, errors.New("unexpected reconciliation inspection")
 }
 
+func (serviceReconciliationInspector) PromoteReconciliationCandidate(
+	context.Context,
+	application.ReconciliationWorkspaceRequest,
+) (application.WorkspaceSnapshot, error) {
+	return application.WorkspaceSnapshot{}, errors.New("unexpected reconciliation promotion")
+}
+
 type serviceRepositoryCatalog struct{}
 
 func (serviceRepositoryCatalog) ValidateRepository(context.Context, string) error { return nil }
@@ -144,9 +152,14 @@ func (serviceRuntimeAttachments) PrepareRuntimeAttachment(
 	request application.RuntimeAttachmentPreparationRequest,
 ) (application.PreparedRuntimeAttachment, error) {
 	return application.PreparedRuntimeAttachment{
-		Kind:       application.RuntimeAttachmentUnixSocket,
-		SourcePath: "/approved/runtime/" + request.TaskHandle + "/attachment.sock",
+		Kind:          application.RuntimeAttachmentUnixSocket,
+		SourcePath:    "/approved/runtime/" + request.TaskHandle + "/attachment.sock",
+		RelayIdentity: strings.Repeat("ab", 32),
 	}, nil
+}
+
+func (serviceRuntimeAttachments) ReleaseRuntimeAttachment(context.Context, string) error {
+	return nil
 }
 
 func (serviceRuntimeAttachments) BindRuntimeAttachment(context.Context, application.RuntimeAttachmentBindingRequest) error {

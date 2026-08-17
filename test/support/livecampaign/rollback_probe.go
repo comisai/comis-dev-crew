@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -26,7 +27,7 @@ func RealRollbackServiceProbe(
 		return errors.New("rollback service probe socket must not exist")
 	}
 	command := exec.CommandContext(ctx, servicePath, "--database", databasePath, "--socket", socketPath)
-	environment, err := protectedCommandEnvironment(nil, false)
+	environment, err := protectedCommandEnvironment(nil, false, false, nil)
 	if err != nil {
 		return errors.New("rollback service probe environment is unavailable")
 	}
@@ -54,13 +55,29 @@ func RealRollbackServiceProbe(
 				output, err := (RealExecutor{}).Run(ctx, Command{
 					Path: cliPath, Args: []string{"--socket", socketPath, "service", "status"},
 				})
-				if err != nil || !strings.Contains(string(output), "healthy") || !strings.Contains(string(output), "complete") {
-					return errors.New("rollback service probe status is not healthy and complete")
+				if err != nil || !rollbackServiceStatusAccepted(output) {
+					return errors.New("rollback service probe status is not healthy in database-only or complete mode")
 				}
 				return nil
 			}
 		}
 	}
+}
+
+// rollbackServiceStatusAccepted reads the rendered SERVICE, HEALTH, COMPLETENESS, and STATE
+// VERSION columns and accepts only a healthy service row in database-only or complete mode.
+func rollbackServiceStatusAccepted(output []byte) bool {
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 4 || fields[0] != "devcrew-service" || fields[1] != "healthy" ||
+			(fields[2] != "partial" && fields[2] != "complete") {
+			continue
+		}
+		if stateVersion, err := strconv.ParseInt(fields[3], 10, 64); err == nil && stateVersion >= 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func stopRollbackProbe(command *exec.Cmd) {

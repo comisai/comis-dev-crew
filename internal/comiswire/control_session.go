@@ -253,17 +253,37 @@ func (session *controlSession) call(ctx context.Context, request any, id Operati
 	}
 	select {
 	case result := <-waiter:
-		if result.err != nil {
-			return result.err
-		}
-		return decodeWireResponse(result.frame, id, response)
+		return resolveControlCall(result, id, response)
 	case <-callContext.Done():
 		session.removePending(id)
-		return callContext.Err()
+		return resolveDeliveredControlCall(waiter, id, response, callContext.Err())
 	case <-session.done:
 		session.removePending(id)
-		return session.failure()
+		return resolveDeliveredControlCall(waiter, id, response, session.failure())
 	}
+}
+
+// resolveDeliveredControlCall prefers a response that was already routed for this operation. A
+// delivered response is a known outcome, so an end observed in the same instant never replaces it.
+func resolveDeliveredControlCall(
+	waiter <-chan controlCallResult,
+	id OperationID,
+	response any,
+	ended error,
+) error {
+	select {
+	case result := <-waiter:
+		return resolveControlCall(result, id, response)
+	default:
+		return ended
+	}
+}
+
+func resolveControlCall(result controlCallResult, id OperationID, response any) error {
+	if result.err != nil {
+		return result.err
+	}
+	return decodeWireResponse(result.frame, id, response)
 }
 
 func (session *controlSession) writeValidated(target PayloadTarget, response any) error {

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -16,14 +15,16 @@ import (
 
 // Mutations owns canonical E0 prepare and bind command construction.
 type Mutations struct {
-	store          MutationStore
-	repositories   RepositoryCatalog
-	workspaces     WorkspacePreparer
-	attachments    RuntimeAttachmentCoordinator
-	taskIDs        TaskIDSource
-	nonces         RegistrationNonceSource
-	preparationTTL time.Duration
-	clock          Clock
+	store              MutationStore
+	repositories       RepositoryCatalog
+	workerProfiles     WorkerProfileValidator
+	validationProfiles ValidationProfileValidator
+	workspaces         WorkspacePreparer
+	attachments        RuntimeAttachmentCoordinator
+	taskIDs            TaskIDSource
+	nonces             RegistrationNonceSource
+	preparationTTL     time.Duration
+	clock              Clock
 }
 
 var registrationNoncePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._~-]{15,255}$`)
@@ -31,15 +32,18 @@ var attachmentTargetNamePattern = regexp.MustCompile(`^attachment-[a-f0-9]{32}\.
 
 // NewMutations creates the sole application mutation coordinator.
 func NewMutations(config MutationConfig) (*Mutations, error) {
-	if config.Store == nil || config.Repositories == nil || config.Workspaces == nil || config.RuntimeAttachments == nil || config.TaskIDs == nil ||
+	if config.Store == nil || config.Repositories == nil || config.WorkerProfiles == nil || config.ValidationProfiles == nil ||
+		config.Workspaces == nil || config.RuntimeAttachments == nil || config.TaskIDs == nil ||
 		config.RegistrationNonces == nil || config.Clock == nil {
-		return nil, errors.New("create mutations: store, repositories, workspaces, runtime attachments, task IDs, registration nonces, and clock are required")
+		return nil, errors.New("create mutations: store, repositories, profile checks, workspaces, runtime attachments, task IDs, registration nonces, and clock are required")
 	}
 	if config.PreparationTTL <= 0 || config.PreparationTTL > 24*time.Hour {
 		return nil, errors.New("create mutations: preparation TTL must be within 24 hours")
 	}
 	return &Mutations{
-		store: config.Store, repositories: config.Repositories, workspaces: config.Workspaces, attachments: config.RuntimeAttachments,
+		store: config.Store, repositories: config.Repositories,
+		workerProfiles: config.WorkerProfiles, validationProfiles: config.ValidationProfiles,
+		workspaces: config.Workspaces, attachments: config.RuntimeAttachments,
 		taskIDs: config.TaskIDs, nonces: config.RegistrationNonces,
 		preparationTTL: config.PreparationTTL, clock: config.Clock,
 	}, nil
@@ -83,6 +87,30 @@ func (mutations *Mutations) PrepareTask(ctx context.Context, command PrepareTask
 	}
 	if err := mutations.repositories.ValidateRepository(ctx, command.RepositoryID); err != nil {
 		return MutationResult{}, &dependencyFailure{message: "repository validation failed", cause: err}
+	}
+	if err := mutations.workerProfiles(command.WorkerProfileID, command.Shape); err != nil {
+		return MutationResult{}, mutationValidationFailure("worker profile is unavailable")
+	}
+	if err := mutations.validationProfiles(command.ValidationProfile, command.Shape); err != nil {
+		return MutationResult{}, mutationValidationFailure("validation profile is unavailable")
+	}
+	intent, err := mutations.store.RecordTaskPreparationIntent(ctx, TaskPreparationIntent{
+		OperationID: command.OperationID, TaskHandle: task.Handle,
+		SubjectDigest: subjectDigest, CreatedAt: now,
+	})
+	if err != nil {
+		return MutationResult{}, &dependencyFailure{message: "task preparation intent failed", cause: err}
+	}
+	if intent.Validate() != nil || intent.OperationID != command.OperationID || intent.SubjectDigest != subjectDigest {
+		return MutationResult{}, &dependencyFailure{message: "task preparation intent differs"}
+	}
+	task.Handle = intent.TaskHandle
+	task.CreatedAt = intent.CreatedAt
+	task.UpdatedAt = intent.CreatedAt
+	now = intent.CreatedAt
+	task, err = task.PinBriefRevision()
+	if err != nil {
+		return MutationResult{}, mutationValidationFailure("task preparation intent is invalid")
 	}
 	workspace, err := mutations.workspaces.PrepareWorkspace(ctx, WorkspacePreparationRequest{
 		OperationID: command.OperationID, TaskHandle: task.Handle,
@@ -159,17 +187,6 @@ func (preparation ManagedRunPreparation) Validate(createdAt time.Time) error {
 		}
 	default:
 		return errors.New("preparation state is invalid")
-	}
-	return nil
-}
-
-// Validate rejects sources that cannot be handed to Comis as one exact
-// owner-controlled Unix-socket capability.
-func (attachment PreparedRuntimeAttachment) Validate() error {
-	if attachment.Kind != RuntimeAttachmentUnixSocket || !filepath.IsAbs(attachment.SourcePath) ||
-		filepath.Clean(attachment.SourcePath) != attachment.SourcePath || filepath.Base(attachment.SourcePath) != "attachment.sock" ||
-		len([]byte(attachment.SourcePath)) > 4096 || strings.ContainsAny(attachment.SourcePath, "\x00\r\n") {
-		return errors.New("prepared runtime attachment is invalid")
 	}
 	return nil
 }
@@ -477,15 +494,3 @@ func mutationCommitFailure(cause error) error {
 	}
 	return failure
 }
-
-type dependencyFailure struct {
-	message string
-	cause   error
-}
-
-func (failure *dependencyFailure) Error() string { return failure.message }
-func (failure *dependencyFailure) Unwrap() error { return failure.cause }
-
-// SafeDependencyMessage returns the bounded application-owned stage without
-// exposing the wrapped adapter error across a transport boundary.
-func (failure *dependencyFailure) SafeDependencyMessage() string { return failure.message }

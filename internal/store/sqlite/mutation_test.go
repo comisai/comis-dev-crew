@@ -169,8 +169,11 @@ func TestMutationStore_DirectReplayAndInvalidMutationsFailClosed(t *testing.T) {
 		Preparation: application.ManagedRunPreparation{
 			ExternalRunRef: "task-direct-0001", RegistrationNonce: "registration-nonce_direct",
 			RequestedWorkspaceRoot: "/approved/workspaces/task-direct-0001",
-			RequestedAttachment:    application.PreparedRuntimeAttachment{Kind: application.RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/task-direct-0001/attachment.sock"},
-			ExpiresAt:              preparedAt.Add(time.Hour), State: application.PreparationOpen,
+			RequestedAttachment: application.PreparedRuntimeAttachment{
+				Kind: application.RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/task-direct-0001/attachment.sock",
+				RelayIdentity: strings.Repeat("ab", 32),
+			},
+			ExpiresAt: preparedAt.Add(time.Hour), State: application.PreparationOpen,
 		},
 		SubjectDigest: strings.Repeat("a", 64), At: preparedAt,
 	}
@@ -342,8 +345,11 @@ func TestMutationStore_RejectsExhaustedVersionAndClosedDatabase(t *testing.T) {
 		Task: storeTask("task-exhausted", 1), OperationID: "op-after-exhaustion",
 		Preparation: application.ManagedRunPreparation{
 			ExternalRunRef: "task-exhausted", RegistrationNonce: "registration-nonce_exhausted",
-			RequestedAttachment: application.PreparedRuntimeAttachment{Kind: application.RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/task-exhausted/attachment.sock"},
-			ExpiresAt:           now.Add(time.Hour), State: application.PreparationOpen,
+			RequestedAttachment: application.PreparedRuntimeAttachment{
+				Kind: application.RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/task-exhausted/attachment.sock",
+				RelayIdentity: strings.Repeat("ab", 32),
+			},
+			ExpiresAt: now.Add(time.Hour), State: application.PreparationOpen,
 		},
 		SubjectDigest: strings.Repeat("a", 64), At: now,
 	}
@@ -484,6 +490,7 @@ func sqliteMutations(t *testing.T, store *Store, ids *sequenceIDs, now time.Time
 	t.Helper()
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: configuredCatalog{},
+		WorkerProfiles: func(string, domain.TaskShape) error { return nil }, ValidationProfiles: func(string, domain.TaskShape) error { return nil },
 		Workspaces:         configuredWorkspacePreparer{root: "/approved/workspaces/task-fixture"},
 		RuntimeAttachments: configuredRuntimeAttachments{},
 		TaskIDs:            ids.next,
@@ -512,9 +519,13 @@ func (configuredRuntimeAttachments) PrepareRuntimeAttachment(
 	request application.RuntimeAttachmentPreparationRequest,
 ) (application.PreparedRuntimeAttachment, error) {
 	return application.PreparedRuntimeAttachment{
-		Kind:       application.RuntimeAttachmentUnixSocket,
-		SourcePath: "/approved/runtime/" + request.TaskHandle + "/attachment.sock",
+		Kind: application.RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/" + request.TaskHandle + "/attachment.sock",
+		RelayIdentity: strings.Repeat("ab", 32),
 	}, nil
+}
+
+func (configuredRuntimeAttachments) ReleaseRuntimeAttachment(context.Context, string) error {
+	return nil
 }
 
 func (configuredRuntimeAttachments) BindRuntimeAttachment(

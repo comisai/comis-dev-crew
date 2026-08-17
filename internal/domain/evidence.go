@@ -23,6 +23,14 @@ const (
 	WorktreeUnknown WorktreeCleanliness = "unknown"
 )
 
+// CandidateUnverifiedReason is a closed task-scoped failure to establish stable Git authority.
+type CandidateUnverifiedReason string
+
+const (
+	CandidateReconciliationMismatch CandidateUnverifiedReason = "reconciliation_mismatch"
+	CandidateValidationDrift        CandidateUnverifiedReason = "validation_drift"
+)
+
 // CheckConclusion is the closed local and forge check outcome vocabulary.
 type CheckConclusion string
 
@@ -74,6 +82,7 @@ type DeliveryEvidenceBundle struct {
 	BaseRevision            string                      `json:"baseRevision"`
 	HeadRevision            string                      `json:"headRevision"`
 	WorktreeCleanliness     WorktreeCleanliness         `json:"worktreeCleanliness"`
+	UnverifiedReason        CandidateUnverifiedReason   `json:"unverifiedReason,omitempty"`
 	ValidationReceipts      []ValidationEvidenceReceipt `json:"validationReceipts"`
 	ForgeEvidence           *ForgeEvidence              `json:"forgeEvidence,omitempty"`
 	ReportArtifact          *ReportArtifactEvidence     `json:"reportArtifact,omitempty"`
@@ -155,15 +164,28 @@ func (sealed *SealedDeliveryEvidence) Bundle() DeliveryEvidenceBundle {
 }
 
 func (bundle DeliveryEvidenceBundle) validate() error {
+	validHead := revisionPattern.MatchString(bundle.HeadRevision) ||
+		(bundle.WorktreeCleanliness == WorktreeUnknown && bundle.HeadRevision == "")
 	if bundle.SchemaVersion != 1 || validateOpaqueID("taskHandle", bundle.TaskHandle) != nil ||
 		validateOpaqueID("repositoryIdentity", bundle.RepositoryIdentity) != nil ||
-		!revisionPattern.MatchString(bundle.BaseRevision) || !revisionPattern.MatchString(bundle.HeadRevision) {
+		!revisionPattern.MatchString(bundle.BaseRevision) || !validHead {
 		return errors.New("seal delivery evidence: bundle identity is invalid")
 	}
 	if bundle.WorktreeCleanliness != WorktreeClean && bundle.WorktreeCleanliness != WorktreeDirty && bundle.WorktreeCleanliness != WorktreeUnknown {
 		return errors.New("seal delivery evidence: worktree posture is invalid")
 	}
-	if len(bundle.ValidationReceipts) == 0 || len(bundle.ValidationReceipts) > 64 {
+	unverified := bundle.UnverifiedReason == CandidateReconciliationMismatch ||
+		bundle.UnverifiedReason == CandidateValidationDrift
+	if bundle.UnverifiedReason != "" && !unverified {
+		return errors.New("seal delivery evidence: unverified reason is invalid")
+	}
+	if unverified && (bundle.WorktreeCleanliness != WorktreeClean || bundle.HeadRevision == bundle.BaseRevision ||
+		len(bundle.ValidationReceipts) != 0 || bundle.ForgeEvidence != nil || bundle.ReportArtifact != nil) {
+		return errors.New("seal delivery evidence: unverified authority is contradictory")
+	}
+	if len(bundle.ValidationReceipts) > 64 ||
+		(len(bundle.ValidationReceipts) == 0 && bundle.WorktreeCleanliness == WorktreeClean &&
+			bundle.HeadRevision != bundle.BaseRevision && !unverified) {
 		return errors.New("seal delivery evidence: validation receipts are invalid")
 	}
 	receipts := make(map[string]struct{}, len(bundle.ValidationReceipts))

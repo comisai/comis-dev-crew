@@ -46,3 +46,19 @@ func (server *RuntimeServer) launchBinding() *RuntimeLaunchConfig {
 	binding := *server.launch
 	return &binding
 }
+
+func runtimeRejected(code string) RuntimeOutcome {
+	return RuntimeOutcome{Version: runtimeProtocolVersion, Error: &RuntimeError{Code: code}}
+}
+
+func validLaunchAcknowledgementResult(
+	result application.MutationResult,
+	operationID string,
+	expected application.LaunchAcknowledgement,
+) bool {
+	return result.Operation.ID == operationID && result.Operation.Status == domain.OperationCompleted &&
+		(result.Task.State == domain.TaskLaunching || result.Task.State == domain.TaskWorking) &&
+		result.Task.Handle == expected.TaskHandle && result.Task.ManagedRunID == expected.ManagedRunID &&
+		result.Task.WorkspaceLeaseID == expected.WorkspaceLeaseID && result.Task.BriefRevision == expected.BriefRevision &&
+		result.Task.BriefRevisionHash == expected.BriefRevisionHash
+}

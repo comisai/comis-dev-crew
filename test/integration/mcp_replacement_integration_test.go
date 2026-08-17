@@ -120,6 +120,8 @@ func startReplacementService(t *testing.T) (string, string) {
 			DatabasePath: filepath.Join(root, "state", "devcrew.db"),
 			SocketPath:   operatorSocket, MCPSocketPath: mcpSocket, ServiceInstanceID: parityServiceID,
 			Repositories:       parityRepositoryCatalog{},
+			WorkerProfiles:     func(string, domain.TaskShape) error { return nil },
+			ValidationProfiles: func(string, domain.TaskShape) error { return nil },
 			Workspaces:         parityWorkspacePreparer{root: filepath.Join(root, "worktrees", "task-replacement-0001")},
 			RuntimeAttachments: integrationRuntimeAttachments{},
 			TaskIDs:            func(string) (string, error) { return "task-replacement-0001", nil },

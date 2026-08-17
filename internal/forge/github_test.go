@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -42,7 +43,7 @@ func TestGitHubAdapter_UsesSeparateAuthoritiesAndRereadsExactPullRequestTruth(t 
 		case "GET /repos/comisai/fixture/pulls/17":
 			_, _ = response.Write([]byte(`{"number":17,"state":"open","html_url":"https://example.com/comisai/fixture/pull/17","head":{"sha":"` + head + `","ref":"devcrew/task-fixture"},"base":{"ref":"main"}}`))
 		case "GET /repos/comisai/fixture/commits/" + head + "/check-runs":
-			_, _ = response.Write([]byte(`{"check_runs":[{"name":"ci/unit","status":"completed","conclusion":"success"}]}`))
+			_, _ = response.Write([]byte(`{"total_count":1,"check_runs":[{"id":17,"name":"ci/unit","status":"completed","conclusion":"success","started_at":"2026-08-14T19:00:00Z"}]}`))
 		default:
 			http.NotFound(response, request)
 		}
@@ -85,7 +86,8 @@ func TestGitHubAdapter_UsesSeparateAuthoritiesAndRereadsExactPullRequestTruth(t 
 		"GET /repos/comisai/fixture/pulls?head=comisai%3Adevcrew%2Ftask-fixture&state=open",
 		"POST /repos/comisai/fixture/pulls",
 		"GET /repos/comisai/fixture/pulls/17",
-		"GET /repos/comisai/fixture/commits/" + head + "/check-runs",
+		"GET /repos/comisai/fixture/commits/" + head + "/check-runs?filter=all&page=1&per_page=100",
+		"GET /repos/comisai/fixture/commits/" + head + "/check-runs?filter=all&page=1&per_page=100",
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -105,7 +107,7 @@ func TestGitHubAdapter_VerifiesRecordedPullRequestWithReadAuthorityOnly(t *testi
 		case "/repos/comisai/fixture/pulls/23":
 			_, _ = response.Write([]byte(`{"number":23,"state":"open","html_url":"https://example.com/comisai/fixture/pull/23","head":{"sha":"` + head + `","ref":"devcrew/task-recorded"},"base":{"ref":"main"}}`))
 		case "/repos/comisai/fixture/commits/" + head + "/check-runs":
-			_, _ = response.Write([]byte(`{"check_runs":[{"name":"ci/unit","status":"completed","conclusion":"success"}]}`))
+			_, _ = response.Write([]byte(`{"total_count":1,"check_runs":[{"id":23,"name":"ci/unit","status":"completed","conclusion":"success","started_at":"2026-08-14T19:00:00Z"}]}`))
 		default:
 			http.NotFound(response, request)
 		}
@@ -148,6 +150,31 @@ func TestGitHubAdapter_VerifiesRecordedPullRequestWithReadAuthorityOnly(t *testi
 		Branch: "devcrew/task-recorded", HeadRevision: head, RequiredChecks: []string{"ci/unit"},
 	}); err == nil {
 		t.Fatal("VerifyPullRequestDelivery(different repository) error = nil")
+	}
+}
+
+func TestGitHubAdapter_ClassifiesClosedPullRequestAsStaleDeliveryTruth(t *testing.T) {
+	head := strings.Repeat("e", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path != "/repos/comisai/fixture/pulls/23" {
+			http.NotFound(response, request)
+			return
+		}
+		_, _ = response.Write([]byte(`{"number":23,"state":"closed","html_url":"https://example.com/comisai/fixture/pull/23","head":{"sha":"` + head + `","ref":"devcrew/task-recorded"},"base":{"ref":"main"}}`))
+	}))
+	defer server.Close()
+	configuration := validGitHubConfig(server)
+	adapter, err := NewGitHubAdapter(configuration)
+	if err != nil {
+		t.Fatalf("NewGitHubAdapter() error = %v", err)
+	}
+	_, err = adapter.VerifyPullRequestDelivery(context.Background(), application.PullRequestDeliveryVerification{
+		RepositoryID: "fixture-repository", PullRequestID: "github-pr-23",
+		Branch: "devcrew/task-recorded", HeadRevision: head, RequiredChecks: []string{"ci/unit"},
+	})
+	if !errors.Is(err, application.ErrCleanupStaleForgeTruth) {
+		t.Fatalf("VerifyPullRequestDelivery(closed pull request) error = %v, want stale forge truth", err)
 	}
 }
 
@@ -332,6 +359,263 @@ func TestGitHubCheckConclusion_MapsEveryExternalPostureFailClosed(t *testing.T) 
 		if got := githubCheckConclusion(test.status, test.conclusion); got != test.want {
 			t.Fatalf("githubCheckConclusion(%q, %v) = %q, want %q", test.status, test.conclusion, got, test.want)
 		}
+	}
+}
+
+func TestGitHubAdapter_SelectsNewestCheckRunForRepeatedName(t *testing.T) {
+	head := strings.Repeat("f", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path != "/repos/comisai/fixture/commits/"+head+"/check-runs" {
+			http.NotFound(response, request)
+			return
+		}
+		_, _ = response.Write([]byte(`{"total_count":2,"check_runs":[` +
+			`{"id":12,"name":"ci/unit","status":"in_progress","conclusion":null,"started_at":"2026-08-14T20:05:00Z"},` +
+			`{"id":11,"name":"ci/unit","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"}` +
+			`]}`))
+	}))
+	defer server.Close()
+	configuration := validGitHubConfig(server)
+	adapter, err := NewGitHubAdapter(configuration)
+	if err != nil {
+		t.Fatalf("NewGitHubAdapter() error = %v", err)
+	}
+	checks, err := adapter.readChecks(context.Background(), "read-token", head, []string{"ci/unit"})
+	if err != nil {
+		t.Fatalf("readChecks(repeated name) error = %v", err)
+	}
+	want := []domain.ForgeCheckEvidence{{Name: "ci/unit", Conclusion: domain.CheckPending}}
+	if !reflect.DeepEqual(checks, want) {
+		t.Fatalf("readChecks(repeated name) = %#v, want %#v", checks, want)
+	}
+}
+
+func TestGitHubAdapter_ExhaustsCheckRunPaginationBeforeSelectingRepeatedName(t *testing.T) {
+	head := strings.Repeat("a", 40)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path != "/repos/comisai/fixture/commits/"+head+"/check-runs" {
+			http.NotFound(response, request)
+			return
+		}
+		if request.URL.Query().Get("filter") != "all" || request.URL.Query().Get("per_page") != "100" {
+			t.Errorf("check-run query = %q", request.URL.RawQuery)
+		}
+		requests++
+		switch request.URL.Query().Get("page") {
+		case "1":
+			runs := []map[string]any{{
+				"id": 1, "name": "ci/unit", "status": "completed", "conclusion": "success",
+				"started_at": "2026-08-14T20:00:00Z",
+			}}
+			for index := 0; index < 99; index++ {
+				runs = append(runs, map[string]any{
+					"id": 1000 + index, "name": fmt.Sprintf("ci/extra-%d", index),
+					"status": "completed", "conclusion": "success", "started_at": "2026-08-14T20:00:00Z",
+				})
+			}
+			_ = json.NewEncoder(response).Encode(map[string]any{"total_count": 101, "check_runs": runs})
+		case "2":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"total_count": 101,
+				"check_runs": []map[string]any{{
+					"id": 2, "name": "ci/unit", "status": "queued", "conclusion": nil,
+					"started_at": "2026-08-14T20:05:00Z",
+				}},
+			})
+		default:
+			http.Error(response, "unexpected page", http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	adapter, err := NewGitHubAdapter(validGitHubConfig(server))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks, err := adapter.readChecks(context.Background(), "read-token", head, []string{"ci/unit"})
+	if err != nil {
+		t.Fatalf("readChecks(paginated repeated name) error = %v", err)
+	}
+	want := []domain.ForgeCheckEvidence{{Name: "ci/unit", Conclusion: domain.CheckPending}}
+	if !reflect.DeepEqual(checks, want) || requests != 4 {
+		t.Fatalf("readChecks(paginated repeated name) = %#v after %d requests, want %#v after 4", checks, requests, want)
+	}
+}
+
+func TestGitHubAdapter_TreatsMissingOrMalformedCheckRecencyConservatively(t *testing.T) {
+	head := strings.Repeat("e", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path != "/repos/comisai/fixture/commits/"+head+"/check-runs" {
+			http.NotFound(response, request)
+			return
+		}
+		_, _ = response.Write([]byte(`{"total_count":8,"check_runs":[` +
+			`{"id":13,"name":"ci/unit","status":"queued","conclusion":null,"started_at":null},` +
+			`{"id":12,"name":"ci/unit","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"},` +
+			`{"id":14,"name":"ci/lint","status":"completed","conclusion":"success","started_at":null},` +
+			`{"id":15,"name":"ci/security","status":"completed","conclusion":"success","started_at":"invalid"},` +
+			`{"id":16,"name":"ci/number","status":"completed","conclusion":"success","started_at":42},` +
+			`{"id":17,"name":"ci/boolean","status":"completed","conclusion":"success","started_at":false},` +
+			`{"id":18,"name":"ci/object","status":"completed","conclusion":"success","started_at":{}},` +
+			`{"id":19,"name":"ci/array","status":"completed","conclusion":"success","started_at":[]}` +
+			`]}`))
+	}))
+	defer server.Close()
+	adapter, err := NewGitHubAdapter(validGitHubConfig(server))
+	if err != nil {
+		t.Fatalf("NewGitHubAdapter() error = %v", err)
+	}
+	checks, err := adapter.readChecks(context.Background(), "read-token", head, []string{
+		"ci/unit", "ci/lint", "ci/security", "ci/number", "ci/boolean", "ci/object", "ci/array",
+	})
+	if err != nil {
+		t.Fatalf("readChecks(nullable recency) error = %v", err)
+	}
+	want := []domain.ForgeCheckEvidence{
+		{Name: "ci/unit", Conclusion: domain.CheckUnknown},
+		{Name: "ci/lint", Conclusion: domain.CheckUnknown},
+		{Name: "ci/security", Conclusion: domain.CheckUnknown},
+		{Name: "ci/number", Conclusion: domain.CheckUnknown},
+		{Name: "ci/boolean", Conclusion: domain.CheckUnknown},
+		{Name: "ci/object", Conclusion: domain.CheckUnknown},
+		{Name: "ci/array", Conclusion: domain.CheckUnknown},
+	}
+	if !reflect.DeepEqual(checks, want) {
+		t.Fatalf("readChecks(nullable recency) = %#v, want %#v", checks, want)
+	}
+}
+
+func TestGitHubAdapter_TreatsMalformedCompetingCheckIDsConservatively(t *testing.T) {
+	head := strings.Repeat("d", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path != "/repos/comisai/fixture/commits/"+head+"/check-runs" {
+			http.NotFound(response, request)
+			return
+		}
+		_, _ = response.Write([]byte(`{"total_count":8,"check_runs":[` +
+			`{"id":21,"name":"ci/missing","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"},` +
+			`{"name":"ci/missing","status":"queued","conclusion":null,"started_at":"2026-08-14T20:05:00Z"},` +
+			`{"id":22,"name":"ci/null","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"},` +
+			`{"id":null,"name":"ci/null","status":"queued","conclusion":null,"started_at":"2026-08-14T20:05:00Z"},` +
+			`{"id":23,"name":"ci/string","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"},` +
+			`{"id":"24","name":"ci/string","status":"queued","conclusion":null,"started_at":"2026-08-14T20:05:00Z"},` +
+			`{"id":25,"name":"ci/object","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"},` +
+			`{"id":{},"name":"ci/object","status":"queued","conclusion":null,"started_at":"2026-08-14T20:05:00Z"}` +
+			`]}`))
+	}))
+	defer server.Close()
+	adapter, err := NewGitHubAdapter(validGitHubConfig(server))
+	if err != nil {
+		t.Fatalf("NewGitHubAdapter() error = %v", err)
+	}
+	checks, err := adapter.readChecks(context.Background(), "read-token", head, []string{
+		"ci/missing", "ci/null", "ci/string", "ci/object",
+	})
+	if err != nil {
+		t.Fatalf("readChecks(malformed competing IDs) error = %v", err)
+	}
+	want := []domain.ForgeCheckEvidence{
+		{Name: "ci/missing", Conclusion: domain.CheckUnknown},
+		{Name: "ci/null", Conclusion: domain.CheckUnknown},
+		{Name: "ci/string", Conclusion: domain.CheckUnknown},
+		{Name: "ci/object", Conclusion: domain.CheckUnknown},
+	}
+	if !reflect.DeepEqual(checks, want) {
+		t.Fatalf("readChecks(malformed competing IDs) = %#v, want %#v", checks, want)
+	}
+}
+
+func TestGitHubAdapter_TreatsMalformedCheckStateConservatively(t *testing.T) {
+	head := strings.Repeat("c", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path != "/repos/comisai/fixture/commits/"+head+"/check-runs" {
+			http.NotFound(response, request)
+			return
+		}
+		_, _ = response.Write([]byte(`{"total_count":4,"check_runs":[` +
+			`{"id":31,"name":"ci/status","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"},` +
+			`{"id":32,"name":"ci/status","status":42,"conclusion":null,"started_at":"2026-08-14T20:05:00Z"},` +
+			`{"id":33,"name":"ci/conclusion","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"},` +
+			`{"id":34,"name":"ci/conclusion","status":"completed","conclusion":{},"started_at":"2026-08-14T20:05:00Z"}` +
+			`]}`))
+	}))
+	defer server.Close()
+	adapter, err := NewGitHubAdapter(validGitHubConfig(server))
+	if err != nil {
+		t.Fatalf("NewGitHubAdapter() error = %v", err)
+	}
+	checks, err := adapter.readChecks(context.Background(), "read-token", head, []string{"ci/status", "ci/conclusion"})
+	if err != nil {
+		t.Fatalf("readChecks(malformed state) error = %v", err)
+	}
+	want := []domain.ForgeCheckEvidence{
+		{Name: "ci/status", Conclusion: domain.CheckUnknown},
+		{Name: "ci/conclusion", Conclusion: domain.CheckUnknown},
+	}
+	if !reflect.DeepEqual(checks, want) {
+		t.Fatalf("readChecks(malformed state) = %#v, want %#v", checks, want)
+	}
+}
+
+func TestGitHubAdapter_TreatsMalformedCheckNameAsUnknownTruth(t *testing.T) {
+	head := strings.Repeat("9", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path != "/repos/comisai/fixture/commits/"+head+"/check-runs" {
+			http.NotFound(response, request)
+			return
+		}
+		_, _ = response.Write([]byte(`{"total_count":2,"check_runs":[` +
+			`{"id":41,"name":"ci/unit","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"},` +
+			`{"id":42,"name":42,"status":"queued","conclusion":null,"started_at":"2026-08-14T20:05:00Z"}` +
+			`]}`))
+	}))
+	defer server.Close()
+	adapter, err := NewGitHubAdapter(validGitHubConfig(server))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks, err := adapter.readChecks(context.Background(), "read-token", head, []string{"ci/unit"})
+	if err != nil {
+		t.Fatalf("readChecks(malformed name) error = %v", err)
+	}
+	want := []domain.ForgeCheckEvidence{{Name: "ci/unit", Conclusion: domain.CheckUnknown}}
+	if !reflect.DeepEqual(checks, want) {
+		t.Fatalf("readChecks(malformed name) = %#v, want %#v", checks, want)
+	}
+}
+
+func TestGitHubAdapter_TreatsDuplicateGlobalCheckIdentityAsUnknownTruth(t *testing.T) {
+	head := strings.Repeat("8", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path != "/repos/comisai/fixture/commits/"+head+"/check-runs" {
+			http.NotFound(response, request)
+			return
+		}
+		_, _ = response.Write([]byte(`{"total_count":3,"check_runs":[` +
+			`{"id":51,"name":"ci/unit","status":"completed","conclusion":"success","started_at":"2026-08-14T20:00:00Z"},` +
+			`{"id":52,"name":"ci/unrelated-a","status":"completed","conclusion":"success","started_at":"2026-08-14T20:01:00Z"},` +
+			`{"id":52,"name":"ci/unrelated-b","status":"completed","conclusion":"success","started_at":"2026-08-14T20:02:00Z"}` +
+			`]}`))
+	}))
+	defer server.Close()
+	adapter, err := NewGitHubAdapter(validGitHubConfig(server))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks, err := adapter.readChecks(context.Background(), "read-token", head, []string{"ci/unit"})
+	if err != nil {
+		t.Fatalf("readChecks(duplicate global identity) error = %v", err)
+	}
+	want := []domain.ForgeCheckEvidence{{Name: "ci/unit", Conclusion: domain.CheckUnknown}}
+	if !reflect.DeepEqual(checks, want) {
+		t.Fatalf("readChecks(duplicate global identity) = %#v, want %#v", checks, want)
 	}
 }
 

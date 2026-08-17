@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -149,9 +150,32 @@ func TestGitMachineRunner_HandlesByteResultsAndPredicateExitCodes(t *testing.T) 
 	}
 }
 
+func TestGitMachineRunner_ClassifiesCommandUnavailableExitsAsInfrastructure(t *testing.T) {
+	root := internalCanonicalTempDir(t)
+	for _, exitCode := range []int{126, 127} {
+		t.Run(strconv.Itoa(exitCode), func(t *testing.T) {
+			executable := filepath.Join(root, "git-exit-"+strconv.Itoa(exitCode))
+			if err := os.WriteFile(executable, []byte("#!/bin/sh\nexit "+strconv.Itoa(exitCode)+"\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := executeGit(context.Background(), executable, "--version"); !errors.Is(err, errGitInfrastructure) {
+				t.Fatalf("executeGit(exit %d) error = %v", exitCode, err)
+			}
+		})
+	}
+}
+
 func TestWorktreeGitQueries_RefuseUnavailableInventory(t *testing.T) {
 	registry := &Registry{gitExecutable: "/usr/bin/false"}
 	repository := Repository{PrimaryCheckout: "/unavailable"}
+	if exists, err := registry.branchExists(context.Background(), repository, "devcrew/missing"); err != nil || exists {
+		t.Fatalf("branchExists(missing) = %t, %v", exists, err)
+	}
+	registry.gitExecutable = "/bin/sh"
+	if _, err := registry.branchExists(context.Background(), repository, "devcrew/task"); err == nil {
+		t.Fatal("branchExists(failed query) error = nil")
+	}
+	registry.gitExecutable = "/usr/bin/false"
 	if _, err := registry.worktreeEntries(context.Background(), repository); err == nil {
 		t.Fatal("worktreeEntries(unavailable) error = nil")
 	}

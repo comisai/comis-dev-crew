@@ -133,6 +133,16 @@ func TestManifestRequiresExactPreviousDevCrewReleaseCoordinate(t *testing.T) {
 	}
 }
 
+func TestManifestAcceptsOperationIdentitiesDeferredUntilTelegramMutationCompletes(t *testing.T) {
+	manifest := validManifest()
+	for index := range manifest.Operations {
+		manifest.Operations[index].OperationID = ""
+	}
+	if _, err := LoadManifest(writeManifest(t, manifest, "-deferred-operations")); err != nil {
+		t.Fatalf("LoadManifest(deferred operation identities) error = %v", err)
+	}
+}
+
 func TestManifestRequiresWorkerPinsForBothTaskProfiles(t *testing.T) {
 	manifest := validManifest()
 	manifest.Workers[1].ProfileID = manifest.Workers[0].ProfileID

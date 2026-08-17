@@ -1,0 +1,520 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
+)
+
+func TestRuntimeAttachmentCoordinator_DoesNotRestoreDurablyReleasedAttachment(t *testing.T) {
+	for _, stage := range []application.TaskCleanupStage{
+		application.CleanupHostReleased,
+		application.CleanupRemovalAuthorized,
+		application.CleanupCompleted,
+	} {
+		t.Run(string(stage), func(t *testing.T) {
+			root := shortTempDir(t)
+			runtimeRoot := filepath.Join(root, "runtime")
+			now := time.Date(2026, time.August, 16, 12, 0, 0, 0, time.UTC)
+			task := runtimeAttachmentCleanupHeldTask(t, now, "task-runtime-cleanup-recovery")
+			store := &runtimeAttachmentRecoveryStore{
+				tasks: []domain.Task{task}, cleanupFound: true,
+				cleanupRecord: application.TaskCleanupRecord{TaskHandle: task.Handle, Stage: stage},
+			}
+			coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+				RuntimeRoot: runtimeRoot, Store: store, Clock: func() time.Time { return now },
+				NewCredential:           func() (string, error) { return "unused-cleanup-credential-0123456789", nil },
+				NewAttentionOperationID: runtimeAttentionOperationID,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			taskRoot := filepath.Join(runtimeRoot, task.Handle)
+			if err := os.Mkdir(taskRoot, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			socketPath := filepath.Join(taskRoot, "attachment.sock")
+			listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			listener.SetUnlinkOnClose(false)
+			if err := os.Chmod(socketPath, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			identity, err := runtimeAttachmentPathIdentity(socketPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := coordinator.persistRuntimeAttachmentIdentity(task.Handle, identity); err != nil {
+				t.Fatal(err)
+			}
+			if err := listener.Close(); err != nil {
+				t.Fatal(err)
+			}
+			servers, err := coordinator.recoverRuntimeAttachments(context.Background())
+			if err != nil || len(servers) != 0 {
+				t.Fatalf("recoverRuntimeAttachments(%s) = %d servers, %v", stage, len(servers), err)
+			}
+			if store.cleanupReads != 1 || store.preparationReads != 0 || len(coordinator.entries) != 0 {
+				t.Fatalf("released recovery reads: cleanup=%d preparation=%d entries=%d",
+					store.cleanupReads, store.preparationReads, len(coordinator.entries))
+			}
+			if _, err := os.Lstat(taskRoot); !os.IsNotExist(err) {
+				t.Fatalf("released task runtime root error = %v, want not exist", err)
+			}
+		})
+	}
+}
+
+func TestRuntimeAttachmentCoordinator_PreservesUnprovenCleanedTaskDirectory(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	now := time.Date(2026, time.August, 10, 16, 45, 0, 0, time.UTC)
+	task := domain.Task{
+		SchemaVersion: 1, Handle: "task-runtime-cleaned-0001", State: domain.TaskCleaned,
+		ServiceInstanceID: "service-instance-runtime-cleaned",
+		ManagedRunID:      "managed-run.runtime-cleaned", WorkspaceLeaseID: "workspace-lease.runtime-cleaned",
+		Shape: domain.ShapeScout, RepositoryID: "product-api", BaseRevision: strings.Repeat("c", 40),
+		BriefRevision: 1, AcceptanceCriteria: []string{"Retain no reporter after cleanup."},
+		ValidationProfile: "go-default", DeliveryMode: domain.DeliveryReport,
+		WorkerProfileID: "codex-reviewed", StateVersion: 2, CreatedAt: now, UpdatedAt: now,
+	}
+	task, err := task.PinBriefRevision()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanedRuntimeRoot := filepath.Join(runtimeRoot, task.Handle)
+	if err := os.MkdirAll(cleanedRuntimeRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store := &runtimeAttachmentRecoveryStore{tasks: []domain.Task{task}}
+	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+		RuntimeRoot: runtimeRoot, Store: store, Clock: func() time.Time { return now },
+		NewCredential:           func() (string, error) { return "unused-cleaned-credential-0123456789", nil },
+		NewAttentionOperationID: runtimeAttentionOperationID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	servers, err := coordinator.recoverRuntimeAttachments(context.Background())
+	if err != nil || len(servers) != 0 {
+		t.Fatalf("recoverRuntimeAttachments(cleaned) = %d servers, %v", len(servers), err)
+	}
+	if len(store.taskRefusals) != 1 || store.taskRefusals[0].TaskHandle != task.Handle {
+		t.Fatalf("task refusals = %#v", store.taskRefusals)
+	}
+	if store.preparationReads != 0 {
+		t.Fatalf("cleaned task preparation reads = %d, want 0", store.preparationReads)
+	}
+	if info, err := os.Lstat(cleanedRuntimeRoot); err != nil || !info.IsDir() {
+		t.Fatalf("unproven cleaned task runtime root was not preserved: %#v, %v", info, err)
+	}
+}
+
+func TestRuntimeAttachmentCoordinator_IsolatesMalformedTaskRecord(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.August, 17, 15, 0, 0, 0, time.UTC)
+	affected := runtimeAttachmentRecoverableTask(t, now, "task-runtime-malformed-record")
+	affected.State = domain.TaskCleaned
+	affected.StateVersion++
+	unaffected := runtimeAttachmentRecoverableTask(t, now, "task-runtime-record-unaffected")
+	store := &runtimeAttachmentRecoveryStore{
+		tasks: []domain.Task{affected, unaffected},
+		preparations: map[string]application.ManagedRunPreparation{
+			unaffected.Handle: {
+				RequestedWorkspaceRoot: workspace,
+				RequestedAttachment: application.PreparedRuntimeAttachment{
+					Kind:          application.RuntimeAttachmentUnixSocket,
+					SourcePath:    filepath.Join(runtimeRoot, unaffected.Handle, "attachment.sock"),
+					RelayIdentity: runtimeTransitionRelayIdentity(),
+				},
+			},
+		},
+	}
+	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, store, now)
+	affectedRoot := filepath.Join(runtimeRoot, affected.Handle)
+	if err := os.Mkdir(affectedRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	recordName, err := runtimeAttachmentIdentityName(affected.Handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordPath := filepath.Join(runtimeRoot, recordName)
+	if err := os.WriteFile(recordPath, []byte("malformed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	servers, err := coordinator.recoverRuntimeAttachments(context.Background())
+	if err != nil || len(servers) != 1 {
+		t.Fatalf("recoverRuntimeAttachments(malformed record) = %d, %v", len(servers), err)
+	}
+	if len(store.taskRefusals) != 1 || store.taskRefusals[0].TaskHandle != affected.Handle {
+		t.Fatalf("task refusals = %#v", store.taskRefusals)
+	}
+	if contents, err := os.ReadFile(recordPath); err != nil || string(contents) != "malformed\n" {
+		t.Fatalf("malformed record was not preserved = %q, %v", contents, err)
+	}
+	if info, err := os.Lstat(affectedRoot); err != nil || !info.IsDir() {
+		t.Fatalf("affected runtime directory = %#v, %v", info, err)
+	}
+	if info, err := os.Lstat(filepath.Join(runtimeRoot, unaffected.Handle, "attachment.sock")); err != nil || info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("unaffected socket = %#v, %v", info, err)
+	}
+	if err := servers[0].Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadRuntimeAttachmentIdentityRecordKeepsIOFailureInfrastructureScoped(t *testing.T) {
+	root := shortTempDir(t)
+	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+		RuntimeRoot: filepath.Join(root, "runtime"), Store: &runtimeAttachmentRecoveryStore{},
+		Clock:                   func() time.Time { return time.Date(2026, time.August, 17, 15, 5, 0, 0, time.UTC) },
+		NewCredential:           func() (string, error) { return "unused-record-io-credential-0123456789", nil },
+		NewAttentionOperationID: runtimeAttentionOperationID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor, err := coordinator.pinRuntimeRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := closeRuntimeRootDescriptor(descriptor); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err = readRuntimeAttachmentIdentityRecord(descriptor, "task-runtime-record-io")
+	if err == nil || errors.Is(err, errRuntimeAttachmentOwnershipUnproven) {
+		t.Fatalf("readRuntimeAttachmentIdentityRecord(closed root) error = %v", err)
+	}
+}
+
+func TestRuntimeAttachmentCoordinator_PreservesReplacementSocketAfterReleaseRestart(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	now := time.Date(2026, time.August, 16, 12, 20, 0, 0, time.UTC)
+	task := runtimeAttachmentCleanupHeldTask(t, now, "task-runtime-cleanup-replaced")
+	store := &runtimeAttachmentRecoveryStore{
+		tasks: []domain.Task{task}, cleanupFound: true,
+		cleanupRecord: application.TaskCleanupRecord{TaskHandle: task.Handle, Stage: application.CleanupHostReleased},
+	}
+	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+		RuntimeRoot: runtimeRoot, Store: store, Clock: func() time.Time { return now },
+		NewCredential:           func() (string, error) { return "unused-replaced-credential-0123456789", nil },
+		NewAttentionOperationID: runtimeAttentionOperationID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskRoot := filepath.Join(runtimeRoot, task.Handle)
+	if err := os.Mkdir(taskRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	socketPath := filepath.Join(taskRoot, "attachment.sock")
+	original, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original.SetUnlinkOnClose(false)
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalIdentity, err := runtimeAttachmentPathIdentity(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinator.persistRuntimeAttachmentIdentity(task.Handle, originalIdentity); err != nil {
+		t.Fatal(err)
+	}
+	if err := original.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(socketPath); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement.SetUnlinkOnClose(false)
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := replacement.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err != nil || len(servers) != 0 {
+		t.Fatalf("recoverRuntimeAttachments(replacement) = %d servers, %v", len(servers), err)
+	}
+	if len(store.taskRefusals) != 1 || store.taskRefusals[0].TaskHandle != task.Handle {
+		t.Fatalf("task refusals = %#v", store.taskRefusals)
+	}
+	if info, err := os.Lstat(socketPath); err != nil || info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("replacement socket was not preserved: %#v, %v", info, err)
+	}
+}
+
+func TestRuntimeAttachmentCoordinator_PreservesSocketWithoutPersistedIdentity(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	now := time.Date(2026, time.August, 16, 12, 25, 0, 0, time.UTC)
+	task := runtimeAttachmentCleanupHeldTask(t, now, "task-runtime-cleanup-unproven")
+	store := &runtimeAttachmentRecoveryStore{
+		tasks: []domain.Task{task}, cleanupFound: true,
+		cleanupRecord: application.TaskCleanupRecord{TaskHandle: task.Handle, Stage: application.CleanupHostReleased},
+	}
+	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+		RuntimeRoot: runtimeRoot, Store: store, Clock: func() time.Time { return now },
+		NewCredential:           func() (string, error) { return "unused-unproven-credential-0123456789", nil },
+		NewAttentionOperationID: runtimeAttentionOperationID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskRoot := filepath.Join(runtimeRoot, task.Handle)
+	if err := os.Mkdir(taskRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	socketPath := filepath.Join(taskRoot, "attachment.sock")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.SetUnlinkOnClose(false)
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err != nil || len(servers) != 0 {
+		t.Fatalf("recoverRuntimeAttachments(unproven socket) = %d servers, %v", len(servers), err)
+	}
+	if len(store.taskRefusals) != 1 || store.taskRefusals[0].TaskHandle != task.Handle {
+		t.Fatalf("task refusals = %#v", store.taskRefusals)
+	}
+	if info, err := os.Lstat(socketPath); err != nil || info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("unproven socket was not preserved: %#v, %v", info, err)
+	}
+}
+
+func TestRuntimeAttachmentCoordinator_PreservesReplacementTaskDirectoryAfterReleaseRestart(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	now := time.Date(2026, time.August, 16, 12, 27, 0, 0, time.UTC)
+	task := runtimeAttachmentCleanupHeldTask(t, now, "task-runtime-cleanup-directory-replaced")
+	store := &runtimeAttachmentRecoveryStore{
+		tasks: []domain.Task{task}, cleanupFound: true,
+		cleanupRecord: application.TaskCleanupRecord{TaskHandle: task.Handle, Stage: application.CleanupHostReleased},
+	}
+	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+		RuntimeRoot: runtimeRoot, Store: store, Clock: func() time.Time { return now },
+		NewCredential:           func() (string, error) { return "unused-directory-credential-0123456789", nil },
+		NewAttentionOperationID: runtimeAttentionOperationID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskRoot := filepath.Join(runtimeRoot, task.Handle)
+	if err := os.Mkdir(taskRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	socketPath := filepath.Join(taskRoot, "attachment.sock")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.SetUnlinkOnClose(false)
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := runtimeAttachmentPathIdentity(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinator.persistRuntimeAttachmentIdentity(task.Handle, identity); err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(taskRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(taskRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err != nil || len(servers) != 0 {
+		t.Fatalf("recoverRuntimeAttachments(replacement directory) = %d servers, %v", len(servers), err)
+	}
+	if len(store.taskRefusals) != 1 || store.taskRefusals[0].TaskHandle != task.Handle {
+		t.Fatalf("task refusals = %#v", store.taskRefusals)
+	}
+	if info, err := os.Lstat(taskRoot); err != nil || !info.IsDir() {
+		t.Fatalf("replacement task directory was not preserved: %#v, %v", info, err)
+	}
+}
+
+func TestRuntimeAttachmentCoordinator_PreservesUnprovenEmptyTaskDirectory(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	now := time.Date(2026, time.August, 16, 12, 28, 0, 0, time.UTC)
+	task := runtimeAttachmentCleanupHeldTask(t, now, "task-runtime-cleanup-directory-unproven")
+	store := &runtimeAttachmentRecoveryStore{
+		tasks: []domain.Task{task}, cleanupFound: true,
+		cleanupRecord: application.TaskCleanupRecord{TaskHandle: task.Handle, Stage: application.CleanupHostReleased},
+	}
+	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+		RuntimeRoot: runtimeRoot, Store: store, Clock: func() time.Time { return now },
+		NewCredential:           func() (string, error) { return "unused-empty-credential-0123456789", nil },
+		NewAttentionOperationID: runtimeAttentionOperationID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskRoot := filepath.Join(runtimeRoot, task.Handle)
+	if err := os.Mkdir(taskRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err != nil || len(servers) != 0 {
+		t.Fatalf("recoverRuntimeAttachments(unproven directory) = %d servers, %v", len(servers), err)
+	}
+	if len(store.taskRefusals) != 1 || store.taskRefusals[0].TaskHandle != task.Handle {
+		t.Fatalf("task refusals = %#v", store.taskRefusals)
+	}
+	if info, err := os.Lstat(taskRoot); err != nil || !info.IsDir() {
+		t.Fatalf("unproven task directory was not preserved: %#v, %v", info, err)
+	}
+}
+
+func TestRuntimeAttachmentCoordinator_PreservesDirectoryWithDifferentGenerationIdentity(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	now := time.Date(2026, time.August, 16, 12, 29, 0, 0, time.UTC)
+	task := runtimeAttachmentCleanupHeldTask(t, now, "task-runtime-cleanup-directory-identity")
+	store := &runtimeAttachmentRecoveryStore{
+		tasks: []domain.Task{task}, cleanupFound: true,
+		cleanupRecord: application.TaskCleanupRecord{TaskHandle: task.Handle, Stage: application.CleanupHostReleased},
+	}
+	coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+		RuntimeRoot: runtimeRoot, Store: store, Clock: func() time.Time { return now },
+		NewCredential:           func() (string, error) { return "unused-identity-credential-0123456789", nil },
+		NewAttentionOperationID: runtimeAttentionOperationID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskRoot := filepath.Join(runtimeRoot, task.Handle)
+	if err := os.Mkdir(taskRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	socketPath := filepath.Join(taskRoot, "attachment.sock")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.SetUnlinkOnClose(false)
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := runtimeAttachmentPathIdentity(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinator.persistRuntimeAttachmentIdentity(task.Handle, identity); err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rootDescriptor, err := coordinator.pinRuntimeRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, _, found, err := readRuntimeAttachmentIdentityRecord(rootDescriptor, task.Handle)
+	if closeErr := closeRuntimeRootDescriptor(rootDescriptor); err != nil || closeErr != nil || !found {
+		t.Fatalf("read identity record = %#v, found=%t, errors=%v, %v", record, found, err, closeErr)
+	}
+	record.Generation.Inode++
+	name, err := runtimeAttachmentIdentityName(task.Handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeRoot, name), []byte(formatRuntimeAttachmentIdentityRecord(record)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err != nil || len(servers) != 0 {
+		t.Fatalf("recoverRuntimeAttachments(different generation) = %d servers, %v", len(servers), err)
+	}
+	if len(store.taskRefusals) != 1 || store.taskRefusals[0].TaskHandle != task.Handle {
+		t.Fatalf("task refusals = %#v", store.taskRefusals)
+	}
+	if info, err := os.Lstat(taskRoot); err != nil || !info.IsDir() {
+		t.Fatalf("different generation task directory was not preserved: %#v, %v", info, err)
+	}
+}
+
+func TestRuntimeAttachmentCoordinator_RefusesUnknownHeldCleanupPosture(t *testing.T) {
+	root := shortTempDir(t)
+	now := time.Date(2026, time.August, 16, 12, 30, 0, 0, time.UTC)
+	task := runtimeAttachmentCleanupHeldTask(t, now, "task-runtime-cleanup-unknown")
+	for _, test := range []struct {
+		name  string
+		store *runtimeAttachmentRecoveryStore
+	}{
+		{name: "missing", store: &runtimeAttachmentRecoveryStore{tasks: []domain.Task{task}}},
+		{name: "read failure", store: &runtimeAttachmentRecoveryStore{
+			tasks: []domain.Task{task}, cleanupErr: errors.New("cleanup posture unavailable"),
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			coordinator, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+				RuntimeRoot: filepath.Join(root, test.name), Store: test.store, Clock: func() time.Time { return now },
+				NewCredential:           func() (string, error) { return "unused-unknown-credential-0123456789", nil },
+				NewAttentionOperationID: runtimeAttentionOperationID,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if servers, err := coordinator.recoverRuntimeAttachments(context.Background()); err == nil || len(servers) != 0 {
+				t.Fatalf("recoverRuntimeAttachments(%s) = %d servers, %v", test.name, len(servers), err)
+			}
+			if test.store.cleanupReads != 1 || test.store.preparationReads != 0 {
+				t.Fatalf("unknown recovery reads: cleanup=%d preparation=%d",
+					test.store.cleanupReads, test.store.preparationReads)
+			}
+		})
+	}
+}
+
+func runtimeAttachmentCleanupHeldTask(t *testing.T, now time.Time, taskHandle string) domain.Task {
+	t.Helper()
+	task := domain.Task{
+		SchemaVersion: 1, Handle: taskHandle, State: domain.TaskCleanupHeld,
+		ServiceInstanceID: "service-instance-runtime-cleanup", ManagedRunID: "managed-run.runtime-cleanup",
+		WorkspaceLeaseID: "workspace-lease.runtime-cleanup", Shape: domain.ShapeScout,
+		RepositoryID: "product-api", BaseRevision: strings.Repeat("a", 40), BriefRevision: 1,
+		AcceptanceCriteria: []string{"Do not restore a released reporter."}, ValidationProfile: "go-default",
+		DeliveryMode: domain.DeliveryReport, WorkerProfileID: "codex-reviewed",
+		StateVersion: 3, CreatedAt: now.Add(-time.Hour), UpdatedAt: now,
+	}
+	pinned, err := task.PinBriefRevision()
+	if err != nil || pinned.Validate() != nil {
+		t.Fatalf("cleanup-held task = %#v, %v", pinned, err)
+	}
+	return pinned
+}

@@ -149,7 +149,10 @@ action is `validate-clean-candidate`; caller input contains no repository, path,
 branch, head, run, lease, terminal, or attachment authority.
 
 The service combines durable preparation and terminal bindings with a fresh Git
-inspection, then atomically records reconciliation evidence and advances
+inspection. When Comis confinement produced a clean commit in lease-private Git
+administration, read-only diagnostics recognize that exact candidate and the
+reconciliation mutation explicitly hands it into the prepared host branch. The
+service then atomically records reconciliation evidence and advances
 `unknown` through `reconciling` into `validating`. It neither synthesizes a worker
 report nor increments the report cursor. Exact operation replay remains bound to
 the original result reference and may project only a monotonically newer state of
@@ -166,11 +169,19 @@ publications drive the task to `delivered`; the service does not create a worker
 report merely to close the state machine. Incomplete recovery history remains
 unresolved after restart and refuses a second reconciliation record.
 
+The private Git handoff is a high-risk boundary. Paths come only from the
+registered worktree and its canonical Git administration, and the source record,
+generated configuration, inert commit identity, copied worktree controls, branch, clean index, and base
+ancestry must all match. Symlinks, executable Git configuration, alternate object
+indirection, dirty content, or shared/private head drift are refused before any
+host branch mutation. Promotion imports no tags or submodules, advances the exact
+branch with an old-head compare-and-swap, and synchronizes only the worktree index;
+it never replaces workspace files. Replay re-verifies the same clean head.
+
 `ExplainTask` combines durable terminal posture, current host connectivity, and
-fresh registered-worktree inspection. Its closed recovery reasons distinguish a
-settled terminal without candidate evidence, unresolved restart evidence,
-unavailable host integration, an unrecoverable workspace, and reconciliation in
-progress, with reachable reason-specific next actions.
+fresh registered-worktree inspection. It exposes closed recovery reasons with
+reachable reason-specific next actions; their operator-facing meanings are
+documented in [running.md](running.md).
 
 Canonical task detail and explanation projections include content-free evidence
 references for candidate, report activity, decision posture, validation, forge
@@ -275,7 +286,8 @@ Threat posture: resumption cannot select a task, worktree, lease, head, or deliv
 record from the fresh caller operation. The unique existing task cleanup record
 remains authoritative, an operation ID already owned by another command is rejected,
 and the service re-proves the clean exact worktree and current forge truth before
-host release and again before removal authorization. Open cleanup holds remain a
+host release, closes and removes the exact service-owned runtime attachment, and
+then verifies again before removal authorization. Open cleanup holds remain a
 fail-closed pre-release blocker; the operator surface identifies only that closed
 category and never exposes the hold's free-text reason. Unresolved decisions have
 their own closed retryable precondition and operator hint, without exposing
@@ -304,7 +316,10 @@ and append reports without a task or authority selector. Preparation creates tha
 socket under the configured private runtime root and declares it as
 `requestedAttachment`; activation then supplies the execution-attachment ID and
 target name that bind the same listener. The listener and any durable activation
-binding are reconstructed after a service restart.
+binding are reconstructed after a service restart only when the recorded runtime
+directory, socket, and relay identities still match. Ambiguous ownership preserves
+the filesystem objects, moves an affected live task to `unknown`, and exposes a
+closed recovery explanation instead of granting cleanup or relaunch authority.
 
 After a decision report is locally accepted, the reporter blocks on that same
 protected socket until Comis returns the exact keyed owner response. The service
@@ -324,6 +339,10 @@ its head, base, state, URL, and check conclusions. Scout delivery reads only the
 reviewed bounded artifact. Both use durable outbox identities for exactly-once
 host delivery across restart.
 
+Task explanation reads the latest durable candidate judgment while validation is
+in progress as well as after failure. Operator-facing candidate diagnoses are
+documented in [running.md](running.md).
+
 Forge API and pull-request truth and branch push use distinct credentials. HTTPS
 token push is supported, and an SSH route allows a repository-scoped deploy key
 to be the push identity. The latter decodes the owner-private key only into a
@@ -336,8 +355,8 @@ upload command, and removes the key before returning. There is no merge operatio
 The Codex harness adapter builds a fixed no-shell `codex exec --json`
 descriptor from an exact-version static profile. The descriptor validates the
 activation-returned attachment ID and target name, references no host socket
-source, and binds only the exact protected mounted path and its matching target
-name to the two fixed reporter environment keys. Task, run, and lease identity,
+source, and binds the exact protected mounted path, its matching target name,
+and the public untrusted relay identity to three fixed reporter environment keys. Task, run, and lease identity,
 the execution-attachment ID, and brief authority remain only in the protected
 attachment, never in argv or the generic bootstrap prompt.
 

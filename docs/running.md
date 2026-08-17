@@ -30,9 +30,12 @@ Prerequisites, all of which fail closed if unmet:
 - The primary checkout and the worktree parent are separate canonical
   directories under the approved root.
 
-Task preparation creates or exactly adopts its operation-bound linked Git
-worktree beneath that parent before requesting the Comis workspace lease. Launch
-the installed service without hand-editing generated or runtime files:
+Task preparation first resolves the requested worker and validation profiles for
+the exact task shape. An unavailable, incompatible, or incomplete profile is
+rejected before any worktree or runtime attachment is allocated. Preparation
+then creates or exactly adopts its operation-bound linked Git worktree beneath
+that parent before requesting the Comis workspace lease. Launch the installed
+service without hand-editing generated or runtime files:
 
 ```text
 devcrew-service \
@@ -107,6 +110,16 @@ also leave the task `validating` and are retried without stopping the candidate
 supervisor. Other pull-request delivery errors still stop supervision so that
 permanent failures remain visible.
 
+A dirty worktree, a head that still equals the pinned base, a structurally
+unverified worktree, a reconciliation mismatch, or candidate authority that
+drifts during validation is not eligible for delivery. The supervisor seals that
+Git posture as unknown, does not call the forge or artifact delivery adapter,
+and remains available for other tasks. It skips local validation when the initial
+posture is already invalid; if the worktree changes or becomes unverified during
+local checks, it seals that drift afterward. While the observed head and
+cleanliness are unchanged, later polls reuse the sealed unknown judgment instead
+of rerunning validation processes.
+
 Diagnostic reads report validation as `unknown` when a task is already
 `validating` but no durable judgment or active validation process can be found;
 they never turn that inconsistent posture into `not_started`.
@@ -121,9 +134,11 @@ publications. Incomplete recovery history becomes unresolved and cannot authoriz
 second reconciliation. Cleanup accepts exactly one origin and refuses missing or
 ambiguous evidence.
 
-`task explain` reads the latest durable candidate judgment for a failed task and
-distinguishes a required local-validation failure from a required forge-check
-failure. Other terminal failures retain the generic failed-task explanation.
+`task explain` reads the latest durable candidate judgment for failed and
+validating tasks. It distinguishes required local-validation and forge-check
+failures, and identifies an unverified worktree when current Git truth is dirty,
+base-equal, or otherwise not a clean non-base candidate. Other terminal failures
+retain the generic failed-task explanation.
 `task show` and JSON `explain_task` output also include a content-free `evidence`
 projection. It joins the candidate head and digest, latest authenticated report,
 decision and resolution references, validation status, forge and outbox delivery
@@ -168,7 +183,11 @@ instance against every private call context.
 closed-world mutation. The service derives the preparation, run, lease, terminal,
 repository, worktree, branch, base, and head authority; callers cannot supply or
 override those fields. An eligible unknown task must have a settled terminal and
-an exact clean non-base candidate. Recovery records fresh evidence and enters the
+an exact clean non-base candidate. A candidate committed under Comis's
+lease-private Git confinement remains read-only during explanation; only this
+mutation may validate its source, generated controls, and inert commit identity, import its objects,
+compare-and-swap the prepared branch from the pinned base, and synchronize the
+worktree index without replacing files. Recovery records fresh evidence and enters the
 existing validation pipeline without creating a worker candidate report or
 advancing the report cursor. Validation and pull-request delivery must match the
 persisted recovery branch and head; a changed worktree is refused before validation
@@ -178,9 +197,12 @@ closeout to prove whether the candidate came from recovery.
 
 Call `explain_task` before recovery. It distinguishes a settled terminal without
 candidate evidence, unresolved restart evidence, unavailable host integration, an
-unrecoverable workspace, and reconciliation already in progress. Only the settled
-clean-candidate reason recommends `reconcile_task`; an unrecoverable workspace
-remains preserved and requires an explicitly approved replacement task.
+unrecoverable workspace, unproven reporter-relay identity, and reconciliation
+already in progress. Only the settled clean-candidate reason recommends
+`reconcile_task`; an unrecoverable workspace remains preserved and requires an
+explicitly approved replacement task. An unproven reporter relay is likewise
+preserved without cleanup authority and recommends inspection rather than
+reconciliation.
 
 `cleanup_task` may refuse after it has placed the task in a durable cleanup hold,
 for example when the exact worktree is dirty. Once that safety condition is
@@ -188,6 +210,12 @@ corrected, call `cleanup_task` again with the same task handle. The service resu
 the existing cleanup record even though the new MCP invocation has a fresh caller
 operation ID, and records both operation identities against the single completed
 cleanup effect.
+
+After host release, cleanup closes and removes the exact service-owned reporter
+attachment before it re-verifies Git and forge truth and authorizes worktree
+removal. If attachment ownership cannot be proven, the service preserves the
+runtime path and directs the operator to inspect that exact task attachment before
+retrying cleanup.
 
 Cleanup refuses before release when an operator cleanup hold remains open. The
 error names the closed `open task hold` category and directs the operator to close
@@ -199,7 +227,43 @@ Positive active execution or validation evidence instructs the operator to wait
 for settlement. Missing, lost, or mismatched terminal/run/lease authority instead
 requires reconciliation and is never treated as idle. Current pull-request truth
 that differs from the delivered head or required checks is a separate stale-forge
-precondition and blocks host release.
+precondition and blocks host release. When GitHub retains repeated runs for one
+required check name, the most recently started run is authoritative so an older
+green run cannot mask a newer pending or failed rerun. Missing or malformed check
+identity, recency, or state; duplicate check identities; incomplete pagination;
+and two changing full snapshots all resolve the required checks to `unknown`.
+
+## Liaison installation
+
+The agent-side assets ship in this repository and are installed by the operator
+into exactly one selected agent workspace. They are deliberately not bundled with
+the Comis daemon: its bundled-skill tree auto-seeds into every deployment's data
+directory at boot, which would hand a persona for this service to deployments
+that do not run it.
+
+```text
+skills/dev-crew/SKILL.md            opt-in liaison skill
+skills/dev-crew/references/         procedures loaded per step
+workspace-template/ROLE.md          named-agent policy scaffold
+workspace-template/TOOLS.md         deployment environment notes
+workspace-template/HEARTBEAT.md     periodic-work policy scaffold
+```
+
+Copy `skills/dev-crew/` into the selected agent's workspace skill directory.
+Copy each `workspace-template/` file only when the agent's workspace does not
+already have that file; never overwrite a saved policy, and never install these
+into a shared or default workspace. Each template keeps its `COMIS-TEMPLATE`
+marker until an operator has filled it in and verified the result.
+
+An empty prompt-skill allowlist means allow-all. A deployment that wants
+enforced selectivity must add `dev-crew` to an explicit allowlist on the selected
+agent; copying the skill into one workspace is not by itself an exclusion of the
+others.
+
+The skill recommends procedure only. It grants no tool, credential, or approval,
+and it renders no operator command line: worker credentials, terminal profiles,
+workspace roots, approval gates, forge branch protection, and service scopes
+enforce the boundary in code regardless of what the prose says.
 
 ## Operator CLI surface
 
@@ -391,12 +455,14 @@ not prove the safety rows.
 
 ## Worker reporter contract
 
-Workers receive `devcrew-report` with `COMIS_EXECUTION_ATTACHMENT` and
-`COMIS_EXECUTION_ATTACHMENT_TARGET_NAME` set by the host-managed terminal from the same
-activation-returned binding. The former is the Comis-protected task socket at
-`/run/comis/attachments/<attachmentTargetName>`; the latter must exactly match
-that path's host-assigned `attachment-<32 lowercase hex>.sock` basename. The
-command rejects a different directory, basename, or assigned name and accepts no
+Workers receive `devcrew-report` with `COMIS_EXECUTION_ATTACHMENT`,
+`COMIS_EXECUTION_ATTACHMENT_TARGET_NAME`, and `COMIS_EXECUTION_ATTACHMENT_IDENTITY` set by
+the host-managed terminal from the same activation-returned binding. The path names the
+Comis-protected task socket at `/run/comis/attachments/<attachmentTargetName>`; the target name
+must exactly match that path's host-assigned `attachment-<32 lowercase hex>.sock` basename. The
+identity is the pinned lowercase Ed25519 public key used to authenticate an ephemeral encrypted
+session with the connected task relay before any request crosses the socket. The command rejects
+a different directory, basename, assigned name, or relay proof and accepts no
 task, run, lease, socket, or credential selector.
 
 Subcommands:
@@ -414,14 +480,21 @@ Subcommands:
 
 A candidate report remains non-terminal until service validation.
 
-This boundary treats both environment values as untrusted selectors. The mount
-directory must already exist without group or other access and must equal its
-`EvalSymlinks` result. The socket must already exist at client construction, be a
-Unix socket with mode `0600`, and keep its pinned inode. The fixed directory and
-exact assigned-name equality must also agree. Any missing, altered, symlinked, or
-differently named target fails closed. Client-construction failures are written to
-worker stderr with their concrete safe reason before command dispatch; a nil
-capability is never used.
+This boundary treats all three environment values as untrusted inputs: the path
+and target name are selectors, while the relay identity is public authentication
+material rather than authority. The mount
+directory must already grant its owner full access while denying group and other
+read/write access; execute-only traversal is permitted so a dedicated worker UID
+can reach its assigned socket without listing the directory. Every directory
+component is opened without following symlinks; the protected mount identity and
+socket filesystem identity are pinned and rechecked before and after each dial.
+The socket must already exist at client construction and be a Unix socket with
+mode `0600`. The fixed directory and exact assigned-name equality must also agree.
+Any missing, altered, symlinked, mount-replaced, or differently named target fails
+closed. Protected mounted reporter calls currently require Linux mount-identity
+support; Darwin builds fail closed for this worker-mounted path. Client-construction
+failures are written to worker stderr with their concrete safe reason before
+command dispatch; a nil capability is never used.
 
 ## Attachment threat boundary
 

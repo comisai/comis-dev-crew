@@ -180,6 +180,13 @@ func readTaskReconciliationAuthority(
 	source queryer,
 	taskHandle string,
 ) (application.TaskReconciliationAuthority, error) {
+	refused, err := runtimeRelayIdentityRefusalExists(ctx, source, taskHandle)
+	if err != nil {
+		return application.TaskReconciliationAuthority{}, err
+	}
+	if refused {
+		return application.TaskReconciliationAuthority{}, fmt.Errorf("task reconciliation relay authority is unproven: %w", application.ErrPrecondition)
+	}
 	task, err := getTask(ctx, source, taskHandle)
 	if err != nil {
 		return application.TaskReconciliationAuthority{}, err

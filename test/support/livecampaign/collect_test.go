@@ -32,7 +32,7 @@ func (executor *fixtureExecutor) Run(_ context.Context, command Command) ([]byte
 	if command.Path == manifest.DevCrew.CLIPath {
 		switch {
 		case args == "--socket "+manifest.DevCrew.SocketPath+" service status":
-			return []byte("SERVICE HEALTH COMPLETENESS\ndevcrew-service healthy complete\n"), nil
+			return []byte("SERVICE          HEALTH   COMPLETENESS  STATE VERSION\ndevcrew-service  healthy  complete      12\n"), nil
 		case args == "--socket "+manifest.DevCrew.SocketPath+" doctor --format json":
 			return encode(application.DiagnosticReport{SchemaVersion: 1, CapturedAtMs: manifest.EndedAtMs, StateVersion: 20, Completeness: application.CompletenessComplete, ServiceHealth: application.HealthHealthy, ComisHealth: application.HealthHealthy})
 		case args == "--socket "+manifest.DevCrew.SocketPath+" status --format json":
@@ -523,5 +523,22 @@ func TestCollectUsesOnlyFixedExecutableAndArgumentCatalog(t *testing.T) {
 	}
 	if githubCalls != len(manifest.Tasks)*2 {
 		t.Fatalf("GitHub CLI calls = %d, want %d", githubCalls, len(manifest.Tasks)*2)
+	}
+	residencyCalls := 0
+	for _, call := range executor.calls {
+		if call.Path != manifest.Comis.NodePath || len(call.Args) == 0 ||
+			call.Args[0] != manifest.Comis.SecretResidencyScript {
+			if len(call.SecretEnvironmentNames) != 0 {
+				t.Fatalf("non-residency command declared campaign secrets: %#v", call)
+			}
+			continue
+		}
+		residencyCalls++
+		if !reflect.DeepEqual(call.SecretEnvironmentNames, manifest.Comis.SecretNames) {
+			t.Fatalf("residency command secret names = %#v", call.SecretEnvironmentNames)
+		}
+	}
+	if residencyCalls != 1 {
+		t.Fatalf("secret residency calls = %d, want 1", residencyCalls)
 	}
 }

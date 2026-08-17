@@ -50,7 +50,9 @@ func TestCodexAdapter_ProbesAndPinsExactInstalledVersion(t *testing.T) {
 func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(t *testing.T) {
 	profile := availableCodexProfile(codexFixtureExecutable(t), "codex-reviewed")
 	profile.Unattended = true
-	profile.EnvironmentKeys = append(profile.EnvironmentKeys, "COMIS_EXECUTION_ATTACHMENT_TARGET_NAME")
+	profile.EnvironmentKeys = append(
+		profile.EnvironmentKeys, "COMIS_EXECUTION_ATTACHMENT_TARGET_NAME", "COMIS_EXECUTION_ATTACHMENT_IDENTITY",
+	)
 	catalog, err := workers.NewProfileCatalog([]workers.StaticProfile{profile})
 	if err != nil {
 		t.Fatal(err)
@@ -73,6 +75,7 @@ func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(
 			ExecutionAttachmentID: "execution-attachment-secret-0001",
 			AttachmentTargetName:  attachmentTarget,
 			MountSocketPath:       attachmentMount,
+			RelayIdentity:         strings.Repeat("ab", 32),
 		},
 	}
 	descriptor, err := adapter.BuildLaunchDescriptor(context.Background(), request)
@@ -86,7 +89,7 @@ func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(
 	}
 	wantArguments := []string{
 		"exec", "--json", "--strict-config", "--ignore-user-config", "--ignore-rules", "--ephemeral",
-		"--color", "never", "--model", profile.Model, "--sandbox", "workspace-write",
+		"--color", "never", "--model", profile.Model, "--dangerously-bypass-approvals-and-sandbox",
 		"-c", `model_reasoning_effort="high"`, "--cd", request.WorkingDirectory,
 		"Before doing any task work, acknowledge the exact protected launch binding with `devcrew-report acknowledge`. Then read the pinned task brief with `devcrew-report brief`. If either command fails, stop without reading or changing the workspace; do not continue task work. Run `devcrew-report --help` before reporting and use only its exact flag syntax; do not invent JSON or stdin formats. Use `devcrew-report` for sparse progress, decisions, blocked state, candidate completion, and failure. Treat the protected runtime attachment as the only task/report authority.\n",
 	}
@@ -106,15 +109,19 @@ func TestCodexAdapter_BuildsProtectedAttachmentLaunchWithoutTaskAuthorityInArgv(
 		t.Fatalf("Codex launch must not depend on post-create stdin: %q", descriptor.StandardInput)
 	}
 	bootstrap := descriptor.Arguments[len(descriptor.Arguments)-1]
-	if !strings.Contains(bootstrap, "devcrew-report acknowledge") ||
+	if !containsString(descriptor.Arguments, "--dangerously-bypass-approvals-and-sandbox") ||
+		containsString(descriptor.Arguments, "workspace-write") ||
+		!strings.Contains(bootstrap, "devcrew-report acknowledge") ||
 		!strings.Contains(bootstrap, "devcrew-report brief") ||
 		!strings.Contains(bootstrap, "If either command fails, stop without reading or changing the workspace") ||
 		!strings.Contains(bootstrap, "Run `devcrew-report --help` before reporting") ||
 		strings.Index(bootstrap, "devcrew-report acknowledge") > strings.Index(bootstrap, "devcrew-report brief") ||
 		!containsString(descriptor.EnvironmentKeys, "COMIS_EXECUTION_ATTACHMENT") ||
 		!containsString(descriptor.EnvironmentKeys, "COMIS_EXECUTION_ATTACHMENT_TARGET_NAME") ||
-		len(descriptor.EnvironmentBindings) != 2 || descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT"] != attachmentMount ||
-		descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT_TARGET_NAME"] != attachmentTarget {
+		!containsString(descriptor.EnvironmentKeys, "COMIS_EXECUTION_ATTACHMENT_IDENTITY") ||
+		len(descriptor.EnvironmentBindings) != 3 || descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT"] != attachmentMount ||
+		descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT_TARGET_NAME"] != attachmentTarget ||
+		descriptor.EnvironmentBindings["COMIS_EXECUTION_ATTACHMENT_IDENTITY"] != request.Attachment.RelayIdentity {
 		t.Fatalf("Codex bootstrap does not use protected attachment: %#v", descriptor)
 	}
 	if descriptor.ExpectedAcknowledgement.TaskHandle != request.TaskHandle ||
@@ -238,6 +245,7 @@ func TestCodexAdapter_RejectsInvalidConfigurationProbeAndLaunchBoundaries(t *tes
 		Attachment: application.RuntimeSocketAttachment{
 			ExecutionAttachmentID: "execution-attachment-valid-0001", AttachmentTargetName: attachmentTarget,
 			MountSocketPath: "/run/comis/attachments/" + attachmentTarget,
+			RelayIdentity:   strings.Repeat("ab", 32),
 		},
 	}
 	//lint:ignore SA1012 The launch boundary must reject nil before profile or mount inspection.
@@ -268,6 +276,7 @@ func TestCodexAdapter_RejectsInvalidConfigurationProbeAndLaunchBoundaries(t *tes
 		func(request *application.WorkerLaunchRequest) {
 			request.Attachment.MountSocketPath = "/run/comis/attachments/attachment-ffffffffffffffffffffffffffffffff.sock"
 		},
+		func(request *application.WorkerLaunchRequest) { request.Attachment.RelayIdentity = "bad" },
 	} {
 		request := valid
 		mutate(&request)

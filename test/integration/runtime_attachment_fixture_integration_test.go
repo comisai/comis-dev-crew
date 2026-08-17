@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"path/filepath"
+	"strings"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 )
@@ -19,9 +20,14 @@ func (integrationRuntimeAttachments) PrepareRuntimeAttachment(
 	request application.RuntimeAttachmentPreparationRequest,
 ) (application.PreparedRuntimeAttachment, error) {
 	return application.PreparedRuntimeAttachment{
-		Kind:       application.RuntimeAttachmentUnixSocket,
-		SourcePath: filepath.Join("/private/integration-runtime", request.TaskHandle, "attachment.sock"),
+		Kind:          application.RuntimeAttachmentUnixSocket,
+		SourcePath:    filepath.Join("/private/integration-runtime", request.TaskHandle, "attachment.sock"),
+		RelayIdentity: strings.Repeat("ab", 32),
 	}, nil
+}
+
+func (integrationRuntimeAttachments) ReleaseRuntimeAttachment(context.Context, string) error {
+	return nil
 }
 
 func (integrationRuntimeAttachments) BindRuntimeAttachment(

@@ -45,6 +45,8 @@ type Config struct {
 	RuntimeRoot              string
 	ServiceInstanceID        string
 	Repositories             application.RepositoryCatalog
+	WorkerProfiles           application.WorkerProfileValidator
+	ValidationProfiles       application.ValidationProfileValidator
 	Workspaces               application.WorkspacePreparer
 	RuntimeAttachments       application.RuntimeAttachmentCoordinator
 	WorkerHarnesses          application.WorkerHarnessResolver
@@ -63,7 +65,7 @@ type Config struct {
 	Ready                    func()
 	candidateGit             candidateGitInspector
 	workspaceInspector       application.WorkspaceInspector
-	reconciliationInspector  application.ReconciliationWorkspaceInspector
+	reconciliationInspector  application.ReconciliationWorkspaceManager
 	validationCatalog        *validation.Catalog
 	validationMaxOutputBytes int64
 	validationPollInterval   time.Duration
@@ -178,6 +180,26 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	defer func() {
 		resultErr = errors.Join(resultErr, store.Close())
 	}()
+	var attachmentSupervisor *runtimeAttachmentCoordinator
+	if config.RuntimeAttachments == nil && config.RuntimeRoot != "" {
+		attachmentSupervisor, err = newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+			RuntimeRoot: config.RuntimeRoot, Store: store, Clock: clock,
+			NewCredential:           func() (string, error) { return randomIdentity("runtime-credential", 16) },
+			NewAttentionOperationID: func() (string, error) { return randomIdentity("attention-response", 16) },
+		})
+		if err != nil {
+			return fmt.Errorf("run service runtime attachments: %w", err)
+		}
+		config.RuntimeAttachments = attachmentSupervisor
+		if err := attachmentSupervisor.recoverRuntimeRelayIdentityUpgrades(ctx); err != nil {
+			return fmt.Errorf("run service runtime relay identity upgrade: %w", err)
+		}
+	} else {
+		upgrades, upgradeErr := store.ListRuntimeRelayIdentityUpgrades(ctx)
+		if upgradeErr != nil || len(upgrades) != 0 {
+			return errors.New("run service runtime relay identity upgrade requires service-owned attachments")
+		}
+	}
 	reconciler, err := application.NewStartupReconciler(application.StartupReconcilerConfig{Store: store, Clock: clock})
 	if err != nil {
 		return fmt.Errorf("run service startup reconciler: %w", err)
@@ -206,18 +228,6 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		if runnerErr != nil {
 			return fmt.Errorf("run service candidate supervisor: %w", runnerErr)
 		}
-	}
-	var attachmentSupervisor *runtimeAttachmentCoordinator
-	if config.RuntimeAttachments == nil && config.RuntimeRoot != "" {
-		attachmentSupervisor, err = newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
-			RuntimeRoot: config.RuntimeRoot, Store: store, Clock: clock,
-			NewCredential:           func() (string, error) { return randomIdentity("runtime-credential", 16) },
-			NewAttentionOperationID: func() (string, error) { return randomIdentity("attention-response", 16) },
-		})
-		if err != nil {
-			return fmt.Errorf("run service runtime attachments: %w", err)
-		}
-		config.RuntimeAttachments = attachmentSupervisor
 	}
 	mutations, err := composeMutations(config, store, clock)
 	if err != nil {
@@ -282,7 +292,8 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		}
 		cleanup, err = application.NewCleanupCoordinator(application.CleanupCoordinatorConfig{
 			Store: store, Workspaces: config.workspaceInspector, Forge: config.cleanupForge,
-			Releaser: control, Remover: config.cleanupRemover, Clock: clock,
+			Releaser: control, Attachments: config.RuntimeAttachments,
+			Remover: config.cleanupRemover, Clock: clock,
 		})
 		if err != nil {
 			return fmt.Errorf("run service cleanup coordinator: %w", err)
@@ -337,7 +348,10 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	}
 	if control == nil {
 		if attachmentSupervisor != nil {
-			return serveServiceComponents(ctx, servers, []func(context.Context) error{attachmentSupervisor.Run}, config.Ready)
+			return serveServiceComponents(
+				ctx, servers, []func(context.Context) error{attachmentSupervisor.Run},
+				attachmentSupervisor.waitForRecovery, config.Ready,
+			)
 		}
 		if config.Ready != nil {
 			config.Ready()
@@ -374,7 +388,11 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if candidate != nil {
 		components = append(components, candidate.Run)
 	}
-	return serveServiceComponents(ctx, servers, components, config.Ready)
+	var beforeReady func(context.Context) error
+	if attachmentSupervisor != nil {
+		beforeReady = attachmentSupervisor.waitForRecovery
+	}
+	return serveServiceComponents(ctx, servers, components, beforeReady, config.Ready)
 }
 
 func composeMutations(config Config, store *sqlite.Store, clock application.Clock) (*application.Mutations, error) {
@@ -387,7 +405,9 @@ func composeMutations(config Config, store *sqlite.Store, clock application.Cloc
 		return nil, nil
 	}
 	mutations, err := application.NewMutations(application.MutationConfig{
-		Store: store, Repositories: config.Repositories, Workspaces: config.Workspaces, TaskIDs: config.TaskIDs,
+		Store: store, Repositories: config.Repositories,
+		WorkerProfiles: config.WorkerProfiles, ValidationProfiles: config.ValidationProfiles,
+		Workspaces: config.Workspaces, TaskIDs: config.TaskIDs,
 		RuntimeAttachments: config.RuntimeAttachments,
 		RegistrationNonces: config.RegistrationNonces,
 		PreparationTTL:     config.PreparationTTL,
@@ -416,40 +436,6 @@ func serveLocalEndpoints(ctx context.Context, servers []*localapi.Server) error 
 	for range servers {
 		err := <-results
 		resultErr = errors.Join(resultErr, err)
-		cancel()
-		for _, server := range servers {
-			resultErr = errors.Join(resultErr, server.Close())
-		}
-	}
-	return resultErr
-}
-
-func serveServiceComponents(
-	ctx context.Context,
-	servers []*localapi.Server,
-	components []func(context.Context) error,
-	ready func(),
-) error {
-	runContext, cancel := context.WithCancel(ctx)
-	defer cancel()
-	components = append([]func(context.Context) error{
-		func(componentContext context.Context) error { return serveLocalEndpoints(componentContext, servers) },
-	}, components...)
-	results := make(chan error, len(components))
-	for _, component := range components {
-		go func(run func(context.Context) error) { results <- run(runContext) }(component)
-	}
-	if ready != nil {
-		ready()
-	}
-	var resultErr error
-	for range components {
-		err := <-results
-		if err == nil && ctx.Err() == nil && runContext.Err() == nil {
-			resultErr = errors.Join(resultErr, errors.New("service component stopped unexpectedly"))
-		} else if err != nil && !(errors.Is(err, context.Canceled) && runContext.Err() != nil) {
-			resultErr = errors.Join(resultErr, err)
-		}
 		cancel()
 		for _, server := range servers {
 			resultErr = errors.Join(resultErr, server.Close())

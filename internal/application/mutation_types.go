@@ -2,10 +2,46 @@ package application
 
 import (
 	"context"
+	"encoding/hex"
+	"errors"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
+
+// Validate rejects sources that cannot be handed to Comis as one exact
+// owner-controlled Unix-socket capability.
+func (attachment PreparedRuntimeAttachment) Validate() error {
+	if attachment.Kind != RuntimeAttachmentUnixSocket || !filepath.IsAbs(attachment.SourcePath) ||
+		filepath.Clean(attachment.SourcePath) != attachment.SourcePath || filepath.Base(attachment.SourcePath) != "attachment.sock" ||
+		len([]byte(attachment.SourcePath)) > 4096 || strings.ContainsAny(attachment.SourcePath, "\x00\r\n") ||
+		ValidateRuntimeRelayIdentity(attachment.RelayIdentity) != nil {
+		return errors.New("prepared runtime attachment is invalid")
+	}
+	return nil
+}
+
+// TaskPreparationIntent durably binds a preparation operation to one task
+// identity before workspace or runtime attachment publication.
+type TaskPreparationIntent struct {
+	OperationID   string
+	TaskHandle    string
+	SubjectDigest string
+	CreatedAt     time.Time
+}
+
+// Validate rejects incomplete or non-canonical preparation authority.
+func (intent TaskPreparationIntent) Validate() error {
+	digest, err := hex.DecodeString(intent.SubjectDigest)
+	if domain.ValidateOperationID(intent.OperationID) != nil || domain.ValidateTaskHandle(intent.TaskHandle) != nil ||
+		err != nil || len(digest) != 32 || hex.EncodeToString(digest) != intent.SubjectDigest ||
+		intent.CreatedAt.IsZero() || intent.CreatedAt.Location() != time.UTC {
+		return errors.New("task preparation intent is invalid")
+	}
+	return nil
+}
 
 const (
 	commandPrepareTask             = "PrepareTask"
@@ -176,6 +212,7 @@ type MutationResult struct {
 // MutationStore is the service-owned transactional mutation port.
 type MutationStore interface {
 	ReplayMutation(context.Context, string, string, string) (MutationResult, bool, error)
+	RecordTaskPreparationIntent(context.Context, TaskPreparationIntent) (TaskPreparationIntent, error)
 	CommitPreparedTask(context.Context, PreparedTaskMutation) (MutationResult, error)
 	CommitManagedRunActivation(context.Context, ManagedRunActivationMutation) (MutationResult, error)
 	CommitManagedRunAbandon(context.Context, ManagedRunAbandonMutation) (MutationResult, error)
@@ -189,6 +226,14 @@ type MutationStore interface {
 type RepositoryCatalog interface {
 	ValidateRepository(context.Context, string) error
 }
+
+// WorkerProfileValidator validates an exact operator-reviewed worker profile
+// and task shape before any workspace side effect.
+type WorkerProfileValidator func(string, domain.TaskShape) error
+
+// ValidationProfileValidator validates an exact operator-reviewed validation
+// profile and task shape before any workspace side effect.
+type ValidationProfileValidator func(string, domain.TaskShape) error
 
 // WorkspacePreparationRequest binds allocation to the stable preparation
 // operation and the already-validated immutable task contract.
@@ -220,8 +265,22 @@ const (
 
 // PreparedRuntimeAttachment is the exact source Comis must validate and bind.
 type PreparedRuntimeAttachment struct {
-	Kind       RuntimeAttachmentKind `json:"kind"`
-	SourcePath string                `json:"sourcePath"`
+	Kind          RuntimeAttachmentKind `json:"kind"`
+	SourcePath    string                `json:"sourcePath"`
+	RelayIdentity string                `json:"relayIdentity"`
+}
+
+// ValidateRuntimeRelayIdentity rejects non-canonical relay public identities.
+func ValidateRuntimeRelayIdentity(value string) error {
+	decoded, err := hex.DecodeString(value)
+	var nonzero byte
+	for _, item := range decoded {
+		nonzero |= item
+	}
+	if err != nil || len(decoded) != 32 || hex.EncodeToString(decoded) != value || nonzero == 0 {
+		return errors.New("runtime relay identity is invalid")
+	}
+	return nil
 }
 
 // RuntimeAttachmentPreparationRequest binds the socket to the immutable brief
@@ -250,6 +309,7 @@ type RuntimeAttachmentBindingRequest struct {
 // RuntimeAttachmentCoordinator owns per-task reporter listeners and binds the
 // activation identity to the same protected socket without replacing it.
 type RuntimeAttachmentCoordinator interface {
+	RuntimeAttachmentReleaser
 	PrepareRuntimeAttachment(context.Context, RuntimeAttachmentPreparationRequest) (PreparedRuntimeAttachment, error)
 	BindRuntimeAttachment(context.Context, RuntimeAttachmentBindingRequest) error
 }
@@ -306,6 +366,8 @@ const (
 type MutationConfig struct {
 	Store              MutationStore
 	Repositories       RepositoryCatalog
+	WorkerProfiles     WorkerProfileValidator
+	ValidationProfiles ValidationProfileValidator
 	Workspaces         WorkspacePreparer
 	RuntimeAttachments RuntimeAttachmentCoordinator
 	TaskIDs            TaskIDSource

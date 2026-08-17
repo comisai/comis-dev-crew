@@ -71,6 +71,9 @@ func TestGitInspectionRunner_IsBoundedCancellableAndContentFreeOnFailure(t *test
 	if _, err := runGit(context.Background(), executable, "not-a-real-inspection-command"); err == nil {
 		t.Fatal("runGit(invalid) error = nil")
 	}
+	if _, err := runGit(context.Background(), "/not/an/executable"); err == nil {
+		t.Fatal("runGit(unavailable executable) error = nil")
+	}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := runGit(cancelled, executable, "--version"); !errors.Is(err, context.Canceled) {
@@ -79,6 +82,27 @@ func TestGitInspectionRunner_IsBoundedCancellableAndContentFreeOnFailure(t *test
 	//lint:ignore SA1012 The private boundary test proves nil cannot reach os/exec.
 	if _, err := runGit(nil, executable, "--version"); err == nil {
 		t.Fatal("runGit(nil) error = nil")
+	}
+	if output, err := runGitBytes(context.Background(), "/bin/sh", "-c", `printf 'machine-output\n'`); err != nil || string(output) != "machine-output\n" {
+		t.Fatalf("runGitBytes(success) = %q, %v", output, err)
+	}
+	if _, err := runGitBytes(context.Background(), "/bin/sh", "-c", `exit 2`); err == nil {
+		t.Fatal("runGitBytes(failure) error = nil")
+	}
+	if _, err := runGitBytes(context.Background(), "/not/an/executable"); err == nil {
+		t.Fatal("runGitBytes(unavailable executable) error = nil")
+	}
+	if matched, err := gitPredicate(context.Background(), "/bin/sh", "-c", `exit 0`); err != nil || !matched {
+		t.Fatalf("gitPredicate(true) = %t, %v", matched, err)
+	}
+	if matched, err := gitPredicate(context.Background(), "/bin/sh", "-c", `exit 1`); err != nil || matched {
+		t.Fatalf("gitPredicate(false) = %t, %v", matched, err)
+	}
+	if _, err := gitPredicate(context.Background(), "/bin/sh", "-c", `exit 2`); err == nil {
+		t.Fatal("gitPredicate(unexpected exit) error = nil")
+	}
+	if _, err := gitPredicate(context.Background(), "/not/an/executable"); err == nil {
+		t.Fatal("gitPredicate(unavailable executable) error = nil")
 	}
 
 	buffer := &boundedBuffer{limit: 4}
@@ -91,6 +115,67 @@ func TestGitInspectionRunner_IsBoundedCancellableAndContentFreeOnFailure(t *test
 	partial := &boundedBuffer{limit: 3}
 	if written, err := partial.Write([]byte("12345")); !errors.Is(err, errGitOutputTooLarge) || written != 3 {
 		t.Fatalf("partial bounded write = %d, %v", written, err)
+	}
+}
+
+func TestWorkspaceGitRunner_PropagatesEnvironmentAndNormalizesCommandOutcomes(t *testing.T) {
+	environment := gitWorkspaceEnvironment{
+		gitDir:      "/example/git-dir",
+		gitWorkTree: "/example/work-tree",
+		gitIndex:    "/example/git-index",
+	}
+	output, err := runGitInWorkspace(
+		context.Background(),
+		"/bin/sh",
+		environment,
+		"-c",
+		`printf '%s' "$GIT_DIR|$GIT_WORK_TREE|$GIT_INDEX_FILE"`,
+	)
+	if err != nil || output != "/example/git-dir|/example/work-tree|/example/git-index" {
+		t.Fatalf("runGitInWorkspace(environment) = %q, %v", output, err)
+	}
+	bytesOutput, err := runGitBytesInWorkspace(
+		context.Background(),
+		"/bin/sh",
+		environment,
+		"-c",
+		`printf 'machine-output\n'`,
+	)
+	if err != nil || string(bytesOutput) != "machine-output\n" {
+		t.Fatalf("runGitBytesInWorkspace(success) = %q, %v", bytesOutput, err)
+	}
+
+	for _, command := range []string{`exit 2`, `printf 'first\nsecond\n'`, `printf ''`} {
+		if _, err := runGitInWorkspace(context.Background(), "/bin/sh", environment, "-c", command); err == nil {
+			t.Fatalf("runGitInWorkspace(%q) error = nil", command)
+		}
+	}
+	if _, err := runGitInWorkspace(context.Background(), "/not/an/executable", environment); err == nil {
+		t.Fatal("runGitInWorkspace(unavailable executable) error = nil")
+	}
+	if _, err := runGitBytesInWorkspace(context.Background(), "/bin/sh", environment, "-c", `exit 2`); err == nil {
+		t.Fatal("runGitBytesInWorkspace(failure) error = nil")
+	}
+	if _, err := runGitBytesInWorkspace(context.Background(), "/not/an/executable", environment); err == nil {
+		t.Fatal("runGitBytesInWorkspace(unavailable executable) error = nil")
+	}
+	if _, err := runGitBytesInWorkspace(context.Background(), "/bin/sh", environment, "-c", `printf '%*s' 8193 ''`); !errors.Is(err, errGitOutputTooLarge) {
+		t.Fatalf("runGitBytesInWorkspace(oversized output) error = %v", err)
+	}
+
+	if matched, err := gitPredicateInWorkspace(context.Background(), "/bin/sh", environment, "-c", `exit 0`); err != nil || !matched {
+		t.Fatalf("gitPredicateInWorkspace(true) = %t, %v", matched, err)
+	}
+	if matched, err := gitPredicateInWorkspace(context.Background(), "/bin/sh", environment, "-c", `exit 1`); err != nil || matched {
+		t.Fatalf("gitPredicateInWorkspace(false) = %t, %v", matched, err)
+	}
+	if _, err := gitPredicateInWorkspace(context.Background(), "/bin/sh", environment, "-c", `exit 2`); err == nil {
+		t.Fatal("gitPredicateInWorkspace(unexpected exit) error = nil")
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := gitPredicateInWorkspace(cancelled, "/bin/sh", environment, "-c", `exit 0`); !errors.Is(err, context.Canceled) {
+		t.Fatalf("gitPredicateInWorkspace(cancelled) error = %v, want context.Canceled", err)
 	}
 }
 
@@ -121,8 +206,9 @@ func TestGitMarkersAndIdentity_RejectWrongArtifactKinds(t *testing.T) {
 	if identity, err := commonDirectoryIdentity(marker); err != nil || len(identity) != 64 {
 		t.Fatalf("commonDirectoryIdentity() = %q, %v", identity, err)
 	}
-	if _, err := commonDirectoryIdentity(filepath.Join(root, "missing")); err == nil {
-		t.Fatal("commonDirectoryIdentity(missing) error = nil")
+	if _, err := commonDirectoryIdentity(filepath.Join(root, "missing")); err == nil ||
+		!errors.Is(err, errFilesystemInfrastructure) {
+		t.Fatalf("commonDirectoryIdentity(missing) error = %v", err)
 	}
 }
 

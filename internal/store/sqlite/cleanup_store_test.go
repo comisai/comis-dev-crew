@@ -728,10 +728,10 @@ func deliveredCleanupFixture(t *testing.T, databasePath string) (*Store, domain.
 	if _, err := store.db.Exec(`INSERT INTO task_preparations(
         task_handle, external_run_ref, registration_nonce, expires_at, created_at,
         requested_workspace_root, state, abandon_reason, disposition,
-        requested_attachment_kind, requested_attachment_source_path)
-        VALUES (?, ?, 'registration-cleanup-0001', ?, ?, ?, 'open', '', '', 'unix_socket', ?)`,
+		requested_attachment_kind, requested_attachment_source_path, requested_attachment_relay_identity)
+		VALUES (?, ?, 'registration-cleanup-0001', ?, ?, ?, 'open', '', '', 'unix_socket', ?, ?)`,
 		task.Handle, task.Handle, formatTime(task.CreatedAt.Add(24*time.Hour)), formatTime(task.CreatedAt), workspace,
-		"/approved/runtime/"+task.Handle+"/attachment.sock"); err != nil {
+		"/approved/runtime/"+task.Handle+"/attachment.sock", strings.Repeat("ab", 32)); err != nil {
 		t.Fatalf("insert cleanup preparation: %v", err)
 	}
 	prepare := storeOperation("prepare-cleanup-0001", 2)

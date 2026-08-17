@@ -75,6 +75,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 		EnvironmentKeys: []string{
 			application.RuntimeAttachmentPathEnvironment,
 			application.RuntimeAttachmentTargetEnvironment,
+			application.RuntimeAttachmentIdentityEnvironment,
 			"PATH",
 		},
 		Availability: workers.AvailabilityAvailable,
@@ -92,6 +93,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 			EnvironmentKeys: []string{
 				application.RuntimeAttachmentPathEnvironment,
 				application.RuntimeAttachmentTargetEnvironment,
+				application.RuntimeAttachmentIdentityEnvironment,
 				"CLAUDE_CONFIG_DIR",
 				"PATH",
 			},
@@ -142,6 +144,20 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	})
 	if err != nil {
 		return Config{}, fmt.Errorf("run service validation composition: %w", err)
+	}
+	config.WorkerProfiles = func(profileID string, shape domain.TaskShape) error {
+		if config.FixtureComposition != nil && profileID == "fixture-worker" {
+			if shape == domain.ShapeShip || shape == domain.ShapeScout {
+				return nil
+			}
+			return workers.ErrProfileShapeUnsupported
+		}
+		_, resolveErr := profiles.ResolveProfile(profileID, shape)
+		return resolveErr
+	}
+	config.ValidationProfiles = func(profileID string, shape domain.TaskShape) error {
+		_, resolveErr := catalog.ResolveProfileForShape(profileID, shape)
+		return resolveErr
 	}
 	if validationConfig.MaxOutputBytes < 1 || validationConfig.MaxOutputBytes > 16<<20 ||
 		validationConfig.PollInterval <= 0 || validationConfig.PollInterval > time.Minute {

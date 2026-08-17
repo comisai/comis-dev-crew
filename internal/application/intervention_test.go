@@ -18,8 +18,11 @@ func TestInterventions_HandbackInspectsExactPausedWorkspaceBeforeCommit(t *testi
 		preparation: ManagedRunPreparation{
 			ExternalRunRef: task.Handle, RegistrationNonce: "registration-nonce-handback",
 			RequestedWorkspaceRoot: "/approved/worktrees/" + task.Handle,
-			RequestedAttachment:    PreparedRuntimeAttachment{Kind: RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/attachment.sock"},
-			ExpiresAt:              now.Add(time.Hour), State: PreparationOpen,
+			RequestedAttachment: PreparedRuntimeAttachment{
+				Kind: RuntimeAttachmentUnixSocket, SourcePath: "/approved/runtime/attachment.sock",
+				RelayIdentity: strings.Repeat("ab", 32),
+			},
+			ExpiresAt: now.Add(time.Hour), State: PreparationOpen,
 		},
 	}
 	inspector := &interventionInspector{snapshot: WorkspaceSnapshot{
