@@ -53,6 +53,17 @@ func CreateRecoveryBackup(
 	executor Executor,
 	capturedAtMs int64,
 ) (BackupEvidence, error) {
+	return createRecoveryBackup(ctx, manifest, backupRoot, executor, capturedAtMs, realRecoveryWait)
+}
+
+func createRecoveryBackup(
+	ctx context.Context,
+	manifest Manifest,
+	backupRoot string,
+	executor Executor,
+	capturedAtMs int64,
+	wait recoveryWait,
+) (BackupEvidence, error) {
 	if ctx == nil || executor == nil || capturedAtMs <= 0 {
 		return BackupEvidence{}, errors.New("create recovery backup: dependencies and capture time are required")
 	}
@@ -88,7 +99,7 @@ func CreateRecoveryBackup(
 		_ = os.RemoveAll(backupRoot)
 		return BackupEvidence{}, err
 	}
-	if err := verifyBackupSecretResidency(ctx, manifest, backupRoot, executor); err != nil {
+	if err := verifyBackupSecretResidency(ctx, manifest, backupRoot, executor, wait); err != nil {
 		_ = os.RemoveAll(backupRoot)
 		return BackupEvidence{}, err
 	}

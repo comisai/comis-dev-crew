@@ -63,12 +63,59 @@ func restartRecoveryServices(manifest Manifest, executor Executor, stopped []str
 	return startRecoveryServices(ctx, manifest, executor, stopped)
 }
 
+// Restarting an isolated unit returns before its authenticated RPC accepts requests, so the
+// count-only oracle is polled across one bounded readiness budget instead of a single attempt.
+const (
+	recoverySecretResidencyReadinessAttempts = 30
+	recoverySecretResidencyReadinessInterval = 2 * time.Second
+)
+
+// recoveryWait pauses for one bounded readiness interval or reports why the wait ended early.
+type recoveryWait func(ctx context.Context, interval time.Duration) error
+
+func realRecoveryWait(ctx context.Context, interval time.Duration) error {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// verifyBackupSecretResidency retries only an unreachable or unparsable oracle. A parsed report
+// that is incomplete or finds plaintext is terminal and is never retried or softened.
 func verifyBackupSecretResidency(
 	ctx context.Context,
 	manifest Manifest,
 	backupRoot string,
 	executor Executor,
+	wait recoveryWait,
 ) error {
+	if wait == nil {
+		return errors.New("create recovery backup: secret residency readiness wait is required")
+	}
+	for attempt := 1; ; attempt++ {
+		report, available := runBackupSecretResidency(ctx, manifest, backupRoot, executor)
+		if available {
+			return evaluateBackupSecretResidency(manifest, report)
+		}
+		if attempt >= recoverySecretResidencyReadinessAttempts {
+			return errors.New("create recovery backup: count-only secret residency oracle is unavailable")
+		}
+		if err := wait(ctx, recoverySecretResidencyReadinessInterval); err != nil {
+			return errors.New("create recovery backup: count-only secret residency oracle is unavailable")
+		}
+	}
+}
+
+func runBackupSecretResidency(
+	ctx context.Context,
+	manifest Manifest,
+	backupRoot string,
+	executor Executor,
+) (residencyReport, bool) {
 	args := append([]string{manifest.Comis.SecretResidencyScript}, manifest.Comis.SecretNames...)
 	var report residencyReport
 	output, err := executor.Run(ctx, Command{
@@ -81,8 +128,12 @@ func verifyBackupSecretResidency(
 		},
 	})
 	if err != nil || len(output) == 0 || len(output) > maximumCommandOutputBytes || json.Unmarshal(output, &report) != nil {
-		return errors.New("create recovery backup: count-only secret residency oracle is unavailable")
+		return residencyReport{}, false
 	}
+	return report, true
+}
+
+func evaluateBackupSecretResidency(manifest Manifest, report residencyReport) error {
 	if report.SchemaVersion != 1 || report.ScannedFiles <= 0 || len(report.ReadErrors) != 0 ||
 		report.TotalMatches != 0 || len(report.Secrets) != len(manifest.Comis.SecretNames) {
 		return errors.New("create recovery backup: count-only secret residency oracle is incomplete or found plaintext")

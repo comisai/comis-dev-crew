@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type recoveryExecutorFixture struct {
@@ -151,17 +152,69 @@ func TestCreateRecoveryBackupWaitsForRestartedSecretResidencyOracleReadiness(t *
 	if err := os.Chmod(parent, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	backup, err := CreateRecoveryBackup(
-		context.Background(), manifest, filepath.Join(parent, "backup"), executor, manifest.EndedAtMs,
+	waits := 0
+	wait := func(ctx context.Context, _ time.Duration) error {
+		waits++
+		return ctx.Err()
+	}
+	backup, err := createRecoveryBackup(
+		context.Background(), manifest, filepath.Join(parent, "backup"), executor, manifest.EndedAtMs, wait,
 	)
 	if err != nil {
-		t.Fatalf("CreateRecoveryBackup() error = %v", err)
+		t.Fatalf("createRecoveryBackup() error = %v", err)
 	}
 	if !backup.Passed || !backup.SecretResidencyPassed {
 		t.Fatalf("backup evidence = %#v", backup)
 	}
-	if executor.residencyRuns != 4 {
-		t.Fatalf("residency runs = %d, want 4", executor.residencyRuns)
+	if executor.residencyRuns != 4 || waits != 3 {
+		t.Fatalf("residency runs = %d and readiness waits = %d, want 4 and 3", executor.residencyRuns, waits)
+	}
+}
+
+func TestCreateRecoveryBackupRefusesPermanentlyUnavailableSecretResidencyOracle(t *testing.T) {
+	manifest := recoveryManifestFixture(t)
+	executor := &recoveryExecutorFixture{
+		manifest: manifest, unavailableResidencyRuns: recoverySecretResidencyReadinessAttempts + 5,
+	}
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	backupRoot := filepath.Join(parent, "backup")
+	wait := func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
+	_, err := createRecoveryBackup(context.Background(), manifest, backupRoot, executor, manifest.EndedAtMs, wait)
+	if err == nil || !strings.Contains(err.Error(), "secret residency oracle is unavailable") {
+		t.Fatalf("expected bounded readiness refusal, got %v", err)
+	}
+	if executor.residencyRuns != recoverySecretResidencyReadinessAttempts {
+		t.Fatalf("residency runs = %d, want %d", executor.residencyRuns, recoverySecretResidencyReadinessAttempts)
+	}
+	if _, err := os.Lstat(backupRoot); !os.IsNotExist(err) {
+		t.Fatalf("refused backup root was retained: %v", err)
+	}
+}
+
+func TestCreateRecoveryBackupEndsReadinessWaitWhenTheContextEnds(t *testing.T) {
+	manifest := recoveryManifestFixture(t)
+	executor := &recoveryExecutorFixture{manifest: manifest, unavailableResidencyRuns: 4}
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	wait := func(context.Context, time.Duration) error {
+		cancel()
+		return context.Canceled
+	}
+	_, err := createRecoveryBackup(
+		ctx, manifest, filepath.Join(parent, "backup"), executor, manifest.EndedAtMs, wait,
+	)
+	if err == nil || !strings.Contains(err.Error(), "secret residency oracle is unavailable") {
+		t.Fatalf("expected cancelled readiness refusal, got %v", err)
+	}
+	if executor.residencyRuns != 1 {
+		t.Fatalf("residency runs = %d, want 1", executor.residencyRuns)
 	}
 }
 
@@ -178,12 +231,17 @@ func TestCreateRecoveryBackupRefusesParsedPlaintextSecretResidencyWithoutRetryin
 		t.Fatal(err)
 	}
 	backupRoot := filepath.Join(parent, "backup")
-	_, err := CreateRecoveryBackup(context.Background(), manifest, backupRoot, executor, manifest.EndedAtMs)
+	waits := 0
+	wait := func(ctx context.Context, _ time.Duration) error {
+		waits++
+		return ctx.Err()
+	}
+	_, err := createRecoveryBackup(context.Background(), manifest, backupRoot, executor, manifest.EndedAtMs, wait)
 	if err == nil || !strings.Contains(err.Error(), "incomplete or found plaintext") {
 		t.Fatalf("expected immediate plaintext refusal, got %v", err)
 	}
-	if executor.residencyRuns != 1 {
-		t.Fatalf("residency runs = %d, want 1", executor.residencyRuns)
+	if executor.residencyRuns != 1 || waits != 0 {
+		t.Fatalf("residency runs = %d and readiness waits = %d, want 1 and 0", executor.residencyRuns, waits)
 	}
 	if _, err := os.Lstat(backupRoot); !os.IsNotExist(err) {
 		t.Fatalf("refused backup root was retained: %v", err)
