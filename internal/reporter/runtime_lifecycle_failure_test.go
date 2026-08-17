@@ -135,7 +135,8 @@ func TestRuntimeClientCallRejectsUnpinnedMountAuthority(t *testing.T) {
 
 func TestRuntimeClientCallRejectsUnusableCallContext(t *testing.T) {
 	client := &RuntimeClient{socketPath: "/tmp/absent.sock", timeout: time.Second}
-	if _, err := client.call(nil, runtimeRequest{}); err == nil { //nolint:staticcheck // exercises the nil-context boundary
+	//lint:ignore SA1012 This boundary test proves nil cannot reach an attachment call.
+	if _, err := client.call(nil, runtimeRequest{}); err == nil {
 		t.Fatal("client accepted a nil call context")
 	}
 	cancelled, cancel := context.WithCancel(context.Background())

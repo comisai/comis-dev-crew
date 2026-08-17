@@ -24,7 +24,8 @@ func TestEndpointSubmitRejectsUnusableContextAndReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := endpoint.submit(nil, credential, domain.WorkerReport{}); err == nil { //nolint:staticcheck // exercises the nil-context boundary
+	//lint:ignore SA1012 This boundary test proves nil cannot reach report submission.
+	if _, err := endpoint.submit(nil, credential, domain.WorkerReport{}); err == nil {
 		t.Fatal("endpoint accepted a nil submission context")
 	}
 	if _, err := endpoint.submit(context.Background(), credential, domain.WorkerReport{}); !errors.Is(err, ErrInvalidReport) {
