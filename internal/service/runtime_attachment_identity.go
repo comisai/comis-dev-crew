@@ -314,13 +314,16 @@ func inspectRuntimeAttachmentPathAbsent(directoryDescriptor int, name string) (b
 }
 
 func runtimeAttachmentDirectoryEmpty(descriptor int) (bool, error) {
-	duplicate, err := unix.Dup(descriptor)
+	// A duplicated descriptor shares its directory offset with the original, so a
+	// descriptor that was already read reports empty regardless of its contents.
+	// Reopen the same directory to read it from an independent offset.
+	independent, err := unix.Openat(descriptor, ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return false, errors.New("runtime attachment directory contents are unavailable")
 	}
-	directory := os.NewFile(uintptr(duplicate), "runtime-attachment-directory")
+	directory := os.NewFile(uintptr(independent), "runtime-attachment-directory")
 	if directory == nil {
-		_ = unix.Close(duplicate)
+		_ = unix.Close(independent)
 		return false, errors.New("runtime attachment directory contents are unavailable")
 	}
 	names, readErr := directory.Readdirnames(1)
