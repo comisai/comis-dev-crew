@@ -17,6 +17,7 @@ func TestGitEntryPointsRejectMissingAuthority(t *testing.T) {
 	if _, err := NewRegistry(canceled, RegistryConfig{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("NewRegistry(canceled) error = %v", err)
 	}
+	//lint:ignore SA1012 This boundary test proves nil cannot reach repository inspection.
 	if _, err := NewRegistry(nil, RegistryConfig{}); err == nil {
 		t.Fatal("NewRegistry(nil context) succeeded")
 	}
