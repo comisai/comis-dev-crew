@@ -343,3 +343,96 @@ func TestRuntimeSourceRemovalPreservesMismatchedObjects(t *testing.T) {
 		t.Fatalf("missing exact socket error = %v", err)
 	}
 }
+
+func TestRuntimeSourceIdentityIsCapturedLazily(t *testing.T) {
+	root := boundaryRuntimeDirectory(t)
+	socketPath := filepath.Join(root, "attachment.sock")
+	listener := listenRuntimeQuarantineSocket(t, socketPath)
+	listener.SetUnlinkOnClose(false)
+	info, err := os.Lstat(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &RuntimeServer{listener: listener, socketPath: socketPath, socketInfo: info}
+	identity, err := server.SocketIdentity()
+	if err != nil || !identity.Valid() || server.socketIdentity != identity {
+		t.Fatalf("SocketIdentity() = %#v, %v", identity, err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeRuntimeSocket(socketPath, info, identity); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRuntimeIsolationReconciliationKeepsOriginalAuthority(t *testing.T) {
+	root := boundaryRuntimeDirectory(t)
+	directory := runtimePathTestDirectoryDescriptor(t, root)
+	t.Cleanup(func() { _ = unix.Close(directory) })
+	expected := RuntimeSocketIdentity{Device: 1, Inode: 2, ChangeSec: 3}
+
+	makeIsolation := func(t *testing.T, name string) int {
+		t.Helper()
+		if err := os.Mkdir(filepath.Join(root, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		descriptor, err := unix.Openat(directory, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return descriptor
+	}
+
+	originalName := "original"
+	if err := os.WriteFile(filepath.Join(root, originalName), []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	isolation := makeIsolation(t, "isolation-original")
+	if reconciled, err := reconcileIsolatedRuntimePath(
+		directory, isolation, "isolation-original", originalName, expected, RuntimePathRegular, 0o600,
+	); err != nil || reconciled {
+		t.Fatalf("reconcileIsolatedRuntimePath(original) = %t, %v", reconciled, err)
+	}
+
+	isolation = makeIsolation(t, "isolation-absent")
+	if reconciled, err := reconcileIsolatedRuntimePath(
+		directory, isolation, "isolation-absent", "absent", expected, RuntimePathRegular, 0o600,
+	); err != nil || !reconciled {
+		t.Fatalf("reconcileIsolatedRuntimePath(absent) = %t, %v", reconciled, err)
+	}
+
+	isolation = makeIsolation(t, "isolation-mismatch")
+	if err := os.WriteFile(filepath.Join(root, "isolation-mismatch", runtimePathIsolationTarget), []byte("other"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if reconciled, err := reconcileIsolatedRuntimePath(
+		directory, isolation, "isolation-mismatch", "missing", expected, RuntimePathRegular, 0o600,
+	); err == nil || !reconciled {
+		t.Fatalf("reconcileIsolatedRuntimePath(mismatch) = %t, %v", reconciled, err)
+	}
+}
+
+func TestRuntimeSourceHelpersRejectIncompleteLifecycleAuthority(t *testing.T) {
+	if _, err := runtimeSocketStatIdentity(unix.Stat_t{}); err == nil {
+		t.Fatal("runtimeSocketStatIdentity accepted an empty identity")
+	}
+	missing := filepath.Join(t.TempDir(), "missing", "attachment.sock")
+	if _, err := captureRuntimeSocketIdentity(missing, fakeRuntimeFileInfo{}); err == nil {
+		t.Fatal("captureRuntimeSocketIdentity accepted a missing parent")
+	}
+	server := &RuntimeServer{socketPath: missing, socketInfo: fakeRuntimeFileInfo{}}
+	if _, err := server.SocketIdentity(); err == nil {
+		t.Fatal("SocketIdentity accepted unavailable lazy identity authority")
+	}
+	server.initializeLifecycle()
+	server.acceptWaitGroup.Add(1)
+	if server.finishAccept(nil) {
+		t.Fatal("finishAccept accepted a nil connection")
+	}
+	if err := validateRuntimeLaunchConfig(RuntimeServerConfig{
+		AttentionResponses: boundaryAttentionReceiver{},
+	}); err == nil {
+		t.Fatal("validateRuntimeLaunchConfig accepted incomplete attention authority")
+	}
+}

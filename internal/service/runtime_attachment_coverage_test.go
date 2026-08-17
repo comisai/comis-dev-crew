@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/reporter"
@@ -441,5 +442,327 @@ func TestRuntimeAttachmentCleanupRemovesOnlyBoundDirectories(t *testing.T) {
 	}
 	if errors.Is(classifyRuntimeAttachmentCleanupPathError("resource", unix.EIO), errRuntimeAttachmentOwnershipUnproven) {
 		t.Fatal("resource cleanup failure was task scoped")
+	}
+}
+
+func TestRuntimeAttachmentGenerationRejectsReplacedAnchors(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rootDescriptor, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = unix.Close(rootDescriptor) })
+
+	makeGeneration := func(t *testing.T, taskHandle string) (reporter.RuntimeSocketIdentity, [16]byte, string) {
+		t.Helper()
+		identity, generationID, err := createRuntimeAttachmentGeneration(rootDescriptor, taskHandle)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return identity, generationID, filepath.Join(root, runtimeAttachmentGenerationName(generationID))
+	}
+
+	identity, generationID, _ := makeGeneration(t, "task-generation-identity-drift")
+	changed := identity
+	changed.Inode++
+	if _, _, _, err := pinRuntimeAttachmentGeneration(rootDescriptor, changed, generationID); !errors.Is(err, errRuntimeAttachmentGenerationDiffers) {
+		t.Fatalf("changed generation identity error = %v", err)
+	}
+
+	identity, generationID, generationPath := makeGeneration(t, "task-generation-mode-drift")
+	if err := os.Chmod(generationPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := pinRuntimeAttachmentGeneration(rootDescriptor, identity, generationID); !errors.Is(err, errRuntimeAttachmentGenerationDiffers) {
+		t.Fatalf("changed generation mode error = %v", err)
+	}
+
+	identity, generationID, generationPath = makeGeneration(t, "task-generation-anchor-missing")
+	anchorPath := filepath.Join(generationPath, runtimeAttachmentGenerationLink)
+	if err := os.Remove(anchorPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := pinRuntimeAttachmentGeneration(rootDescriptor, identity, generationID); !errors.Is(err, errRuntimeAttachmentGenerationDiffers) {
+		t.Fatalf("missing generation anchor error = %v", err)
+	}
+
+	identity, generationID, generationPath = makeGeneration(t, "task-generation-anchor-unsafe")
+	anchorPath = filepath.Join(generationPath, runtimeAttachmentGenerationLink)
+	if err := os.Chmod(anchorPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := pinRuntimeAttachmentGeneration(rootDescriptor, identity, generationID); !errors.Is(err, errRuntimeAttachmentOwnershipUnproven) {
+		t.Fatalf("unsafe generation anchor error = %v", err)
+	}
+
+	identity, generationID, _ = makeGeneration(t, "task-generation-link-missing")
+	taskDirectory := filepath.Join(root, "task-generation-link-missing")
+	if err := os.Mkdir(taskDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	taskDescriptor, taskIdentity, missing, err := openTaskRuntimeDirectory(rootDescriptor, "task-generation-link-missing")
+	if err != nil || missing {
+		t.Fatal(err)
+	}
+	pinned := &pinnedTaskRuntimeDirectory{
+		runtimeRootDescriptor: rootDescriptor, taskDescriptor: taskDescriptor,
+		taskHandle: "task-generation-link-missing", directoryName: "task-generation-link-missing", taskIdentity: taskIdentity,
+	}
+	if matches, err := inspectRuntimeAttachmentGeneration(pinned, identity, generationID); !errors.Is(err, errRuntimeAttachmentGenerationDiffers) || matches {
+		t.Fatalf("inspectRuntimeAttachmentGeneration(missing link) = %t, %v", matches, err)
+	}
+	if err := os.WriteFile(filepath.Join(taskDirectory, runtimeAttachmentGenerationLink), []byte("wrong"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := linkRuntimeAttachmentGeneration(pinned, identity, generationID); err == nil {
+		t.Fatal("generation link accepted an existing unrelated anchor")
+	}
+	if err := unix.Close(taskDescriptor); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRuntimeAttachmentCreatingCleanupRequiresExactGeneration(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rootDescriptor, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = unix.Close(rootDescriptor) })
+	taskHandle := "task-creating-generation-cleanup"
+	generation, generationID, err := createRuntimeAttachmentGeneration(rootDescriptor, taskHandle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, taskHandle), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	taskDescriptor, taskIdentity, missing, err := openTaskRuntimeDirectory(rootDescriptor, taskHandle)
+	if err != nil || missing {
+		t.Fatalf("openTaskRuntimeDirectory() = %d, %#v, %t, %v", taskDescriptor, taskIdentity, missing, err)
+	}
+	pinnedRoot, err := unix.Dup(rootDescriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned := &pinnedTaskRuntimeDirectory{
+		runtimeRootDescriptor: pinnedRoot, taskDescriptor: taskDescriptor,
+		taskHandle: taskHandle, directoryName: taskHandle, taskIdentity: taskIdentity,
+	}
+	linked, err := linkRuntimeAttachmentGeneration(pinned, generation, generationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := runtimeAttachmentIdentityRecord{
+		Stage: runtimeAttachmentCreating, Task: taskIdentity, Generation: linked, GenerationID: generationID,
+	}
+	if err := removePinnedTaskRuntimeDirectory(pinned, record); err != nil {
+		t.Fatalf("removePinnedTaskRuntimeDirectory(creating) error = %v", err)
+	}
+	if err := pinned.close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, taskHandle)); !os.IsNotExist(err) {
+		t.Fatalf("creating directory remained: %v", err)
+	}
+
+	otherTask := "task-creating-generation-mismatch"
+	if err := os.Mkdir(filepath.Join(root, otherTask), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	descriptor, identity, missing, err := openTaskRuntimeDirectory(rootDescriptor, otherTask)
+	if err != nil || missing {
+		t.Fatal(err)
+	}
+	pinned = &pinnedTaskRuntimeDirectory{
+		runtimeRootDescriptor: rootDescriptor, taskDescriptor: descriptor,
+		taskHandle: otherTask, directoryName: otherTask, taskIdentity: identity,
+	}
+	if err := removePinnedTaskRuntimeDirectory(pinned, record); !errors.Is(err, errRuntimeAttachmentOwnershipUnproven) {
+		t.Fatalf("mismatched creating generation error = %v", err)
+	}
+	_ = unix.Close(descriptor)
+}
+
+func TestServiceCompositionFailuresRemainBoundaryScoped(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	validSocket := filepath.Join(root, "service.sock")
+	if err := Run(context.Background(), Config{DatabasePath: root, SocketPath: validSocket}); err == nil {
+		t.Fatal("Run accepted a directory as a database")
+	}
+	databasePath := filepath.Join(root, "state.db")
+	if err := Run(context.Background(), Config{
+		DatabasePath: databasePath, SocketPath: validSocket, MCPSocketPath: filepath.Join(root, "mcp.sock"),
+	}); err == nil {
+		t.Fatal("Run accepted an MCP endpoint without mutation authority")
+	}
+	runtimeFile := filepath.Join(root, "runtime-file")
+	if err := os.WriteFile(runtimeFile, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(context.Background(), Config{
+		DatabasePath: filepath.Join(root, "runtime.db"), SocketPath: filepath.Join(root, "runtime.sock"),
+		RuntimeRoot: runtimeFile,
+	}); err == nil {
+		t.Fatal("Run accepted a regular file as a runtime root")
+	}
+	blockedSocket := filepath.Join(root, "blocked.sock")
+	if err := os.Mkdir(blockedSocket, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(context.Background(), Config{
+		DatabasePath: filepath.Join(root, "listen.db"), SocketPath: blockedSocket,
+	}); err == nil {
+		t.Fatal("Run accepted a directory as an endpoint")
+	}
+
+	readyCalls := 0
+	if err := serveServiceComponents(context.Background(), nil, nil, nil); err == nil ||
+		!strings.Contains(err.Error(), "stopped unexpectedly") {
+		t.Fatalf("serveServiceComponents(empty) = %v", err)
+	}
+	componentErr := errors.New("component failed")
+	err = serveServiceComponents(context.Background(), nil, []func(context.Context) error{
+		func(context.Context) error { return componentErr },
+		func(ctx context.Context) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	}, func() { readyCalls++ })
+	if readyCalls != 1 || !errors.Is(err, componentErr) {
+		t.Fatalf("serveServiceComponents() = %v, ready=%d", err, readyCalls)
+	}
+}
+
+func TestRuntimeAttachmentIdentityHelpersRejectAmbiguousObjects(t *testing.T) {
+	if _, err := runtimeAttachmentPathIdentity("/path/that/does/not/exist"); err == nil {
+		t.Fatal("missing runtime path acquired identity")
+	}
+	if _, err := runtimeAttachmentDescriptorIdentity(-1); err == nil {
+		t.Fatal("invalid runtime descriptor acquired identity")
+	}
+	if _, err := runtimeAttachmentStatIdentity(unix.Stat_t{}); err == nil {
+		t.Fatal("empty runtime stat acquired identity")
+	}
+	if err := (&pinnedTaskRuntimeDirectory{taskDescriptor: -1, runtimeRootDescriptor: -1}).close(); err == nil {
+		t.Fatal("invalid pinned descriptors closed successfully")
+	}
+	root := filepath.Join(shortTempDir(t), "runtime")
+	store := &runtimeAttachmentRecoveryStore{}
+	coordinator := runtimeTransitionCoordinator(t, root, store, time.Now().UTC())
+	if pinned, missing, err := coordinator.pinTaskRuntimeDirectory("invalid handle"); err == nil || missing || pinned != nil {
+		t.Fatalf("pinTaskRuntimeDirectory(invalid) = %#v, %t, %v", pinned, missing, err)
+	}
+	if pinned, missing, err := coordinator.pinTaskRuntimeDirectory("task-identity-missing"); err != nil || !missing || pinned != nil {
+		t.Fatalf("pinTaskRuntimeDirectory(missing) = %#v, %t, %v", pinned, missing, err)
+	}
+	if err := coordinator.persistRuntimeAttachmentIdentity("task-identity-invalid", reporter.RuntimeSocketIdentity{}); err == nil {
+		t.Fatal("invalid socket identity was persisted")
+	}
+	if err := coordinator.persistRuntimeAttachmentIdentity(
+		"task-identity-missing", reporter.RuntimeSocketIdentity{Device: 1, Inode: 2, ChangeSec: 3},
+	); err == nil {
+		t.Fatal("identity was persisted without a task directory")
+	}
+	if _, _, found, err := readPinnedRuntimeSocketIdentity(-1); err == nil || found {
+		t.Fatalf("readPinnedRuntimeSocketIdentity(invalid) = found %t, %v", found, err)
+	}
+	directory := filepath.Join(root, "task-identity-regular")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	descriptor, err := unix.Open(directory, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = unix.Close(descriptor) })
+	if _, _, found, err := readPinnedRuntimeSocketIdentity(descriptor); err != nil || found {
+		t.Fatalf("readPinnedRuntimeSocketIdentity(missing) = found %t, %v", found, err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "attachment.sock"), []byte("regular"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if identity, mode, found, err := readPinnedRuntimeSocketIdentity(descriptor); err != nil || !found ||
+		!identity.Valid() || mode&unix.S_IFMT != unix.S_IFREG {
+		t.Fatalf("readPinnedRuntimeSocketIdentity(regular) = %#v, %o, %t, %v", identity, mode, found, err)
+	}
+	if err := coordinator.removeTaskRuntimeDirectory("invalid handle"); err == nil {
+		t.Fatal("invalid task runtime directory was removed")
+	}
+	if err := coordinator.removeTaskRuntimeDirectory("task-cleanup-absent"); err != nil {
+		t.Fatalf("removeTaskRuntimeDirectory(absent) error = %v", err)
+	}
+	unproven := filepath.Join(root, "task-cleanup-unproven")
+	if err := os.Mkdir(unproven, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinator.removeTaskRuntimeDirectory("task-cleanup-unproven"); !errors.Is(err, errRuntimeAttachmentOwnershipUnproven) {
+		t.Fatalf("removeTaskRuntimeDirectory(unproven) error = %v", err)
+	}
+	if _, err := runtimeAttachmentIdentityName("invalid handle"); err == nil {
+		t.Fatal("invalid task handle acquired an identity record name")
+	}
+	if _, err := runtimeAttachmentIdentityTemporaryName("invalid handle"); err == nil {
+		t.Fatal("invalid task handle acquired a temporary record name")
+	}
+	if err := persistPinnedRuntimeAttachmentIdentity(nil, runtimeAttachmentIdentityRecord{}, nil); err == nil {
+		t.Fatal("nil pinned directory persisted an identity")
+	}
+	if _, err := publishRuntimeAttachmentIdentity(-1, "task-invalid-record", runtimeAttachmentIdentityRecord{}, nil, nil); err == nil {
+		t.Fatal("invalid root descriptor published an identity record")
+	}
+	if matches, err := inspectRuntimeAttachmentSocket(descriptor, reporter.RuntimeSocketIdentity{}); err != nil || matches {
+		t.Fatalf("inspectRuntimeAttachmentSocket(regular) = %t, %v", matches, err)
+	}
+	if _, err := stagePinnedRuntimeAttachmentDirectory(
+		&pinnedTaskRuntimeDirectory{taskDescriptor: -1}, runtimeAttachmentIdentityRecord{},
+	); err == nil {
+		t.Fatal("invalid task descriptor staged a directory")
+	}
+}
+
+func TestRuntimeAttachmentListenerRejectsUnavailableComposition(t *testing.T) {
+	credentialErr := errors.New("credential unavailable")
+	coordinator := &runtimeAttachmentCoordinator{
+		newCredential: func() (string, error) { return "", credentialErr },
+	}
+	if _, err := coordinator.listenRuntimeAttachment(
+		application.RuntimeAttachmentPreparationRequest{}, application.PreparedRuntimeAttachment{},
+	); err == nil {
+		t.Fatal("listener accepted an unavailable credential source")
+	}
+	root := filepath.Join(shortTempDir(t), "runtime")
+	coordinator = runtimeTransitionCoordinator(t, root, &runtimeAttachmentRecoveryStore{}, time.Now().UTC())
+	if _, _, _, _, err := coordinator.prepareRuntimeAttachmentDirectory("invalid handle", [32]byte{1}); err == nil {
+		t.Fatal("preparation accepted an invalid task handle")
+	}
+	taskHandle := "task-listener-existing"
+	if err := os.Mkdir(filepath.Join(root, taskHandle), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, _, err := coordinator.prepareRuntimeAttachmentDirectory(taskHandle, [32]byte{1}); err == nil {
+		t.Fatal("preparation accepted an existing canonical directory")
+	}
+	stagedTask := "task-listener-staged"
+	if err := os.Mkdir(filepath.Join(root, runtimeAttachmentCreationName(stagedTask)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, _, err := coordinator.prepareRuntimeAttachmentDirectory(stagedTask, [32]byte{1}); err == nil {
+		t.Fatal("preparation accepted an unproven staged directory")
 	}
 }
