@@ -74,3 +74,46 @@ func TestRepositoryPolicy_ProtectedWorkflowSuppliesEveryLiveRecoveryRoot(t *test
 		}
 	}
 }
+
+// The companion owns the operator-installed liaison assets. Comis must not ship
+// them, because its bundled-skill tree auto-seeds into every deployment, so this
+// repository is where the skill and the named-agent policy templates have to be
+// resolvable for an installer to copy.
+func TestRepositoryPolicy_CompanionOwnsOperatorInstalledLiaisonAssets(t *testing.T) {
+	for _, name := range []string{
+		"skills/dev-crew/SKILL.md",
+		"skills/dev-crew/references/task-shapes.md",
+		"skills/dev-crew/references/delegation.md",
+		"skills/dev-crew/references/decisions.md",
+		"skills/dev-crew/references/delivery.md",
+		"skills/dev-crew/references/recovery.md",
+		"workspace-template/ROLE.md",
+		"workspace-template/TOOLS.md",
+		"workspace-template/HEARTBEAT.md",
+	} {
+		if _, err := os.Stat(filepath.Join(repositoryRoot(t), name)); err != nil {
+			t.Errorf("operator-installed liaison asset %s must be present: %v", name, err)
+		}
+	}
+}
+
+// A skill recommends procedure. It can never be the enforcement layer for a
+// credential, an approval, or a capability, so it must not present itself as one.
+func TestRepositoryPolicy_LiaisonSkillGrantsNoAuthority(t *testing.T) {
+	skill := readRepositoryFile(t, "skills/dev-crew/SKILL.md")
+	if !strings.Contains(skill, "grants no capability") {
+		t.Error("the liaison skill must state that it grants no capability")
+	}
+	for _, forbidden := range []string{
+		"devcrew ", // no operator command lines for a model to assemble
+		"sqlite",
+		"credential",
+		"secret://",
+	} {
+		if strings.Contains(strings.ToLower(skill), forbidden) &&
+			!strings.Contains(strings.ToLower(skill), "never "+forbidden) &&
+			!strings.Contains(strings.ToLower(skill), "`"+strings.TrimSpace(forbidden)+"`") {
+			t.Errorf("the liaison skill must not present %q as an available surface", forbidden)
+		}
+	}
+}
