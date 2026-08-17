@@ -730,3 +730,15 @@ func assertControlFailure(t *testing.T, response []byte, want ErrorKind) {
 }
 
 func nilControlContext() context.Context { return nil }
+
+// Cancellation is dispatched like every other inbound method; these doubles
+// accept it and assert nothing, so adding it changed no existing expectation.
+func (controlHandlerStub) Cancel(
+	_ context.Context,
+	params CancelRequestParams,
+) (CancelResponseResult, error) {
+	return CancelResponseResult{
+		ManagedRunID: params.ManagedRunID, State: CancelStateCancelled,
+		AcknowledgedAtMs: 1_800_000_000_000,
+	}, nil
+}

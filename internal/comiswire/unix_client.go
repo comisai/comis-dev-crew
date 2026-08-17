@@ -40,6 +40,11 @@ type authenticatedReportRequest struct {
 	Bearer string `json:"bearer"`
 }
 
+type authenticatedCancelRequest struct {
+	CancelRequest
+	Bearer string `json:"bearer"`
+}
+
 type authenticatedHeartbeatRequest struct {
 	HeartbeatRequest
 	Bearer string `json:"bearer"`

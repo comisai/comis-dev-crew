@@ -562,3 +562,11 @@ func TestRandomIdentity_WhenEntropyIsRequested_ReturnsAPrefixedHexIdentity(t *te
 		t.Errorf("identity %q lost its prefix", first)
 	}
 }
+
+// Cancellation joins the same durable mutation surface; the double accepts it.
+func (serviceMutationStub) CancelManagedRun(
+	_ context.Context,
+	_ application.CancelManagedRunCommand,
+) (application.MutationResult, error) {
+	return application.MutationResult{}, nil
+}

@@ -234,6 +234,39 @@ func validateWorkerLaunchAcknowledgementMutation(mutation application.WorkerLaun
 	return nil
 }
 
+// A run identity alone is enough here: the host mints it, it is unique, and the
+// caller's service instance is checked against the task it resolves to.
+func getTaskByManagedRun(ctx context.Context, source queryer, managedRunID string) (domain.Task, error) {
+	const query = `SELECT
+		handle, schema_version, service_instance_id, managed_run_id,
+		workspace_lease_id, execution_attachment_id, attachment_target_name,
+		state, shape, repository_id, base_revision,
+        brief_revision, brief_revision_hash, acceptance_criteria_json,
+        constraints_json, validation_profile, delivery_mode, worker_profile_id,
+        report_cursor, state_version, created_at, updated_at
+    FROM tasks WHERE managed_run_id = ?`
+	rows, err := source.QueryContext(ctx, query, managedRunID)
+	if err != nil {
+		return domain.Task{}, fmt.Errorf("get task by managed run: %w", err)
+	}
+	defer rows.Close()
+	var matches []domain.Task
+	for rows.Next() {
+		task, err := scanTask(rows)
+		if err != nil {
+			return domain.Task{}, fmt.Errorf("get task by managed run: %w", err)
+		}
+		matches = append(matches, task)
+	}
+	if err := rows.Err(); err != nil {
+		return domain.Task{}, fmt.Errorf("get task by managed run: %w", err)
+	}
+	if len(matches) != 1 {
+		return domain.Task{}, fmt.Errorf("get task by managed run: %w", application.ErrPrecondition)
+	}
+	return matches[0], nil
+}
+
 func getTaskByBinding(ctx context.Context, source queryer, managedRunID, workspaceLeaseID string) (domain.Task, error) {
 	const query = `SELECT
 		handle, schema_version, service_instance_id, managed_run_id,

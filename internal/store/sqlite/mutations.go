@@ -297,6 +297,7 @@ const (
 	commandPrepareTask             = "PrepareTask"
 	commandActivateManagedRun      = "ActivateManagedRun"
 	commandAbandonManagedRun       = "AbandonManagedRun"
+	commandCancelManagedRun        = "CancelManagedRun"
 	commandStartTask               = "StartTask"
 	commandRecordTerminalEvent     = "RecordTerminalEvent"
 	commandAcknowledgeWorkerLaunch = "AcknowledgeWorkerLaunch"

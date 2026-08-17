@@ -604,3 +604,53 @@ func testRegistrationNonceSource() (string, error) { return "registration-nonce_
 func testWorkspacePreparer() *workspacePreparer {
 	return &workspacePreparer{prepared: PreparedWorkspace{CanonicalRoot: "/approved/workspaces/task-0001"}}
 }
+
+// Cancellation joins the same durable mutation surface; the double accepts it.
+func (store *mutationStore) CommitManagedRunCancel(
+	_ context.Context,
+	mutation ManagedRunCancelMutation,
+) (MutationResult, error) {
+	return MutationResult{
+		Task:      domain.Task{Handle: "task_cancel", State: domain.TaskCancelled},
+		Operation: domain.OperationRecord{ID: mutation.OperationID},
+	}, nil
+}
+
+func TestMutations_CancelValidatesClosedInputsBeforeTouchingTheStore(t *testing.T) {
+	clock := time.Date(2026, time.August, 9, 12, 31, 0, 0, time.UTC)
+	newMutations := func(store *mutationStore) *Mutations {
+		mutations, err := NewMutations(MutationConfig{
+			Store: store, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(),
+			RuntimeAttachments: testRuntimeAttachments(),
+			WorkerProfiles:     acceptingWorkerProfile, ValidationProfiles: acceptingValidationProfile,
+			TaskIDs:            func(string) (string, error) { return "task-unused", nil },
+			RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour,
+			Clock: func() time.Time { return clock },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return mutations
+	}
+	valid := CancelManagedRunCommand{
+		OperationID: "operation-cancel", ServiceInstanceID: "service-instance-0001",
+		ManagedRunID: "managed-run-0001", Reason: CancelReasonOwnerCancelled,
+	}
+	if _, err := newMutations(&mutationStore{}).CancelManagedRun(context.Background(), valid); err != nil {
+		t.Fatalf("CancelManagedRun(valid) error = %v", err)
+	}
+	for name, mutate := range map[string]func(*CancelManagedRunCommand){
+		"operation":  func(c *CancelManagedRunCommand) { c.OperationID = "" },
+		"instance":   func(c *CancelManagedRunCommand) { c.ServiceInstanceID = "" },
+		"managedRun": func(c *CancelManagedRunCommand) { c.ManagedRunID = "" },
+		// A reason outside the closed set is refused rather than recorded: the
+		// audit trail for a stopped run must name a reason the host defined.
+		"reason": func(c *CancelManagedRunCommand) { c.Reason = CancelReason("because") },
+	} {
+		command := valid
+		mutate(&command)
+		if _, err := newMutations(&mutationStore{}).CancelManagedRun(context.Background(), command); err == nil {
+			t.Errorf("%s: CancelManagedRun accepted invalid input", name)
+		}
+	}
+}

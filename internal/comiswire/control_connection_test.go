@@ -673,3 +673,15 @@ func readControlFrame(connection net.Conn, destination any) error {
 	}
 	return errors.New("control test frame exceeds line limit")
 }
+
+// Cancellation is dispatched like every other inbound method; these doubles
+// accept it and assert nothing, so adding it changed no existing expectation.
+func (handler *durableControlHandler) Cancel(
+	_ context.Context,
+	params CancelRequestParams,
+) (CancelResponseResult, error) {
+	return CancelResponseResult{
+		ManagedRunID: params.ManagedRunID, State: CancelStateCancelled,
+		AcknowledgedAtMs: 1_800_000_000_000,
+	}, nil
+}

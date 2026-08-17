@@ -1,7 +1,9 @@
 package comiswire
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"testing"
@@ -124,4 +126,47 @@ func TestControlConnectionHeartbeatReturnsTheHostAcknowledgement(t *testing.T) {
 	if err := <-hostDone; err != nil {
 		t.Fatalf("host exchange: %v", err)
 	}
+}
+
+func TestControlSessionDispatchesCancelAndFailsClosed(t *testing.T) {
+	valid := CancelRequest{
+		JSONRPC: JSONRPCVersion, ID: "operation_cancel_a", Method: MethodManagedRunsCancel,
+		Params: CancelRequestParams{
+			OperationID: "operation_cancel_a", ManagedRunID: "managed-run_a",
+			Reason: "owner_cancelled",
+		},
+	}
+	t.Run("success", func(t *testing.T) {
+		response := dispatchControlTestFrame(t, controlHandlerStub{}, authenticatedCancelRequest{
+			CancelRequest: valid, Bearer: controlTestBearer,
+		})
+		var cancelled CancelResponse
+		if err := json.Unmarshal(response, &cancelled); err != nil {
+			t.Fatal(err)
+		}
+		if cancelled.Result.ManagedRunID != valid.Params.ManagedRunID ||
+			cancelled.Result.State != CancelStateCancelled {
+			t.Fatalf("cancel response = %#v", cancelled)
+		}
+	})
+	t.Run("altered envelope operation", func(t *testing.T) {
+		// The envelope id and the params operation id are one identity; letting
+		// them differ would let a caller address a run it did not name.
+		altered := valid
+		altered.ID = "operation_envelope_other"
+		response := dispatchControlTestFrame(t, controlHandlerStub{}, authenticatedCancelRequest{
+			CancelRequest: altered, Bearer: controlTestBearer,
+		})
+		if !bytes.Contains(response, []byte("invalid_request")) {
+			t.Fatalf("altered cancel envelope response = %s", response)
+		}
+	})
+	t.Run("wrong credential", func(t *testing.T) {
+		response := dispatchControlTestFrame(t, controlHandlerStub{}, authenticatedCancelRequest{
+			CancelRequest: valid, Bearer: "not-the-instance-credential",
+		})
+		if !bytes.Contains(response, []byte("unauthorized_instance")) {
+			t.Fatalf("unauthenticated cancel response = %s", response)
+		}
+	})
 }

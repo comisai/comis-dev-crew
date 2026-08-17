@@ -19,6 +19,7 @@ type productionLaunchStore interface {
 type productionLaunchMutations interface {
 	ActivateManagedRun(context.Context, application.ActivateManagedRunCommand) (application.MutationResult, error)
 	AbandonManagedRun(context.Context, application.AbandonManagedRunCommand) (application.MutationResult, error)
+	CancelManagedRun(context.Context, application.CancelManagedRunCommand) (application.MutationResult, error)
 	StartTask(context.Context, application.StartTaskCommand) (application.MutationResult, error)
 	ReconcileTerminalEvent(context.Context, application.RecordTerminalEventCommand) (application.MutationResult, bool, error)
 	RecordTerminalEvent(context.Context, application.RecordTerminalEventCommand) (application.MutationResult, error)
@@ -53,6 +54,16 @@ func (supervisor *productionLaunchSupervisor) ActivateManagedRun(
 	command application.ActivateManagedRunCommand,
 ) (application.MutationResult, error) {
 	return supervisor.mutations.ActivateManagedRun(ctx, command)
+}
+
+// Cancellation passes straight through: the supervisor coordinates worker
+// launch, and stopping a run is a durable state decision that needs no launch
+// side effect — the worker's terminal is reclaimed by the normal cleanup path.
+func (supervisor *productionLaunchSupervisor) CancelManagedRun(
+	ctx context.Context,
+	command application.CancelManagedRunCommand,
+) (application.MutationResult, error) {
+	return supervisor.mutations.CancelManagedRun(ctx, command)
 }
 
 func (supervisor *productionLaunchSupervisor) AbandonManagedRun(

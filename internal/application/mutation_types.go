@@ -47,6 +47,7 @@ const (
 	commandPrepareTask             = "PrepareTask"
 	commandActivateManagedRun      = "ActivateManagedRun"
 	commandAbandonManagedRun       = "AbandonManagedRun"
+	commandCancelManagedRun        = "CancelManagedRun"
 	commandStartTask               = "StartTask"
 	commandRecordTerminalEvent     = "RecordTerminalEvent"
 	commandAcknowledgeWorkerLaunch = "AcknowledgeWorkerLaunch"
@@ -78,6 +79,47 @@ type ActivateManagedRunCommand struct {
 	WorkspaceLeaseID      string
 	ExecutionAttachmentID string
 	AttachmentTargetName  string
+}
+
+// CancelManagedRunCommand stops one activated run at the host's request.
+//
+// It names the run and the host's reason and nothing else. How the service
+// disposes of its own artifacts is a domain judgement the service makes and
+// reports; cancellation preserves them by default, because deleting work on a
+// stop request would make the request irreversible.
+type CancelManagedRunCommand struct {
+	OperationID       string
+	ServiceInstanceID string
+	ManagedRunID      string
+	Reason            CancelReason
+}
+
+// CancelReason is the closed set of host reasons for stopping a run.
+type CancelReason string
+
+const (
+	CancelReasonOwnerCancelled   CancelReason = "owner_cancelled"
+	CancelReasonAuthorityRevoked CancelReason = "authority_revoked"
+	CancelReasonBudgetExhausted  CancelReason = "budget_exhausted"
+)
+
+func (reason CancelReason) valid() bool {
+	switch reason {
+	case CancelReasonOwnerCancelled, CancelReasonAuthorityRevoked, CancelReasonBudgetExhausted:
+		return true
+	default:
+		return false
+	}
+}
+
+// ManagedRunCancelMutation is the durable half of one cancellation.
+type ManagedRunCancelMutation struct {
+	ServiceInstanceID string
+	ManagedRunID      string
+	Reason            CancelReason
+	OperationID       string
+	SubjectDigest     string
+	At                time.Time
 }
 
 // AbandonManagedRunCommand closes one unbound private preparation without
@@ -216,6 +258,7 @@ type MutationStore interface {
 	CommitPreparedTask(context.Context, PreparedTaskMutation) (MutationResult, error)
 	CommitManagedRunActivation(context.Context, ManagedRunActivationMutation) (MutationResult, error)
 	CommitManagedRunAbandon(context.Context, ManagedRunAbandonMutation) (MutationResult, error)
+	CommitManagedRunCancel(context.Context, ManagedRunCancelMutation) (MutationResult, error)
 	CommitTaskStart(context.Context, TaskStartMutation) (MutationResult, error)
 	CommitTerminalEvent(context.Context, TerminalEventMutation) (MutationResult, error)
 	CommitWorkerLaunchAcknowledgement(context.Context, WorkerLaunchAcknowledgementMutation) (MutationResult, error)

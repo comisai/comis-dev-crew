@@ -13,6 +13,7 @@ import (
 type DurableControlMutations interface {
 	ActivateManagedRun(context.Context, application.ActivateManagedRunCommand) (application.MutationResult, error)
 	AbandonManagedRun(context.Context, application.AbandonManagedRunCommand) (application.MutationResult, error)
+	CancelManagedRun(context.Context, application.CancelManagedRunCommand) (application.MutationResult, error)
 	RecordTerminalEvent(context.Context, application.RecordTerminalEventCommand) (application.MutationResult, error)
 }
 
@@ -99,7 +100,45 @@ func (handler *DurableControlHandler) Activate(ctx context.Context, params Activ
 	}, nil
 }
 
-// Abandon closes the exact preparation and returns its fixed terminal mapping.
+// The generator emits one ManagedRunState union across every method, so the
+// cancel-specific states are named here. The wire schema for a cancel response
+// carries the narrower enum and is what actually validates the frame.
+const (
+	CancelStateCancelled       ManagedRunState = "cancelled"
+	CancelStateAlreadyTerminal ManagedRunState = "already_terminal"
+)
+
+// Cancel stops one activated run and reports the state it reached.
+//
+// The acknowledgement distinguishes a run this call settled from one that was
+// already terminal, so the host can tell a cancellation it caused from a race it
+// lost — both are success, and collapsing them would hide which happened.
+func (handler *DurableControlHandler) Cancel(ctx context.Context, params CancelRequestParams) (CancelResponseResult, error) {
+	result, err := handler.mutations.CancelManagedRun(ctx, application.CancelManagedRunCommand{
+		OperationID:       string(params.OperationID),
+		ServiceInstanceID: handler.serviceInstanceID,
+		ManagedRunID:      string(params.ManagedRunID),
+		Reason:            application.CancelReason(params.Reason),
+	})
+	if err != nil {
+		return CancelResponseResult{}, controlMutationFailure(err)
+	}
+	if result.Task.Handle == "" {
+		return CancelResponseResult{}, wireFailure(ErrorKindInternalError, "durable cancellation result is incomplete")
+	}
+	state := CancelStateCancelled
+	if result.Task.State != domain.TaskCancelled {
+		// The task refused to leave its own terminal state, which only happens
+		// when it had already settled some other way.
+		state = CancelStateAlreadyTerminal
+	}
+	return CancelResponseResult{
+		ManagedRunID: params.ManagedRunID, State: state,
+		AcknowledgedAtMs: result.Operation.UpdatedAt.UnixMilli(),
+	}, nil
+}
+
+// Abandon closes the exact preparation// Abandon closes the exact preparation and returns its fixed terminal mapping.
 func (handler *DurableControlHandler) Abandon(ctx context.Context, params AbandonRequestParams) (AbandonResponseResult, error) {
 	result, err := handler.mutations.AbandonManagedRun(ctx, application.AbandonManagedRunCommand{
 		OperationID: string(params.OperationID), ServiceInstanceID: handler.serviceInstanceID,

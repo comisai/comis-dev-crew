@@ -211,6 +211,26 @@ func (session *controlSession) dispatch(ctx context.Context, method Method, line
 			return session.writeFailure(&id, handlerWireFailure(err))
 		}
 		return session.writeValidated(PayloadAbandonResponse, AbandonResponse{JSONRPC: JSONRPCVersion, ID: id, Result: result})
+	case MethodManagedRunsCancel:
+		var authenticated authenticatedCancelRequest
+		if err := decodeStrictObject(line, &authenticated); err != nil {
+			return session.writeFailure(nil, wireFailure(ErrorKindInvalidRequest, "invalid cancel envelope"))
+		}
+		id := authenticated.ID
+		if !session.authenticated(authenticated.Bearer) {
+			return session.writeFailure(&id, wireFailure(ErrorKindUnauthorizedInstance, "instance credential differs"))
+		}
+		if authenticated.ID != authenticated.Params.OperationID {
+			return session.writeFailure(&id, wireFailure(ErrorKindInvalidRequest, "cancel operation identity differs"))
+		}
+		if err := validateBaseRequest(authenticated.CancelRequest); err != nil {
+			return session.writeFailure(&id, wireFailure(ErrorKindInvalidParams, "invalid cancel request"))
+		}
+		result, err := session.handler.Cancel(ctx, authenticated.Params)
+		if err != nil {
+			return session.writeFailure(&id, handlerWireFailure(err))
+		}
+		return session.writeValidated(PayloadCancelResponse, CancelResponse{JSONRPC: JSONRPCVersion, ID: id, Result: result})
 	case MethodManagedRunsTerminalEvent:
 		var authenticated authenticatedTerminalEventRequest
 		if err := decodeStrictObject(line, &authenticated); err != nil {

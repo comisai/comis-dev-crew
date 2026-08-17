@@ -305,3 +305,37 @@ func (adapter *productionLaunchHarnessAdapter) BuildLaunchDescriptor(
 func (*productionLaunchHarnessAdapter) ClassifySemanticActivity(application.HarnessObservation) application.SemanticActivityResult {
 	return application.SemanticActivityResult{State: application.ActivityUnknown, Reason: application.SemanticReasonMissing}
 }
+
+// Cancellation joins the same durable mutation surface; the stub accepts it.
+func (*productionLaunchMutationStub) CancelManagedRun(
+	_ context.Context,
+	_ application.CancelManagedRunCommand,
+) (application.MutationResult, error) {
+	return application.MutationResult{}, nil
+}
+
+func TestProductionLaunchSupervisor_CancellationPassesThroughWithoutALaunchSideEffect(t *testing.T) {
+	// Stopping a run is a durable state decision. The supervisor exists to
+	// coordinate worker launch, so it must not treat a cancel as a reason to
+	// touch a terminal — the worker's terminal is reclaimed by cleanup.
+	task, preparation := productionLaunchFixture(t)
+	store := &productionLaunchStoreStub{tasks: []domain.Task{task}, preparation: preparation}
+	mutations := &productionLaunchMutationStub{task: task}
+	adapter := &productionLaunchHarnessAdapter{}
+	supervisor, err := newProductionLaunchSupervisor(productionLaunchSupervisorConfig{
+		Store: store, Mutations: mutations, Harnesses: productionLaunchHarnesses{adapter: adapter},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := supervisor.CancelManagedRun(context.Background(), application.CancelManagedRunCommand{
+		OperationID: "operation-cancel", ServiceInstanceID: task.ServiceInstanceID,
+		ManagedRunID: "managed-run-cancel", Reason: application.CancelReasonOwnerCancelled,
+	}); err != nil {
+		t.Fatalf("CancelManagedRun() error = %v", err)
+	}
+	if adapter.request.TaskHandle != "" {
+		t.Errorf("cancellation built a launch request for %q", adapter.request.TaskHandle)
+	}
+}

@@ -543,3 +543,103 @@ func sqlitePrepareCommand() application.PrepareTaskCommand {
 		ValidationProfile: "go-default", DeliveryMode: domain.DeliveryPullRequest, WorkerProfileID: "fixture-worker",
 	}
 }
+
+func TestMutationStore_CancelStopsAnActivatedRunAndStaysSafeToRepeat(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+	at := time.Date(2026, time.August, 9, 13, 0, 0, 0, time.UTC)
+	prepared := application.PreparedTaskMutation{
+		Task: storeTask("task-cancel-0001", 1), OperationID: "op-cancel-prepare",
+		Preparation: application.ManagedRunPreparation{
+			ExternalRunRef: "task-cancel-0001", RegistrationNonce: "registration-nonce_cancel",
+			RequestedWorkspaceRoot: "/approved/workspaces/task-cancel-0001",
+			RequestedAttachment: application.PreparedRuntimeAttachment{
+				Kind:          application.RuntimeAttachmentUnixSocket,
+				SourcePath:    "/approved/runtime/task-cancel-0001/attachment.sock",
+				RelayIdentity: strings.Repeat("ab", 32),
+			},
+			ExpiresAt: at.Add(time.Hour), State: application.PreparationOpen,
+		},
+		SubjectDigest: strings.Repeat("a", 64), At: at,
+	}
+	prepared.Task.CreatedAt = at
+	prepared.Task.UpdatedAt = at
+	if _, err := store.CommitPreparedTask(ctx, prepared); err != nil {
+		t.Fatalf("CommitPreparedTask() error = %v", err)
+	}
+	if _, err := store.CommitManagedRunActivation(ctx, application.ManagedRunActivationMutation{
+		ServiceInstanceID: prepared.Task.ServiceInstanceID, ExternalRunRef: "task-cancel-0001",
+		RegistrationNonce: "registration-nonce_cancel",
+		Binding: domain.TaskBinding{
+			ManagedRunID: "managed-run-cancel", WorkspaceLeaseID: "workspace-lease-cancel",
+		},
+		ExecutionAttachmentID: "execution-attachment-cancel",
+		AttachmentTargetName:  "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
+		OperationID:           "op-cancel-bind", SubjectDigest: strings.Repeat("b", 64), At: at.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("CommitManagedRunActivation() error = %v", err)
+	}
+
+	cancel := application.ManagedRunCancelMutation{
+		ServiceInstanceID: prepared.Task.ServiceInstanceID, ManagedRunID: "managed-run-cancel",
+		Reason: application.CancelReasonOwnerCancelled, OperationID: "op-cancel-0001",
+		SubjectDigest: strings.Repeat("c", 64), At: at.Add(2 * time.Minute),
+	}
+	stopped, err := store.CommitManagedRunCancel(ctx, cancel)
+	if err != nil {
+		t.Fatalf("CommitManagedRunCancel() error = %v", err)
+	}
+	if stopped.Task.State != domain.TaskCancelled {
+		t.Fatalf("cancelled task state = %q", stopped.Task.State)
+	}
+
+	// The host records its decision before sending, so a repeat must reconcile
+	// to the same outcome rather than transitioning an already-cancelled run.
+	replay, err := store.CommitManagedRunCancel(ctx, cancel)
+	if err != nil || replay.Task.State != domain.TaskCancelled {
+		t.Fatalf("CommitManagedRunCancel(replay) = %#v, %v", replay.Task.State, err)
+	}
+
+	// A different service instance must not be able to stop this run.
+	foreign := cancel
+	foreign.ServiceInstanceID = "service-instance-other"
+	foreign.OperationID = "op-cancel-foreign"
+	foreign.SubjectDigest = strings.Repeat("d", 64)
+	if _, err := store.CommitManagedRunCancel(ctx, foreign); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("CommitManagedRunCancel(foreign instance) error = %v, want ErrPrecondition", err)
+	}
+
+	// A second, distinct cancel of an already-cancelled run must also be safe:
+	// two operators can both decide to stop the same run, and the later one has
+	// not done anything wrong. It reports the settled task without transitioning.
+	again := cancel
+	again.OperationID = "op-cancel-second"
+	again.SubjectDigest = strings.Repeat("9", 64)
+	again.At = at.Add(3 * time.Minute)
+	settled, err := store.CommitManagedRunCancel(ctx, again)
+	if err != nil || settled.Task.State != domain.TaskCancelled {
+		t.Fatalf("CommitManagedRunCancel(second operator) = %v, %v", settled.Task.State, err)
+	}
+
+	// A non-UTC instant is refused: the durable record's ordering only means
+	// anything if every writer records the same clock.
+	local := cancel
+	local.OperationID = "op-cancel-local"
+	local.SubjectDigest = strings.Repeat("f", 64)
+	local.At = at.Add(3 * time.Minute).In(time.FixedZone("elsewhere", 3600))
+	if _, err := store.CommitManagedRunCancel(ctx, local); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("CommitManagedRunCancel(non-UTC) error = %v, want ErrPrecondition", err)
+	}
+
+	unknown := cancel
+	unknown.ManagedRunID = "managed-run-absent"
+	unknown.OperationID = "op-cancel-absent"
+	unknown.SubjectDigest = strings.Repeat("e", 64)
+	if _, err := store.CommitManagedRunCancel(ctx, unknown); err == nil {
+		t.Fatal("CommitManagedRunCancel(unknown run) error = nil")
+	}
+}

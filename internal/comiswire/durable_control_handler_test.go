@@ -412,3 +412,58 @@ func testAttachmentTargetName() *comiswire.AttachmentTargetName {
 	target := comiswire.AttachmentTargetName("attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock")
 	return &target
 }
+
+func TestDurableControlHandler_CancelStopsTheRunAndDistinguishesAnAlreadySettledOne(t *testing.T) {
+	harness := newDurableControlHarness(t, "task-cancel")
+	prepared := harness.prepare(t, "operation-prepare-cancel")
+	harness.now = harness.now.Add(time.Minute)
+	lease := comiswire.WorkspaceLeaseID("workspace-lease-cancel")
+	attachmentID := comiswire.ExecutionAttachmentID("execution-attachment-cancel")
+	attachmentTarget := comiswire.AttachmentTargetName("attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock")
+	if _, err := harness.handler.Activate(context.Background(), comiswire.ActivateRequestParams{
+		OperationID: "operation-activate-cancel", ManagedRunID: "managed-run-cancel",
+		ExternalRunRef:        comiswire.ExternalRunRef(prepared.ExternalRunRef),
+		RegistrationNonce:     comiswire.RegistrationNonce(prepared.RegistrationNonce),
+		WorkspaceLeaseID:      &lease,
+		ExecutionAttachmentID: &attachmentID,
+		AttachmentTargetName:  &attachmentTarget,
+	}); err != nil {
+		t.Fatalf("Activate() error = %v", err)
+	}
+
+	harness.now = harness.now.Add(time.Minute)
+	params := comiswire.CancelRequestParams{
+		OperationID: "operation-cancel", ManagedRunID: "managed-run-cancel",
+		Reason: "owner_cancelled",
+	}
+	stopped, err := harness.handler.Cancel(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	if stopped.ManagedRunID != params.ManagedRunID || stopped.State != comiswire.CancelStateCancelled {
+		t.Fatalf("Cancel() = %#v", stopped)
+	}
+
+	// The host records its decision before it sends, so a repeat must reconcile
+	// rather than fail — an operator retrying a cancel has not done anything wrong.
+	replay, err := harness.handler.Cancel(context.Background(), params)
+	if err != nil || replay != stopped {
+		t.Fatalf("Cancel(replay) = %#v, %v, want %#v", replay, err, stopped)
+	}
+
+	// A reason outside the closed set never reaches durable state.
+	invalid := params
+	invalid.OperationID = "operation-cancel-invalid"
+	invalid.Reason = "because"
+	if _, err := harness.handler.Cancel(context.Background(), invalid); err == nil {
+		t.Fatal("Cancel(invalid reason) error = nil")
+	}
+
+	// A run this service does not own is refused rather than stopped.
+	foreign := params
+	foreign.OperationID = "operation-cancel-foreign"
+	foreign.ManagedRunID = "managed-run-absent"
+	if _, err := harness.handler.Cancel(context.Background(), foreign); err == nil {
+		t.Fatal("Cancel(unknown run) error = nil")
+	}
+}

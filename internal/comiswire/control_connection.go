@@ -17,6 +17,7 @@ import (
 type ControlHandler interface {
 	Activate(context.Context, ActivateRequestParams) (ActivateResponseResult, error)
 	Abandon(context.Context, AbandonRequestParams) (AbandonResponseResult, error)
+	Cancel(context.Context, CancelRequestParams) (CancelResponseResult, error)
 	TerminalEvent(context.Context, TerminalEventRequestParams) (TerminalEventResponseResult, error)
 }
 

@@ -12,6 +12,7 @@ const (
 	PayloadRequest               PayloadTarget = "request"
 	PayloadAbandonResponse       PayloadTarget = "abandon-response"
 	PayloadActivateResponse      PayloadTarget = "activate-response"
+	PayloadCancelResponse        PayloadTarget = "cancel-response"
 	PayloadErrorResponse         PayloadTarget = "error-response"
 	PayloadHandshakeResponse     PayloadTarget = "handshake-response"
 	PayloadHealthResponse        PayloadTarget = "health-response"
@@ -34,7 +35,7 @@ type requestHeader struct {
 // Valid reports whether the target belongs to the pinned closed catalog.
 func (target PayloadTarget) Valid() bool {
 	switch target {
-	case PayloadRequest, PayloadAbandonResponse, PayloadActivateResponse, PayloadErrorResponse,
+	case PayloadRequest, PayloadAbandonResponse, PayloadActivateResponse, PayloadCancelResponse, PayloadErrorResponse,
 		PayloadHandshakeResponse, PayloadHealthResponse, PayloadPutEvidenceResponse, PayloadAttentionResponse, PayloadReleaseResponse, PayloadReportResponse,
 		PayloadTerminalEventResponse, PayloadMCPCallContext, PayloadMCPManagedRunResult:
 		return true
@@ -94,6 +95,8 @@ func payloadContract(target PayloadTarget, contents []byte) (string, any, error)
 		return schemaAbandonResponse, &AbandonResponse{}, nil
 	case PayloadActivateResponse:
 		return schemaActivateResponse, &ActivateResponse{}, nil
+	case PayloadCancelResponse:
+		return schemaCancelResponse, &CancelResponse{}, nil
 	case PayloadErrorResponse:
 		return schemaErrorResponse, &ErrorResponse{}, nil
 	case PayloadHandshakeResponse:
@@ -133,6 +136,10 @@ func requestContract(contents []byte) (string, any, error) {
 		return schemaAbandonRequest, &AbandonRequest{}, nil
 	case MethodManagedRunsActivate:
 		return schemaActivateRequest, &ActivateRequest{}, nil
+	case MethodManagedRunsCancel:
+		return schemaCancelRequest, &CancelRequest{}, nil
+	case MethodManagedRunsHeartbeat:
+		return schemaHeartbeatRequest, &HeartbeatRequest{}, nil
 	case MethodManagedRunsPutEvidence:
 		return schemaPutEvidenceRequest, &PutEvidenceRequest{}, nil
 	case MethodManagedRunsReceiveAttentionResponse:
