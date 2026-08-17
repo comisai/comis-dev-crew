@@ -11,14 +11,33 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
 
 const (
-	maximumCommandArguments = 128
-	maximumArgumentBytes    = 4096
+	maximumCommandArguments   = 128
+	maximumArgumentBytes      = 4096
+	maximumCommandOutputBytes = 4 << 20
 )
+
+// Command is one fixed executable and argument vector run with a protected environment.
+type Command struct {
+	Path                 string
+	Args                 []string
+	Env                  map[string]string
+	UseGitHubToken       bool
+	UseComisGatewayToken bool
+	// SecretEnvironmentNames are campaign secret names whose values this command must be able to
+	// look for. Each present value is forwarded from the protected process environment; a name
+	// that is absent stays absent so the command reports its own unavailability.
+	SecretEnvironmentNames []string
+}
+
+type Executor interface {
+	Run(context.Context, Command) ([]byte, error)
+}
 
 type RealExecutor struct{}
 
@@ -40,7 +59,7 @@ func (RealExecutor) Run(ctx context.Context, command Command) ([]byte, error) {
 		}
 	}
 	environment, err := protectedCommandEnvironment(
-		command.Env, command.UseGitHubToken, command.UseComisGatewayToken,
+		command.Env, command.UseGitHubToken, command.UseComisGatewayToken, command.SecretEnvironmentNames,
 	)
 	if err != nil {
 		return nil, err
@@ -343,6 +362,8 @@ func pathWithin(root, candidate string) bool {
 	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
+var secretEnvironmentNamePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,255}$`)
+
 var inheritedCommandEnvironment = []string{
 	"DBUS_SESSION_BUS_ADDRESS", "HOME", "LANG", "LC_ALL", "PATH", "SSL_CERT_DIR", "SSL_CERT_FILE",
 	"TMPDIR", "TZ", "XDG_RUNTIME_DIR",
@@ -360,10 +381,20 @@ func allowedCommandEnvironmentOverride(name string) bool {
 	return found
 }
 
+// reservedCommandEnvironmentName reports whether forwarding a campaign secret under this name
+// would displace protected inherited state or one of the command's own explicit overrides.
+func reservedCommandEnvironmentName(name string) bool {
+	if _, found := commandEnvironmentOverrides[name]; found {
+		return true
+	}
+	return contains(inheritedCommandEnvironment, name) || name == "GH_TOKEN"
+}
+
 func protectedCommandEnvironment(
 	overrides map[string]string,
 	useGitHubToken bool,
 	useComisGatewayToken bool,
+	secretNames []string,
 ) ([]string, error) {
 	values := make(map[string]string)
 	for _, name := range inheritedCommandEnvironment {
@@ -373,6 +404,14 @@ func protectedCommandEnvironment(
 	}
 	for name, value := range overrides {
 		values[name] = value
+	}
+	for _, name := range secretNames {
+		if !secretEnvironmentNamePattern.MatchString(name) || reservedCommandEnvironmentName(name) {
+			return nil, errors.New("execute protected command: forwarded secret name is invalid")
+		}
+		if value, found := os.LookupEnv(name); found && value != "" {
+			values[name] = value
+		}
 	}
 	if useGitHubToken {
 		token := os.Getenv("GH_TOKEN")

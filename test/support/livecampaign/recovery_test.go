@@ -171,6 +171,36 @@ func TestCreateRecoveryBackupWaitsForRestartedSecretResidencyOracleReadiness(t *
 	}
 }
 
+func TestCreateRecoveryBackupDeclaresCampaignSecretsForTheResidencyOracle(t *testing.T) {
+	manifest := recoveryManifestFixture(t)
+	executor := &recoveryExecutorFixture{manifest: manifest}
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	wait := func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
+	if _, err := createRecoveryBackup(
+		context.Background(), manifest, filepath.Join(parent, "backup"), executor, manifest.EndedAtMs, wait,
+	); err != nil {
+		t.Fatalf("createRecoveryBackup() error = %v", err)
+	}
+	declared := 0
+	for _, call := range executor.calls {
+		if call.Path != manifest.Comis.NodePath || len(call.Args) == 0 ||
+			call.Args[0] != manifest.Comis.SecretResidencyScript {
+			continue
+		}
+		declared++
+		if !call.UseComisGatewayToken ||
+			strings.Join(call.SecretEnvironmentNames, ",") != strings.Join(manifest.Comis.SecretNames, ",") {
+			t.Fatalf("residency command credentials = %#v", call)
+		}
+	}
+	if declared != 1 {
+		t.Fatalf("residency commands = %d, want 1", declared)
+	}
+}
+
 func TestCreateRecoveryBackupRefusesPermanentlyUnavailableSecretResidencyOracle(t *testing.T) {
 	manifest := recoveryManifestFixture(t)
 	executor := &recoveryExecutorFixture{

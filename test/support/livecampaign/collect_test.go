@@ -524,4 +524,21 @@ func TestCollectUsesOnlyFixedExecutableAndArgumentCatalog(t *testing.T) {
 	if githubCalls != len(manifest.Tasks)*2 {
 		t.Fatalf("GitHub CLI calls = %d, want %d", githubCalls, len(manifest.Tasks)*2)
 	}
+	residencyCalls := 0
+	for _, call := range executor.calls {
+		if call.Path != manifest.Comis.NodePath || len(call.Args) == 0 ||
+			call.Args[0] != manifest.Comis.SecretResidencyScript {
+			if len(call.SecretEnvironmentNames) != 0 {
+				t.Fatalf("non-residency command declared campaign secrets: %#v", call)
+			}
+			continue
+		}
+		residencyCalls++
+		if !reflect.DeepEqual(call.SecretEnvironmentNames, manifest.Comis.SecretNames) {
+			t.Fatalf("residency command secret names = %#v", call.SecretEnvironmentNames)
+		}
+	}
+	if residencyCalls != 1 {
+		t.Fatalf("secret residency calls = %d, want 1", residencyCalls)
+	}
 }

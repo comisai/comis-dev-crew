@@ -17,20 +17,6 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/application"
 )
 
-const maximumCommandOutputBytes = 4 << 20
-
-type Command struct {
-	Path                 string
-	Args                 []string
-	Env                  map[string]string
-	UseGitHubToken       bool
-	UseComisGatewayToken bool
-}
-
-type Executor interface {
-	Run(context.Context, Command) ([]byte, error)
-}
-
 type collector struct {
 	ctx       context.Context
 	manifest  Manifest
@@ -371,7 +357,8 @@ func (instance *collector) collectSecretPosture() error {
 	var residency residencyReport
 	if err := instance.runJSON(Command{
 		Path: instance.manifest.Comis.NodePath, Args: args, Env: residencyEnv,
-		UseComisGatewayToken: true,
+		UseComisGatewayToken:   true,
+		SecretEnvironmentNames: instance.manifest.Comis.SecretNames,
 	}, &residency); err != nil {
 		return fmt.Errorf("collect live closeout: count-only secret residency oracle unavailable: %w", err)
 	}

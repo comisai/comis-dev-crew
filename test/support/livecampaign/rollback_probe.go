@@ -26,7 +26,7 @@ func RealRollbackServiceProbe(
 		return errors.New("rollback service probe socket must not exist")
 	}
 	command := exec.CommandContext(ctx, servicePath, "--database", databasePath, "--socket", socketPath)
-	environment, err := protectedCommandEnvironment(nil, false, false)
+	environment, err := protectedCommandEnvironment(nil, false, false, nil)
 	if err != nil {
 		return errors.New("rollback service probe environment is unavailable")
 	}
