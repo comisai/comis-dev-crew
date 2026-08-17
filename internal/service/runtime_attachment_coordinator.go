@@ -369,6 +369,20 @@ func (coordinator *runtimeAttachmentCoordinator) Run(ctx context.Context) error 
 	}
 }
 
+func (coordinator *runtimeAttachmentCoordinator) waitForRecovery(ctx context.Context) error {
+	if coordinator == nil || ctx == nil {
+		return errors.New("wait for runtime attachment recovery: coordinator and context are required")
+	}
+	select {
+	case <-coordinator.recoveryReady:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	coordinator.mu.Lock()
+	defer coordinator.mu.Unlock()
+	return coordinator.recoveryErr
+}
+
 func (coordinator *runtimeAttachmentCoordinator) stopServers(
 	active map[*reporter.RuntimeServer]struct{},
 	releasing map[*reporter.RuntimeServer]struct{},
