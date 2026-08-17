@@ -154,3 +154,43 @@ func TestRuntimePathMutationFailureKeepsUnrelatedCausesDistinguishable(t *testin
 		t.Fatalf("runtimePathMutationFailure() classified an unrelated cause as an identity conflict: %v", err)
 	}
 }
+
+func TestPublishAndReplaceRuntimePathCompleteExactMappings(t *testing.T) {
+	root := boundaryRuntimeDirectory(t)
+	staged := filepath.Join(root, "record.new")
+	destination := filepath.Join(root, "record")
+	if err := os.WriteFile(staged, []byte("published"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	directory := runtimePathTestDirectoryDescriptor(t, root)
+	if err := PublishRuntimePath(
+		directory, "record.new", "record", runtimePathTestIdentity(t, staged), 0o600,
+	); err != nil {
+		t.Fatalf("PublishRuntimePath() error = %v", err)
+	}
+	contents, readErr := os.ReadFile(destination)
+	if readErr != nil || string(contents) != "published" {
+		t.Fatalf("published destination = %q, %v", contents, readErr)
+	}
+	if _, statErr := os.Lstat(staged); !os.IsNotExist(statErr) {
+		t.Fatalf("source after publication error = %v, want absent", statErr)
+	}
+
+	replacement := filepath.Join(root, "record.next")
+	if err := os.WriteFile(replacement, []byte("replaced"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReplaceRuntimePath(
+		directory, "record.next", "record",
+		runtimePathTestIdentity(t, replacement), runtimePathTestIdentity(t, destination), 0o600,
+	); err != nil {
+		t.Fatalf("ReplaceRuntimePath() error = %v", err)
+	}
+	destinationContents, destinationErr := os.ReadFile(destination)
+	exchangedContents, exchangedErr := os.ReadFile(replacement)
+	if destinationErr != nil || exchangedErr != nil ||
+		string(destinationContents) != "replaced" || string(exchangedContents) != "published" {
+		t.Fatalf("exchanged mappings = %q/%q, %v/%v",
+			destinationContents, exchangedContents, destinationErr, exchangedErr)
+	}
+}
