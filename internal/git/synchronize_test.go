@@ -22,7 +22,7 @@ func TestSynchronizePrimary_FastForwardsOnlyAndNamesEveryRefusal(t *testing.T) {
 		before := gitOutput(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary, "rev-parse", "HEAD")
 		advanced := advanceOrigin(t, fixture, origin, "second")
 
-		result, err := registry.SynchronizePrimary(context.Background(), devgit.PrimarySyncRequest{
+		result, err := registry.SynchronizePrimaryCheckout(context.Background(), devgit.PrimarySyncRequest{
 			RepositoryID: fixture.repositoryID,
 		})
 		if err != nil {
@@ -44,7 +44,7 @@ func TestSynchronizePrimary_FastForwardsOnlyAndNamesEveryRefusal(t *testing.T) {
 		registry := newLifecycleRegistry(t, fixture)
 		before := gitOutput(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary, "rev-parse", "HEAD")
 
-		result, err := registry.SynchronizePrimary(context.Background(), devgit.PrimarySyncRequest{
+		result, err := registry.SynchronizePrimaryCheckout(context.Background(), devgit.PrimarySyncRequest{
 			RepositoryID: fixture.repositoryID,
 		})
 		if err != nil {
@@ -100,7 +100,7 @@ func TestSynchronizePrimary_FastForwardsOnlyAndNamesEveryRefusal(t *testing.T) {
 			wantRefusal := arrange(t, fixture, origin)
 			before := gitOutput(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary, "rev-parse", "HEAD")
 
-			result, err := registry.SynchronizePrimary(context.Background(), devgit.PrimarySyncRequest{
+			result, err := registry.SynchronizePrimaryCheckout(context.Background(), devgit.PrimarySyncRequest{
 				RepositoryID: fixture.repositoryID,
 			})
 			if err != nil {
@@ -123,15 +123,15 @@ func TestSynchronizePrimary_RejectsUnconfiguredRepositoryAndMissingAuthority(t *
 	fixture, _ := newSyncFixture(t)
 	registry := newLifecycleRegistry(t, fixture)
 
-	if _, err := registry.SynchronizePrimary(context.Background(), devgit.PrimarySyncRequest{
+	if _, err := registry.SynchronizePrimaryCheckout(context.Background(), devgit.PrimarySyncRequest{
 		RepositoryID: "never-configured",
 	}); err == nil {
 		t.Error("SynchronizePrimary(unconfigured repository) error = nil")
 	}
-	if _, err := registry.SynchronizePrimary(context.Background(), devgit.PrimarySyncRequest{}); err == nil {
+	if _, err := registry.SynchronizePrimaryCheckout(context.Background(), devgit.PrimarySyncRequest{}); err == nil {
 		t.Error("SynchronizePrimary(no repository) error = nil")
 	}
-	if _, err := registry.SynchronizePrimary(missingGitContext(), devgit.PrimarySyncRequest{
+	if _, err := registry.SynchronizePrimaryCheckout(missingGitContext(), devgit.PrimarySyncRequest{
 		RepositoryID: fixture.repositoryID,
 	}); err == nil {
 		t.Error("SynchronizePrimary(nil context) error = nil")
@@ -187,7 +187,7 @@ func TestSynchronizePrimary_ReportsInfrastructureFailureRatherThanARefusal(t *te
 
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := registry.SynchronizePrimary(canceled, devgit.PrimarySyncRequest{
+	if _, err := registry.SynchronizePrimaryCheckout(canceled, devgit.PrimarySyncRequest{
 		RepositoryID: fixture.repositoryID,
 	}); !errors.Is(err, context.Canceled) {
 		t.Errorf("SynchronizePrimary(canceled) error = %v, want context.Canceled", err)
@@ -198,7 +198,7 @@ func TestSynchronizePrimary_ReportsInfrastructureFailureRatherThanARefusal(t *te
 	if err := os.RemoveAll(filepath.Join(fixture.primary, ".git")); err != nil {
 		t.Fatal(err)
 	}
-	result, err := registry.SynchronizePrimary(context.Background(), devgit.PrimarySyncRequest{
+	result, err := registry.SynchronizePrimaryCheckout(context.Background(), devgit.PrimarySyncRequest{
 		RepositoryID: fixture.repositoryID,
 	})
 	if err == nil {
@@ -219,7 +219,7 @@ func TestSynchronizePrimary_RefusesAnUpstreamThatNamesNoRemote(t *testing.T) {
 	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary, "config", "branch.main.remote", ".")
 	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary, "config", "branch.main.merge", "refs/heads/local-base")
 
-	result, err := registry.SynchronizePrimary(context.Background(), devgit.PrimarySyncRequest{
+	result, err := registry.SynchronizePrimaryCheckout(context.Background(), devgit.PrimarySyncRequest{
 		RepositoryID: fixture.repositoryID,
 	})
 	if err != nil {
@@ -239,7 +239,7 @@ func TestSynchronizePrimary_ReportsAnUnreachableRemoteAsAFailure(t *testing.T) {
 	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary,
 		"remote", "set-url", "origin", filepath.Join(canonicalTempDir(t), "absent.git"))
 
-	if _, err := registry.SynchronizePrimary(context.Background(), devgit.PrimarySyncRequest{
+	if _, err := registry.SynchronizePrimaryCheckout(context.Background(), devgit.PrimarySyncRequest{
 		RepositoryID: fixture.repositoryID,
 	}); err == nil {
 		t.Fatal("SynchronizePrimary(unreachable remote) error = nil")
@@ -260,7 +260,7 @@ func TestSynchronizePrimary_ReportsACorruptIndexAsAFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := registry.SynchronizePrimary(context.Background(), devgit.PrimarySyncRequest{
+	result, err := registry.SynchronizePrimaryCheckout(context.Background(), devgit.PrimarySyncRequest{
 		RepositoryID: fixture.repositoryID,
 	})
 	if err == nil {

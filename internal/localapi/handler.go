@@ -20,6 +20,7 @@ type Handler struct {
 	reconciliation    TaskReconciliation
 	interventions     TaskInterventions
 	cleanup           TaskCleanup
+	primaryCheckouts  PrimaryCheckoutSync
 	serviceInstanceID string
 	clock             application.Clock
 }
@@ -40,6 +41,7 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 	return &Handler{
 		queries: config.Queries, mutations: config.Mutations, reconciliation: config.Reconciliation,
 		interventions: config.Interventions, cleanup: config.Cleanup,
+		primaryCheckouts:  config.PrimaryCheckouts,
 		serviceInstanceID: config.ServiceInstanceID, clock: config.Clock,
 	}, nil
 }
@@ -75,6 +77,18 @@ func (handler *Handler) handle(ctx context.Context, caller CallerClass, data []b
 
 func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 	switch request.Method {
+	case MethodSyncPrimary:
+		var input SyncPrimaryInput
+		if err := decodeObject(request.Payload, &input); err != nil {
+			return invalidPayload(request.OperationID, err)
+		}
+		if handler.primaryCheckouts == nil {
+			return rejectedOutcome(request.OperationID, domain.ErrorUnavailable, true, "primary checkout synchronization is unavailable", "inspect service configuration", nil)
+		}
+		report, err := handler.primaryCheckouts.SyncPrimary(ctx, application.PrimarySyncCommand{
+			OperationID: request.OperationID, RepositoryID: input.RepositoryID,
+		})
+		return handler.primarySyncOutcome(request.OperationID, report, err)
 	case MethodDiagnose:
 		if err := decodeObject(request.Payload, &emptyPayload{}); err != nil {
 			return invalidPayload(request.OperationID, err)
@@ -291,6 +305,23 @@ func (handler *Handler) taskMutationOutcome(
 		State: mutation.Task.State, StateVersion: mutation.Task.StateVersion, SideEffect: method.SideEffect(),
 	}
 	return queryOutcome(operationID, result.StateVersion, result, nil)
+}
+
+// primarySyncOutcome projects one synchronization. A refusal is a completed
+// operation carrying its named posture, not an error: the checkout was
+// inspected and found unfit to advance, which is an answer the caller acts on.
+func (handler *Handler) primarySyncOutcome(
+	operationID string,
+	report application.PrimarySyncReport,
+	err error,
+) Outcome {
+	if err != nil {
+		return outcomeFromError(operationID, err)
+	}
+	if report.RepositoryID == "" || report.Outcome == "" {
+		return rejectedOutcome(operationID, domain.ErrorInternal, false, "synchronization outcome is incomplete", "inspect service configuration", nil)
+	}
+	return queryOutcome(operationID, int64(report.SchemaVersion), report, nil)
 }
 
 func (handler *Handler) prepareOutcome(operationID string, mutation application.MutationResult, err error) Outcome {

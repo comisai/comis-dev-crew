@@ -62,13 +62,15 @@ const (
 	MethodReplaceWorker  Method = "ReplaceWorker"
 	MethodSteerTask      Method = "SteerTask"
 	MethodDiscardTask    Method = "DiscardTask"
+	MethodSyncPrimary    Method = "SyncPrimary"
 )
 
 func (method Method) valid() bool {
 	switch method {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
 		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
-		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask:
+		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
+		MethodSyncPrimary:
 		return true
 	default:
 		return false
@@ -88,7 +90,8 @@ const (
 func (method Method) SideEffect() SideEffectClass {
 	switch method {
 	case MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
-		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask:
+		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
+		MethodSyncPrimary:
 		return SideEffectMutate
 	default:
 		return SideEffectRead
@@ -162,6 +165,13 @@ type TaskCleanup interface {
 	DiscardTask(context.Context, application.DiscardTaskCommand) (application.MutationResult, error)
 }
 
+// PrimaryCheckoutSync is the canonical repository synchronization surface. It
+// is separate from the task surfaces because it moves no task: it advances the
+// developer's own checkout and touches no durable task state.
+type PrimaryCheckoutSync interface {
+	SyncPrimary(context.Context, application.PrimarySyncCommand) (application.PrimarySyncReport, error)
+}
+
 // HandlerConfig binds local endpoint authority to canonical application seams.
 type HandlerConfig struct {
 	Queries           ReadQueries
@@ -169,6 +179,7 @@ type HandlerConfig struct {
 	Reconciliation    TaskReconciliation
 	Interventions     TaskInterventions
 	Cleanup           TaskCleanup
+	PrimaryCheckouts  PrimaryCheckoutSync
 	ServiceInstanceID string
 	Clock             application.Clock
 }
@@ -197,6 +208,13 @@ type PauseTaskInput = taskHandleMutationInput
 type DiscardTaskInput struct {
 	TaskHandle   string `json:"taskHandle"`
 	Acknowledged bool   `json:"acknowledged"`
+}
+
+// SyncPrimaryInput names the configured repository whose primary checkout is
+// synchronized. It carries no path: the checkout comes from operator
+// configuration, so a caller cannot aim the update at another tree.
+type SyncPrimaryInput struct {
+	RepositoryID string `json:"repositoryId"`
 }
 
 // SteerTaskInput carries one bounded instruction for a task's current worker.

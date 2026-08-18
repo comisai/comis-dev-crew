@@ -179,6 +179,14 @@ func (client *Client) DiscardTask(ctx context.Context, operationID string, input
 	return result, err
 }
 
+// SyncPrimary fast-forwards one configured primary checkout, or reports the
+// posture that refused.
+func (client *Client) SyncPrimary(ctx context.Context, operationID string, input SyncPrimaryInput) (application.PrimarySyncReport, error) {
+	var result application.PrimarySyncReport
+	err := client.call(ctx, operationID, MethodSyncPrimary, input, &result)
+	return result, err
+}
+
 func (client *Client) call(ctx context.Context, operationID string, method Method, payload any, result any) error {
 	if ctx == nil {
 		return errors.New("call local API: context is required")

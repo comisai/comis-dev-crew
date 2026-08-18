@@ -50,7 +50,7 @@ type PrimarySyncResult struct {
 	Refusal      PrimarySyncRefusal
 }
 
-// SynchronizePrimary fast-forwards one configured primary checkout, or refuses.
+// SynchronizePrimaryCheckout fast-forwards one configured primary checkout, or refuses.
 //
 // No task ever mutates the primary checkout; this is the single sanctioned
 // exception and it is deliberately the weakest operation that is still useful.
@@ -58,7 +58,7 @@ type PrimarySyncResult struct {
 // so a reset, clean, stash, checkout or force-update here would destroy work
 // that belongs to nobody but them and that no task could restore. Every posture
 // it cannot advance safely is refused by name and leaves the checkout untouched.
-func (registry *Registry) SynchronizePrimary(
+func (registry *Registry) SynchronizePrimaryCheckout(
 	ctx context.Context,
 	request PrimarySyncRequest,
 ) (PrimarySyncResult, error) {

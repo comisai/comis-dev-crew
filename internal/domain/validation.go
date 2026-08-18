@@ -25,6 +25,14 @@ func ValidateTaskHandle(value string) error {
 	return validateOpaqueID("taskHandle", value)
 }
 
+// ValidateRepositoryID rejects repository references that are not bounded
+// opaque IDs. It delegates to the same rule task records are validated with, so
+// a caller-supplied repository cannot be accepted by one surface and refused by
+// another.
+func ValidateRepositoryID(value string) error {
+	return validateOpaqueID("repositoryId", value)
+}
+
 // ValidateOperationID rejects operation references that are not bounded opaque IDs.
 func ValidateOperationID(value string) error {
 	return validateOpaqueID("operationId", value)

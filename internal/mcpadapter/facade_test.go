@@ -480,6 +480,8 @@ type fakeClient struct {
 	cleanupErrors   []error
 	discardResult   localapi.TaskMutationResult
 	discardErrors   []error
+	syncReport      application.PrimarySyncReport
+	syncErrors      []error
 }
 
 func (client *fakeClient) ReconcileTask(
