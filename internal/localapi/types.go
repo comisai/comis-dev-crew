@@ -61,13 +61,14 @@ const (
 	MethodPromoteScout   Method = "PromoteScout"
 	MethodReplaceWorker  Method = "ReplaceWorker"
 	MethodSteerTask      Method = "SteerTask"
+	MethodDiscardTask    Method = "DiscardTask"
 )
 
 func (method Method) valid() bool {
 	switch method {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
 		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
-		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask:
+		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask:
 		return true
 	default:
 		return false
@@ -87,7 +88,7 @@ const (
 func (method Method) SideEffect() SideEffectClass {
 	switch method {
 	case MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
-		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask:
+		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask:
 		return SideEffectMutate
 	default:
 		return SideEffectRead
@@ -158,6 +159,7 @@ type TaskReconciliation interface {
 // TaskCleanup is the canonical release-before-removal mutation surface.
 type TaskCleanup interface {
 	CleanupTask(context.Context, application.CleanupTaskCommand) (application.MutationResult, error)
+	DiscardTask(context.Context, application.DiscardTaskCommand) (application.MutationResult, error)
 }
 
 // HandlerConfig binds local endpoint authority to canonical application seams.
@@ -188,6 +190,14 @@ type ReconcileTaskInput struct {
 // carries no instruction and no interrupt: pause asks the worker to stop
 // cleanly, and anything more is a different command.
 type PauseTaskInput = taskHandleMutationInput
+
+// DiscardTaskInput removes the worktree of one task that never delivered. The
+// acknowledgement is the only gate such a removal has, so it travels explicitly
+// rather than being implied by calling the method at all.
+type DiscardTaskInput struct {
+	TaskHandle   string `json:"taskHandle"`
+	Acknowledged bool   `json:"acknowledged"`
+}
 
 // SteerTaskInput carries one bounded instruction for a task's current worker.
 type SteerTaskInput struct {

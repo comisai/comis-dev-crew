@@ -477,6 +477,15 @@ func (client *fakeClient) PauseTask(
 	return client.taskMutation, client.err
 }
 
+func (client *fakeClient) DiscardTask(
+	_ context.Context,
+	operationID string,
+	input localapi.DiscardTaskInput,
+) (localapi.TaskMutationResult, error) {
+	client.record(operationID, "discard:"+input.TaskHandle)
+	return client.taskMutation, client.err
+}
+
 func (client *fakeClient) CleanupTask(
 	_ context.Context,
 	operationID string,

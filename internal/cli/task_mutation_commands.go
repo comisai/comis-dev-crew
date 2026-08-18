@@ -406,3 +406,53 @@ func parseSteerTaskCommand(command parsedCommand, args []string) (parsedCommand,
 	}
 	return command, nil
 }
+
+// parseDiscardTaskCommand reads one task reference and requires --yes.
+//
+// Discard removes work nobody delivered and cannot be undone. Cleanup can prove
+// removal is safe by pointing at delivered work; a discard has nothing to point
+// at, so the operator typing --yes is the only gate it has. It is deliberately
+// not defaulted and deliberately not inferable from anything else on the line.
+func parseDiscardTaskCommand(command parsedCommand, args []string) (parsedCommand, error) {
+	if len(args) < 1 || domain.ValidateTaskHandle(args[0]) != nil {
+		return parsedCommand{}, errors.New("discard task reference is required")
+	}
+	command.kind = commandDiscardTask
+	command.reference = args[0]
+	command.format = "json"
+	args = args[1:]
+	seen := make(map[string]bool)
+	for len(args) > 0 {
+		if seen[args[0]] {
+			return parsedCommand{}, errors.New("invalid discard arguments")
+		}
+		seen[args[0]] = true
+		if args[0] == "--yes" {
+			command.acknowledged = true
+			args = args[1:]
+			continue
+		}
+		if len(args) < 2 {
+			return parsedCommand{}, errors.New("invalid discard arguments")
+		}
+		name, value := args[0], args[1]
+		switch name {
+		case "--operation":
+			if domain.ValidateOperationID(value) != nil {
+				return parsedCommand{}, errors.New("invalid discard operation")
+			}
+			command.operationID = value
+		case "--format":
+			if value != "json" {
+				return parsedCommand{}, errors.New("discard format must be JSON")
+			}
+		default:
+			return parsedCommand{}, errors.New("unknown discard option")
+		}
+		args = args[2:]
+	}
+	if !command.acknowledged {
+		return parsedCommand{}, errors.New("discard requires an explicit --yes acknowledgement")
+	}
+	return command, nil
+}

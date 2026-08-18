@@ -172,6 +172,13 @@ func (client *Client) SteerTask(ctx context.Context, operationID string, input S
 	return result, err
 }
 
+// DiscardTask removes the worktree of one task that never delivered.
+func (client *Client) DiscardTask(ctx context.Context, operationID string, input DiscardTaskInput) (TaskMutationResult, error) {
+	var result TaskMutationResult
+	err := client.call(ctx, operationID, MethodDiscardTask, input, &result)
+	return result, err
+}
+
 func (client *Client) call(ctx context.Context, operationID string, method Method, payload any, result any) error {
 	if ctx == nil {
 		return errors.New("call local API: context is required")

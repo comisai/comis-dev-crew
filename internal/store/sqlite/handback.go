@@ -65,7 +65,7 @@ func (store *Store) CommitTaskHandback(
 		mutation.Snapshot.WorktreePath != preparation.RequestedWorkspaceRoot {
 		return application.MutationResult{}, fmt.Errorf("task handback authority differs: %w", application.ErrPrecondition)
 	}
-	if err := proveNothingIsStillRunning(ctx, transaction, task.Handle, "task handback"); err != nil {
+	if err := proveNothingIsStillRunning(ctx, transaction, task.Handle, "task handback", true); err != nil {
 		return application.MutationResult{}, err
 	}
 	updated, err := task.AcceptWorkerReport(mutation.CandidateReport, mutation.At)

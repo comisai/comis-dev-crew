@@ -46,6 +46,10 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 		return client.HandbackTask(ctx, operationID, localapi.HandbackTaskInput{
 			TaskHandle: command.reference, Action: command.handbackAction,
 		})
+	case commandDiscardTask:
+		return client.DiscardTask(ctx, operationID, localapi.DiscardTaskInput{
+			TaskHandle: command.reference, Acknowledged: command.acknowledged,
+		})
 	case commandCleanupTask:
 		return client.CleanupTask(ctx, operationID, localapi.CleanupTaskInput{TaskHandle: command.reference})
 	case commandPauseTask:

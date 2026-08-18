@@ -49,9 +49,12 @@ type apiInterventions struct {
 }
 
 type apiCleanup struct {
-	command application.CleanupTaskCommand
-	result  application.MutationResult
-	err     error
+	command        application.CleanupTaskCommand
+	discardCommand application.DiscardTaskCommand
+	result         application.MutationResult
+	discardResult  application.MutationResult
+	err            error
+	discardErr     error
 }
 
 type apiTaskReconciliation struct {
@@ -77,6 +80,14 @@ func TestDecodePrepareTaskInput_UsesStrictBoundedPayload(t *testing.T) {
 	if _, err := DecodePrepareTaskInput([]byte(`{"shape":"scout","unexpected":true}`)); err == nil {
 		t.Fatal("DecodePrepareTaskInput(unknown field) error = nil")
 	}
+}
+
+func (cleanup *apiCleanup) DiscardTask(
+	_ context.Context,
+	command application.DiscardTaskCommand,
+) (application.MutationResult, error) {
+	cleanup.discardCommand = command
+	return cleanup.discardResult, cleanup.discardErr
 }
 
 func (cleanup *apiCleanup) CleanupTask(

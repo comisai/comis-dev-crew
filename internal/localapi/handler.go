@@ -241,6 +241,19 @@ func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 					OperationID: request.OperationID, TaskHandle: taskHandle,
 				})
 			})
+	case MethodDiscardTask:
+		var input DiscardTaskInput
+		if err := decodeObject(request.Payload, &input); err != nil {
+			return invalidPayload(request.OperationID, err)
+		}
+		if handler.cleanup == nil {
+			return rejectedOutcome(request.OperationID, domain.ErrorUnavailable, true, "cleanup service is unavailable", "inspect service configuration", nil)
+		}
+		result, err := handler.cleanup.DiscardTask(ctx, application.DiscardTaskCommand{
+			OperationID: request.OperationID, TaskHandle: input.TaskHandle,
+			Acknowledged: input.Acknowledged,
+		})
+		return handler.taskMutationOutcome(request.OperationID, MethodDiscardTask, result, err)
 	case MethodCleanupTask:
 		var input CleanupTaskInput
 		if err := decodeObject(request.Payload, &input); err != nil {

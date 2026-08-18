@@ -43,6 +43,7 @@ Commands:
   task replace TASK --worker PROFILE [--operation OPERATION] [--format json]
   task steer TASK --instruction TEXT [--operation OPERATION] [--format json]
   task cleanup TASK [--operation OPERATION] [--format json]
+  task discard TASK --yes [--operation OPERATION] [--format json]
 
 Global options:
   --socket PATH  Owner-only service Unix socket
@@ -63,6 +64,7 @@ type ReadClient interface {
 	PromoteScout(context.Context, string, localapi.PromoteScoutInput) (localapi.PrepareTaskResult, error)
 	ReplaceWorker(context.Context, string, localapi.ReplaceWorkerInput) (localapi.TaskMutationResult, error)
 	SteerTask(context.Context, string, localapi.SteerTaskInput) (localapi.TaskMutationResult, error)
+	DiscardTask(context.Context, string, localapi.DiscardTaskInput) (localapi.TaskMutationResult, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
 	GetLaunchPlan(context.Context, string, string) (application.LaunchPlan, error)
@@ -99,6 +101,7 @@ const (
 	commandReconcileTask
 	commandHandbackTask
 	commandCleanupTask
+	commandDiscardTask
 	commandPauseTask
 	commandCancelTask
 	commandResumeTask
@@ -119,6 +122,7 @@ type parsedCommand struct {
 	promoteInput    *localapi.PromoteScoutInput
 	workerProfileID string
 	instruction     string
+	acknowledged    bool
 	reconcileAction application.ReconcileTaskAction
 	handbackAction  application.HandbackAction
 }
@@ -248,6 +252,9 @@ func parseTaskCommand(command parsedCommand, args []string) (parsedCommand, erro
 	}
 	if len(args) > 0 && args[0] == "cleanup" {
 		return parseCleanupTaskCommand(command, args[1:])
+	}
+	if len(args) > 0 && args[0] == "discard" {
+		return parseDiscardTaskCommand(command, args[1:])
 	}
 	if len(args) > 0 && args[0] == "pause" {
 		return parsePauseTaskCommand(command, args[1:])

@@ -305,6 +305,7 @@ devcrew [--socket PATH] task promote SCOUT --input FILE|- [--operation OPERATION
 devcrew [--socket PATH] task replace TASK --worker PROFILE [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task steer TASK --instruction TEXT [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task cleanup TASK [--operation OPERATION] [--format json]
+devcrew [--socket PATH] task discard TASK --yes [--operation OPERATION] [--format json]
 ```
 
 `task pause` asks one task's worker to reach a safe boundary and stop. It does
@@ -314,6 +315,23 @@ worker's own paused report is what settles the state. That ordering is what
 makes the worktree safe to hand to a developer — a task marked paused while its
 worker kept committing would be changing under their editor. The request carries
 no instruction text and no interrupt, and a repeat replays rather than stacking.
+
+`task discard` removes the worktree of a task that stopped without delivering
+anything. It exists because cancellation preserves work on purpose and cleanup
+requires delivery evidence a cancelled task will never have — without it, the
+worktree, lease and run binding of every cancelled task stay held with nothing
+able to release them.
+
+It is operator-only and has no agent tool. `--yes` is required and never
+defaulted: cleanup proves removal is safe by pointing at delivered work, and a
+discard has nothing to point at, so the operator typing it is the only gate the
+command has. A dirty worktree is expected rather than refused — uncommitted work
+is usually the thing being thrown away, and the acknowledgement covers it. Only
+a cancelled or failed task can be discarded, nothing is removed while a terminal
+or validation process is still running, and host authority is released before
+removal exactly as cleanup does. The durable record says which proof authorised
+the removal, so an audit can tell delivered-work removal from acknowledged
+removal.
 
 `task steer` sends one bounded instruction to a task's current worker. The
 worker reads it on its next report receipt, so an instruction arrives at a

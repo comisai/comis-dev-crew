@@ -122,6 +122,10 @@ type TaskCleanupRecord struct {
 	ReleaseOperationID     string
 	ReleasedAt             time.Time
 	Snapshot               WorkspaceSnapshot
+	// Discard marks a removal of work that was never delivered. Its safety proof
+	// is an operator's explicit acknowledgement rather than delivery evidence,
+	// because by definition there is none to check.
+	Discard bool
 }
 
 // CleanupTaskCommand is the stable operator mutation.
@@ -249,6 +253,26 @@ func (coordinator *CleanupCoordinator) CleanupTask(ctx context.Context, command 
 	if err != nil {
 		return MutationResult{}, cleanupCommitFailure(err)
 	}
+	return coordinator.runRemovalStages(ctx, record, command.OperationID, command.TaskHandle, digest)
+}
+
+// runRemovalStages drives the release-before-remove sequence to completion.
+//
+// Cleanup and discard differ only in what they must prove before entering it —
+// delivery evidence for one, an operator's explicit acknowledgement for the
+// other. The sequence itself is identical and stays written once: releasing host
+// authority before removing a worktree, and recording each stage so a crash
+// resumes rather than repeats, is exactly the part that must not diverge
+// between two commands that both end in an irreversible deletion.
+func (coordinator *CleanupCoordinator) runRemovalStages(
+	ctx context.Context,
+	record TaskCleanupRecord,
+	commandOperationID string,
+	commandTaskHandle string,
+	digest string,
+) (MutationResult, error) {
+	var err error
+	command := CleanupTaskCommand{OperationID: commandOperationID, TaskHandle: commandTaskHandle}
 	for {
 		if record.TaskHandle != command.TaskHandle {
 			return MutationResult{}, errors.New("cleanup task: durable operation identity differs")
@@ -342,9 +366,21 @@ func (coordinator *CleanupCoordinator) verifyCurrentSafety(
 			err,
 		)
 	}
-	if snapshot.Validate() != nil || snapshot.TaskHandle != record.TaskHandle || snapshot.RepositoryID != record.RepositoryID ||
-		snapshot.WorktreePath != record.WorktreePath || snapshot.HeadRevision != record.HeadRevision {
+	// A discard has no recorded head to match: the work was never delivered, so
+	// nothing pinned one. Its identity proof is the task, repository and worktree.
+	headMatches := record.Discard || snapshot.HeadRevision == record.HeadRevision
+	if snapshot.Validate() != nil || snapshot.TaskHandle != record.TaskHandle ||
+		snapshot.RepositoryID != record.RepositoryID ||
+		snapshot.WorktreePath != record.WorktreePath || !headMatches {
 		return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, fmt.Errorf("cleanup workspace safety differs: %w", ErrPrecondition)
+	}
+	if record.Discard {
+		// A discard removes work nobody delivered, so there is no delivery truth
+		// to verify and a dirty tree is the ordinary case — uncommitted work is
+		// usually the thing being thrown away. The operator acknowledged that
+		// when they asked; re-checking cleanliness here would refuse exactly the
+		// case the command exists for.
+		return snapshot, PullRequestDeliveryTruth{}, nil
 	}
 	if snapshot.Cleanliness != WorkspaceClean {
 		return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, cleanupDirtyWorkspaceFailure()

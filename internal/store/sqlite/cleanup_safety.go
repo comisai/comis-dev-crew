@@ -223,7 +223,7 @@ const taskCleanupRecordQuery = `SELECT operation_id, subject_digest, task_handle
         managed_run_id, workspace_lease_id, repository_id, worktree_path,
         head_revision, evidence_digest, pull_request_id, required_forge_checks_json,
         report_artifact_hash, stage, release_operation_id, released_at,
-        snapshot_branch, snapshot_head_revision, snapshot_cleanliness
+        snapshot_branch, snapshot_head_revision, snapshot_cleanliness, discard
 		FROM task_cleanup_operations`
 
 func scanTaskCleanupRecord(row rowScanner) (application.TaskCleanupRecord, bool, error) {
@@ -236,7 +236,7 @@ func scanTaskCleanupRecord(row rowScanner) (application.TaskCleanupRecord, bool,
 		&record.ManagedRunID, &record.WorkspaceLeaseID, &record.RepositoryID, &record.WorktreePath,
 		&record.HeadRevision, &record.EvidenceDigest, &record.PullRequestID, &checks,
 		&record.ReportArtifactHash, &record.Stage, &record.ReleaseOperationID, &releasedAt,
-		&snapshotBranch, &snapshotHead, &snapshotCleanliness,
+		&snapshotBranch, &snapshotHead, &snapshotCleanliness, &record.Discard,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return application.TaskCleanupRecord{}, false, nil

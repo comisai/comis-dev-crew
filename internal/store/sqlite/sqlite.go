@@ -380,7 +380,10 @@ func (store *Store) migrate(ctx context.Context) error {
 	if err := store.applyVersionedMigration(ctx, 25, taskReplacementMigration); err != nil {
 		return err
 	}
-	return store.applyVersionedMigration(ctx, 26, taskSteeringMigration)
+	if err := store.applyVersionedMigration(ctx, 26, taskSteeringMigration); err != nil {
+		return err
+	}
+	return store.applyVersionedMigration(ctx, 27, taskDiscardMigration)
 }
 func (store *Store) applyVersionedMigration(ctx context.Context, version int, migration string) error {
 	var applied int

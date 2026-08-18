@@ -126,27 +126,39 @@ func proveReplacementSafety(
 		mutation.Snapshot.WorktreePath != preparation.RequestedWorkspaceRoot {
 		return fmt.Errorf("worker replacement authority differs: %w", application.ErrPrecondition)
 	}
-	return proveNothingIsStillRunning(ctx, transaction, task.Handle, "worker replacement")
+	return proveNothingIsStillRunning(ctx, transaction, task.Handle, "worker replacement", true)
 }
 
 // proveNothingIsStillRunning refuses while anything still owns the worktree.
 //
 // A worker whose terminal never settled may still be alive, and a validation
-// process reads and writes the same tree. Both handback and replacement need
-// exactly this proof before they touch the task, and a second copy of it is a
-// second place for one of the two conditions to be forgotten.
+// process reads and writes the same tree. Every command that takes a worktree
+// away from whoever had it needs exactly this proof, and a second copy of it is
+// a second place for one of the two conditions to be forgotten.
+//
+// requireBinding separates two different absences. Handback and replacement act
+// on a paused task, which is paused because a worker reported — so no binding at
+// all means the durable record is inconsistent and the command must refuse.
+// Discard acts on settled work that may have been cancelled before it ever
+// launched, where no binding means nothing ever ran, which is the safest state
+// there is. Treating those alike would make undelivered work unremovable in
+// exactly the case where removing it is most obviously safe.
 func proveNothingIsStillRunning(
 	ctx context.Context,
 	transaction *sql.Tx,
 	taskHandle string,
 	label string,
+	requireBinding bool,
 ) error {
 	binding, found, err := findTerminalBinding(ctx, transaction, taskHandle)
 	if err != nil {
 		return err
 	}
-	if !found || (binding.latestTransition != application.TerminalExited &&
-		binding.latestTransition != application.TerminalReleased) {
+	if !found && requireBinding {
+		return fmt.Errorf("%s terminal is unsettled: %w", label, application.ErrPrecondition)
+	}
+	if found && binding.latestTransition != application.TerminalExited &&
+		binding.latestTransition != application.TerminalReleased {
 		return fmt.Errorf("%s terminal is unsettled: %w", label, application.ErrPrecondition)
 	}
 	var activeProcesses int

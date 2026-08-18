@@ -67,6 +67,16 @@ complete on the strength of the call returning.
 A repeated pause replays rather than stacking, so retrying a call whose outcome
 you did not see is safe.
 
+## Discard
+
+There is no agent tool for discarding. Removing work nobody delivered is an
+operator decision made at the CLI with an explicit acknowledgement, and there is
+no way to reach it from here.
+
+If a cancelled task's worktree needs to go, say so plainly and let the operator
+run `devcrew task discard <handle> --yes`. Never describe cancellation as having
+freed disk: it preserves the work on purpose.
+
 ## Cancel
 
 `cancel_task` stops work and keeps it. The worktree, the artifacts, the run
