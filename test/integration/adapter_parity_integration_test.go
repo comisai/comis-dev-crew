@@ -375,6 +375,64 @@ func (parityLaunchAdapter) ClassifySemanticActivity(application.HarnessObservati
 	return application.SemanticActivityResult{State: application.ActivityUnknown, Reason: application.SemanticReasonMissing}
 }
 
+// The parity fixture launches and observes; it never reaches a running worker,
+// diagnoses a harness, or resumes one. Each of these refuses rather than
+// returning an empty value, so a parity path that started to use one would fail
+// loudly instead of acting on a silently blank plan.
+func (parityLaunchAdapter) SendInput(
+	context.Context, application.WorkerInputRequest,
+) (application.WorkerInputPlan, error) {
+	return application.WorkerInputPlan{}, errors.New("parity launch adapter does not deliver input")
+}
+
+func (parityLaunchAdapter) RequestPause(
+	context.Context, application.WorkerControlRequest,
+) (application.WorkerInputPlan, error) {
+	return application.WorkerInputPlan{}, errors.New("parity launch adapter does not deliver control")
+}
+
+func (parityLaunchAdapter) RequestStop(
+	context.Context, application.WorkerControlRequest,
+) (application.WorkerInputPlan, error) {
+	return application.WorkerInputPlan{}, errors.New("parity launch adapter does not deliver control")
+}
+
+func (parityLaunchAdapter) ValidateProfile(context.Context, string, domain.TaskShape) error {
+	return nil
+}
+
+func (parityLaunchAdapter) Diagnose(context.Context) (application.HarnessDiagnosis, error) {
+	return application.HarnessDiagnosis{}, errors.New("parity launch adapter does not diagnose")
+}
+
+// Unknown is the honest answer from a fixture that observes no processes.
+func (parityLaunchAdapter) ClassifyProcessRole(
+	application.TaskProcessObservation,
+) application.ProcessRoleResult {
+	return application.ProcessRoleResult{
+		Role: application.ProcessRoleUnknown, Reason: application.ProcessRoleReasonUnattributed,
+	}
+}
+
+func (parityLaunchAdapter) BuildResumeDescriptor(
+	context.Context, application.WorkerResumeRequest,
+) (application.WorkerLaunchDescriptor, error) {
+	return application.WorkerLaunchDescriptor{}, errors.New("parity launch adapter does not resume")
+}
+
+func (parityLaunchAdapter) InstallLifecycleIntegration(
+	context.Context, application.LifecycleIntegrationRequest,
+) (application.LifecycleIntegration, error) {
+	return application.LifecycleIntegration{}, errors.New("parity launch adapter installs no lifecycle integration")
+}
+
+// Unknown is the honest answer from a fixture with no usage producer behind it.
+func (parityLaunchAdapter) CollectUsage(
+	context.Context, application.UsageObservation,
+) (application.WorkerUsage, error) {
+	return application.WorkerUsage{Reason: application.SemanticReasonMissing}, nil
+}
+
 func (harness *parityHarness) runCLI(args []string, operation string, stdin []byte) (string, string, int) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
