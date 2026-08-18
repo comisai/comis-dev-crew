@@ -132,6 +132,7 @@ func TestFacade_ReadToolsUseOneCanonicalCommandAndIgnoreForgedRunMetadata(t *tes
 		{name: ToolGetTask, args: TaskInput{TaskHandle: "task-0001"}, want: "get:read-0001:task-0001"},
 		{name: ToolExplainTask, args: TaskInput{TaskHandle: "task-0001"}, want: "explain:read-0001:task-0001"},
 		{name: ToolGetLaunchPlan, args: TaskInput{TaskHandle: "task-0001"}, want: "launch-plan:read-0001:task-0001"},
+		{name: ToolDoctor, args: EmptyInput{}, want: "doctor:read-0001"},
 	}
 	for _, test := range tests {
 		client.calls = nil
@@ -380,7 +381,7 @@ func TestFacade_UncertainTerminalMutationsReconcileBeforeExactRetry(t *testing.T
 
 func assertToolCatalog(t *testing.T, tools []*mcp.Tool) {
 	t.Helper()
-	want := map[string]bool{ToolPrepareTask: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true}
+	want := map[string]bool{ToolPrepareTask: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true}
 	if len(tools) != len(want) {
 		t.Fatalf("tool count = %d, want %d", len(tools), len(want))
 	}
@@ -544,4 +545,11 @@ func (client *fakeClient) GetLaunchPlan(_ context.Context, operationID, taskHand
 		SchemaVersion: 1, StateVersion: 7, TaskHandle: taskHandle,
 		WorkerProfileID: "codex-reviewed", TerminalAllowEntryID: "terminal-codex-reviewed",
 	}, nil
+}
+
+// Readiness is a read like the others; the fake records the call so the parity
+// and authorization tests can assert it reached the canonical client.
+func (client *fakeClient) Diagnose(_ context.Context, operationID string) (application.DiagnosticReport, error) {
+	client.calls = append(client.calls, "doctor:"+operationID)
+	return application.DiagnosticReport{SchemaVersion: 1}, nil
 }

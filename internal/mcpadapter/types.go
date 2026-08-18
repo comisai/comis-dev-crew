@@ -20,6 +20,7 @@ const (
 	ToolGetTask       = "get_task"
 	ToolExplainTask   = "explain_task"
 	ToolGetLaunchPlan = "get_launch_plan"
+	ToolDoctor        = "doctor"
 
 	CallContextMetaKey      = "comis.callContext"
 	ManagedRunResultMetaKey = "comis.managedRun"
@@ -31,6 +32,7 @@ type Client interface {
 	ReconcileTask(context.Context, string, localapi.ReconcileTaskInput) (localapi.TaskMutationResult, error)
 	HandbackTask(context.Context, string, localapi.HandbackTaskInput) (localapi.TaskMutationResult, error)
 	CleanupTask(context.Context, string, localapi.CleanupTaskInput) (localapi.TaskMutationResult, error)
+	Diagnose(context.Context, string) (application.DiagnosticReport, error)
 	ListTasks(context.Context, string) (application.TaskList, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)

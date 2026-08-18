@@ -52,6 +52,7 @@ product does, and this list is not permission to guess a name.
 | Intent | Tool | Changes |
 |---|---|---|
 | Look | `list_tasks`, `get_task`, `explain_task`, `get_launch_plan` | Nothing |
+| Check readiness | `doctor` | Nothing |
 | Start work | `prepare_task` | Creates a prepared task and worktree |
 | Recover an exited worker | `reconcile_task` | Validates one exact clean candidate |
 | Resume after a developer edit | `handback_task` | Revalidates the developer's work |

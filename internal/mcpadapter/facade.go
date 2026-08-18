@@ -62,6 +62,7 @@ func (facade *Facade) registerTools() {
 	mcp.AddTool(facade.server, tool(ToolGetTask, "Get one durable development task.", true), facade.getTask)
 	mcp.AddTool(facade.server, tool(ToolExplainTask, "Explain one durable task posture.", true), facade.explainTask)
 	mcp.AddTool(facade.server, tool(ToolGetLaunchPlan, "Get reviewed launch requirements for one ready task.", true), facade.getLaunchPlan)
+	mcp.AddTool(facade.server, tool(ToolDoctor, "Report bounded service, repository, harness, and forge readiness.", true), facade.doctor)
 }
 
 func (facade *Facade) reconcileTask(
@@ -171,6 +172,18 @@ func (facade *Facade) listTasks(ctx context.Context, request *mcp.CallToolReques
 		return nil, application.TaskList{}, err
 	}
 	result, err := facade.client.ListTasks(ctx, string(callContext.OperationID))
+	return nil, result, err
+}
+
+// Readiness is the one read that answers "why can nothing start", so it is
+// reachable from the agent surface as well as the operator CLI. It reports what
+// is configured and reachable — never a credential, a path, or a secret ref.
+func (facade *Facade) doctor(ctx context.Context, request *mcp.CallToolRequest, _ EmptyInput) (*mcp.CallToolResult, application.DiagnosticReport, error) {
+	callContext, err := facade.authorize(request)
+	if err != nil {
+		return nil, application.DiagnosticReport{}, err
+	}
+	result, err := facade.client.Diagnose(ctx, string(callContext.OperationID))
 	return nil, result, err
 }
 

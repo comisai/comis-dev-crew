@@ -166,8 +166,12 @@ devcrew-mcp \
   --service-instance service-instance-devcrew
 ```
 
-The facade defines eight tools: `prepare_task`, `reconcile_task`, `handback_task`,
-`cleanup_task`, `list_tasks`, `get_task`, `explain_task`, and `get_launch_plan`. Every call must carry a
+The facade defines nine tools: `prepare_task`, `reconcile_task`, `handback_task`,
+`cleanup_task`, `list_tasks`, `get_task`, `explain_task`, `get_launch_plan`, and
+`doctor`. Readiness is reachable from the agent surface as well as the operator
+CLI because it is the one read that answers "why can nothing start"; it reports
+what is configured and reachable, never a credential, a path, or a secret
+reference. Every call must carry a
 generated-schema-valid `comis.callContext`; the configured service identity must
 match, while optional managed-run references grant no task authority. Preparation
 returns its visible task outcome separately from the private schema-validated
