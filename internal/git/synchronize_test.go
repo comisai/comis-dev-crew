@@ -2,6 +2,7 @@ package git_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -80,7 +81,7 @@ func TestSynchronizePrimary_FastForwardsOnlyAndNamesEveryRefusal(t *testing.T) {
 		"non-default branch": func(t *testing.T, fixture repositoryFixture, origin string) devgit.PrimarySyncRefusal {
 			advanceOrigin(t, fixture, origin, "second")
 			runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary, "checkout", "-b", "side")
-			return devgit.PrimarySyncRefusalNonDefaultBranch
+			return devgit.PrimarySyncRefusalNonDefault
 		},
 		"detached head": func(t *testing.T, fixture repositoryFixture, origin string) devgit.PrimarySyncRefusal {
 			advanceOrigin(t, fixture, origin, "second")
@@ -130,7 +131,7 @@ func TestSynchronizePrimary_RejectsUnconfiguredRepositoryAndMissingAuthority(t *
 	if _, err := registry.SynchronizePrimary(context.Background(), devgit.PrimarySyncRequest{}); err == nil {
 		t.Error("SynchronizePrimary(no repository) error = nil")
 	}
-	if _, err := registry.SynchronizePrimary(nil, devgit.PrimarySyncRequest{ //nolint:staticcheck // a nil context is the refusal under test
+	if _, err := registry.SynchronizePrimary(missingGitContext(), devgit.PrimarySyncRequest{
 		RepositoryID: fixture.repositoryID,
 	}); err == nil {
 		t.Error("SynchronizePrimary(nil context) error = nil")
@@ -158,7 +159,7 @@ func advanceOrigin(t *testing.T, fixture repositoryFixture, origin, message stri
 	if err := os.WriteFile(filepath.Join(scratch, message+".txt"), []byte(message+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", scratch, "add", ".")
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", scratch, "add", "--force", ".")
 	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", scratch,
 		"-c", "user.name=DevCrew Fixture", "-c", "user.email=fixture@example.invalid",
 		"commit", "-m", message)
@@ -175,4 +176,97 @@ func commitInPrimary(t *testing.T, fixture repositoryFixture, message string) {
 	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary,
 		"-c", "user.name=DevCrew Fixture", "-c", "user.email=fixture@example.invalid",
 		"commit", "-m", message)
+}
+
+// A canceled caller and an unreadable checkout are infrastructure failures, not
+// sync outcomes. Reporting either as a refusal would tell an operator their
+// checkout was in a bad posture when the truth is that nothing was inspected.
+func TestSynchronizePrimary_ReportsInfrastructureFailureRatherThanARefusal(t *testing.T) {
+	fixture, _ := newSyncFixture(t)
+	registry := newLifecycleRegistry(t, fixture)
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := registry.SynchronizePrimary(canceled, devgit.PrimarySyncRequest{
+		RepositoryID: fixture.repositoryID,
+	}); !errors.Is(err, context.Canceled) {
+		t.Errorf("SynchronizePrimary(canceled) error = %v, want context.Canceled", err)
+	}
+
+	// The registry validated this checkout when it was built. Removing its Git
+	// data afterwards is the drift a long-lived service actually meets.
+	if err := os.RemoveAll(filepath.Join(fixture.primary, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	result, err := registry.SynchronizePrimary(context.Background(), devgit.PrimarySyncRequest{
+		RepositoryID: fixture.repositoryID,
+	})
+	if err == nil {
+		t.Fatalf("SynchronizePrimary(unreadable checkout) = %#v, want an error", result)
+	}
+	if result.Outcome != "" {
+		t.Errorf("an unreadable checkout reported outcome %q", result.Outcome)
+	}
+}
+
+// A branch may track another local branch rather than a remote one. There is
+// nothing to fetch from, and the configured upstream names no remote, so the
+// posture is ambiguous rather than merely absent.
+func TestSynchronizePrimary_RefusesAnUpstreamThatNamesNoRemote(t *testing.T) {
+	fixture, _ := newSyncFixture(t)
+	registry := newLifecycleRegistry(t, fixture)
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary, "branch", "local-base")
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary, "config", "branch.main.remote", ".")
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary, "config", "branch.main.merge", "refs/heads/local-base")
+
+	result, err := registry.SynchronizePrimary(context.Background(), devgit.PrimarySyncRequest{
+		RepositoryID: fixture.repositoryID,
+	})
+	if err != nil {
+		t.Fatalf("SynchronizePrimary() error = %v", err)
+	}
+	if result.Outcome != devgit.PrimarySyncRefused || result.Refusal != devgit.PrimarySyncRefusalAmbiguous {
+		t.Fatalf("result = %#v, want an ambiguous refusal", result)
+	}
+}
+
+// An unreachable remote is an infrastructure failure. It is not reported as a
+// checkout posture: the checkout is fine and the operator's repair is the
+// network or the remote, not their working copy.
+func TestSynchronizePrimary_ReportsAnUnreachableRemoteAsAFailure(t *testing.T) {
+	fixture, _ := newSyncFixture(t)
+	registry := newLifecycleRegistry(t, fixture)
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary,
+		"remote", "set-url", "origin", filepath.Join(canonicalTempDir(t), "absent.git"))
+
+	if _, err := registry.SynchronizePrimary(context.Background(), devgit.PrimarySyncRequest{
+		RepositoryID: fixture.repositoryID,
+	}); err == nil {
+		t.Fatal("SynchronizePrimary(unreachable remote) error = nil")
+	}
+}
+
+// A corrupt index is an infrastructure failure discovered after the branch
+// checks pass. It is not a posture the operator can fix by tidying their
+// checkout, so it surfaces as an error rather than as a named refusal.
+func TestSynchronizePrimary_ReportsACorruptIndexAsAFailure(t *testing.T) {
+	fixture, _ := newSyncFixture(t)
+	registry := newLifecycleRegistry(t, fixture)
+	index := filepath.Join(fixture.primary, ".git", "index")
+	if err := os.Remove(index); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(index, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := registry.SynchronizePrimary(context.Background(), devgit.PrimarySyncRequest{
+		RepositoryID: fixture.repositoryID,
+	})
+	if err == nil {
+		t.Fatalf("SynchronizePrimary(corrupt index) = %#v, want an error", result)
+	}
+	if result.Outcome != "" {
+		t.Errorf("a corrupt index reported outcome %q", result.Outcome)
+	}
 }
