@@ -94,9 +94,9 @@ func TestAdapters_DiagnoseReportsSettlePostureSeparatelyFromAvailability(t *test
 func TestAdapters_ClassifyProcessRoleRefusesToGuessFromPartialAttribution(t *testing.T) {
 	for name, adapter := range interventionAdapters(t) {
 		t.Run(name, func(t *testing.T) {
-			attributed := application.ProcessObservation{
+			attributed := application.TaskProcessObservation{
 				TaskHandle: "task-0001", Attributed: true,
-				Source: application.ProcessSourceTerminalDescendant,
+				Source:     application.ProcessSourceTerminalDescendant,
 				Executable: "worker", ProfileID: interventionProfileID(name),
 			}
 			role := adapter.ClassifyProcessRole(attributed)
@@ -111,7 +111,7 @@ func TestAdapters_ClassifyProcessRoleRefusesToGuessFromPartialAttribution(t *tes
 				t.Errorf("service-launched validation role = %q, want validation", got.Role)
 			}
 
-			for label, observation := range map[string]application.ProcessObservation{
+			for label, observation := range map[string]application.TaskProcessObservation{
 				"unattributed": {TaskHandle: "task-0001", Source: application.ProcessSourceTerminalDescendant, Executable: "worker"},
 				"no task":      {Attributed: true, Source: application.ProcessSourceTerminalDescendant, Executable: "worker"},
 				"no source":    {TaskHandle: "task-0001", Attributed: true, Executable: "worker"},

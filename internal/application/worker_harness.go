@@ -192,6 +192,12 @@ type WorkerHarnessAdapter interface {
 	SendInput(context.Context, WorkerInputRequest) (WorkerInputPlan, error)
 	RequestPause(context.Context, WorkerControlRequest) (WorkerInputPlan, error)
 	RequestStop(context.Context, WorkerControlRequest) (WorkerInputPlan, error)
+	// ValidateProfile, Diagnose and ClassifyProcessRole answer readiness and
+	// attribution. Each names the exact condition it refused on, so a caller
+	// repairs the right thing instead of retrying a generic unavailability.
+	ValidateProfile(context.Context, string, domain.TaskShape) error
+	Diagnose(context.Context) (HarnessDiagnosis, error)
+	ClassifyProcessRole(TaskProcessObservation) ProcessRoleResult
 }
 
 // WorkerHarnessResolver returns only the exact operator-reviewed adapter for a

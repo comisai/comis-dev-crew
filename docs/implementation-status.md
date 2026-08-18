@@ -409,6 +409,19 @@ or more than 8192 bytes is refused rather than sanitized. Pause and stop carry
 no operator text and use distinct keystrokes, and every unconfirmed submission
 is reconciled rather than silently resent.
 
+Each family also answers for its own readiness and process attribution. Profile
+validation is delegated to the reviewed catalog rather than re-checked per
+family, so dispatch and the adapter cannot disagree about which profiles exist
+and which shapes each allows, and a refusal names whether the profile belongs to
+another family or simply disallows the shape. A diagnosis reports the settle
+signal separately from availability, because an installed, pinned, reachable
+harness can still be unable to prove a turn ended and only the unattended
+decision depends on that second fact. Process roles are assigned solely from
+exact attribution: an unattributed observation, a missing task, source or
+executable label, or a foreign profile is `unknown` with the reason named, since
+a role pinned to the wrong process is what makes an unrelated program look like
+task state.
+
 The canonical `GetLaunchPlan` read accepts `ready` and recovery-reread `launching`
 tasks, then invokes that configured adapter with the durable task, workspace,
 brief, and activation binding. It projects the profile ID, terminal allow-entry

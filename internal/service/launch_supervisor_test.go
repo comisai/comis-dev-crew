@@ -326,6 +326,25 @@ func (*productionLaunchHarnessAdapter) RequestStop(
 	return application.WorkerInputPlan{}, errors.New("launch harness adapter does not deliver control")
 }
 
+func (*productionLaunchHarnessAdapter) ValidateProfile(
+	context.Context, string, domain.TaskShape,
+) error {
+	return nil
+}
+
+func (*productionLaunchHarnessAdapter) Diagnose(context.Context) (application.HarnessDiagnosis, error) {
+	return application.HarnessDiagnosis{}, errors.New("launch harness adapter does not diagnose")
+}
+
+// Unknown is the honest answer from a stub that observes nothing.
+func (*productionLaunchHarnessAdapter) ClassifyProcessRole(
+	application.TaskProcessObservation,
+) application.ProcessRoleResult {
+	return application.ProcessRoleResult{
+		Role: application.ProcessRoleUnknown, Reason: application.ProcessRoleReasonUnattributed,
+	}
+}
+
 // Cancellation joins the same durable mutation surface; the stub accepts it.
 func (*productionLaunchMutationStub) CancelManagedRun(
 	_ context.Context,
