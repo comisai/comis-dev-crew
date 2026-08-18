@@ -546,6 +546,12 @@ type queryRepository struct {
 	candidateJudgment      domain.CandidateJudgment
 	candidateEvidence      *domain.SealedDeliveryEvidence
 	candidateErr           error
+	replacement            TaskReplacementRecord
+	replacementFound       bool
+	replacementErr         error
+	promotion              ScoutPromotionLink
+	promotionFound         bool
+	promotionErr           error
 	candidateCalled        bool
 	taskEvidence           TaskEvidenceView
 	taskEvidenceErr        error
@@ -687,6 +693,20 @@ func (repository *queryRepository) GetOperation(context.Context, string) (domain
 		return domain.OperationRecord{}, repository.readErr
 	}
 	return repository.operation, nil
+}
+
+func (repository *queryRepository) ScoutPromotion(
+	_ context.Context,
+	_ string,
+) (ScoutPromotionLink, bool, error) {
+	return repository.promotion, repository.promotionFound, repository.promotionErr
+}
+
+func (repository *queryRepository) TaskReplacement(
+	_ context.Context,
+	_ string,
+) (TaskReplacementRecord, bool, error) {
+	return repository.replacement, repository.replacementFound, repository.replacementErr
 }
 
 func (repository *queryRepository) CurrentStateVersion(context.Context) (int64, error) {

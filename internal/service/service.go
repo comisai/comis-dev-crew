@@ -246,7 +246,11 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	var interventions *application.Interventions
 	if config.workspaceInspector != nil {
 		interventions, err = application.NewInterventions(application.InterventionConfig{
-			Store: store, Workspaces: config.workspaceInspector, Clock: clock,
+			Store: store, Workspaces: config.workspaceInspector,
+			// Replacement launches a worker, so it must be able to prove the
+			// proposed profile is one an operator reviewed for this task's shape.
+			WorkerProfiles: config.WorkerProfiles,
+			Clock:          clock,
 		})
 		if err != nil {
 			return fmt.Errorf("run service intervention coordinator: %w", err)

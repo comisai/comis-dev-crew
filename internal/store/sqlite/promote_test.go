@@ -244,3 +244,49 @@ func TestStore_AShipTaskCannotBeClaimedByTwoPromotions(t *testing.T) {
 		t.Fatalf("second promotion of the same ship task error = %v, want a conflict", err)
 	}
 }
+
+// A cancelled caller must not reach the database. The guard treats a live-but-
+// cancelled context differently from an absent one, and both must stop the read
+// before it starts: work done for a caller that has already given up is work
+// whose result nobody will check.
+func TestStore_PromotionAndReplacementReadsRefuseACancelledCaller(t *testing.T) {
+	store, ship := openReportFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := store.ReadScoutPromotionSource(cancelled, ship.Handle); !errors.Is(err, context.Canceled) {
+		t.Errorf("ReadScoutPromotionSource(cancelled) error = %v", err)
+	}
+	if err := store.CommitScoutPromotionLink(cancelled, application.ScoutPromotionLink{}); !errors.Is(err, context.Canceled) {
+		t.Errorf("CommitScoutPromotionLink(cancelled) error = %v", err)
+	}
+	if _, _, err := store.ScoutPromotion(cancelled, ship.Handle); !errors.Is(err, context.Canceled) {
+		t.Errorf("ScoutPromotion(cancelled) error = %v", err)
+	}
+	if _, _, err := store.TaskReplacement(cancelled, ship.Handle); !errors.Is(err, context.Canceled) {
+		t.Errorf("TaskReplacement(cancelled) error = %v", err)
+	}
+}
+
+// A promotion link that cannot be written or read is reported, never swallowed:
+// a silent failure would leave a ship task carrying a scout's conclusions with
+// nothing recording where they came from.
+func TestStore_PromotionReportsStorageFailuresInsteadOfSwallowingThem(t *testing.T) {
+	store, ship := openReportFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	scout := scoutWithEvidence(t, store, "task-scout-0001")
+	at := time.Date(2026, time.August, 9, 16, 0, 0, 0, time.UTC)
+	recordPromotionOperation(t, store, "operation-promote-0001", ship.Handle, at)
+	if _, err := store.db.Exec("ALTER TABLE scout_promotions RENAME TO unavailable_scout_promotions"); err != nil {
+		t.Fatalf("break promotion table: %v", err)
+	}
+
+	if err := store.CommitScoutPromotionLink(context.Background(), application.ScoutPromotionLink{
+		OperationID: "operation-promote-0001", ScoutTaskHandle: scout.Handle,
+		ShipTaskHandle: ship.Handle, EvidenceDigest: strings.Repeat("f", 64), PromotedAt: at,
+	}); err == nil {
+		t.Error("CommitScoutPromotionLink() with an unwritable table error = nil")
+	}
+	if _, _, err := store.ScoutPromotion(context.Background(), ship.Handle); err == nil {
+		t.Error("ScoutPromotion() with an unreadable table error = nil")
+	}
+}

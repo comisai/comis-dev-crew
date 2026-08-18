@@ -91,20 +91,25 @@ type InterventionStore interface {
 	GetManagedRunPreparation(context.Context, string) (ManagedRunPreparation, error)
 	CommitTaskHandback(context.Context, TaskHandbackMutation) (MutationResult, error)
 	CommitTaskResume(context.Context, TaskResumeMutation) (MutationResult, error)
+	CommitTaskReplace(context.Context, TaskReplaceMutation) (MutationResult, error)
 }
 
 // InterventionConfig supplies independent workspace truth and durable state.
 type InterventionConfig struct {
 	Store      InterventionStore
 	Workspaces WorkspaceInspector
-	Clock      Clock
+	// Replacement needs to know a proposed profile is one an operator reviewed.
+	// Absent, replacement is refused rather than launching an unreviewed worker.
+	WorkerProfiles WorkerProfileValidator
+	Clock          Clock
 }
 
 // Interventions coordinates E0 pause/edit/revalidate without terminal custody.
 type Interventions struct {
-	store      InterventionStore
-	workspaces WorkspaceInspector
-	clock      Clock
+	store          InterventionStore
+	workspaces     WorkspaceInspector
+	workerProfiles WorkerProfileValidator
+	clock          Clock
 }
 
 // NewInterventions creates the canonical handback application service.
@@ -112,7 +117,10 @@ func NewInterventions(config InterventionConfig) (*Interventions, error) {
 	if config.Store == nil || config.Workspaces == nil || config.Clock == nil {
 		return nil, errors.New("create interventions: store, workspaces, and clock are required")
 	}
-	return &Interventions{store: config.Store, workspaces: config.Workspaces, clock: config.Clock}, nil
+	return &Interventions{
+		store: config.Store, workspaces: config.Workspaces,
+		workerProfiles: config.WorkerProfiles, clock: config.Clock,
+	}, nil
 }
 
 // HandbackTask captures fresh Git truth and durably starts normal validation.

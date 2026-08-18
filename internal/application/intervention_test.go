@@ -95,16 +95,18 @@ func TestInterventions_HandbackReplaysBeforeInspectionAndRejectsUnsafeInputs(t *
 }
 
 type interventionStore struct {
-	task        domain.Task
-	preparation ManagedRunPreparation
-	mutation    TaskHandbackMutation
-	resume      TaskResumeMutation
-	resumeCalls int
-	replay      MutationResult
-	replayFound bool
-	replayErr   error
-	commitErr   error
-	commitCalls int
+	task         domain.Task
+	preparation  ManagedRunPreparation
+	mutation     TaskHandbackMutation
+	resume       TaskResumeMutation
+	replace      TaskReplaceMutation
+	replaceCalls int
+	resumeCalls  int
+	replay       MutationResult
+	replayFound  bool
+	replayErr    error
+	commitErr    error
+	commitCalls  int
 }
 
 func (store *interventionStore) ReplayMutation(context.Context, string, string, string) (MutationResult, bool, error) {
@@ -129,6 +131,19 @@ func (store *interventionStore) CommitTaskHandback(_ context.Context, mutation T
 		return MutationResult{}, store.commitErr
 	}
 	return MutationResult{Task: store.task}, nil
+}
+
+func (store *interventionStore) CommitTaskReplace(_ context.Context, mutation TaskReplaceMutation) (MutationResult, error) {
+	store.replaceCalls++
+	store.replace = mutation
+	if store.commitErr != nil {
+		return MutationResult{}, store.commitErr
+	}
+	replaced := store.task
+	replaced.State = domain.TaskReady
+	replaced.WorkerProfileID = mutation.WorkerProfileID
+	replaced.BriefRevision = store.task.BriefRevision + 1
+	return MutationResult{Task: replaced}, nil
 }
 
 func (store *interventionStore) CommitTaskResume(_ context.Context, mutation TaskResumeMutation) (MutationResult, error) {

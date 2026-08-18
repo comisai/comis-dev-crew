@@ -207,6 +207,19 @@ func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 					OperationID: request.OperationID, TaskHandle: taskHandle,
 				})
 			})
+	case MethodReplaceWorker:
+		var input ReplaceWorkerInput
+		if err := decodeObject(request.Payload, &input); err != nil {
+			return invalidPayload(request.OperationID, err)
+		}
+		if handler.interventions == nil {
+			return rejectedOutcome(request.OperationID, domain.ErrorUnavailable, true, "task intervention service is unavailable", "inspect service configuration", nil)
+		}
+		result, err := handler.interventions.ReplaceWorker(ctx, application.ReplaceWorkerCommand{
+			OperationID: request.OperationID, TaskHandle: input.TaskHandle,
+			WorkerProfileID: input.WorkerProfileID,
+		})
+		return handler.taskMutationOutcome(request.OperationID, MethodReplaceWorker, result, err)
 	case MethodCancelTask:
 		return handleTaskHandleMutation(ctx, handler, request, MethodCancelTask,
 			handler.mutations == nil, "task mutation service is unavailable",

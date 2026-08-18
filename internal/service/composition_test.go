@@ -131,7 +131,7 @@ func TestRun_StartsAndJoinsInstalledCompositionWithoutPreparedWork(t *testing.T)
 	case <-ready:
 	case err := <-done:
 		t.Fatalf("Run(installed) before ready error = %v", err)
-	case <-time.After(5 * time.Second):
+	case <-time.After(serviceReadyDeadline):
 		t.Fatal("Run(installed) did not become ready")
 	}
 	cancel()
@@ -570,3 +570,14 @@ func (serviceMutationStub) CancelManagedRun(
 ) (application.MutationResult, error) {
 	return application.MutationResult{}, nil
 }
+
+// serviceReadyDeadline bounds how long a test waits for the service to finish
+// starting.
+//
+// It is deliberately far longer than startup takes. The assertion is that
+// startup completes at all — a service that fails to become ready never becomes
+// ready, so a generous bound loses nothing. A tight one instead measures how
+// busy the machine is: these waits passed alone and failed inside the full
+// suite, reporting scheduler contention as a product failure and training the
+// reader to re-run rather than read the result.
+const serviceReadyDeadline = 60 * time.Second

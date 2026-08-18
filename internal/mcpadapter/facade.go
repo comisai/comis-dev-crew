@@ -75,6 +75,11 @@ func (facade *Facade) registerTools() {
 		false,
 	), facade.promoteScout)
 	mcp.AddTool(facade.server, tool(
+		ToolReplaceWorker,
+		"Hand one paused task to a different reviewed worker from a fresh brief. The worktree and its work are preserved; only who continues changes.",
+		false,
+	), facade.replaceWorker)
+	mcp.AddTool(facade.server, tool(
 		ToolPauseTask,
 		"Ask one task's worker to reach a safe boundary and stop. It carries no instruction and no interrupt, and does not itself pause the task: the worker settles and reports.",
 		false,
@@ -238,6 +243,29 @@ func (facade *Facade) promoteScout(
 		TaskHandle: promoted.TaskHandle, State: promoted.State,
 		StateVersion: promoted.StateVersion, SideEffect: promoted.SideEffect,
 	}, nil
+}
+
+func (facade *Facade) replaceWorker(
+	ctx context.Context,
+	request *mcp.CallToolRequest,
+	input ReplaceWorkerInput,
+) (*mcp.CallToolResult, localapi.TaskMutationResult, error) {
+	callContext, err := facade.authorize(request)
+	if err != nil {
+		return nil, localapi.TaskMutationResult{}, err
+	}
+	operationID := string(callContext.OperationID)
+	localInput := localapi.ReplaceWorkerInput{
+		TaskHandle: input.TaskHandle, WorkerProfileID: input.WorkerProfileID,
+	}
+	result, err := facade.client.ReplaceWorker(ctx, operationID, localInput)
+	if err != nil && uncertainMutation(ctx, err) {
+		result, err = reconcileTaskMutation(
+			facade, ctx, operationID, "ReplaceWorker", localInput,
+			facade.client.ReplaceWorker, err,
+		)
+	}
+	return nil, result, err
 }
 
 func (facade *Facade) listTasks(ctx context.Context, request *mcp.CallToolRequest, _ EmptyInput) (*mcp.CallToolResult, application.TaskList, error) {

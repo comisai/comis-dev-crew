@@ -414,6 +414,15 @@ func (client *fakeClient) ReconcileTask(
 	return client.taskMutation, client.err
 }
 
+func (client *fakeClient) ReplaceWorker(
+	_ context.Context,
+	operationID string,
+	input localapi.ReplaceWorkerInput,
+) (localapi.TaskMutationResult, error) {
+	client.record(operationID, "replace:"+input.TaskHandle+":"+input.WorkerProfileID)
+	return client.taskMutation, client.err
+}
+
 func (client *fakeClient) PromoteScout(
 	_ context.Context,
 	operationID string,

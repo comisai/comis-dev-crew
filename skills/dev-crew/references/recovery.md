@@ -62,6 +62,24 @@ free disk, and never describe a cancel as having cleaned anything up.
 Cancelling a task that is already cancelled reports the settled task instead of
 refusing, so a repeat is safe.
 
+## Replace
+
+`replace_worker` hands a paused task to a different reviewed worker. Use it when
+the work is worth keeping and the worker is not — a wedged harness, a profile
+that turned out wrong for the task.
+
+The worktree and everything in it survive. Replacement changes who continues,
+never what exists; if the intent is to stop or throw away the work, say that
+with `cancel_task` instead.
+
+Name a profile from `worker_profiles`. It is checked against the reviewed
+catalog for this task's shape, so a guessed name is refused rather than
+launched, and a ship profile cannot take over a scout.
+
+After a replacement the task is `ready` under a new brief revision. The previous
+worker's reports name the old revision and are refused — that is what makes the
+swap one generation rather than two workers sharing a tree.
+
 ## Verify
 
 `verify_task` opens validation now rather than waiting for the worker to declare

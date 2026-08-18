@@ -34,12 +34,15 @@ type apiMutations struct {
 }
 
 type apiInterventions struct {
-	command       application.HandbackTaskCommand
-	resumeCommand application.ResumeTaskCommand
-	resumeResult  application.MutationResult
-	resumeErr     error
-	result        application.MutationResult
-	err           error
+	command        application.HandbackTaskCommand
+	resumeCommand  application.ResumeTaskCommand
+	replaceCommand application.ReplaceWorkerCommand
+	replaceResult  application.MutationResult
+	replaceErr     error
+	resumeResult   application.MutationResult
+	resumeErr      error
+	result         application.MutationResult
+	err            error
 }
 
 type apiCleanup struct {
@@ -87,6 +90,14 @@ func (reconciliation *apiTaskReconciliation) ReconcileTask(
 ) (application.MutationResult, error) {
 	reconciliation.command = command
 	return reconciliation.result, reconciliation.err
+}
+
+func (interventions *apiInterventions) ReplaceWorker(
+	_ context.Context,
+	command application.ReplaceWorkerCommand,
+) (application.MutationResult, error) {
+	interventions.replaceCommand = command
+	return interventions.replaceResult, interventions.replaceErr
 }
 
 func (interventions *apiInterventions) ResumeTask(

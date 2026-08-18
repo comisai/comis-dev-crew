@@ -24,6 +24,12 @@ type taskMutationSpec struct {
 	SubjectDigest string
 	At            time.Time
 	Label         string
+	// Record runs after the operation is inserted and before the commit, for
+	// commands that write their own durable trail alongside the task. It sees the
+	// persisted task, so a row it writes cannot disagree with the state version
+	// the same transaction assigned, and the operation its trail references
+	// already exists.
+	Record func(context.Context, *sql.Tx, domain.Task) error
 }
 
 // commitTaskMutation runs the transaction skeleton every task-state command
@@ -82,6 +88,14 @@ func commitTaskMutation(
 			return application.MutationResult{}, fmt.Errorf("insert %s operation: %w", spec.Label, application.ErrConflict)
 		}
 		return application.MutationResult{}, fmt.Errorf("insert %s operation: %w", spec.Label, err)
+	}
+	// Record runs after the operation exists, because a command's own trail
+	// references it. Running it earlier leaves that reference dangling inside the
+	// transaction and the insert is refused.
+	if spec.Record != nil {
+		if err := spec.Record(ctx, transaction, updated); err != nil {
+			return application.MutationResult{}, err
+		}
 	}
 	if err := transaction.Commit(); err != nil {
 		return application.MutationResult{}, fmt.Errorf("commit %s: %w", spec.Label, err)

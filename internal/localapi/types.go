@@ -59,13 +59,14 @@ const (
 	MethodResumeTask     Method = "ResumeTask"
 	MethodVerifyTask     Method = "VerifyTask"
 	MethodPromoteScout   Method = "PromoteScout"
+	MethodReplaceWorker  Method = "ReplaceWorker"
 )
 
 func (method Method) valid() bool {
 	switch method {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
 		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
-		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout:
+		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker:
 		return true
 	default:
 		return false
@@ -85,7 +86,7 @@ const (
 func (method Method) SideEffect() SideEffectClass {
 	switch method {
 	case MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
-		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout:
+		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker:
 		return SideEffectMutate
 	default:
 		return SideEffectRead
@@ -143,6 +144,7 @@ type TaskMutations interface {
 // TaskInterventions is the canonical paused-worktree handback surface.
 type TaskInterventions interface {
 	ResumeTask(context.Context, application.ResumeTaskCommand) (application.MutationResult, error)
+	ReplaceWorker(context.Context, application.ReplaceWorkerCommand) (application.MutationResult, error)
 	HandbackTask(context.Context, application.HandbackTaskCommand) (application.MutationResult, error)
 }
 
@@ -184,6 +186,14 @@ type ReconcileTaskInput struct {
 // carries no instruction and no interrupt: pause asks the worker to stop
 // cleanly, and anything more is a different command.
 type PauseTaskInput = taskHandleMutationInput
+
+// ReplaceWorkerInput names the task and the reviewed profile that takes over.
+// It carries no disposition: replacement preserves the work, and stopping or
+// discarding it are separate commands that say so plainly.
+type ReplaceWorkerInput struct {
+	TaskHandle      string `json:"taskHandle"`
+	WorkerProfileID string `json:"workerProfileId"`
+}
 
 // VerifyTaskInput selects one task to validate now. It selects no profile:
 // validation runs the reviewed profile the task was prepared with.

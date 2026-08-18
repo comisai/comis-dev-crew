@@ -158,6 +158,13 @@ func (client *Client) VerifyTask(ctx context.Context, operationID string, input 
 	return result, err
 }
 
+// ReplaceWorker preserves one paused task's work and readies a new worker.
+func (client *Client) ReplaceWorker(ctx context.Context, operationID string, input ReplaceWorkerInput) (TaskMutationResult, error) {
+	var result TaskMutationResult
+	err := client.call(ctx, operationID, MethodReplaceWorker, input, &result)
+	return result, err
+}
+
 func (client *Client) call(ctx context.Context, operationID string, method Method, payload any, result any) error {
 	if ctx == nil {
 		return errors.New("call local API: context is required")

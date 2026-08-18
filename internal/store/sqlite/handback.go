@@ -60,24 +60,13 @@ func (store *Store) CommitTaskHandback(
 	if err != nil {
 		return application.MutationResult{}, fmt.Errorf("read task handback workspace: %w", err)
 	}
-	binding, found, err := findTerminalBinding(ctx, transaction, task.Handle)
-	if err != nil {
-		return application.MutationResult{}, err
-	}
-	terminalSettled := found && (binding.latestTransition == application.TerminalExited || binding.latestTransition == application.TerminalReleased)
 	if task.State != domain.TaskPaused || mutation.At.Before(task.UpdatedAt) ||
 		mutation.Snapshot.TaskHandle != task.Handle || mutation.Snapshot.RepositoryID != task.RepositoryID ||
-		mutation.Snapshot.WorktreePath != preparation.RequestedWorkspaceRoot || !terminalSettled {
+		mutation.Snapshot.WorktreePath != preparation.RequestedWorkspaceRoot {
 		return application.MutationResult{}, fmt.Errorf("task handback authority differs: %w", application.ErrPrecondition)
 	}
-	var activeProcesses int
-	if err := transaction.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM validation_processes WHERE task_handle = ? AND state NOT IN ('exited', 'absent')", task.Handle,
-	).Scan(&activeProcesses); err != nil {
-		return application.MutationResult{}, fmt.Errorf("inspect task handback validation processes: %w", err)
-	}
-	if activeProcesses != 0 {
-		return application.MutationResult{}, fmt.Errorf("task handback validation process remains: %w", application.ErrPrecondition)
+	if err := proveNothingIsStillRunning(ctx, transaction, task.Handle, "task handback"); err != nil {
+		return application.MutationResult{}, err
 	}
 	updated, err := task.AcceptWorkerReport(mutation.CandidateReport, mutation.At)
 	if err != nil {

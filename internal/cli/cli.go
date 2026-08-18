@@ -40,6 +40,7 @@ Commands:
   task resume TASK [--operation OPERATION] [--format json]
   task verify TASK [--operation OPERATION] [--format json]
   task promote SCOUT --input FILE|- [--operation OPERATION] [--format json]
+  task replace TASK --worker PROFILE [--operation OPERATION] [--format json]
   task cleanup TASK [--operation OPERATION] [--format json]
 
 Global options:
@@ -59,6 +60,7 @@ type ReadClient interface {
 	ResumeTask(context.Context, string, localapi.ResumeTaskInput) (localapi.TaskMutationResult, error)
 	VerifyTask(context.Context, string, localapi.VerifyTaskInput) (localapi.TaskMutationResult, error)
 	PromoteScout(context.Context, string, localapi.PromoteScoutInput) (localapi.PrepareTaskResult, error)
+	ReplaceWorker(context.Context, string, localapi.ReplaceWorkerInput) (localapi.TaskMutationResult, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
 	GetLaunchPlan(context.Context, string, string) (application.LaunchPlan, error)
@@ -100,6 +102,7 @@ const (
 	commandResumeTask
 	commandVerifyTask
 	commandPromoteScout
+	commandReplaceWorker
 )
 
 type parsedCommand struct {
@@ -111,6 +114,7 @@ type parsedCommand struct {
 	operationID     string
 	prepareInput    *localapi.PrepareTaskInput
 	promoteInput    *localapi.PromoteScoutInput
+	workerProfileID string
 	reconcileAction application.ReconcileTaskAction
 	handbackAction  application.HandbackAction
 }
@@ -255,6 +259,9 @@ func parseTaskCommand(command parsedCommand, args []string) (parsedCommand, erro
 	}
 	if len(args) > 0 && args[0] == "promote" {
 		return parsePromoteScoutCommand(command, args[1:])
+	}
+	if len(args) > 0 && args[0] == "replace" {
+		return parseReplaceWorkerCommand(command, args[1:])
 	}
 	if len(args) < 2 {
 		return parsedCommand{}, errors.New("task subcommand and reference are required")
@@ -441,6 +448,10 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 		return client.ResumeTask(ctx, operationID, localapi.ResumeTaskInput{TaskHandle: command.reference})
 	case commandVerifyTask:
 		return client.VerifyTask(ctx, operationID, localapi.VerifyTaskInput{TaskHandle: command.reference})
+	case commandReplaceWorker:
+		return client.ReplaceWorker(ctx, operationID, localapi.ReplaceWorkerInput{
+			TaskHandle: command.reference, WorkerProfileID: command.workerProfileID,
+		})
 	default:
 		return nil, errors.New("unknown parsed command")
 	}

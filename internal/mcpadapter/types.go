@@ -21,6 +21,7 @@ const (
 	ToolResumeTask     = "resume_task"
 	ToolVerifyTask     = "verify_task"
 	ToolPromoteScout   = "promote_scout"
+	ToolReplaceWorker  = "replace_worker"
 	ToolListTasks      = "list_tasks"
 	ToolWorkerProfiles = "worker_profiles"
 	ToolGetTask        = "get_task"
@@ -46,6 +47,7 @@ type Client interface {
 	ResumeTask(context.Context, string, localapi.ResumeTaskInput) (localapi.TaskMutationResult, error)
 	VerifyTask(context.Context, string, localapi.VerifyTaskInput) (localapi.TaskMutationResult, error)
 	PromoteScout(context.Context, string, localapi.PromoteScoutInput) (localapi.PrepareTaskResult, error)
+	ReplaceWorker(context.Context, string, localapi.ReplaceWorkerInput) (localapi.TaskMutationResult, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
 	GetLaunchPlan(context.Context, string, string) (application.LaunchPlan, error)
@@ -125,6 +127,12 @@ func (input PromoteScoutInput) local() localapi.PromoteScoutInput {
 		ValidationProfile:  input.ValidationProfile, DeliveryMode: input.DeliveryMode,
 		WorkerProfileID: input.WorkerProfileID,
 	}
+}
+
+// ReplaceWorkerInput names the task and the reviewed profile that takes over.
+type ReplaceWorkerInput struct {
+	TaskHandle      string `json:"taskHandle" jsonschema:"opaque task handle"`
+	WorkerProfileID string `json:"workerProfileId" jsonschema:"operator-configured worker profile identity that takes over"`
 }
 
 // PrepareTaskOutput is deliberately free of private Comis registration data.

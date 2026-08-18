@@ -166,10 +166,10 @@ devcrew-mcp \
   --service-instance service-instance-devcrew
 ```
 
-The facade defines fifteen tools: `prepare_task`, `promote_scout`,
+The facade defines sixteen tools: `prepare_task`, `promote_scout`,
 `reconcile_task`, `handback_task`, `cleanup_task`, `pause_task`, `cancel_task`,
-`resume_task`, `verify_task`, `list_tasks`, `get_task`, `explain_task`,
-`get_launch_plan`, `worker_profiles`, and `doctor`. `promote_scout` returns the
+`resume_task`, `replace_worker`, `verify_task`, `list_tasks`, `get_task`,
+`explain_task`, `get_launch_plan`, `worker_profiles`, and `doctor`. `promote_scout` returns the
 same private managed-run registration metadata preparation does, because it
 mints a task the same way.
 `cancel_task` is destructive — it ends work an operator asked for and repeating
@@ -302,6 +302,7 @@ devcrew [--socket PATH] task cancel TASK [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task resume TASK [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task verify TASK [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task promote SCOUT --input FILE|- [--operation OPERATION] [--format json]
+devcrew [--socket PATH] task replace TASK --worker PROFILE [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task cleanup TASK [--operation OPERATION] [--format json]
 ```
 
@@ -312,6 +313,20 @@ worker's own paused report is what settles the state. That ordering is what
 makes the worktree safe to hand to a developer — a task marked paused while its
 worker kept committing would be changing under their editor. The request carries
 no instruction text and no interrupt, and a repeat replays rather than stacking.
+
+`task replace` hands one paused task to a different reviewed worker. The
+worktree, the run binding and the lease are all preserved — replacement is for
+when the work is worth keeping and the worker is not, so discarding the tree
+would destroy the thing being preserved. The task passes through reconciliation
+back to `ready` under a fresh brief revision, which is what makes the swap one
+generation rather than a second worker joining the first: the previous worker's
+reports name a revision that is no longer current.
+
+The profile is required and is checked against the reviewed catalog for the
+task's own shape, so a replacement cannot launch an unreviewed executable and a
+ship profile cannot take over a scout. Replacement is refused while a terminal
+or validation process is still running, and the durable trail records which
+worker was swapped for which, on which tree, under which brief revision.
 
 `task promote` creates a ship task from a scout's investigation. The scout is
 untouched — its handle, shape, evidence and history stay exactly as they were,

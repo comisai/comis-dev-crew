@@ -238,3 +238,84 @@ func byHandleResult(operationID, command string, state domain.TaskState) applica
 		},
 	}
 }
+
+// Replacement travels the intervention surface, and the handler must report the
+// method it actually ran. A deployment without interventions reports that
+// surface unavailable rather than the mutation surface it does have.
+func TestLocalAPI_ReplaceReachesTheInterventionSurface(t *testing.T) {
+	interventions := &apiInterventions{replaceResult: application.MutationResult{
+		Task: domain.Task{Handle: "task-0001", State: domain.TaskReady, StateVersion: 17},
+		Operation: domain.OperationRecord{
+			ID: "operation-replace-0001", Command: "ReplaceWorker", Status: domain.OperationCompleted,
+			ResultRef: "task-0001", StateVersion: 17,
+		},
+	}}
+	handler, err := NewHandler(HandlerConfig{
+		Queries: &apiQueries{}, Interventions: interventions,
+		ServiceInstanceID: "service-instance_a", Clock: time.Now,
+	})
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	socketPath := startHandlerServer(t, handler, CallerMCPFacade)
+	client, err := NewClient(socketPath, time.Second)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	result, err := client.ReplaceWorker(context.Background(), "operation-replace-0001", ReplaceWorkerInput{
+		TaskHandle: "task-0001", WorkerProfileID: "claude-reviewed",
+	})
+	if err != nil {
+		t.Fatalf("ReplaceWorker() error = %v", err)
+	}
+	if interventions.replaceCommand.TaskHandle != "task-0001" ||
+		interventions.replaceCommand.WorkerProfileID != "claude-reviewed" {
+		t.Fatalf("replacement command = %+v", interventions.replaceCommand)
+	}
+	if result.SideEffect != SideEffectMutate || result.State != domain.TaskReady {
+		t.Errorf("replacement result = %+v", result)
+	}
+}
+
+func TestLocalAPI_ReplaceReportsAnAbsentInterventionSurfaceAsUnavailable(t *testing.T) {
+	handler, err := NewHandler(HandlerConfig{
+		Queries: &apiQueries{}, ServiceInstanceID: "service-instance_a", Clock: time.Now,
+	})
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	outcome := handler.handle(context.Background(), CallerMCPFacade, []byte(
+		`{"protocolVersion":"`+ProtocolVersion+`","operationId":"operation-replace-0001",`+
+			`"method":"ReplaceWorker","payload":{"taskHandle":"task-0001",`+
+			`"workerProfileId":"claude-reviewed"}}`,
+	))
+
+	if outcome.Status != domain.OperationRejected || outcome.Error == nil ||
+		outcome.Error.Code != domain.ErrorUnavailable {
+		t.Fatalf("absent intervention surface outcome = %+v", outcome)
+	}
+}
+
+// A payload carrying anything beyond the task and the profile is refused: a
+// replacement takes no disposition and no instruction.
+func TestLocalAPI_ReplaceRefusesAForgedPayload(t *testing.T) {
+	handler, err := NewHandler(HandlerConfig{
+		Queries: &apiQueries{}, Interventions: &apiInterventions{},
+		ServiceInstanceID: "service-instance_a", Clock: time.Now,
+	})
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	outcome := handler.handle(context.Background(), CallerMCPFacade, []byte(
+		`{"protocolVersion":"`+ProtocolVersion+`","operationId":"operation-replace-0001",`+
+			`"method":"ReplaceWorker","payload":{"taskHandle":"task-0001",`+
+			`"workerProfileId":"claude-reviewed","discardWork":true}}`,
+	))
+
+	if outcome.Status != domain.OperationRejected {
+		t.Fatalf("forged replacement payload outcome = %+v, want a rejection", outcome)
+	}
+}

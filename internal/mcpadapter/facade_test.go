@@ -382,7 +382,7 @@ func TestFacade_UncertainTerminalMutationsReconcileBeforeExactRetry(t *testing.T
 
 func assertToolCatalog(t *testing.T, tools []*mcp.Tool) {
 	t.Helper()
-	want := map[string]bool{ToolPrepareTask: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolPauseTask: false, ToolCancelTask: false, ToolResumeTask: false, ToolVerifyTask: false, ToolPromoteScout: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
+	want := map[string]bool{ToolPrepareTask: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolPauseTask: false, ToolCancelTask: false, ToolResumeTask: false, ToolVerifyTask: false, ToolPromoteScout: false, ToolReplaceWorker: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
 	if len(tools) != len(want) {
 		t.Fatalf("tool count = %d, want %d", len(tools), len(want))
 	}
@@ -459,6 +459,8 @@ type fakeClient struct {
 	resumeResult    localapi.TaskMutationResult
 	verifyResult    localapi.TaskMutationResult
 	promoteResult   localapi.PrepareTaskResult
+	replaceResult   localapi.TaskMutationResult
+	replaceErrors   []error
 	promoteErrors   []error
 	verifyErrors    []error
 	resumeErrors    []error
@@ -488,6 +490,23 @@ func (client *fakeClient) ReconcileTask(
 	err := client.reconcileErrors[0]
 	client.reconcileErrors = client.reconcileErrors[1:]
 	return client.reconcileResult, err
+}
+
+func (client *fakeClient) ReplaceWorker(
+	_ context.Context,
+	operationID string,
+	input localapi.ReplaceWorkerInput,
+) (localapi.TaskMutationResult, error) {
+	client.calls = append(client.calls, "replace:"+operationID+":"+input.TaskHandle+":"+input.WorkerProfileID)
+	if len(client.replaceErrors) == 0 {
+		return client.replaceResult, nil
+	}
+	failure := client.replaceErrors[0]
+	client.replaceErrors = client.replaceErrors[1:]
+	if failure == nil {
+		return client.replaceResult, nil
+	}
+	return localapi.TaskMutationResult{}, failure
 }
 
 func (client *fakeClient) PromoteScout(

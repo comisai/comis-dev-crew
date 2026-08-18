@@ -41,6 +41,20 @@ func (repository *nonAtomicQueryRepository) GetOperation(ctx context.Context, op
 	return repository.inner.GetOperation(ctx, operationID)
 }
 
+func (repository *nonAtomicQueryRepository) ScoutPromotion(
+	ctx context.Context,
+	handle string,
+) (ScoutPromotionLink, bool, error) {
+	return repository.inner.ScoutPromotion(ctx, handle)
+}
+
+func (repository *nonAtomicQueryRepository) TaskReplacement(
+	ctx context.Context,
+	handle string,
+) (TaskReplacementRecord, bool, error) {
+	return repository.inner.TaskReplacement(ctx, handle)
+}
+
 func (repository *nonAtomicQueryRepository) CurrentStateVersion(ctx context.Context) (int64, error) {
 	return repository.inner.CurrentStateVersion(ctx)
 }

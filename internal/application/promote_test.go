@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
@@ -180,5 +181,72 @@ func TestMutations_PromoteScout_RefusesForgedIdentityAndDeadContexts(t *testing.
 	}
 	if _, err := mutations.PromoteScout(nilPauseContext(), validPromotion()); err == nil {
 		t.Error("PromoteScout(nil) error = nil")
+	}
+}
+
+// A promoted ship task is otherwise indistinguishable from one somebody wrote by
+// hand. Surfacing the link is what lets a reader see which investigation the
+// work is justified by.
+func TestQueries_TaskDetailSurfacesTheScoutAShipTaskCameFrom(t *testing.T) {
+	task := queryTask("task-promoted-detail", domain.TaskPrepared, 5)
+	repository := &queryRepository{
+		tasks: []domain.Task{task}, stateVersion: task.StateVersion,
+		promotionFound: true,
+		promotion: ScoutPromotionLink{
+			OperationID: "operation-promote-0001", ScoutTaskHandle: "task-scout-0001",
+			ShipTaskHandle: task.Handle, EvidenceDigest: strings.Repeat("f", 64),
+			PromotedAt: task.CreatedAt,
+		},
+	}
+	queries, err := NewQueries(QueryConfig{Repository: repository, Clock: time.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	detail, err := queries.ShowTask(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("ShowTask() error = %v", err)
+	}
+	if detail.Promotion == nil {
+		t.Fatal("task detail omitted the scout this ship task came from")
+	}
+	if detail.Promotion.ScoutTaskHandle != "task-scout-0001" ||
+		detail.Promotion.EvidenceDigest != strings.Repeat("f", 64) {
+		t.Errorf("promotion view = %+v", detail.Promotion)
+	}
+}
+
+func TestQueries_TaskDetailOmitsAPromotionThatNeverHappened(t *testing.T) {
+	task := queryTask("task-unpromoted-detail", domain.TaskWorking, 7)
+	repository := &queryRepository{tasks: []domain.Task{task}, stateVersion: task.StateVersion}
+	queries, err := NewQueries(QueryConfig{Repository: repository, Clock: time.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	detail, err := queries.ShowTask(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("ShowTask() error = %v", err)
+	}
+	if detail.Promotion != nil {
+		t.Errorf("unpromoted task carried a promotion view = %+v", detail.Promotion)
+	}
+}
+
+// A promotion read that fails must fail the detail. Silently omitting it would
+// make a promoted task look hand-written, and its evidence unattributed.
+func TestQueries_TaskDetailFailsRatherThanHideAnUnreadablePromotion(t *testing.T) {
+	task := queryTask("task-promotion-unreadable", domain.TaskPrepared, 5)
+	repository := &queryRepository{
+		tasks: []domain.Task{task}, stateVersion: task.StateVersion,
+		promotionErr: errors.New("promotion store unavailable"),
+	}
+	queries, err := NewQueries(QueryConfig{Repository: repository, Clock: time.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := queries.ShowTask(context.Background(), task.Handle); err == nil {
+		t.Fatal("ShowTask() with an unreadable promotion error = nil, want a failure")
 	}
 }

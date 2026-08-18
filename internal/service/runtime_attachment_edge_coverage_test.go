@@ -587,7 +587,7 @@ func TestRuntimeAttachmentCoordinatorRejectsInactiveReleaseAndUnavailableEntry(t
 	go func() { done <- coordinator.Run(ctx) }()
 	select {
 	case <-coordinator.recoveryReady:
-	case <-time.After(5 * time.Second):
+	case <-time.After(serviceReadyDeadline):
 		t.Fatal("runtime attachment recovery did not become ready")
 	}
 	releaseReady := make(chan error, 1)
@@ -658,7 +658,7 @@ func TestServiceRunCoversOwnedAttachmentAndCompositionBoundaries(t *testing.T) {
 	case <-ready:
 	case err := <-done:
 		t.Fatalf("Run(runtime attachments) before ready error = %v", err)
-	case <-time.After(5 * time.Second):
+	case <-time.After(serviceReadyDeadline):
 		t.Fatal("Run(runtime attachments) did not become ready")
 	}
 	cancel()

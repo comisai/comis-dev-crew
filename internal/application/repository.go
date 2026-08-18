@@ -54,6 +54,8 @@ type Repository interface {
 	TaskSnapshot(context.Context) ([]domain.Task, int64, error)
 	GetTask(context.Context, string) (domain.Task, error)
 	GetManagedRunPreparation(context.Context, string) (ManagedRunPreparation, error)
+	TaskReplacement(context.Context, string) (TaskReplacementRecord, bool, error)
+	ScoutPromotion(context.Context, string) (ScoutPromotionLink, bool, error)
 	GetOperation(context.Context, string) (domain.OperationRecord, error)
 	CurrentStateVersion(context.Context) (int64, error)
 }

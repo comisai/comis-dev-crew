@@ -314,3 +314,48 @@ func parsePromoteScoutCommand(command parsedCommand, args []string) (parsedComma
 	}
 	return command, nil
 }
+
+// parseReplaceWorkerCommand reads the task and the profile that takes over.
+// Both are required: a replacement with no named profile would have to pick one,
+// and a command that chose a worker on the operator's behalf is exactly the
+// decision this command exists to make explicit.
+func parseReplaceWorkerCommand(command parsedCommand, args []string) (parsedCommand, error) {
+	if len(args) < 1 || domain.ValidateTaskHandle(args[0]) != nil {
+		return parsedCommand{}, errors.New("replace task reference is required")
+	}
+	command.kind = commandReplaceWorker
+	command.reference = args[0]
+	command.format = "json"
+	args = args[1:]
+	seen := make(map[string]bool)
+	for len(args) > 0 {
+		if len(args) < 2 || seen[args[0]] {
+			return parsedCommand{}, errors.New("invalid replace arguments")
+		}
+		name, value := args[0], args[1]
+		seen[name] = true
+		switch name {
+		case "--worker":
+			if domain.ValidateAuthorityReference("workerProfileId", value) != nil {
+				return parsedCommand{}, errors.New("invalid replacement worker profile")
+			}
+			command.workerProfileID = value
+		case "--operation":
+			if domain.ValidateOperationID(value) != nil {
+				return parsedCommand{}, errors.New("invalid replace operation")
+			}
+			command.operationID = value
+		case "--format":
+			if value != "json" {
+				return parsedCommand{}, errors.New("replace format must be JSON")
+			}
+		default:
+			return parsedCommand{}, errors.New("unknown replace option")
+		}
+		args = args[2:]
+	}
+	if command.workerProfileID == "" {
+		return parsedCommand{}, errors.New("replacement worker profile is required")
+	}
+	return command, nil
+}

@@ -158,9 +158,18 @@ type TaskDetail struct {
 	ValidationProfile string              `json:"validationProfile"`
 	DeliveryMode      domain.DeliveryMode `json:"deliveryMode"`
 	ReportCursor      int64               `json:"reportCursor"`
-	StateVersion      int64               `json:"stateVersion"`
-	CreatedAtMs       int64               `json:"createdAtMs"`
-	UpdatedAtMs       int64               `json:"updatedAtMs"`
+	// Present only when a worker was swapped. It answers the question the task
+	// row cannot: this brief revision is current because a different worker took
+	// over, not because the contract changed.
+	Replacement *TaskReplacementView `json:"replacement,omitempty"`
+	// Present only on a ship task that came from a scout. It names the
+	// investigation this work is justified by, which nothing else on the task
+	// records — a promoted ship task is otherwise indistinguishable from one
+	// somebody wrote by hand.
+	Promotion    *TaskPromotionView `json:"promotion,omitempty"`
+	StateVersion int64              `json:"stateVersion"`
+	CreatedAtMs  int64              `json:"createdAtMs"`
+	UpdatedAtMs  int64              `json:"updatedAtMs"`
 }
 
 // TaskExplanation provides a content-free reason and next safe actions.
@@ -246,3 +255,24 @@ type WorkerProfileList struct {
 // WorkerProfileCatalog lists the operator-reviewed profiles this deployment
 // configured. It is a read: it never ranks, selects, or falls back.
 type WorkerProfileCatalog func() []WorkerProfileSummary
+
+// TaskReplacementView is the bounded projection of one worker swap. It names the
+// profiles and the tree the new worker inherited, and nothing about why: the
+// reason is an operator's, not the service's, and inventing one here would put
+// words in their mouth.
+type TaskReplacementView struct {
+	PreviousWorkerProfileID string               `json:"previousWorkerProfileId"`
+	WorkerProfileID         string               `json:"workerProfileId"`
+	HeadRevision            string               `json:"headRevision"`
+	Cleanliness             WorkspaceCleanliness `json:"cleanliness"`
+	BriefRevision           int64                `json:"briefRevision"`
+	ObservedAtMs            int64                `json:"observedAtMs"`
+}
+
+// TaskPromotionView names the scout one ship task came from and the exact
+// evidence digest that justified promoting it.
+type TaskPromotionView struct {
+	ScoutTaskHandle string `json:"scoutTaskHandle"`
+	EvidenceDigest  string `json:"evidenceDigest"`
+	PromotedAtMs    int64  `json:"promotedAtMs"`
+}

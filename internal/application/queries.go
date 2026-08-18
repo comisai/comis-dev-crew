@@ -157,39 +157,6 @@ func (queries *Queries) ListTasks(ctx context.Context) (TaskList, error) {
 	}, nil
 }
 
-// ShowTask returns durable detail for one validated task handle.
-func (queries *Queries) ShowTask(ctx context.Context, handle string) (TaskDetail, error) {
-	if err := domain.ValidateTaskHandle(handle); err != nil {
-		return TaskDetail{}, invalidReferenceFailure("task handle", err)
-	}
-	observation, err := queries.taskObservation(ctx, handle)
-	if err != nil {
-		return TaskDetail{}, translateReadError(err, "task")
-	}
-	task := observation.Task
-	now := queries.now()
-	summary, evidence, err := queries.projectTask(ctx, observation, now)
-	if err != nil {
-		return TaskDetail{}, err
-	}
-	return TaskDetail{
-		SchemaVersion:     1,
-		CapturedAtMs:      now.UnixMilli(),
-		Completeness:      CompletenessPartial,
-		Summary:           summary,
-		Evidence:          evidence,
-		Shape:             task.Shape,
-		BaseRevision:      task.BaseRevision,
-		BriefRevision:     task.BriefRevision,
-		ValidationProfile: task.ValidationProfile,
-		DeliveryMode:      task.DeliveryMode,
-		ReportCursor:      task.ReportCursor,
-		StateVersion:      task.StateVersion,
-		CreatedAtMs:       task.CreatedAt.UnixMilli(),
-		UpdatedAtMs:       task.UpdatedAt.UnixMilli(),
-	}, nil
-}
-
 // Operation returns one durable reconciliation record by stable operation ID.
 func (queries *Queries) Operation(ctx context.Context, id string) (OperationView, error) {
 	if err := domain.ValidateOperationID(id); err != nil {
