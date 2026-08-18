@@ -422,6 +422,22 @@ executable label, or a foreign profile is `unknown` with the reason named, since
 a role pinned to the wrong process is what makes an unrelated program look like
 task state.
 
+Resuming a paused worker reuses the family's own reviewed launch descriptor and
+replaces only its trailing bootstrap, so the executable, argument vector,
+environment allowlist and attachment binding stay exactly what launch reviewed
+and resuming cannot become a second, less-examined way to start a worker. The
+resume bootstrap names the exact head the worker left and tells it the tree
+already holds its own unfinished work. Resume is refused without that head:
+E0 returns a worker through the worktree rather than a vendor session, so the
+head is what proves the tree did not move under it.
+
+Neither family reports a lifecycle integration it cannot prove. An unverified
+settle signal yields no artifacts and a named reason rather than a best-effort
+hook, because a hook that looks installed but emits nothing reads as evidence
+that a turn ended. Usage is reported only when a producer emitted it: absence,
+staleness, a half-counted turn and a negative count are all unknown with a
+reason, never zero.
+
 The canonical `GetLaunchPlan` read accepts `ready` and recovery-reread `launching`
 tasks, then invokes that configured adapter with the durable task, workspace,
 brief, and activation binding. It projects the profile ID, terminal allow-entry

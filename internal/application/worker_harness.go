@@ -198,6 +198,13 @@ type WorkerHarnessAdapter interface {
 	ValidateProfile(context.Context, string, domain.TaskShape) error
 	Diagnose(context.Context) (HarnessDiagnosis, error)
 	ClassifyProcessRole(TaskProcessObservation) ProcessRoleResult
+	// BuildResumeDescriptor returns a paused worker to the tree it left.
+	// InstallLifecycleIntegration states what the family needs before a turn's
+	// end is an authenticated fact. CollectUsage reports only usage a producer
+	// emitted; absence stays unknown rather than becoming zero.
+	BuildResumeDescriptor(context.Context, WorkerResumeRequest) (WorkerLaunchDescriptor, error)
+	InstallLifecycleIntegration(context.Context, LifecycleIntegrationRequest) (LifecycleIntegration, error)
+	CollectUsage(context.Context, UsageObservation) (WorkerUsage, error)
 }
 
 // WorkerHarnessResolver returns only the exact operator-reviewed adapter for a

@@ -345,6 +345,25 @@ func (*productionLaunchHarnessAdapter) ClassifyProcessRole(
 	}
 }
 
+func (*productionLaunchHarnessAdapter) BuildResumeDescriptor(
+	context.Context, application.WorkerResumeRequest,
+) (application.WorkerLaunchDescriptor, error) {
+	return application.WorkerLaunchDescriptor{}, errors.New("launch harness adapter does not resume")
+}
+
+func (*productionLaunchHarnessAdapter) InstallLifecycleIntegration(
+	context.Context, application.LifecycleIntegrationRequest,
+) (application.LifecycleIntegration, error) {
+	return application.LifecycleIntegration{}, errors.New("launch harness adapter installs no lifecycle integration")
+}
+
+// Unknown is the honest answer from a stub with no usage producer behind it.
+func (*productionLaunchHarnessAdapter) CollectUsage(
+	context.Context, application.UsageObservation,
+) (application.WorkerUsage, error) {
+	return application.WorkerUsage{Reason: application.SemanticReasonMissing}, nil
+}
+
 // Cancellation joins the same durable mutation surface; the stub accepts it.
 func (*productionLaunchMutationStub) CancelManagedRun(
 	_ context.Context,

@@ -126,10 +126,13 @@ func ValidateWorkerInstruction(instruction string) error {
 		if character == '\n' || character == '\r' || character == 0x00 || character == 0x1b {
 			return ErrWorkerInputUnsafe
 		}
+		// Every control character is refused, tab included: in a TUI composer
+		// tab is a completion or focus key, so it acts on the composer rather
+		// than becoming part of the line.
 		if character < 0x20 || character == 0x7f {
 			return ErrWorkerInputUnsafe
 		}
-		if character != ' ' && character != '\t' {
+		if character != ' ' {
 			visible = true
 		}
 	}

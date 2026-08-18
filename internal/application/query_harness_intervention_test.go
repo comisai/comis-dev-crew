@@ -34,3 +34,20 @@ func (*queryHarnessAdapter) Diagnose(context.Context) (HarnessDiagnosis, error) 
 func (*queryHarnessAdapter) ClassifyProcessRole(TaskProcessObservation) ProcessRoleResult {
 	return ProcessRoleResult{Role: ProcessRoleUnknown, Reason: ProcessRoleReasonUnattributed}
 }
+
+func (*queryHarnessAdapter) BuildResumeDescriptor(
+	context.Context, WorkerResumeRequest,
+) (WorkerLaunchDescriptor, error) {
+	return WorkerLaunchDescriptor{}, errors.New("query harness adapter does not build descriptors")
+}
+
+func (*queryHarnessAdapter) InstallLifecycleIntegration(
+	context.Context, LifecycleIntegrationRequest,
+) (LifecycleIntegration, error) {
+	return LifecycleIntegration{}, errors.New("query harness adapter installs no lifecycle integration")
+}
+
+// Unknown is the honest answer from a stub with no usage producer behind it.
+func (*queryHarnessAdapter) CollectUsage(context.Context, UsageObservation) (WorkerUsage, error) {
+	return WorkerUsage{Reason: SemanticReasonMissing}, nil
+}

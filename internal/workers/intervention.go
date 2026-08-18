@@ -31,6 +31,9 @@ const (
 	workerSubmitAttempts = 3
 )
 
+// errArgumentsMissing guards a descriptor with no bootstrap to replace.
+var errArgumentsMissing = errors.New("build resume descriptor: reviewed launch argv is empty")
+
 // invocationPrefixes open a harness picker rather than composing a line.
 var invocationPrefixes = []string{"/", "@", "#"}
 
