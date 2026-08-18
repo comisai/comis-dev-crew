@@ -14,11 +14,11 @@ const MaximumUsageEventBytes = 8 * 1024
 
 // WorkerResumeRequest relaunches a paused worker onto the exact tree it left.
 //
-// E0 resumes through the worktree rather than a vendor session: the work is
-// ordinary disk state, so the worker is started again in the same directory and
-// told it is continuing. That deliberately avoids depending on a harness's own
-// session-resume flag, which each vendor changes on its own schedule and which
-// would have to be re-verified per release for a claim this does not need.
+// A worker is returned through the worktree rather than a vendor session: the
+// work is ordinary disk state, so the worker is started again in the same
+// directory and told it is continuing. That deliberately avoids depending on a
+// harness's own session-resume flag, which each vendor changes on its own
+// schedule and would have to be re-verified per vendor release to stay trusted.
 type WorkerResumeRequest struct {
 	Launch WorkerLaunchRequest
 	// ResumeFromHead is the exact revision observed when the task paused.
