@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	devgit "github.com/comisai/comis-dev-crew/internal/git"
 )
 
@@ -268,5 +269,49 @@ func TestSynchronizePrimary_ReportsACorruptIndexAsAFailure(t *testing.T) {
 	}
 	if result.Outcome != "" {
 		t.Errorf("a corrupt index reported outcome %q", result.Outcome)
+	}
+}
+
+// The port maps this adapter's vocabulary onto the application's. The mapping
+// is asserted rather than assumed: an unmapped outcome or refusal must fail
+// loudly instead of travelling to an operator surface as an empty string.
+func TestSynchronizePrimary_MapsEveryOutcomeOntoTheApplicationPort(t *testing.T) {
+	fixture, origin := newSyncFixture(t)
+	registry := newLifecycleRegistry(t, fixture)
+	advanced := advanceOrigin(t, fixture, origin, "second")
+
+	report, err := registry.SynchronizePrimary(context.Background(), application.PrimarySyncCommand{
+		OperationID: "operation-sync-0001", RepositoryID: fixture.repositoryID,
+	})
+	if err != nil {
+		t.Fatalf("SynchronizePrimary() error = %v", err)
+	}
+	if report.Outcome != application.PrimarySyncUpdated || report.Head != advanced ||
+		report.Branch != "main" || report.RepositoryID != fixture.repositoryID {
+		t.Fatalf("report = %#v, want the mapped update to %q", report, advanced)
+	}
+	if report.Refusal != "" {
+		t.Errorf("a successful update carried refusal %q", report.Refusal)
+	}
+
+	// A refusal must arrive with its posture mapped, not blank.
+	if err := os.WriteFile(filepath.Join(fixture.primary, "scratch.txt"), []byte("scratch\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	advanceOrigin(t, fixture, origin, "third")
+	refused, err := registry.SynchronizePrimary(context.Background(), application.PrimarySyncCommand{
+		OperationID: "operation-sync-0002", RepositoryID: fixture.repositoryID,
+	})
+	if err != nil {
+		t.Fatalf("SynchronizePrimary(dirty) error = %v", err)
+	}
+	if refused.Outcome != application.PrimarySyncRefused || refused.Refusal != application.PrimarySyncRefusalDirty {
+		t.Fatalf("report = %#v, want a mapped dirty refusal", refused)
+	}
+
+	if _, err := registry.SynchronizePrimary(context.Background(), application.PrimarySyncCommand{
+		OperationID: "operation-sync-0003", RepositoryID: "never-configured",
+	}); err == nil {
+		t.Error("SynchronizePrimary(unconfigured) error = nil")
 	}
 }

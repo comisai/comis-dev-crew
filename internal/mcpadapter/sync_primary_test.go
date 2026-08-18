@@ -18,7 +18,7 @@ const syncPrimaryToolName = "sync_primary"
 // refuses every posture it cannot advance safely.
 func TestFacade_SyncPrimaryIsReachableAndNotDestructive(t *testing.T) {
 	client := &fakeClient{syncReport: application.PrimarySyncReport{
-		SchemaVersion: 1, RepositoryID: "product-api", Branch: "main",
+		SchemaVersion: 1, StateVersion: 31, RepositoryID: "product-api", Branch: "main",
 		Outcome: application.PrimarySyncUpdated,
 	}}
 	facade, err := New(Config{
@@ -72,7 +72,7 @@ func TestFacade_SyncPrimaryIsReachableAndNotDestructive(t *testing.T) {
 // when it actually answered.
 func TestFacade_SyncPrimaryReturnsARefusalAsAnAnswer(t *testing.T) {
 	client := &fakeClient{syncReport: application.PrimarySyncReport{
-		SchemaVersion: 1, RepositoryID: "product-api", Branch: "main",
+		SchemaVersion: 1, StateVersion: 31, RepositoryID: "product-api", Branch: "main",
 		Outcome: application.PrimarySyncRefused, Refusal: application.PrimarySyncRefusalDirty,
 	}}
 	facade, err := New(Config{

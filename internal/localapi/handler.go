@@ -321,7 +321,7 @@ func (handler *Handler) primarySyncOutcome(
 	if report.RepositoryID == "" || report.Outcome == "" {
 		return rejectedOutcome(operationID, domain.ErrorInternal, false, "synchronization outcome is incomplete", "inspect service configuration", nil)
 	}
-	return queryOutcome(operationID, int64(report.SchemaVersion), report, nil)
+	return queryOutcome(operationID, report.StateVersion, report, nil)
 }
 
 func (handler *Handler) prepareOutcome(operationID string, mutation application.MutationResult, err error) Outcome {

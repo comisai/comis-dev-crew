@@ -29,6 +29,7 @@ const (
 	ToolGetTask        = "get_task"
 	ToolExplainTask    = "explain_task"
 	ToolGetLaunchPlan  = "get_launch_plan"
+	ToolSyncPrimary    = "sync_primary"
 	ToolDoctor         = "doctor"
 
 	CallContextMetaKey      = "comis.callContext"
@@ -56,6 +57,7 @@ type Client interface {
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
 	GetLaunchPlan(context.Context, string, string) (application.LaunchPlan, error)
 	Operation(context.Context, string, string) (application.OperationView, error)
+	SyncPrimary(context.Context, string, localapi.SyncPrimaryInput) (application.PrimarySyncReport, error)
 }
 
 // Config injects the local client and bounded reconciliation dependencies.
@@ -82,6 +84,13 @@ type TaskInput struct {
 type DiscardTaskInput struct {
 	TaskHandle   string `json:"taskHandle" jsonschema:"opaque task handle"`
 	Acknowledged bool   `json:"acknowledged" jsonschema:"set true only when the operator accepted that uncommitted work is removed permanently"`
+}
+
+// SyncPrimaryInput names the configured repository to synchronize. There is no
+// path and no branch: both come from operator configuration, so a model cannot
+// aim the update at another tree or at a branch nobody approved.
+type SyncPrimaryInput struct {
+	RepositoryID string `json:"repositoryId" jsonschema:"operator-configured repository catalog identity"`
 }
 
 // PrepareTaskInput is the public model-visible task contract.

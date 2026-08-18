@@ -36,7 +36,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	}
 	if config.Repositories != nil || config.Workspaces != nil || config.TaskIDs != nil ||
 		config.RuntimeAttachments != nil || config.WorkerHarnesses != nil || config.RegistrationNonces != nil || config.ComisControl != nil ||
-		config.candidateGit != nil || config.workspaceInspector != nil || config.validationCatalog != nil || config.pullRequests != nil ||
+		config.candidateGit != nil || config.workspaceInspector != nil || config.primarySynchronizer != nil || config.validationCatalog != nil || config.pullRequests != nil ||
 		config.cleanupRemover != nil || config.cleanupForge != nil ||
 		config.fixtureCandidatePreparer != nil ||
 		config.validationMaxOutputBytes != 0 || config.validationPollInterval != 0 {
@@ -215,6 +215,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	config.WorkerHarnesses = exactWorkerHarnesses{adapters: harnessAdapters}
 	config.candidateGit = registry
 	config.workspaceInspector = registry
+	config.primarySynchronizer = registry
 	config.reconciliationInspector = registry
 	config.validationCatalog = catalog
 	config.validationMaxOutputBytes = validationConfig.MaxOutputBytes

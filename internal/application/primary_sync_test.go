@@ -20,9 +20,20 @@ func (stub *stubPrimarySynchronizer) SynchronizePrimary(
 	return stub.report, stub.err
 }
 
+type stubStateVersions struct {
+	version int64
+	err     error
+}
+
+func (stub stubStateVersions) CurrentStateVersion(context.Context) (int64, error) {
+	return stub.version, stub.err
+}
+
 func newPrimaryCheckouts(t *testing.T, stub *stubPrimarySynchronizer) *PrimaryCheckouts {
 	t.Helper()
-	checkouts, err := NewPrimaryCheckouts(PrimaryCheckoutConfig{Synchronizer: stub})
+	checkouts, err := NewPrimaryCheckouts(PrimaryCheckoutConfig{
+		Synchronizer: stub, StateVersions: stubStateVersions{version: 12},
+	})
 	if err != nil {
 		t.Fatalf("NewPrimaryCheckouts() error = %v", err)
 	}
@@ -93,9 +104,42 @@ func TestSyncPrimary_SurfacesAnAdapterFailureRatherThanInventingAPosture(t *test
 	}
 }
 
-func TestNewPrimaryCheckouts_RequiresASynchronizer(t *testing.T) {
-	if _, err := NewPrimaryCheckouts(PrimaryCheckoutConfig{}); err == nil {
-		t.Fatal("NewPrimaryCheckouts(no synchronizer) error = nil")
+func TestNewPrimaryCheckouts_RequiresEverySeam(t *testing.T) {
+	for label, config := range map[string]PrimaryCheckoutConfig{
+		"nothing":           {},
+		"no synchronizer":   {StateVersions: stubStateVersions{}},
+		"no state versions": {Synchronizer: &stubPrimarySynchronizer{}},
+	} {
+		if _, err := NewPrimaryCheckouts(config); err == nil {
+			t.Errorf("NewPrimaryCheckouts(%s) error = nil", label)
+		}
+	}
+}
+
+// The report carries the service's own state version as the connection's
+// read-after-write token. Without it the projection cannot travel over the
+// local API at all, so a lookup failure is surfaced rather than defaulted.
+func TestSyncPrimary_CarriesTheServiceStateVersionAndSurfacesItsFailure(t *testing.T) {
+	stub := &stubPrimarySynchronizer{report: PrimarySyncReport{Outcome: PrimarySyncAlreadyCurrent}}
+	checkouts := newPrimaryCheckouts(t, stub)
+	report, err := checkouts.SyncPrimary(context.Background(), PrimarySyncCommand{
+		OperationID: "operation-sync-0001", RepositoryID: "product-api",
+	})
+	if err != nil || report.StateVersion != 12 || report.SchemaVersion != 1 {
+		t.Fatalf("report = %#v, %v", report, err)
+	}
+
+	failing, err := NewPrimaryCheckouts(PrimaryCheckoutConfig{
+		Synchronizer:  &stubPrimarySynchronizer{report: PrimarySyncReport{Outcome: PrimarySyncAlreadyCurrent}},
+		StateVersions: stubStateVersions{err: errors.New("store unavailable")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := failing.SyncPrimary(context.Background(), PrimarySyncCommand{
+		OperationID: "operation-sync-0001", RepositoryID: "product-api",
+	}); err == nil {
+		t.Fatal("SyncPrimary(failing state version) error = nil")
 	}
 }
 

@@ -268,6 +268,8 @@ func projectedStateVersion(result any) (int64, bool) {
 		return projection.StateVersion, true
 	case *application.OperationView:
 		return projection.StateVersion, true
+	case *application.PrimarySyncReport:
+		return projection.StateVersion, true
 	case *PrepareTaskResult:
 		return projection.StateVersion, true
 	case *TaskMutationResult:

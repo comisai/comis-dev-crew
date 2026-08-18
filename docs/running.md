@@ -166,11 +166,11 @@ devcrew-mcp \
   --service-instance service-instance-devcrew
 ```
 
-The facade defines eighteen tools: `prepare_task`, `promote_scout`,
+The facade defines nineteen tools: `prepare_task`, `promote_scout`,
 `reconcile_task`, `handback_task`, `cleanup_task`, `discard_task`, `pause_task`,
 `cancel_task`, `resume_task`, `replace_worker`, `steer_task`, `verify_task`,
-`list_tasks`, `get_task`, `explain_task`, `get_launch_plan`, `worker_profiles`,
-and `doctor`. `promote_scout` returns the
+`sync_primary`, `list_tasks`, `get_task`, `explain_task`, `get_launch_plan`,
+`worker_profiles`, and `doctor`. `promote_scout` returns the
 same private managed-run registration metadata preparation does, because it
 mints a task the same way.
 `cancel_task` is destructive — it ends work an operator asked for and repeating
@@ -179,6 +179,14 @@ it does not undo that — but it is not removal.
 requires delivery evidence that a task which never delivered will never have.
 It removes uncommitted work permanently and takes the operator's explicit
 `acknowledged` argument, which is the only gate it has.
+`sync_primary` is the only way the primary checkout ever moves, and it only
+fast-forwards. It never resets, merges, stashes, or switches branches. A dirty
+checkout (untracked files included), divergent history, a detached head, a
+non-default branch, an absent upstream, or a branch tracking another local
+branch are each refused by name, and the checkout is left exactly as it was.
+A refusal is a completed operation carrying its posture, not an error; an
+unreachable remote or an unreadable checkout is a failure, because the repair
+is not the working copy.
 `pause_task` is a non-destructive mutation: it preserves all work and asks the
 worker to settle, so it is not gated behind the confirmation that guards
 cleanup. `worker_profiles` reports the reviewed dispatch

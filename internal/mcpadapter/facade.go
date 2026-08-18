@@ -100,6 +100,13 @@ func (facade *Facade) registerTools() {
 	mcp.AddTool(facade.server, tool(ToolGetTask, "Get one durable development task.", true), facade.getTask)
 	mcp.AddTool(facade.server, tool(ToolExplainTask, "Explain one durable task posture.", true), facade.explainTask)
 	mcp.AddTool(facade.server, tool(ToolGetLaunchPlan, "Get reviewed launch requirements for one ready task.", true), facade.getLaunchPlan)
+	mcp.AddTool(facade.server, tool(
+		ToolSyncPrimary,
+		"Fast-forward one configured repository's primary checkout to its upstream. It never resets, "+
+			"merges, stashes, or switches branches: any posture it cannot fast-forward is refused by name "+
+			"and the checkout is left exactly as it was.",
+		false,
+	), facade.syncPrimary)
 	mcp.AddTool(facade.server, tool(ToolDoctor, "Report bounded service, repository, harness, and forge readiness.", true), facade.doctor)
 }
 
@@ -117,29 +124,6 @@ func (facade *Facade) reconcileTask(
 	result, err := facade.client.ReconcileTask(ctx, operationID, localInput)
 	if err != nil && uncertainMutation(ctx, err) {
 		result, err = facade.reconcileTaskMutation(ctx, operationID, localInput, err)
-	}
-	return nil, result, err
-}
-
-// The acknowledgement is forwarded rather than re-decided here. The canonical
-// coordinator owns the gate, and a second check in the adapter would be a
-// parallel authority that could drift from it.
-func (facade *Facade) discardTask(
-	ctx context.Context,
-	request *mcp.CallToolRequest,
-	input DiscardTaskInput,
-) (*mcp.CallToolResult, localapi.TaskMutationResult, error) {
-	callContext, err := facade.authorize(request)
-	if err != nil {
-		return nil, localapi.TaskMutationResult{}, err
-	}
-	operationID := string(callContext.OperationID)
-	localInput := localapi.DiscardTaskInput{
-		TaskHandle: input.TaskHandle, Acknowledged: input.Acknowledged,
-	}
-	result, err := facade.client.DiscardTask(ctx, operationID, localInput)
-	if err != nil && uncertainMutation(ctx, err) {
-		result, err = facade.reconcileDiscard(ctx, operationID, localInput, err)
 	}
 	return nil, result, err
 }
@@ -200,25 +184,6 @@ func cancelTool() *mcp.Tool {
 		Name: ToolCancelTask,
 		Description: "Stop work on one task while preserving its worktree and artifacts. " +
 			"Removal is a separate evidence-gated cleanup.",
-		Annotations: &mcp.ToolAnnotations{
-			ReadOnlyHint: false, DestructiveHint: &destructive,
-			IdempotentHint: true, OpenWorldHint: &openWorld,
-		},
-	}
-}
-
-// Discard is the only mutation that removes work nothing can point at: a task
-// that stopped without delivering has no evidence for cleanup's gate and no
-// artifact a later command could recover. Cancel preserves the worktree and
-// cleanup requires delivery, so the description has to separate discard from
-// both or a model will reach for it as the tidier of the three.
-func discardTool() *mcp.Tool {
-	destructive, openWorld := true, true
-	return &mcp.Tool{
-		Name: ToolDiscardTask,
-		Description: "Remove the worktree of one task that never delivered, permanently discarding its " +
-			"uncommitted work. Requires the operator's explicit acknowledgement. Cancel stops work while " +
-			"preserving it, and cleanup removes only safely delivered work.",
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint: false, DestructiveHint: &destructive,
 			IdempotentHint: true, OpenWorldHint: &openWorld,

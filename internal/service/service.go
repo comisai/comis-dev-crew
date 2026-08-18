@@ -70,6 +70,7 @@ type Config struct {
 	Ready                    func()
 	candidateGit             candidateGitInspector
 	workspaceInspector       application.WorkspaceInspector
+	primarySynchronizer      application.PrimarySynchronizer
 	reconciliationInspector  application.ReconciliationWorkspaceManager
 	validationCatalog        *validation.Catalog
 	validationMaxOutputBytes int64
@@ -309,6 +310,7 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 			return fmt.Errorf("run service cleanup coordinator: %w", err)
 		}
 	}
+	var primaryCheckouts *application.PrimaryCheckouts
 	var fixture *fixtureSupervisor
 	if config.FixtureComposition != nil {
 		fixture, err = newFixtureSupervisor(fixtureSupervisorConfig{
@@ -321,6 +323,15 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		if err != nil {
 			return fmt.Errorf("run service fixture composition: %w", err)
 		}
+	}
+	if config.primarySynchronizer != nil {
+		checkouts, checkoutErr := application.NewPrimaryCheckouts(application.PrimaryCheckoutConfig{
+			Synchronizer: config.primarySynchronizer, StateVersions: store,
+		})
+		if checkoutErr != nil {
+			return fmt.Errorf("run service primary checkouts: %w", checkoutErr)
+		}
+		primaryCheckouts = checkouts
 	}
 	handlerConfig := localapi.HandlerConfig{Queries: queries, Clock: clock}
 	if mutations != nil {
@@ -335,6 +346,9 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	}
 	if cleanup != nil {
 		handlerConfig.Cleanup = cleanup
+	}
+	if primaryCheckouts != nil {
+		handlerConfig.PrimaryCheckouts = primaryCheckouts
 	}
 	handler, err := localapi.NewHandler(handlerConfig)
 	if err != nil {

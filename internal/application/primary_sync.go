@@ -41,6 +41,7 @@ type PrimarySyncCommand struct {
 // PrimarySyncReport is the bounded, content-free result of one synchronization.
 type PrimarySyncReport struct {
 	SchemaVersion int                `json:"schemaVersion"`
+	StateVersion  int64              `json:"stateVersion"`
 	RepositoryID  string             `json:"repositoryId"`
 	Branch        string             `json:"branch,omitempty"`
 	PreviousHead  string             `json:"previousHead,omitempty"`
@@ -55,24 +56,36 @@ type PrimarySynchronizer interface {
 	SynchronizePrimary(context.Context, PrimarySyncCommand) (PrimarySyncReport, error)
 }
 
+// PrimaryStateVersions supplies the service's current durable state version.
+// Every local-API projection carries one as the connection's read-after-write
+// token; synchronization changes no task state, so it reports the service's
+// version rather than inventing one of its own.
+type PrimaryStateVersions interface {
+	CurrentStateVersion(context.Context) (int64, error)
+}
+
 // PrimaryCheckoutConfig injects the synchronization adapter.
 type PrimaryCheckoutConfig struct {
-	Synchronizer PrimarySynchronizer
+	Synchronizer  PrimarySynchronizer
+	StateVersions PrimaryStateVersions
 }
 
 // PrimaryCheckouts coordinates synchronization of operator-configured primary
 // checkouts. It owns no durable task state: a fast-forward changes no task, and
 // re-running it against an already current checkout is inherently safe.
 type PrimaryCheckouts struct {
-	synchronizer PrimarySynchronizer
+	synchronizer  PrimarySynchronizer
+	stateVersions PrimaryStateVersions
 }
 
 // NewPrimaryCheckouts binds the synchronization adapter.
 func NewPrimaryCheckouts(config PrimaryCheckoutConfig) (*PrimaryCheckouts, error) {
-	if config.Synchronizer == nil {
-		return nil, errors.New("create primary checkouts: synchronizer is required")
+	if config.Synchronizer == nil || config.StateVersions == nil {
+		return nil, errors.New("create primary checkouts: synchronizer and state versions are required")
 	}
-	return &PrimaryCheckouts{synchronizer: config.Synchronizer}, nil
+	return &PrimaryCheckouts{
+		synchronizer: config.Synchronizer, stateVersions: config.StateVersions,
+	}, nil
 }
 
 // SyncPrimary fast-forwards one configured primary checkout, or reports the
@@ -97,6 +110,10 @@ func (checkouts *PrimaryCheckouts) SyncPrimary(
 	if err != nil {
 		return PrimarySyncReport{}, err
 	}
-	report.SchemaVersion, report.RepositoryID = 1, command.RepositoryID
+	stateVersion, err := checkouts.stateVersions.CurrentStateVersion(ctx)
+	if err != nil {
+		return PrimarySyncReport{}, err
+	}
+	report.SchemaVersion, report.RepositoryID, report.StateVersion = 1, command.RepositoryID, stateVersion
 	return report, nil
 }
