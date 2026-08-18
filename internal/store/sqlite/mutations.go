@@ -185,69 +185,53 @@ func (store *Store) CommitManagedRunActivation(ctx context.Context, mutation app
 // CommitManagedRunAbandon closes one exact unbound preparation and records the
 // preserve or reversible-cleanup task posture at one state version.
 func (store *Store) CommitManagedRunAbandon(ctx context.Context, mutation application.ManagedRunAbandonMutation) (application.MutationResult, error) {
-	transaction, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
-		return application.MutationResult{}, fmt.Errorf("begin managed-run abandon: %w", err)
-	}
-	defer func() { _ = transaction.Rollback() }()
-	if replay, found, err := mutationReplay(ctx, transaction, mutation.OperationID, commandAbandonManagedRun, mutation.SubjectDigest); err != nil {
-		return application.MutationResult{}, commitReplayConflict(transaction, err)
-	} else if found {
-		return replayResult(ctx, transaction, replay)
-	}
-	task, err := getTask(ctx, transaction, mutation.ExternalRunRef)
-	if err != nil {
-		return application.MutationResult{}, err
-	}
-	preparation, err := getManagedRunPreparation(ctx, transaction, task)
-	if err != nil {
-		return application.MutationResult{}, fmt.Errorf("read managed-run abandon preparation: %w", err)
-	}
-	if task.ServiceInstanceID != mutation.ServiceInstanceID || preparation.ExternalRunRef != mutation.ExternalRunRef ||
-		subtle.ConstantTimeCompare([]byte(preparation.RegistrationNonce), []byte(mutation.RegistrationNonce)) != 1 ||
-		preparation.State != application.PreparationOpen || mutation.At.Location() != time.UTC {
-		return application.MutationResult{}, fmt.Errorf("managed-run abandon join: %w", application.ErrPrecondition)
-	}
-	transition := domain.TransitionPreparationPreserved
-	if mutation.Disposition == application.AbandonDispositionReapSafe {
-		transition = domain.TransitionPreparationAbandoned
-	} else if mutation.Disposition != application.AbandonDispositionPreserve {
-		return application.MutationResult{}, fmt.Errorf("managed-run abandon disposition: %w", application.ErrInvalidInput)
-	}
-	updated, err := task.ApplyTransition(transition, mutation.At)
-	if err != nil {
-		return application.MutationResult{}, fmt.Errorf("apply managed-run abandon: %w", err)
-	}
-	stateVersion, err := nextMutationStateVersion(ctx, transaction)
-	if err != nil {
-		return application.MutationResult{}, err
-	}
-	updated.StateVersion = stateVersion
-	if err := updateTaskState(ctx, transaction, updated); err != nil {
-		return application.MutationResult{}, err
-	}
-	closedAt := mutation.At
-	preparation.State = application.PreparationAbandoned
-	preparation.AbandonReason = mutation.Reason
-	preparation.Disposition = mutation.Disposition
-	preparation.ClosedAt = &closedAt
-	if err := updateManagedRunPreparation(ctx, transaction, updated, preparation); err != nil {
-		return application.MutationResult{}, err
-	}
-	operation := completedMutationOperation(
-		mutation.OperationID, commandAbandonManagedRun, mutation.SubjectDigest,
-		updated.Handle, stateVersion, mutation.At,
-	)
-	if err := insertOperation(ctx, transaction, operation); err != nil {
-		if isConstraintError(err) {
-			return application.MutationResult{}, fmt.Errorf("insert abandon operation: %w", application.ErrConflict)
+	var closed application.ManagedRunPreparation
+	result, err := commitTaskMutation(ctx, store, taskMutationSpec{
+		Command:     commandAbandonManagedRun,
+		OperationID: mutation.OperationID, SubjectDigest: mutation.SubjectDigest,
+		At: mutation.At, Label: "managed-run abandon",
+	}, func(ctx context.Context, transaction *sql.Tx) (domain.Task, error) {
+		task, err := getTask(ctx, transaction, mutation.ExternalRunRef)
+		if err != nil {
+			return domain.Task{}, err
 		}
-		return application.MutationResult{}, fmt.Errorf("insert abandon operation: %w", err)
+		preparation, err := getManagedRunPreparation(ctx, transaction, task)
+		if err != nil {
+			return domain.Task{}, fmt.Errorf("read managed-run abandon preparation: %w", err)
+		}
+		if task.ServiceInstanceID != mutation.ServiceInstanceID || preparation.ExternalRunRef != mutation.ExternalRunRef ||
+			subtle.ConstantTimeCompare([]byte(preparation.RegistrationNonce), []byte(mutation.RegistrationNonce)) != 1 ||
+			preparation.State != application.PreparationOpen || mutation.At.Location() != time.UTC {
+			return domain.Task{}, fmt.Errorf("managed-run abandon join: %w", application.ErrPrecondition)
+		}
+		transition := domain.TransitionPreparationPreserved
+		if mutation.Disposition == application.AbandonDispositionReapSafe {
+			transition = domain.TransitionPreparationAbandoned
+		} else if mutation.Disposition != application.AbandonDispositionPreserve {
+			return domain.Task{}, fmt.Errorf("managed-run abandon disposition: %w", application.ErrInvalidInput)
+		}
+		updated, err := task.ApplyTransition(transition, mutation.At)
+		if err != nil {
+			return domain.Task{}, fmt.Errorf("apply managed-run abandon: %w", err)
+		}
+		closedAt := mutation.At
+		preparation.State = application.PreparationAbandoned
+		preparation.AbandonReason = mutation.Reason
+		preparation.Disposition = mutation.Disposition
+		preparation.ClosedAt = &closedAt
+		// The preparation is written against the task's post-transition identity,
+		// so it is persisted here rather than after the shared skeleton commits.
+		if err := updateManagedRunPreparation(ctx, transaction, updated, preparation); err != nil {
+			return domain.Task{}, err
+		}
+		closed = preparation
+		return updated, nil
+	})
+	if err != nil {
+		return application.MutationResult{}, err
 	}
-	if err := transaction.Commit(); err != nil {
-		return application.MutationResult{}, fmt.Errorf("commit managed-run abandon: %w", err)
-	}
-	return application.MutationResult{Task: updated, Operation: operation, Preparation: &preparation}, nil
+	result.Preparation = &closed
+	return result, nil
 }
 
 // CommitTaskStart atomically records launch intent and its replay outcome

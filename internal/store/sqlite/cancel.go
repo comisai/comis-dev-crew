@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -16,51 +17,31 @@ import (
 // already-terminal run as a precondition failure would make a safe repeat look
 // like a fault. Artifacts are preserved — cancellation stops work, it does not
 // discard it, and removal has its own evidence-gated path.
-func (store *Store) CommitManagedRunCancel(ctx context.Context, mutation application.ManagedRunCancelMutation) (application.MutationResult, error) {
-	transaction, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
-		return application.MutationResult{}, fmt.Errorf("begin managed-run cancel: %w", err)
-	}
-	defer func() { _ = transaction.Rollback() }()
-	if replay, found, err := mutationReplay(ctx, transaction, mutation.OperationID, commandCancelManagedRun, mutation.SubjectDigest); err != nil {
-		return application.MutationResult{}, commitReplayConflict(transaction, err)
-	} else if found {
-		return replayResult(ctx, transaction, replay)
-	}
-	task, err := getTaskByManagedRun(ctx, transaction, mutation.ManagedRunID)
-	if err != nil {
-		return application.MutationResult{}, err
-	}
-	if task.ServiceInstanceID != mutation.ServiceInstanceID || mutation.At.Location() != time.UTC {
-		return application.MutationResult{}, fmt.Errorf("managed-run cancel join: %w", application.ErrPrecondition)
-	}
-	updated := task
-	if task.State != domain.TaskCancelled {
-		updated, err = task.ApplyTransition(domain.TransitionCancelRequested, mutation.At)
+func (store *Store) CommitManagedRunCancel(
+	ctx context.Context,
+	mutation application.ManagedRunCancelMutation,
+) (application.MutationResult, error) {
+	return commitTaskMutation(ctx, store, taskMutationSpec{
+		Command:     commandCancelManagedRun,
+		OperationID: mutation.OperationID, SubjectDigest: mutation.SubjectDigest,
+		At: mutation.At, Label: "managed-run cancel",
+	}, func(ctx context.Context, transaction *sql.Tx) (domain.Task, error) {
+		task, err := getTaskByManagedRun(ctx, transaction, mutation.ManagedRunID)
 		if err != nil {
-			return application.MutationResult{}, fmt.Errorf("apply managed-run cancel: %w", err)
+			return domain.Task{}, err
 		}
-	}
-	stateVersion, err := nextMutationStateVersion(ctx, transaction)
-	if err != nil {
-		return application.MutationResult{}, err
-	}
-	updated.StateVersion = stateVersion
-	if err := updateTaskState(ctx, transaction, updated); err != nil {
-		return application.MutationResult{}, err
-	}
-	operation := completedMutationOperation(
-		mutation.OperationID, commandCancelManagedRun, mutation.SubjectDigest,
-		updated.Handle, stateVersion, mutation.At,
-	)
-	if err := insertOperation(ctx, transaction, operation); err != nil {
-		if isConstraintError(err) {
-			return application.MutationResult{}, fmt.Errorf("insert cancel operation: %w", application.ErrConflict)
+		if task.ServiceInstanceID != mutation.ServiceInstanceID || mutation.At.Location() != time.UTC {
+			return domain.Task{}, fmt.Errorf("managed-run cancel join: %w", application.ErrPrecondition)
 		}
-		return application.MutationResult{}, fmt.Errorf("insert cancel operation: %w", err)
-	}
-	if err := transaction.Commit(); err != nil {
-		return application.MutationResult{}, fmt.Errorf("commit managed-run cancel: %w", err)
-	}
-	return application.MutationResult{Task: updated, Operation: operation}, nil
+		// Two operators can both decide to stop the same run. The second one
+		// reports the settled task rather than transitioning it again.
+		if task.State == domain.TaskCancelled {
+			return task, nil
+		}
+		updated, err := task.ApplyTransition(domain.TransitionCancelRequested, mutation.At)
+		if err != nil {
+			return domain.Task{}, fmt.Errorf("apply managed-run cancel: %w", err)
+		}
+		return updated, nil
+	})
 }
