@@ -414,6 +414,15 @@ func (client *fakeClient) ReconcileTask(
 	return client.taskMutation, client.err
 }
 
+func (client *fakeClient) PauseTask(
+	_ context.Context,
+	operationID string,
+	input localapi.PauseTaskInput,
+) (localapi.TaskMutationResult, error) {
+	client.record(operationID, "pause:"+input.TaskHandle)
+	return client.taskMutation, client.err
+}
+
 func (client *fakeClient) CleanupTask(
 	_ context.Context,
 	operationID string,

@@ -61,10 +61,49 @@ func (store *Store) CommitReport(ctx context.Context, mutation application.Repor
 	if err := insertComisReport(ctx, transaction, task, accepted); err != nil {
 		return domain.ReportReceipt{}, err
 	}
+	// A paused report is the answer to a pause request, so honouring it clears
+	// the request in the same transaction that records the report. Leaving it
+	// standing would ask an already-settled worker to settle again on its next
+	// report — and after a resume, immediately re-pause it.
+	pauseRequested, err := consumeTaskPauseRequest(ctx, transaction, task.Handle, accepted.Report.Kind)
+	if err != nil {
+		return domain.ReportReceipt{}, err
+	}
 	if err := transaction.Commit(); err != nil {
 		return domain.ReportReceipt{}, fmt.Errorf("commit report mutation: %w", err)
 	}
-	return reportReceipt(accepted), nil
+	receipt := reportReceipt(accepted)
+	receipt.PauseRequested = pauseRequested
+	return receipt, nil
+}
+
+// consumeTaskPauseRequest reports whether a pause is standing for one task and
+// clears it when this report is the worker's answer to it.
+func consumeTaskPauseRequest(
+	ctx context.Context,
+	transaction *sql.Tx,
+	taskHandle string,
+	kind domain.WorkerReportKind,
+) (bool, error) {
+	var operationID string
+	if err := transaction.QueryRowContext(ctx,
+		`SELECT pause_requested_operation_id FROM tasks WHERE handle = ?`, taskHandle,
+	).Scan(&operationID); err != nil {
+		return false, fmt.Errorf("read task pause request: %w", err)
+	}
+	if operationID == "" {
+		return false, nil
+	}
+	if kind != domain.ReportPaused {
+		return true, nil
+	}
+	if _, err := transaction.ExecContext(ctx,
+		`UPDATE tasks SET pause_requested_operation_id = '', pause_requested_at = '' WHERE handle = ?`,
+		taskHandle,
+	); err != nil {
+		return false, fmt.Errorf("clear task pause request: %w", err)
+	}
+	return false, nil
 }
 
 func validateReportMutation(mutation application.ReportMutation) error {

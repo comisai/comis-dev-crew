@@ -96,6 +96,11 @@ type ReportReceipt struct {
 	LocalReportID string
 	StateVersion  int64
 	AcceptedAt    time.Time
+	// PauseRequested tells the worker an operator has asked it to reach a safe
+	// boundary and send a paused report. It rides the receipt rather than being
+	// pushed into the worker's terminal: a request the worker pulls at a moment
+	// it chose cannot land mid-edit, and needs no keystroke path to deliver.
+	PauseRequested bool
 }
 
 // AcceptedReport is the exact durable sparse-report evidence joined to the

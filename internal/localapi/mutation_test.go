@@ -16,9 +16,12 @@ import (
 )
 
 type apiMutations struct {
-	command application.PrepareTaskCommand
-	result  application.MutationResult
-	err     error
+	command      application.PrepareTaskCommand
+	pauseCommand application.PauseTaskCommand
+	result       application.MutationResult
+	pauseResult  application.MutationResult
+	err          error
+	pauseErr     error
 }
 
 type apiInterventions struct {
@@ -85,6 +88,14 @@ func (interventions *apiInterventions) HandbackTask(
 func (mutations *apiMutations) PrepareTask(_ context.Context, command application.PrepareTaskCommand) (application.MutationResult, error) {
 	mutations.command = command
 	return mutations.result, mutations.err
+}
+
+func (mutations *apiMutations) PauseTask(
+	_ context.Context,
+	command application.PauseTaskCommand,
+) (application.MutationResult, error) {
+	mutations.pauseCommand = command
+	return mutations.pauseResult, mutations.pauseErr
 }
 
 func TestServerClient_PrepareTaskUsesCanonicalMutationAndPrivateRegistration(t *testing.T) {

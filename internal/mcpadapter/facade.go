@@ -58,6 +58,11 @@ func (facade *Facade) registerTools() {
 	mcp.AddTool(facade.server, tool(ToolReconcileTask, "Validate one exact clean candidate after its worker terminal ended without a candidate report.", false), facade.reconcileTask)
 	mcp.AddTool(facade.server, tool(ToolHandbackTask, "Validate developer work after one safe paused worker exits.", false), facade.handbackTask)
 	mcp.AddTool(facade.server, cleanupTool(), facade.cleanupTask)
+	mcp.AddTool(facade.server, tool(
+		ToolPauseTask,
+		"Ask one task's worker to reach a safe boundary and stop. It carries no instruction and no interrupt, and does not itself pause the task: the worker settles and reports.",
+		false,
+	), facade.pauseTask)
 	mcp.AddTool(facade.server, tool(ToolListTasks, "List durable development tasks.", true), facade.listTasks)
 	mcp.AddTool(facade.server, tool(
 		ToolWorkerProfiles,
@@ -231,6 +236,27 @@ func (facade *Facade) getLaunchPlan(ctx context.Context, request *mcp.CallToolRe
 		return nil, application.LaunchPlan{}, err
 	}
 	result, err := facade.client.GetLaunchPlan(ctx, string(callContext.OperationID), input.TaskHandle)
+	return nil, result, err
+}
+
+// Pause is a request, not a transition, so a repeat is harmless and an
+// uncertain send is reconciled the same way every other mutation is: by asking
+// what the recorded operation actually did rather than sending again.
+func (facade *Facade) pauseTask(
+	ctx context.Context,
+	request *mcp.CallToolRequest,
+	input TaskInput,
+) (*mcp.CallToolResult, localapi.TaskMutationResult, error) {
+	callContext, err := facade.authorize(request)
+	if err != nil {
+		return nil, localapi.TaskMutationResult{}, err
+	}
+	operationID := string(callContext.OperationID)
+	localInput := localapi.PauseTaskInput{TaskHandle: input.TaskHandle}
+	result, err := facade.client.PauseTask(ctx, operationID, localInput)
+	if err != nil && uncertainMutation(ctx, err) {
+		result, err = facade.reconcilePause(ctx, operationID, localInput, err)
+	}
 	return nil, result, err
 }
 

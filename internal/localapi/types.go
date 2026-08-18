@@ -54,12 +54,14 @@ const (
 	MethodReconcileTask  Method = "ReconcileTask"
 	MethodHandbackTask   Method = "HandbackTask"
 	MethodCleanupTask    Method = "CleanupTask"
+	MethodPauseTask      Method = "PauseTask"
 )
 
 func (method Method) valid() bool {
 	switch method {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
-		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask:
+		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
+		MethodPauseTask:
 		return true
 	default:
 		return false
@@ -77,10 +79,12 @@ const (
 
 // SideEffect returns the authoritative method classification.
 func (method Method) SideEffect() SideEffectClass {
-	if method == MethodPrepareTask || method == MethodReconcileTask || method == MethodHandbackTask || method == MethodCleanupTask {
+	switch method {
+	case MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask, MethodPauseTask:
 		return SideEffectMutate
+	default:
+		return SideEffectRead
 	}
-	return SideEffectRead
 }
 
 // Request is one strict newline-delimited local service request.
@@ -125,6 +129,7 @@ type ReadQueries interface {
 // TaskMutations is the sole canonical mutation surface used by the local API.
 type TaskMutations interface {
 	PrepareTask(context.Context, application.PrepareTaskCommand) (application.MutationResult, error)
+	PauseTask(context.Context, application.PauseTaskCommand) (application.MutationResult, error)
 }
 
 // TaskInterventions is the canonical paused-worktree handback surface.
@@ -164,6 +169,13 @@ type HandbackTaskInput struct {
 type ReconcileTaskInput struct {
 	TaskHandle string                          `json:"taskHandle"`
 	Action     application.ReconcileTaskAction `json:"action"`
+}
+
+// PauseTaskInput selects one task whose worker should reach a safe boundary. It
+// carries no instruction and no interrupt: pause asks the worker to stop
+// cleanly, and anything more is a different command.
+type PauseTaskInput struct {
+	TaskHandle string `json:"taskHandle"`
 }
 
 // CleanupTaskInput selects one durably delivered task.

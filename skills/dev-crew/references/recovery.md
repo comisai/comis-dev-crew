@@ -37,11 +37,26 @@ Never add a worktree path, repository, branch, head, run, lease, terminal, or
 attachment field to the call. Those are derived and re-proved server-side, and a
 refused recovery must leave the task and worktree exactly as they were.
 
+## Pause
+
+`pause_task` asks one task's worker to reach a safe boundary and stop. It takes
+a task handle and nothing else — no instruction, no interrupt.
+
+It does not pause the task. The worker is still holding the worktree when the
+request lands; it reads the request on its next report and answers with a paused
+report, and that report is what settles the state. So a successful `pause_task`
+means "the request is standing", not "the worker has stopped". Read the task
+before telling anyone the worktree is safe to edit, and never report a pause as
+complete on the strength of the call returning.
+
+A repeated pause replays rather than stacking, so retrying a call whose outcome
+you did not see is safe.
+
 ## Handback
 
-Handback is for a different situation: a developer deliberately edited a safely
-paused task's worktree in their own tools, and wants automation to pick it up
-again. Call it with `action: "validate-developer-work"`.
+Handback is what follows a settled pause: a developer deliberately edited a
+safely paused task's worktree in their own tools, and wants automation to pick it
+up again. Call it with `action: "validate-developer-work"`.
 
 The service captures the fresh head and dirty state, invalidates every piece of
 evidence whose recorded head changed, and resumes exactly one worker generation.

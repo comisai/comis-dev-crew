@@ -83,10 +83,25 @@ func (facade *Facade) reconcileTaskMutation(
 	return facade.client.ReconcileTask(reconcileContext, operationID, input)
 }
 
-func (facade *Facade) reconcileCleanup(
+// reconcileTaskMutation resolves an uncertain mutation by reading what the
+// recorded operation actually did, then replaying it.
+//
+// Re-sending blind is the tempting shortcut and the wrong one: the second
+// attempt's outcome would be reported as if it were the first's, so a send that
+// succeeded and a send that was refused become indistinguishable. Reading the
+// operation first is what keeps "uncertain" recoverable instead of guessed.
+//
+// The skeleton is shared because every command's copy differed only in the
+// command name and the replay call, while the four give-up branches — no
+// context, unmintable request ID, unreadable operation, wrong operation — are
+// identical and cannot be reached without breaking the transport underneath.
+func reconcileTaskMutation[Input any](
+	facade *Facade,
 	ctx context.Context,
 	operationID string,
-	input localapi.CleanupTaskInput,
+	command string,
+	input Input,
+	replay func(context.Context, string, Input) (localapi.TaskMutationResult, error),
 	original error,
 ) (localapi.TaskMutationResult, error) {
 	if ctx == nil {
@@ -99,9 +114,31 @@ func (facade *Facade) reconcileCleanup(
 		return localapi.TaskMutationResult{}, original
 	}
 	operation, err := facade.client.Operation(reconcileContext, requestID, operationID)
-	if err != nil || operation.OperationID != operationID || operation.Command != "CleanupTask" ||
+	if err != nil || operation.OperationID != operationID || operation.Command != command ||
 		operation.Status != domain.OperationCompleted {
 		return localapi.TaskMutationResult{}, original
 	}
-	return facade.client.CleanupTask(reconcileContext, operationID, input)
+	return replay(reconcileContext, operationID, input)
+}
+
+func (facade *Facade) reconcileCleanup(
+	ctx context.Context,
+	operationID string,
+	input localapi.CleanupTaskInput,
+	original error,
+) (localapi.TaskMutationResult, error) {
+	return reconcileTaskMutation(
+		facade, ctx, operationID, "CleanupTask", input, facade.client.CleanupTask, original,
+	)
+}
+
+func (facade *Facade) reconcilePause(
+	ctx context.Context,
+	operationID string,
+	input localapi.PauseTaskInput,
+	original error,
+) (localapi.TaskMutationResult, error) {
+	return reconcileTaskMutation(
+		facade, ctx, operationID, "PauseTask", input, facade.client.PauseTask, original,
+	)
 }

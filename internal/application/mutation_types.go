@@ -259,6 +259,7 @@ type MutationStore interface {
 	CommitManagedRunActivation(context.Context, ManagedRunActivationMutation) (MutationResult, error)
 	CommitManagedRunAbandon(context.Context, ManagedRunAbandonMutation) (MutationResult, error)
 	CommitManagedRunCancel(context.Context, ManagedRunCancelMutation) (MutationResult, error)
+	CommitTaskPauseRequest(context.Context, TaskPauseRequestMutation) (MutationResult, error)
 	CommitTaskStart(context.Context, TaskStartMutation) (MutationResult, error)
 	CommitTerminalEvent(context.Context, TerminalEventMutation) (MutationResult, error)
 	CommitWorkerLaunchAcknowledgement(context.Context, WorkerLaunchAcknowledgementMutation) (MutationResult, error)
@@ -417,4 +418,24 @@ type MutationConfig struct {
 	RegistrationNonces RegistrationNonceSource
 	PreparationTTL     time.Duration
 	Clock              Clock
+}
+
+// PauseTaskCommand asks one task's worker to settle at a safe boundary.
+//
+// It carries no instruction text and no interrupt. Pause is a request to stop
+// cleanly, not a message to the worker and not a signal: an operator who needs
+// to say something uses steering, and one who needs to stop work now cancels.
+// Keeping those separate is what lets a paused worktree be handed to a
+// developer in a known state.
+type PauseTaskCommand struct {
+	OperationID string `json:"operationId"`
+	TaskHandle  string `json:"taskHandle"`
+}
+
+// TaskPauseRequestMutation is the durable half of one pause request.
+type TaskPauseRequestMutation struct {
+	TaskHandle    string
+	OperationID   string
+	SubjectDigest string
+	At            time.Time
 }

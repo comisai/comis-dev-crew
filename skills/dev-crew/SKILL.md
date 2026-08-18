@@ -61,6 +61,7 @@ product does, and this list is not permission to guess a name.
 | See what can run | `worker_profiles` | Nothing |
 | Check readiness | `doctor` | Nothing |
 | Start work | `prepare_task` | Creates a prepared task and worktree |
+| Settle a worker safely | `pause_task` | Asks the worker to stop at a safe boundary; changes no state itself |
 | Recover an exited worker | `reconcile_task` | Validates one exact clean candidate |
 | Resume after a developer edit | `handback_task` | Revalidates the developer's work |
 | Retire a task | `cleanup_task` | Evidence-gated release and removal |

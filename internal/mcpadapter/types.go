@@ -16,6 +16,7 @@ const (
 	ToolReconcileTask  = "reconcile_task"
 	ToolHandbackTask   = "handback_task"
 	ToolCleanupTask    = "cleanup_task"
+	ToolPauseTask      = "pause_task"
 	ToolListTasks      = "list_tasks"
 	ToolWorkerProfiles = "worker_profiles"
 	ToolGetTask        = "get_task"
@@ -36,6 +37,7 @@ type Client interface {
 	Diagnose(context.Context, string) (application.DiagnosticReport, error)
 	ListTasks(context.Context, string) (application.TaskList, error)
 	ListWorkerProfiles(context.Context, string) (application.WorkerProfileList, error)
+	PauseTask(context.Context, string, localapi.PauseTaskInput) (localapi.TaskMutationResult, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
 	GetLaunchPlan(context.Context, string, string) (application.LaunchPlan, error)

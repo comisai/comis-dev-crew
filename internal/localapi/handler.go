@@ -167,6 +167,18 @@ func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 			OperationID: request.OperationID, TaskHandle: input.TaskHandle, Action: input.Action,
 		})
 		return handler.taskMutationOutcome(request.OperationID, MethodHandbackTask, result, err)
+	case MethodPauseTask:
+		var input PauseTaskInput
+		if err := decodeObject(request.Payload, &input); err != nil {
+			return invalidPayload(request.OperationID, err)
+		}
+		if handler.mutations == nil {
+			return rejectedOutcome(request.OperationID, domain.ErrorUnavailable, true, "task mutation service is unavailable", "inspect service configuration", nil)
+		}
+		result, err := handler.mutations.PauseTask(ctx, application.PauseTaskCommand{
+			OperationID: request.OperationID, TaskHandle: input.TaskHandle,
+		})
+		return handler.taskMutationOutcome(request.OperationID, MethodPauseTask, result, err)
 	case MethodCleanupTask:
 		var input CleanupTaskInput
 		if err := decodeObject(request.Payload, &input); err != nil {

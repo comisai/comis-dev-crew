@@ -382,7 +382,7 @@ func TestFacade_UncertainTerminalMutationsReconcileBeforeExactRetry(t *testing.T
 
 func assertToolCatalog(t *testing.T, tools []*mcp.Tool) {
 	t.Helper()
-	want := map[string]bool{ToolPrepareTask: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
+	want := map[string]bool{ToolPrepareTask: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolPauseTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
 	if len(tools) != len(want) {
 		t.Fatalf("tool count = %d, want %d", len(tools), len(want))
 	}
@@ -450,6 +450,8 @@ func preparedResult() localapi.PrepareTaskResult {
 type fakeClient struct {
 	calls           []string
 	profiles        application.WorkerProfileList
+	pauseResult     localapi.TaskMutationResult
+	pauseErrors     []error
 	prepareResults  []localapi.PrepareTaskResult
 	prepareErrors   []error
 	operation       application.OperationView
@@ -474,6 +476,23 @@ func (client *fakeClient) ReconcileTask(
 	err := client.reconcileErrors[0]
 	client.reconcileErrors = client.reconcileErrors[1:]
 	return client.reconcileResult, err
+}
+
+func (client *fakeClient) PauseTask(
+	_ context.Context,
+	operationID string,
+	input localapi.PauseTaskInput,
+) (localapi.TaskMutationResult, error) {
+	client.calls = append(client.calls, "pause:"+operationID+":"+input.TaskHandle)
+	if len(client.pauseErrors) == 0 {
+		return client.pauseResult, nil
+	}
+	failure := client.pauseErrors[0]
+	client.pauseErrors = client.pauseErrors[1:]
+	if failure == nil {
+		return client.pauseResult, nil
+	}
+	return localapi.TaskMutationResult{}, failure
 }
 
 func (client *fakeClient) CleanupTask(

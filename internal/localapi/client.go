@@ -123,6 +123,13 @@ func (client *Client) CleanupTask(ctx context.Context, operationID string, input
 	return result, err
 }
 
+// PauseTask asks one task's worker to reach a safe boundary.
+func (client *Client) PauseTask(ctx context.Context, operationID string, input PauseTaskInput) (TaskMutationResult, error) {
+	var result TaskMutationResult
+	err := client.call(ctx, operationID, MethodPauseTask, input, &result)
+	return result, err
+}
+
 func (client *Client) call(ctx context.Context, operationID string, method Method, payload any, result any) error {
 	if ctx == nil {
 		return errors.New("call local API: context is required")

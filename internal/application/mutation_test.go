@@ -520,6 +520,7 @@ type mutationStore struct {
 	start         TaskStartMutation
 	terminal      TerminalEventMutation
 	launchAck     WorkerLaunchAcknowledgementMutation
+	pauseRequest  TaskPauseRequestMutation
 	prepareCalls  int
 	replayResult  MutationResult
 	replayFound   bool
@@ -606,6 +607,17 @@ func testWorkspacePreparer() *workspacePreparer {
 }
 
 // Cancellation joins the same durable mutation surface; the double accepts it.
+func (store *mutationStore) CommitTaskPauseRequest(
+	_ context.Context,
+	mutation TaskPauseRequestMutation,
+) (MutationResult, error) {
+	store.pauseRequest = mutation
+	return MutationResult{
+		Task:      domain.Task{Handle: mutation.TaskHandle, State: domain.TaskWorking},
+		Operation: domain.OperationRecord{ID: mutation.OperationID},
+	}, nil
+}
+
 func (store *mutationStore) CommitManagedRunCancel(
 	_ context.Context,
 	mutation ManagedRunCancelMutation,

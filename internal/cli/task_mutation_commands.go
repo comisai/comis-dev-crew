@@ -121,3 +121,40 @@ func parseHandbackTaskCommand(command parsedCommand, args []string) (parsedComma
 	}
 	return command, nil
 }
+
+// parsePauseTaskCommand reads one task reference and nothing else. Pause takes
+// no instruction text and no interrupt flag: adding either here would make one
+// command mean two different things to the worker, and the operator could not
+// tell from the transcript which one they had asked for.
+func parsePauseTaskCommand(command parsedCommand, args []string) (parsedCommand, error) {
+	if len(args) < 1 || domain.ValidateTaskHandle(args[0]) != nil {
+		return parsedCommand{}, errors.New("pause task reference is required")
+	}
+	command.kind = commandPauseTask
+	command.reference = args[0]
+	command.format = "json"
+	args = args[1:]
+	seen := make(map[string]bool)
+	for len(args) > 0 {
+		if len(args) < 2 || seen[args[0]] {
+			return parsedCommand{}, errors.New("invalid pause arguments")
+		}
+		name, value := args[0], args[1]
+		seen[name] = true
+		switch name {
+		case "--operation":
+			if domain.ValidateOperationID(value) != nil {
+				return parsedCommand{}, errors.New("invalid pause operation")
+			}
+			command.operationID = value
+		case "--format":
+			if value != "json" {
+				return parsedCommand{}, errors.New("pause format must be JSON")
+			}
+		default:
+			return parsedCommand{}, errors.New("unknown pause option")
+		}
+		args = args[2:]
+	}
+	return command, nil
+}
