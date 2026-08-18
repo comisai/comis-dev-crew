@@ -65,6 +65,16 @@ func (facade *Facade) registerTools() {
 		false,
 	), facade.resumeTask)
 	mcp.AddTool(facade.server, tool(
+		ToolVerifyTask,
+		"Validate one task now against the reviewed profile it was prepared with, refreshing its evidence. It selects no checks of its own and does not decide the outcome.",
+		false,
+	), facade.verifyTask)
+	mcp.AddTool(facade.server, tool(
+		ToolPromoteScout,
+		"Create a new ship task from a scout's investigation, preserving the scout and its evidence. The repository and base revision are inherited from the scout and cannot be chosen here.",
+		false,
+	), facade.promoteScout)
+	mcp.AddTool(facade.server, tool(
 		ToolPauseTask,
 		"Ask one task's worker to reach a safe boundary and stop. It carries no instruction and no interrupt, and does not itself pause the task: the worker settles and reports.",
 		false,
@@ -198,6 +208,38 @@ func (facade *Facade) prepareTask(ctx context.Context, request *mcp.CallToolRequ
 	return &mcp.CallToolResult{Meta: mcp.Meta{ManagedRunResultMetaKey: metadata}}, output, nil
 }
 
+// Promotion mints a task, so it returns the same private registration metadata
+// preparation does. The scout is untouched: a worker able to change its own
+// task's shape would grant itself the push and pull-request authority the scout
+// shape withholds.
+func (facade *Facade) promoteScout(
+	ctx context.Context,
+	request *mcp.CallToolRequest,
+	input PromoteScoutInput,
+) (*mcp.CallToolResult, PrepareTaskOutput, error) {
+	callContext, err := facade.authorize(request)
+	if err != nil {
+		return nil, PrepareTaskOutput{}, err
+	}
+	operationID := string(callContext.OperationID)
+	promoted, err := facade.client.PromoteScout(ctx, operationID, input.local())
+	if err != nil && uncertainMutation(ctx, err) {
+		promoted, err = facade.reconcilePromotion(ctx, operationID, input.local(), err)
+	}
+	if err != nil {
+		return nil, PrepareTaskOutput{}, err
+	}
+	metadata, err := preparationMetadata(operationID, promoted)
+	if err != nil {
+		return nil, PrepareTaskOutput{}, err
+	}
+	return &mcp.CallToolResult{Meta: mcp.Meta{ManagedRunResultMetaKey: metadata}}, PrepareTaskOutput{
+		SchemaVersion: promoted.SchemaVersion, OperationID: promoted.OperationID,
+		TaskHandle: promoted.TaskHandle, State: promoted.State,
+		StateVersion: promoted.StateVersion, SideEffect: promoted.SideEffect,
+	}, nil
+}
+
 func (facade *Facade) listTasks(ctx context.Context, request *mcp.CallToolRequest, _ EmptyInput) (*mcp.CallToolResult, application.TaskList, error) {
 	callContext, err := facade.authorize(request)
 	if err != nil {
@@ -314,6 +356,24 @@ func (facade *Facade) resumeTask(
 	result, err := facade.client.ResumeTask(ctx, operationID, localInput)
 	if err != nil && uncertainMutation(ctx, err) {
 		result, err = facade.reconcileResume(ctx, operationID, localInput, err)
+	}
+	return nil, result, err
+}
+
+func (facade *Facade) verifyTask(
+	ctx context.Context,
+	request *mcp.CallToolRequest,
+	input TaskInput,
+) (*mcp.CallToolResult, localapi.TaskMutationResult, error) {
+	callContext, err := facade.authorize(request)
+	if err != nil {
+		return nil, localapi.TaskMutationResult{}, err
+	}
+	operationID := string(callContext.OperationID)
+	localInput := localapi.VerifyTaskInput{TaskHandle: input.TaskHandle}
+	result, err := facade.client.VerifyTask(ctx, operationID, localInput)
+	if err != nil && uncertainMutation(ctx, err) {
+		result, err = facade.reconcileVerify(ctx, operationID, localInput, err)
 	}
 	return nil, result, err
 }

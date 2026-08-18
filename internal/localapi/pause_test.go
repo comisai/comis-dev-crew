@@ -170,3 +170,71 @@ func TestLocalAPI_ResumeReportsAnAbsentInterventionSurfaceAsUnavailable(t *testi
 		t.Errorf("refusal must name the absent surface, got %q", outcome.Error.Message)
 	}
 }
+
+// Every by-handle mutation must reach its own command, and the transport must
+// report the method it actually ran. A shared skeleton makes that cheap to get
+// wrong: one mis-threaded method argument would make a verify replay answer a
+// cancel, and both would look correct in isolation.
+func TestLocalAPI_EachByHandleMutationReachesItsOwnCommand(t *testing.T) {
+	mutations := &apiMutations{
+		pauseResult:  byHandleResult("operation-0001", "PauseTask", domain.TaskWorking),
+		cancelResult: byHandleResult("operation-0001", "CancelTask", domain.TaskCancelled),
+		verifyResult: byHandleResult("operation-0001", "VerifyTask", domain.TaskValidating),
+	}
+	socketPath := startHandlerServer(t, newTestHandler(t, mutations), CallerMCPFacade)
+	client, err := NewClient(socketPath, time.Second)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	ctx := context.Background()
+
+	if _, err := client.PauseTask(ctx, "operation-0001", PauseTaskInput{TaskHandle: "task-0001"}); err != nil {
+		t.Fatalf("PauseTask() error = %v", err)
+	}
+	if _, err := client.CancelTask(ctx, "operation-0001", CancelTaskInput{TaskHandle: "task-0002"}); err != nil {
+		t.Fatalf("CancelTask() error = %v", err)
+	}
+	if _, err := client.VerifyTask(ctx, "operation-0001", VerifyTaskInput{TaskHandle: "task-0003"}); err != nil {
+		t.Fatalf("VerifyTask() error = %v", err)
+	}
+
+	if mutations.pauseCommand.TaskHandle != "task-0001" {
+		t.Errorf("pause reached %q", mutations.pauseCommand.TaskHandle)
+	}
+	if mutations.cancelCommand.TaskHandle != "task-0002" {
+		t.Errorf("cancel reached %q", mutations.cancelCommand.TaskHandle)
+	}
+	if mutations.verifyCommand.TaskHandle != "task-0003" {
+		t.Errorf("verify reached %q", mutations.verifyCommand.TaskHandle)
+	}
+}
+
+// The completeness check compares the operation's recorded command against the
+// method the transport ran. A verify whose operation says it cancelled is a
+// mismatch the caller must never see reported as its own outcome.
+func TestLocalAPI_RefusesAMutationWhoseOperationRecordsADifferentCommand(t *testing.T) {
+	mutations := &apiMutations{
+		verifyResult: byHandleResult("operation-0001", "CancelTask", domain.TaskValidating),
+	}
+	socketPath := startHandlerServer(t, newTestHandler(t, mutations), CallerMCPFacade)
+	client, err := NewClient(socketPath, time.Second)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	if _, err := client.VerifyTask(context.Background(), "operation-0001", VerifyTaskInput{
+		TaskHandle: "task-0001",
+	}); err == nil {
+		t.Fatal("VerifyTask() with a foreign operation command error = nil, want a refusal")
+	}
+}
+
+func byHandleResult(operationID, command string, state domain.TaskState) application.MutationResult {
+	return application.MutationResult{
+		Task: domain.Task{Handle: "task-0001", State: state, StateVersion: 9},
+		Operation: domain.OperationRecord{
+			ID: operationID, Command: command, Status: domain.OperationCompleted,
+			ResultRef: "task-0001", StateVersion: 9,
+		},
+	}
+}

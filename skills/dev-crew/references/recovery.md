@@ -62,6 +62,15 @@ free disk, and never describe a cancel as having cleaned anything up.
 Cancelling a task that is already cancelled reports the settled task instead of
 refusing, so a repeat is safe.
 
+## Verify
+
+`verify_task` opens validation now rather than waiting for the worker to declare
+a candidate. Its result says validation started — never that it passed. The
+verdict arrives later as evidence, so read the task before reporting an outcome.
+
+It selects no profile and no checks. There is no flag to skip a check or pick an
+easier profile, and looking for one is a sign the intended action is different.
+
 ## Resume
 
 `resume_task` returns a paused task to the worker already running it. It is

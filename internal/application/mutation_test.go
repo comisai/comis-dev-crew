@@ -522,6 +522,7 @@ type mutationStore struct {
 	launchAck     WorkerLaunchAcknowledgementMutation
 	pauseRequest  TaskPauseRequestMutation
 	cancelTask    TaskCancelMutation
+	verifyTask    TaskVerifyMutation
 	prepareCalls  int
 	replayResult  MutationResult
 	replayFound   bool
@@ -548,7 +549,14 @@ func (store *mutationStore) ReplayMutation(context.Context, string, string, stri
 func (store *mutationStore) CommitPreparedTask(_ context.Context, mutation PreparedTaskMutation) (MutationResult, error) {
 	store.prepareCalls++
 	store.prepared = mutation
-	return MutationResult{}, nil
+	// The real store returns the task it persisted. Echoing it here keeps every
+	// caller that reads the prepared task from the result — scout promotion
+	// links the ship handle it gets back — testable against what was committed.
+	return MutationResult{
+		Task:        mutation.Task,
+		Preparation: &mutation.Preparation,
+		Operation:   domain.OperationRecord{ID: mutation.OperationID},
+	}, nil
 }
 
 func (store *mutationStore) CommitManagedRunActivation(_ context.Context, mutation ManagedRunActivationMutation) (MutationResult, error) {
@@ -608,6 +616,17 @@ func testWorkspacePreparer() *workspacePreparer {
 }
 
 // Cancellation joins the same durable mutation surface; the double accepts it.
+func (store *mutationStore) CommitTaskVerify(
+	_ context.Context,
+	mutation TaskVerifyMutation,
+) (MutationResult, error) {
+	store.verifyTask = mutation
+	return MutationResult{
+		Task:      domain.Task{Handle: mutation.TaskHandle, State: domain.TaskValidating},
+		Operation: domain.OperationRecord{ID: mutation.OperationID},
+	}, nil
+}
+
 func (store *mutationStore) CommitTaskCancel(
 	_ context.Context,
 	mutation TaskCancelMutation,

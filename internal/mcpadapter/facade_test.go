@@ -382,7 +382,7 @@ func TestFacade_UncertainTerminalMutationsReconcileBeforeExactRetry(t *testing.T
 
 func assertToolCatalog(t *testing.T, tools []*mcp.Tool) {
 	t.Helper()
-	want := map[string]bool{ToolPrepareTask: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolPauseTask: false, ToolCancelTask: false, ToolResumeTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
+	want := map[string]bool{ToolPrepareTask: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolPauseTask: false, ToolCancelTask: false, ToolResumeTask: false, ToolVerifyTask: false, ToolPromoteScout: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
 	if len(tools) != len(want) {
 		t.Fatalf("tool count = %d, want %d", len(tools), len(want))
 	}
@@ -457,6 +457,10 @@ type fakeClient struct {
 	pauseResult     localapi.TaskMutationResult
 	cancelResult    localapi.TaskMutationResult
 	resumeResult    localapi.TaskMutationResult
+	verifyResult    localapi.TaskMutationResult
+	promoteResult   localapi.PrepareTaskResult
+	promoteErrors   []error
+	verifyErrors    []error
 	resumeErrors    []error
 	cancelErrors    []error
 	pauseErrors     []error
@@ -484,6 +488,40 @@ func (client *fakeClient) ReconcileTask(
 	err := client.reconcileErrors[0]
 	client.reconcileErrors = client.reconcileErrors[1:]
 	return client.reconcileResult, err
+}
+
+func (client *fakeClient) PromoteScout(
+	_ context.Context,
+	operationID string,
+	input localapi.PromoteScoutInput,
+) (localapi.PrepareTaskResult, error) {
+	client.calls = append(client.calls, "promote:"+operationID+":"+input.ScoutTaskHandle)
+	if len(client.promoteErrors) == 0 {
+		return client.promoteResult, nil
+	}
+	failure := client.promoteErrors[0]
+	client.promoteErrors = client.promoteErrors[1:]
+	if failure == nil {
+		return client.promoteResult, nil
+	}
+	return localapi.PrepareTaskResult{}, failure
+}
+
+func (client *fakeClient) VerifyTask(
+	_ context.Context,
+	operationID string,
+	input localapi.VerifyTaskInput,
+) (localapi.TaskMutationResult, error) {
+	client.calls = append(client.calls, "verify:"+operationID+":"+input.TaskHandle)
+	if len(client.verifyErrors) == 0 {
+		return client.verifyResult, nil
+	}
+	failure := client.verifyErrors[0]
+	client.verifyErrors = client.verifyErrors[1:]
+	if failure == nil {
+		return client.verifyResult, nil
+	}
+	return localapi.TaskMutationResult{}, failure
 }
 
 func (client *fakeClient) ResumeTask(

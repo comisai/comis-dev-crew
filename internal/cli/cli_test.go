@@ -414,6 +414,24 @@ func (client *fakeClient) ReconcileTask(
 	return client.taskMutation, client.err
 }
 
+func (client *fakeClient) PromoteScout(
+	_ context.Context,
+	operationID string,
+	input localapi.PromoteScoutInput,
+) (localapi.PrepareTaskResult, error) {
+	client.record(operationID, "promote:"+input.ScoutTaskHandle)
+	return client.prepared, client.err
+}
+
+func (client *fakeClient) VerifyTask(
+	_ context.Context,
+	operationID string,
+	input localapi.VerifyTaskInput,
+) (localapi.TaskMutationResult, error) {
+	client.record(operationID, "verify:"+input.TaskHandle)
+	return client.taskMutation, client.err
+}
+
 func (client *fakeClient) ResumeTask(
 	_ context.Context,
 	operationID string,

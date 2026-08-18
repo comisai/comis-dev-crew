@@ -143,6 +143,22 @@ func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 			WorkerProfileID: input.WorkerProfileID,
 		})
 		return handler.prepareOutcome(request.OperationID, result, err)
+	case MethodPromoteScout:
+		var input PromoteScoutInput
+		if err := decodeObject(request.Payload, &input); err != nil {
+			return invalidPayload(request.OperationID, err)
+		}
+		if handler.mutations == nil {
+			return rejectedOutcome(request.OperationID, domain.ErrorUnavailable, true, "mutation service is unavailable", "inspect service configuration", nil)
+		}
+		result, err := handler.mutations.PromoteScout(ctx, application.PromoteScoutCommand{
+			OperationID: request.OperationID, ServiceInstanceID: handler.serviceInstanceID,
+			ScoutTaskHandle:    input.ScoutTaskHandle,
+			AcceptanceCriteria: input.AcceptanceCriteria, Constraints: input.Constraints,
+			ValidationProfile: input.ValidationProfile, DeliveryMode: input.DeliveryMode,
+			WorkerProfileID: input.WorkerProfileID,
+		})
+		return handler.prepareOutcome(request.OperationID, result, err)
 	case MethodReconcileTask:
 		var input ReconcileTaskInput
 		if err := decodeObject(request.Payload, &input); err != nil {
@@ -180,6 +196,14 @@ func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 			handler.interventions == nil, "task intervention service is unavailable",
 			func(ctx context.Context, taskHandle string) (application.MutationResult, error) {
 				return handler.interventions.ResumeTask(ctx, application.ResumeTaskCommand{
+					OperationID: request.OperationID, TaskHandle: taskHandle,
+				})
+			})
+	case MethodVerifyTask:
+		return handleTaskHandleMutation(ctx, handler, request, MethodVerifyTask,
+			handler.mutations == nil, "task mutation service is unavailable",
+			func(ctx context.Context, taskHandle string) (application.MutationResult, error) {
+				return handler.mutations.VerifyTask(ctx, application.VerifyTaskCommand{
 					OperationID: request.OperationID, TaskHandle: taskHandle,
 				})
 			})

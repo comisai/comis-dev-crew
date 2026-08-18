@@ -42,9 +42,6 @@ func (store *Store) CommitTaskPauseRequest(
 		if err != nil {
 			return domain.Task{}, err
 		}
-		if mutation.At.Location() != time.UTC {
-			return domain.Task{}, fmt.Errorf("task pause request time: %w", application.ErrPrecondition)
-		}
 		// Asking a settled task to settle cannot be honoured: no worker remains
 		// to reach a boundary, and a standing request nothing will ever clear
 		// would read as a pause that is still pending.

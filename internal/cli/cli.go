@@ -38,6 +38,8 @@ Commands:
   task pause TASK [--operation OPERATION] [--format json]
   task cancel TASK [--operation OPERATION] [--format json]
   task resume TASK [--operation OPERATION] [--format json]
+  task verify TASK [--operation OPERATION] [--format json]
+  task promote SCOUT --input FILE|- [--operation OPERATION] [--format json]
   task cleanup TASK [--operation OPERATION] [--format json]
 
 Global options:
@@ -55,6 +57,8 @@ type ReadClient interface {
 	PauseTask(context.Context, string, localapi.PauseTaskInput) (localapi.TaskMutationResult, error)
 	CancelTask(context.Context, string, localapi.CancelTaskInput) (localapi.TaskMutationResult, error)
 	ResumeTask(context.Context, string, localapi.ResumeTaskInput) (localapi.TaskMutationResult, error)
+	VerifyTask(context.Context, string, localapi.VerifyTaskInput) (localapi.TaskMutationResult, error)
+	PromoteScout(context.Context, string, localapi.PromoteScoutInput) (localapi.PrepareTaskResult, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
 	GetLaunchPlan(context.Context, string, string) (application.LaunchPlan, error)
@@ -94,6 +98,8 @@ const (
 	commandPauseTask
 	commandCancelTask
 	commandResumeTask
+	commandVerifyTask
+	commandPromoteScout
 )
 
 type parsedCommand struct {
@@ -104,6 +110,7 @@ type parsedCommand struct {
 	inputPath       string
 	operationID     string
 	prepareInput    *localapi.PrepareTaskInput
+	promoteInput    *localapi.PromoteScoutInput
 	reconcileAction application.ReconcileTaskAction
 	handbackAction  application.HandbackAction
 }
@@ -131,6 +138,14 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, config Co
 			return writeCLIOutput(stderr, "devcrew: invalid task contract\nHint: provide one strict bounded JSON input\n", ExitUsage)
 		}
 		command.prepareInput = &input
+	}
+	if command.kind == commandPromoteScout {
+		input, readErr := readPromoteInput(command.inputPath, config)
+		if readErr != nil {
+			return writeCLIOutput(stderr, "devcrew: invalid promotion contract\nHint: provide one strict bounded JSON input that does not name a scout\n", ExitUsage)
+		}
+		input.ScoutTaskHandle = command.reference
+		command.promoteInput = &input
 	}
 	if ctx == nil || config.NewClient == nil || config.NewOperationID == nil || command.socketPath == "" {
 		return writeCLIOutput(stderr, "devcrew: local client is unavailable\nHint: inspect CLI configuration\n", ExitUnavailable)
@@ -235,6 +250,12 @@ func parseTaskCommand(command parsedCommand, args []string) (parsedCommand, erro
 	if len(args) > 0 && args[0] == "resume" {
 		return parseResumeTaskCommand(command, args[1:])
 	}
+	if len(args) > 0 && args[0] == "verify" {
+		return parseVerifyTaskCommand(command, args[1:])
+	}
+	if len(args) > 0 && args[0] == "promote" {
+		return parsePromoteScoutCommand(command, args[1:])
+	}
 	if len(args) < 2 {
 		return parsedCommand{}, errors.New("task subcommand and reference are required")
 	}
@@ -310,31 +331,53 @@ func parsePrepareTaskCommand(command parsedCommand, args []string) (parsedComman
 }
 
 func readPrepareInput(path string, config Config) (localapi.PrepareTaskInput, error) {
+	data, err := readBoundedContract(path, config)
+	if err != nil {
+		return localapi.PrepareTaskInput{}, err
+	}
+	return localapi.DecodePrepareTaskInput(data)
+}
+
+// readBoundedContract reads one strict bounded JSON contract from a file or
+// stdin. Every command that accepts a contract shares it, so the size bound and
+// the refusal to read an unavailable source cannot drift apart between them.
+func readBoundedContract(path string, config Config) ([]byte, error) {
 	var reader io.Reader
 	var closer io.Closer
 	if path == "-" {
 		reader = config.Stdin
 	} else {
 		if config.OpenInput == nil {
-			return localapi.PrepareTaskInput{}, errors.New("input file access is unavailable")
+			return nil, errors.New("input file access is unavailable")
 		}
 		opened, err := config.OpenInput(path)
 		if err != nil {
-			return localapi.PrepareTaskInput{}, err
+			return nil, err
 		}
 		reader, closer = opened, opened
 	}
 	if reader == nil {
-		return localapi.PrepareTaskInput{}, errors.New("input is unavailable")
+		return nil, errors.New("input is unavailable")
 	}
 	if closer != nil {
 		defer func() { _ = closer.Close() }()
 	}
 	data, err := io.ReadAll(io.LimitReader(reader, localapi.MaxRequestBytes+1))
 	if err != nil || len(data) > localapi.MaxRequestBytes {
-		return localapi.PrepareTaskInput{}, errors.New("read bounded task contract")
+		return nil, errors.New("read bounded contract")
 	}
-	return localapi.DecodePrepareTaskInput(data)
+	return data, nil
+}
+
+// The promotion contract is read the same bounded way a preparation contract is.
+// Sharing the reader keeps one size bound and one decode path rather than a
+// second, subtly different one per command.
+func readPromoteInput(path string, config Config) (localapi.PromoteScoutInput, error) {
+	data, err := readBoundedContract(path, config)
+	if err != nil {
+		return localapi.PromoteScoutInput{}, err
+	}
+	return localapi.DecodePromoteScoutInput(data)
 }
 
 func parseFormat(args []string, defaultFormat string, allowed ...string) (string, error) {
@@ -375,6 +418,11 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 			return nil, errors.New("prepare input is unavailable")
 		}
 		return client.PrepareTask(ctx, operationID, *command.prepareInput)
+	case commandPromoteScout:
+		if command.promoteInput == nil {
+			return nil, errors.New("promotion input is unavailable")
+		}
+		return client.PromoteScout(ctx, operationID, *command.promoteInput)
 	case commandReconcileTask:
 		return client.ReconcileTask(ctx, operationID, localapi.ReconcileTaskInput{
 			TaskHandle: command.reference, Action: command.reconcileAction,
@@ -391,6 +439,8 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 		return client.CancelTask(ctx, operationID, localapi.CancelTaskInput{TaskHandle: command.reference})
 	case commandResumeTask:
 		return client.ResumeTask(ctx, operationID, localapi.ResumeTaskInput{TaskHandle: command.reference})
+	case commandVerifyTask:
+		return client.VerifyTask(ctx, operationID, localapi.VerifyTaskInput{TaskHandle: command.reference})
 	default:
 		return nil, errors.New("unknown parsed command")
 	}

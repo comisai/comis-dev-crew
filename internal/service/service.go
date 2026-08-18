@@ -422,7 +422,11 @@ func composeMutations(config Config, store *sqlite.Store, clock application.Cloc
 		RuntimeAttachments: config.RuntimeAttachments,
 		RegistrationNonces: config.RegistrationNonces,
 		PreparationTTL:     config.PreparationTTL,
-		Clock:              clock,
+		// The durable store is the promotion authority: it proves the scout has
+		// evidence to preserve and records the link. Without it promotion is
+		// refused rather than minting a ship task with no recorded origin.
+		Promotions: store,
+		Clock:      clock,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("run service mutation coordinator: %w", err)

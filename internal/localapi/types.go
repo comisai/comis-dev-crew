@@ -57,13 +57,15 @@ const (
 	MethodPauseTask      Method = "PauseTask"
 	MethodCancelTask     Method = "CancelTask"
 	MethodResumeTask     Method = "ResumeTask"
+	MethodVerifyTask     Method = "VerifyTask"
+	MethodPromoteScout   Method = "PromoteScout"
 )
 
 func (method Method) valid() bool {
 	switch method {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
 		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
-		MethodPauseTask, MethodCancelTask, MethodResumeTask:
+		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout:
 		return true
 	default:
 		return false
@@ -83,7 +85,7 @@ const (
 func (method Method) SideEffect() SideEffectClass {
 	switch method {
 	case MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
-		MethodPauseTask, MethodCancelTask, MethodResumeTask:
+		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout:
 		return SideEffectMutate
 	default:
 		return SideEffectRead
@@ -133,6 +135,8 @@ type ReadQueries interface {
 type TaskMutations interface {
 	PrepareTask(context.Context, application.PrepareTaskCommand) (application.MutationResult, error)
 	PauseTask(context.Context, application.PauseTaskCommand) (application.MutationResult, error)
+	VerifyTask(context.Context, application.VerifyTaskCommand) (application.MutationResult, error)
+	PromoteScout(context.Context, application.PromoteScoutCommand) (application.MutationResult, error)
 	CancelTask(context.Context, application.CancelTaskCommand) (application.MutationResult, error)
 }
 
@@ -181,6 +185,10 @@ type ReconcileTaskInput struct {
 // cleanly, and anything more is a different command.
 type PauseTaskInput = taskHandleMutationInput
 
+// VerifyTaskInput selects one task to validate now. It selects no profile:
+// validation runs the reviewed profile the task was prepared with.
+type VerifyTaskInput = taskHandleMutationInput
+
 // ResumeTaskInput selects one paused task to continue. It names no worker:
 // resume continues what was already running, and choosing a different worker is
 // replacement.
@@ -219,6 +227,19 @@ type PrepareTaskInput struct {
 	WorkerProfileID    string              `json:"workerProfileId"`
 }
 
+// PromoteScoutInput names the scout and the ship contract. It carries no
+// repository or base revision: both are inherited from the scout, so a promotion
+// cannot point the ship task at different ground than the investigation covered
+// while still carrying that investigation as its justification.
+type PromoteScoutInput struct {
+	ScoutTaskHandle    string              `json:"scoutTaskHandle"`
+	AcceptanceCriteria []string            `json:"acceptanceCriteria"`
+	Constraints        []string            `json:"constraints"`
+	ValidationProfile  string              `json:"validationProfile"`
+	DeliveryMode       domain.DeliveryMode `json:"deliveryMode"`
+	WorkerProfileID    string              `json:"workerProfileId"`
+}
+
 // PrepareTaskResult is the stable local mutation projection. ManagedRun stays
 // private when an MCP adapter renders the model-visible result.
 type PrepareTaskResult struct {
@@ -239,6 +260,24 @@ func DecodePrepareTaskInput(data []byte) (PrepareTaskInput, error) {
 	}
 	if err := decodeObject(data, &input); err != nil {
 		return PrepareTaskInput{}, err
+	}
+	return input, nil
+}
+
+// DecodePromoteScoutInput reads one strict bounded promotion contract. The
+// scout handle travels on the command line and the contract carries only what
+// the ship revision must achieve, so a contract naming a different scout than
+// the operator typed cannot be accepted.
+func DecodePromoteScoutInput(data []byte) (PromoteScoutInput, error) {
+	var input PromoteScoutInput
+	if len(data) == 0 || len(data) > MaxRequestBytes {
+		return PromoteScoutInput{}, errors.New("promote scout input exceeds its bound")
+	}
+	if err := decodeObject(data, &input); err != nil {
+		return PromoteScoutInput{}, err
+	}
+	if input.ScoutTaskHandle != "" {
+		return PromoteScoutInput{}, errors.New("promotion contract must not name its own scout")
 	}
 	return input, nil
 }

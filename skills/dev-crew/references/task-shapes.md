@@ -64,3 +64,19 @@ suits which kind of request. Reading those rules and matching a request to one
 is your job. Validating the resolved profile is the service's job. If a rule and
 the catalog disagree, the catalog wins and the disagreement is worth telling the
 operator about.
+
+## Promoting a scout
+
+A scout investigates; it never pushes, opens a pull request, merges, or mutates
+the primary checkout. When its findings warrant a change, call `promote_scout`.
+
+Promotion mints a **new ship task**. The scout is untouched — same handle, same
+shape, same evidence — and the two are linked by the exact evidence digest that
+justifies the new work. Never try to change a task's shape: there is no tool for
+it, and a worker that could do so would grant itself the delivery authority the
+scout shape deliberately withholds.
+
+Supply what the ship task must achieve: acceptance criteria, constraints,
+validation profile, delivery mode, worker profile. Do not supply a repository or
+a base revision — both are inherited from the scout so the ship task starts from
+the ground the investigation actually covered, and passing either is refused.

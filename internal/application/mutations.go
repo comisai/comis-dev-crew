@@ -24,6 +24,7 @@ type Mutations struct {
 	taskIDs            TaskIDSource
 	nonces             RegistrationNonceSource
 	preparationTTL     time.Duration
+	promotions         ScoutPromotionStore
 	clock              Clock
 }
 
@@ -45,7 +46,8 @@ func NewMutations(config MutationConfig) (*Mutations, error) {
 		workerProfiles: config.WorkerProfiles, validationProfiles: config.ValidationProfiles,
 		workspaces: config.Workspaces, attachments: config.RuntimeAttachments,
 		taskIDs: config.TaskIDs, nonces: config.RegistrationNonces,
-		preparationTTL: config.PreparationTTL, clock: config.Clock,
+		preparationTTL: config.PreparationTTL, promotions: config.Promotions,
+		clock: config.Clock,
 	}, nil
 }
 

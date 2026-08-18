@@ -64,6 +64,8 @@ product does, and this list is not permission to guess a name.
 | Settle a worker safely | `pause_task` | Asks the worker to stop at a safe boundary; changes no state itself |
 | Stop work, keep it | `cancel_task` | Stops the task; worktree and artifacts survive |
 | Continue a paused task | `resume_task` | Returns it to the same worker; refused on a dirty worktree |
+| Validate now | `verify_task` | Opens validation against the reviewed profile; reports no verdict |
+| Act on a scout's findings | `promote_scout` | Mints a new ship task; the scout and its evidence are preserved |
 | Recover an exited worker | `reconcile_task` | Validates one exact clean candidate |
 | Resume after a developer edit | `handback_task` | Revalidates the developer's work |
 | Retire a task | `cleanup_task` | Evidence-gated release and removal |

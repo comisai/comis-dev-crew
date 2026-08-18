@@ -19,6 +19,8 @@ const (
 	ToolPauseTask      = "pause_task"
 	ToolCancelTask     = "cancel_task"
 	ToolResumeTask     = "resume_task"
+	ToolVerifyTask     = "verify_task"
+	ToolPromoteScout   = "promote_scout"
 	ToolListTasks      = "list_tasks"
 	ToolWorkerProfiles = "worker_profiles"
 	ToolGetTask        = "get_task"
@@ -42,6 +44,8 @@ type Client interface {
 	PauseTask(context.Context, string, localapi.PauseTaskInput) (localapi.TaskMutationResult, error)
 	CancelTask(context.Context, string, localapi.CancelTaskInput) (localapi.TaskMutationResult, error)
 	ResumeTask(context.Context, string, localapi.ResumeTaskInput) (localapi.TaskMutationResult, error)
+	VerifyTask(context.Context, string, localapi.VerifyTaskInput) (localapi.TaskMutationResult, error)
+	PromoteScout(context.Context, string, localapi.PromoteScoutInput) (localapi.PrepareTaskResult, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
 	GetLaunchPlan(context.Context, string, string) (application.LaunchPlan, error)
@@ -93,6 +97,29 @@ type ReconcileTaskInput struct {
 func (input PrepareTaskInput) local() localapi.PrepareTaskInput {
 	return localapi.PrepareTaskInput{
 		Shape: input.Shape, RepositoryID: input.RepositoryID, BaseRevision: input.BaseRevision,
+		AcceptanceCriteria: append([]string(nil), input.AcceptanceCriteria...),
+		Constraints:        append([]string(nil), input.Constraints...),
+		ValidationProfile:  input.ValidationProfile, DeliveryMode: input.DeliveryMode,
+		WorkerProfileID: input.WorkerProfileID,
+	}
+}
+
+// PromoteScoutInput names the scout and states the ship contract. It has no
+// repository or base-revision field on purpose: both are inherited from the
+// scout, so a promotion cannot aim the ship task at code the investigation never
+// covered while still carrying that investigation as its justification.
+type PromoteScoutInput struct {
+	ScoutTaskHandle    string              `json:"scoutTaskHandle" jsonschema:"opaque handle of the scout task being promoted"`
+	AcceptanceCriteria []string            `json:"acceptanceCriteria" jsonschema:"ordered acceptance criteria for the ship revision; provide a JSON array of strings"`
+	Constraints        []string            `json:"constraints" jsonschema:"ordered constraints; provide a JSON array of strings, using an empty array when there are none"`
+	ValidationProfile  string              `json:"validationProfile" jsonschema:"operator-configured validation profile identity"`
+	DeliveryMode       domain.DeliveryMode `json:"deliveryMode" jsonschema:"use exactly pull_request"`
+	WorkerProfileID    string              `json:"workerProfileId" jsonschema:"operator-configured worker profile identity"`
+}
+
+func (input PromoteScoutInput) local() localapi.PromoteScoutInput {
+	return localapi.PromoteScoutInput{
+		ScoutTaskHandle:    input.ScoutTaskHandle,
 		AcceptanceCriteria: append([]string(nil), input.AcceptanceCriteria...),
 		Constraints:        append([]string(nil), input.Constraints...),
 		ValidationProfile:  input.ValidationProfile, DeliveryMode: input.DeliveryMode,

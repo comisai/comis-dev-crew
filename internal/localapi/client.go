@@ -102,6 +102,13 @@ func (client *Client) PrepareTask(ctx context.Context, operationID string, input
 	return result, err
 }
 
+// PromoteScout creates a ship revision from one scout's investigation.
+func (client *Client) PromoteScout(ctx context.Context, operationID string, input PromoteScoutInput) (PrepareTaskResult, error) {
+	var result PrepareTaskResult
+	err := client.call(ctx, operationID, MethodPromoteScout, input, &result)
+	return result, err
+}
+
 // ReconcileTask executes one canonical idempotent unknown-task recovery.
 func (client *Client) ReconcileTask(ctx context.Context, operationID string, input ReconcileTaskInput) (TaskMutationResult, error) {
 	var result TaskMutationResult
@@ -141,6 +148,13 @@ func (client *Client) CancelTask(ctx context.Context, operationID string, input 
 func (client *Client) ResumeTask(ctx context.Context, operationID string, input ResumeTaskInput) (TaskMutationResult, error) {
 	var result TaskMutationResult
 	err := client.call(ctx, operationID, MethodResumeTask, input, &result)
+	return result, err
+}
+
+// VerifyTask asks the service to validate one task now.
+func (client *Client) VerifyTask(ctx context.Context, operationID string, input VerifyTaskInput) (TaskMutationResult, error) {
+	var result TaskMutationResult
+	err := client.call(ctx, operationID, MethodVerifyTask, input, &result)
 	return result, err
 }
 

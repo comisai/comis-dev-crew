@@ -166,10 +166,12 @@ devcrew-mcp \
   --service-instance service-instance-devcrew
 ```
 
-The facade defines thirteen tools: `prepare_task`, `reconcile_task`,
-`handback_task`, `cleanup_task`, `pause_task`, `cancel_task`, `resume_task`,
-`list_tasks`, `get_task`, `explain_task`, `get_launch_plan`, `worker_profiles`,
-and `doctor`.
+The facade defines fifteen tools: `prepare_task`, `promote_scout`,
+`reconcile_task`, `handback_task`, `cleanup_task`, `pause_task`, `cancel_task`,
+`resume_task`, `verify_task`, `list_tasks`, `get_task`, `explain_task`,
+`get_launch_plan`, `worker_profiles`, and `doctor`. `promote_scout` returns the
+same private managed-run registration metadata preparation does, because it
+mints a task the same way.
 `cancel_task` is destructive — it ends work an operator asked for and repeating
 it does not undo that — but it is not removal.
 `pause_task` is a non-destructive mutation: it preserves all work and asks the
@@ -298,6 +300,8 @@ devcrew [--socket PATH] task handback TASK --action validate-developer-work [--o
 devcrew [--socket PATH] task pause TASK [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task cancel TASK [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task resume TASK [--operation OPERATION] [--format json]
+devcrew [--socket PATH] task verify TASK [--operation OPERATION] [--format json]
+devcrew [--socket PATH] task promote SCOUT --input FILE|- [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task cleanup TASK [--operation OPERATION] [--format json]
 ```
 
@@ -308,6 +312,29 @@ worker's own paused report is what settles the state. That ordering is what
 makes the worktree safe to hand to a developer — a task marked paused while its
 worker kept committing would be changing under their editor. The request carries
 no instruction text and no interrupt, and a repeat replays rather than stacking.
+
+`task promote` creates a ship task from a scout's investigation. The scout is
+untouched — its handle, shape, evidence and history stay exactly as they were,
+and the promotion is recorded as a link naming the exact evidence digest that
+justifies the new task. A worker cannot change its own task's shape; promotion
+is an explicit operator or agent operation that mints a new task instead.
+
+The scout handle is given on the command line and the contract carries only what
+the ship revision must achieve. The contract must not name a scout, a
+repository, a base revision or a shape: the repository and base revision are
+inherited so a promotion cannot aim the ship task at code the investigation
+never covered, and a contract naming its own scout could disagree with what the
+operator typed. All four are refused by strict decoding rather than ignored.
+
+`task verify` asks the service to validate one task now instead of waiting for
+the worker to declare a candidate. It opens validation and nothing more: the
+reviewed profile, the candidate inspection, the unresolved-decision check and
+the evidence refresh all stay with the supervisor that already owns them, so the
+command's result reports that validation started, never that it passed. It
+selects no profile and no checks — a caller able to choose either could validate
+against an easier bar than the one the task was accepted under. A task already
+validating is left alone rather than restarted, and an unverifiable worktree is
+judged `unknown` by the candidate inspection rather than blocked here.
 
 `task resume` returns one paused task to the worker already running it. It is
 refused when the worktree has uncommitted changes: the paused worker still holds

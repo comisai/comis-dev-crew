@@ -95,28 +95,29 @@ func (facade *Facade) reconcileTaskMutation(
 // command name and the replay call, while the four give-up branches — no
 // context, unmintable request ID, unreadable operation, wrong operation — are
 // identical and cannot be reached without breaking the transport underneath.
-func reconcileTaskMutation[Input any](
+func reconcileTaskMutation[Input any, Result any](
 	facade *Facade,
 	ctx context.Context,
 	operationID string,
 	command string,
 	input Input,
-	replay func(context.Context, string, Input) (localapi.TaskMutationResult, error),
+	replay func(context.Context, string, Input) (Result, error),
 	original error,
-) (localapi.TaskMutationResult, error) {
+) (Result, error) {
+	var empty Result
 	if ctx == nil {
-		return localapi.TaskMutationResult{}, original
+		return empty, original
 	}
 	reconcileContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), facade.reconcileTimeout)
 	defer cancel()
 	requestID, err := facade.newOperationID()
 	if err != nil || domain.ValidateOperationID(requestID) != nil {
-		return localapi.TaskMutationResult{}, original
+		return empty, original
 	}
 	operation, err := facade.client.Operation(reconcileContext, requestID, operationID)
 	if err != nil || operation.OperationID != operationID || operation.Command != command ||
 		operation.Status != domain.OperationCompleted {
-		return localapi.TaskMutationResult{}, original
+		return empty, original
 	}
 	return replay(reconcileContext, operationID, input)
 }
@@ -162,5 +163,35 @@ func (facade *Facade) reconcileResume(
 ) (localapi.TaskMutationResult, error) {
 	return reconcileTaskMutation(
 		facade, ctx, operationID, "ResumeTask", input, facade.client.ResumeTask, original,
+	)
+}
+
+func (facade *Facade) reconcileVerify(
+	ctx context.Context,
+	operationID string,
+	input localapi.VerifyTaskInput,
+	original error,
+) (localapi.TaskMutationResult, error) {
+	return reconcileTaskMutation(
+		facade, ctx, operationID, "VerifyTask", input, facade.client.VerifyTask, original,
+	)
+}
+
+// reconcilePromotion resolves an uncertain promotion by replaying it.
+//
+// The operation it expects is a preparation. A promotion mints its task through
+// the ordinary preparation path, so that is what the durable record says; the
+// scout link, not the command name, is what marks the operation a promotion.
+// Replaying through PromoteScout rather than PrepareTask is the part that
+// matters: the prepared half replays to the same task, and the link half — which
+// may be exactly the part that never ran — is attempted again.
+func (facade *Facade) reconcilePromotion(
+	ctx context.Context,
+	operationID string,
+	input localapi.PromoteScoutInput,
+	original error,
+) (localapi.PrepareTaskResult, error) {
+	return reconcileTaskMutation(
+		facade, ctx, operationID, "PrepareTask", input, facade.client.PromoteScout, original,
 	)
 }

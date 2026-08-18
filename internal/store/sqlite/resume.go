@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -30,7 +29,7 @@ func (store *Store) CommitTaskResume(
 		if err != nil {
 			return domain.Task{}, err
 		}
-		if mutation.At.Location() != time.UTC || mutation.At.Before(task.UpdatedAt) {
+		if mutation.At.Before(task.UpdatedAt) {
 			return domain.Task{}, fmt.Errorf("task resume time: %w", application.ErrPrecondition)
 		}
 		if task.State != domain.TaskPaused {

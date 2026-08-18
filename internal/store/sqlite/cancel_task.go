@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -34,9 +33,6 @@ func (store *Store) CommitTaskCancel(
 		task, err := getTask(ctx, transaction, mutation.TaskHandle)
 		if err != nil {
 			return domain.Task{}, err
-		}
-		if mutation.At.Location() != time.UTC {
-			return domain.Task{}, fmt.Errorf("task cancel time: %w", application.ErrPrecondition)
 		}
 		// Two operators can decide to stop the same work. The second reports the
 		// settled task rather than transitioning it again, so a safe repeat does

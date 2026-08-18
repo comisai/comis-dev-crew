@@ -16,15 +16,21 @@ import (
 )
 
 type apiMutations struct {
-	command       application.PrepareTaskCommand
-	pauseCommand  application.PauseTaskCommand
-	cancelCommand application.CancelTaskCommand
-	result        application.MutationResult
-	pauseResult   application.MutationResult
-	cancelResult  application.MutationResult
-	err           error
-	pauseErr      error
-	cancelErr     error
+	command        application.PrepareTaskCommand
+	pauseCommand   application.PauseTaskCommand
+	cancelCommand  application.CancelTaskCommand
+	verifyCommand  application.VerifyTaskCommand
+	promoteCommand application.PromoteScoutCommand
+	result         application.MutationResult
+	pauseResult    application.MutationResult
+	cancelResult   application.MutationResult
+	verifyResult   application.MutationResult
+	promoteResult  application.MutationResult
+	err            error
+	pauseErr       error
+	cancelErr      error
+	verifyErr      error
+	promoteErr     error
 }
 
 type apiInterventions struct {
@@ -102,6 +108,22 @@ func (interventions *apiInterventions) HandbackTask(
 func (mutations *apiMutations) PrepareTask(_ context.Context, command application.PrepareTaskCommand) (application.MutationResult, error) {
 	mutations.command = command
 	return mutations.result, mutations.err
+}
+
+func (mutations *apiMutations) PromoteScout(
+	_ context.Context,
+	command application.PromoteScoutCommand,
+) (application.MutationResult, error) {
+	mutations.promoteCommand = command
+	return mutations.promoteResult, mutations.promoteErr
+}
+
+func (mutations *apiMutations) VerifyTask(
+	_ context.Context,
+	command application.VerifyTaskCommand,
+) (application.MutationResult, error) {
+	mutations.verifyCommand = command
+	return mutations.verifyResult, mutations.verifyErr
 }
 
 func (mutations *apiMutations) CancelTask(

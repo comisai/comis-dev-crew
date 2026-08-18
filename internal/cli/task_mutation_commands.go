@@ -229,3 +229,88 @@ func parseResumeTaskCommand(command parsedCommand, args []string) (parsedCommand
 	}
 	return command, nil
 }
+
+// parseVerifyTaskCommand reads one task reference. Verify selects no profile or
+// checks of its own: validation runs the reviewed profile the task was prepared
+// with, and a caller able to choose otherwise could validate against an easier
+// bar than the one the task was accepted under.
+func parseVerifyTaskCommand(command parsedCommand, args []string) (parsedCommand, error) {
+	if len(args) < 1 || domain.ValidateTaskHandle(args[0]) != nil {
+		return parsedCommand{}, errors.New("verify task reference is required")
+	}
+	command.kind = commandVerifyTask
+	command.reference = args[0]
+	command.format = "json"
+	args = args[1:]
+	seen := make(map[string]bool)
+	for len(args) > 0 {
+		if len(args) < 2 || seen[args[0]] {
+			return parsedCommand{}, errors.New("invalid verify arguments")
+		}
+		name, value := args[0], args[1]
+		seen[name] = true
+		switch name {
+		case "--operation":
+			if domain.ValidateOperationID(value) != nil {
+				return parsedCommand{}, errors.New("invalid verify operation")
+			}
+			command.operationID = value
+		case "--format":
+			if value != "json" {
+				return parsedCommand{}, errors.New("verify format must be JSON")
+			}
+		default:
+			return parsedCommand{}, errors.New("unknown verify option")
+		}
+		args = args[2:]
+	}
+	return command, nil
+}
+
+// parsePromoteScoutCommand reads the scout handle from the command line and the
+// ship contract from a bounded JSON input.
+//
+// The handle stays on the command line deliberately. An operator promoting a
+// scout names it where they can see it, and a contract that could also name one
+// would let the file disagree with the command — with no way to tell afterwards
+// which the service acted on.
+func parsePromoteScoutCommand(command parsedCommand, args []string) (parsedCommand, error) {
+	if len(args) < 1 || domain.ValidateTaskHandle(args[0]) != nil {
+		return parsedCommand{}, errors.New("promote scout reference is required")
+	}
+	command.kind = commandPromoteScout
+	command.reference = args[0]
+	command.format = "json"
+	args = args[1:]
+	seen := make(map[string]bool)
+	for len(args) > 0 {
+		if len(args) < 2 || seen[args[0]] {
+			return parsedCommand{}, errors.New("invalid promote arguments")
+		}
+		name, value := args[0], args[1]
+		seen[name] = true
+		switch name {
+		case "--input":
+			if value == "" {
+				return parsedCommand{}, errors.New("invalid promote input")
+			}
+			command.inputPath = value
+		case "--operation":
+			if domain.ValidateOperationID(value) != nil {
+				return parsedCommand{}, errors.New("invalid promote operation")
+			}
+			command.operationID = value
+		case "--format":
+			if value != "json" {
+				return parsedCommand{}, errors.New("promote format must be JSON")
+			}
+		default:
+			return parsedCommand{}, errors.New("unknown promote option")
+		}
+		args = args[2:]
+	}
+	if command.inputPath == "" {
+		return parsedCommand{}, errors.New("promote input is required")
+	}
+	return command, nil
+}

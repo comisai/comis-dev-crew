@@ -261,6 +261,7 @@ type MutationStore interface {
 	CommitManagedRunCancel(context.Context, ManagedRunCancelMutation) (MutationResult, error)
 	CommitTaskPauseRequest(context.Context, TaskPauseRequestMutation) (MutationResult, error)
 	CommitTaskCancel(context.Context, TaskCancelMutation) (MutationResult, error)
+	CommitTaskVerify(context.Context, TaskVerifyMutation) (MutationResult, error)
 	CommitTaskStart(context.Context, TaskStartMutation) (MutationResult, error)
 	CommitTerminalEvent(context.Context, TerminalEventMutation) (MutationResult, error)
 	CommitWorkerLaunchAcknowledgement(context.Context, WorkerLaunchAcknowledgementMutation) (MutationResult, error)
@@ -418,64 +419,8 @@ type MutationConfig struct {
 	TaskIDs            TaskIDSource
 	RegistrationNonces RegistrationNonceSource
 	PreparationTTL     time.Duration
-	Clock              Clock
-}
-
-// PauseTaskCommand asks one task's worker to settle at a safe boundary.
-//
-// It carries no instruction text and no interrupt. Pause is a request to stop
-// cleanly, not a message to the worker and not a signal: an operator who needs
-// to say something uses steering, and one who needs to stop work now cancels.
-// Keeping those separate is what lets a paused worktree be handed to a
-// developer in a known state.
-type PauseTaskCommand struct {
-	OperationID string `json:"operationId"`
-	TaskHandle  string `json:"taskHandle"`
-}
-
-// TaskPauseRequestMutation is the durable half of one pause request.
-type TaskPauseRequestMutation struct {
-	TaskHandle    string
-	OperationID   string
-	SubjectDigest string
-	At            time.Time
-}
-
-// CancelTaskCommand stops one task at an operator's request.
-//
-// It preserves artifacts. Stopping work and discarding it are separate
-// decisions with separate evidence requirements, and a cancel that also removed
-// the worktree would make the stop irreversible at the moment an operator is
-// least certain.
-type CancelTaskCommand struct {
-	OperationID string `json:"operationId"`
-	TaskHandle  string `json:"taskHandle"`
-}
-
-// TaskCancelMutation is the durable half of one operator cancellation.
-type TaskCancelMutation struct {
-	TaskHandle    string
-	OperationID   string
-	SubjectDigest string
-	At            time.Time
-}
-
-// ResumeTaskCommand returns one paused task to its existing worker.
-//
-// It carries no instruction and selects no worker: resume continues what was
-// already running. Choosing a different worker is replacement, which reconciles
-// a fresh brief rather than assuming the old one still describes the tree.
-type ResumeTaskCommand struct {
-	OperationID string `json:"operationId"`
-	TaskHandle  string `json:"taskHandle"`
-}
-
-// TaskResumeMutation is the durable half of one resume, carrying the head the
-// caller proved the worktree was sitting at when it checked.
-type TaskResumeMutation struct {
-	TaskHandle           string
-	OperationID          string
-	SubjectDigest        string
-	ObservedHeadRevision string
-	At                   time.Time
+	// Absent when the deployment has no scout-promotion authority. Promotion is
+	// then refused rather than minting a ship task with no recorded origin.
+	Promotions ScoutPromotionStore
+	Clock      Clock
 }

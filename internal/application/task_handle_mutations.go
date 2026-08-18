@@ -89,9 +89,32 @@ func (mutations *Mutations) CancelTask(
 	)
 }
 
+// VerifyTask asks the service to validate one task now rather than waiting for
+// the worker to declare a candidate.
+//
+// It selects no profile and no checks. Validation runs the reviewed profile the
+// task was prepared with, so a caller cannot validate against an easier bar than
+// the one the task was accepted under, and the judgement stays with the
+// supervisor that already owns candidate inspection and evidence.
+func (mutations *Mutations) VerifyTask(
+	ctx context.Context,
+	command VerifyTaskCommand,
+) (MutationResult, error) {
+	return taskHandleMutation(
+		mutations, ctx, command.OperationID, command.TaskHandle, commandVerifyTaskName, command,
+		func(ctx context.Context, subjectDigest, taskHandle string) (MutationResult, error) {
+			return mutations.store.CommitTaskVerify(ctx, TaskVerifyMutation{
+				TaskHandle: taskHandle, OperationID: command.OperationID,
+				SubjectDigest: subjectDigest, At: mutations.clock(),
+			})
+		},
+	)
+}
+
 // The command names are shared with the durable layer's replay index; a mismatch
 // would make a repeated command commit twice rather than replay.
 const (
 	commandPauseTaskName  = "PauseTask"
 	commandCancelTaskName = "CancelTask"
+	commandVerifyTaskName = "VerifyTask"
 )

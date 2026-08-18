@@ -41,6 +41,15 @@ func commitTaskMutation(
 	spec taskMutationSpec,
 	body taskMutationBody,
 ) (application.MutationResult, error) {
+	// Every durable timestamp is UTC. A local-zone time would be stored as a wall
+	// clock reading whose meaning depends on where the service happened to run,
+	// and two records written either side of a DST change would compare wrongly.
+	// The check lives here rather than in each command because it is the same
+	// rule everywhere, and a command that forgot it would look correct until a
+	// deployment moved.
+	if spec.At.Location() != time.UTC {
+		return application.MutationResult{}, fmt.Errorf("%s time: %w", spec.Label, application.ErrPrecondition)
+	}
 	transaction, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return application.MutationResult{}, fmt.Errorf("begin %s: %w", spec.Label, err)

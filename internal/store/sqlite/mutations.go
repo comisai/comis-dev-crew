@@ -288,6 +288,7 @@ const (
 	commandPauseTask               = "PauseTask"
 	commandCancelTask              = "CancelTask"
 	commandResumeTask              = "ResumeTask"
+	commandVerifyTask              = "VerifyTask"
 )
 
 func updateTaskState(ctx context.Context, transaction *sql.Tx, task domain.Task) error {
