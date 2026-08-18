@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
 	"github.com/comisai/comis-dev-crew/internal/workers"
 )
 
@@ -19,6 +20,12 @@ func interventionAdapters(t *testing.T) map[string]application.WorkerHarnessAdap
 	t.Helper()
 
 	codexProfile := availableCodexProfile(codexFixtureExecutable(t), "codex-reviewed")
+	// The attachment keys are what a launch or resume descriptor binds; the
+	// shared fixture allows only the socket path.
+	codexProfile.EnvironmentKeys = append(
+		codexProfile.EnvironmentKeys,
+		"COMIS_EXECUTION_ATTACHMENT_TARGET_NAME", "COMIS_EXECUTION_ATTACHMENT_IDENTITY",
+	)
 	codexCatalog, err := workers.NewProfileCatalog([]workers.StaticProfile{codexProfile})
 	if err != nil {
 		t.Fatal(err)
@@ -238,5 +245,26 @@ func TestAdapters_InterventionRefusesAProfileTheAdapterDoesNotOwn(t *testing.T) 
 				t.Error("RequestStop(foreign profile) error = nil")
 			}
 		})
+	}
+}
+
+// resumeLaunchRequest is the launch binding a resume is built from. Task, run
+// and lease identity are deliberately recognizable strings so a test can prove
+// none of them reached argv.
+func resumeLaunchRequest(t *testing.T, name string) application.WorkerLaunchRequest {
+	t.Helper()
+	attachmentTarget := "attachment-0123456789abcdef0123456789abcdef.sock"
+	return application.WorkerLaunchRequest{
+		ProfileID: interventionProfileID(name), Shape: domain.ShapeShip,
+		WorkingDirectory: canonicalWorkerTempDir(t),
+		TaskHandle:       "task-secret-0001", ManagedRunID: "managed-run-secret-0001",
+		WorkspaceLeaseID: "workspace-lease-secret-0001", BriefRevision: 3,
+		BriefRevisionHash: strings.Repeat("a", 64),
+		Attachment: application.RuntimeSocketAttachment{
+			ExecutionAttachmentID: "execution-attachment-secret-0001",
+			AttachmentTargetName:  attachmentTarget,
+			MountSocketPath:       "/run/comis/attachments/" + attachmentTarget,
+			RelayIdentity:         strings.Repeat("ab", 32),
+		},
 	}
 }
