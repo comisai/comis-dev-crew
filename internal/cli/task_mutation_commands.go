@@ -193,3 +193,39 @@ func parseCancelTaskCommand(command parsedCommand, args []string) (parsedCommand
 	}
 	return command, nil
 }
+
+// parseResumeTaskCommand reads one task reference. Resume selects no worker:
+// continuing what was already running and choosing a different worker are
+// different decisions with different safety requirements.
+func parseResumeTaskCommand(command parsedCommand, args []string) (parsedCommand, error) {
+	if len(args) < 1 || domain.ValidateTaskHandle(args[0]) != nil {
+		return parsedCommand{}, errors.New("resume task reference is required")
+	}
+	command.kind = commandResumeTask
+	command.reference = args[0]
+	command.format = "json"
+	args = args[1:]
+	seen := make(map[string]bool)
+	for len(args) > 0 {
+		if len(args) < 2 || seen[args[0]] {
+			return parsedCommand{}, errors.New("invalid resume arguments")
+		}
+		name, value := args[0], args[1]
+		seen[name] = true
+		switch name {
+		case "--operation":
+			if domain.ValidateOperationID(value) != nil {
+				return parsedCommand{}, errors.New("invalid resume operation")
+			}
+			command.operationID = value
+		case "--format":
+			if value != "json" {
+				return parsedCommand{}, errors.New("resume format must be JSON")
+			}
+		default:
+			return parsedCommand{}, errors.New("unknown resume option")
+		}
+		args = args[2:]
+	}
+	return command, nil
+}

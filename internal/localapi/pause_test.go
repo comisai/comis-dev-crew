@@ -2,6 +2,7 @@ package localapi
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -107,4 +108,65 @@ func newTestHandler(t *testing.T, mutations *apiMutations) *Handler {
 		t.Fatalf("NewHandler() error = %v", err)
 	}
 	return handler
+}
+
+// Resume travels the same mutation path as pause and cancel but reaches the
+// intervention surface, not the mutation one. A deployment composed without
+// interventions must report that surface as unavailable rather than the
+// mutation surface it does have.
+func TestLocalAPI_ResumeReachesTheInterventionSurface(t *testing.T) {
+	interventions := &apiInterventions{resumeResult: application.MutationResult{
+		Task: domain.Task{Handle: "task-0001", State: domain.TaskWorking, StateVersion: 13},
+		Operation: domain.OperationRecord{
+			ID: "operation-resume-0001", Command: "ResumeTask", Status: domain.OperationCompleted,
+			ResultRef: "task-0001", StateVersion: 13,
+		},
+	}}
+	handler, err := NewHandler(HandlerConfig{
+		Queries: &apiQueries{}, Interventions: interventions,
+		ServiceInstanceID: "service-instance_a", Clock: time.Now,
+	})
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	socketPath := startHandlerServer(t, handler, CallerMCPFacade)
+	client, err := NewClient(socketPath, time.Second)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	result, err := client.ResumeTask(context.Background(), "operation-resume-0001", ResumeTaskInput{
+		TaskHandle: "task-0001",
+	})
+	if err != nil {
+		t.Fatalf("ResumeTask() error = %v", err)
+	}
+	if interventions.resumeCommand.TaskHandle != "task-0001" {
+		t.Fatalf("resume command = %+v", interventions.resumeCommand)
+	}
+	if result.SideEffect != SideEffectMutate || result.State != domain.TaskWorking {
+		t.Errorf("resume result = %+v", result)
+	}
+}
+
+func TestLocalAPI_ResumeReportsAnAbsentInterventionSurfaceAsUnavailable(t *testing.T) {
+	handler, err := NewHandler(HandlerConfig{
+		Queries: &apiQueries{}, ServiceInstanceID: "service-instance_a", Clock: time.Now,
+	})
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	outcome := handler.handle(context.Background(), CallerMCPFacade, []byte(
+		`{"protocolVersion":"`+ProtocolVersion+`","operationId":"operation-resume-0001",`+
+			`"method":"ResumeTask","payload":{"taskHandle":"task-0001"}}`,
+	))
+
+	if outcome.Status != domain.OperationRejected || outcome.Error == nil ||
+		outcome.Error.Code != domain.ErrorUnavailable || !outcome.Error.Retryable {
+		t.Fatalf("absent intervention surface outcome = %+v", outcome)
+	}
+	if !strings.Contains(outcome.Error.Message, "intervention") {
+		t.Errorf("refusal must name the absent surface, got %q", outcome.Error.Message)
+	}
 }

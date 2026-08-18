@@ -137,6 +137,13 @@ func (client *Client) CancelTask(ctx context.Context, operationID string, input 
 	return result, err
 }
 
+// ResumeTask returns one paused task to its existing worker.
+func (client *Client) ResumeTask(ctx context.Context, operationID string, input ResumeTaskInput) (TaskMutationResult, error) {
+	var result TaskMutationResult
+	err := client.call(ctx, operationID, MethodResumeTask, input, &result)
+	return result, err
+}
+
 func (client *Client) call(ctx context.Context, operationID string, method Method, payload any, result any) error {
 	if ctx == nil {
 		return errors.New("call local API: context is required")

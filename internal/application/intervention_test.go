@@ -98,6 +98,8 @@ type interventionStore struct {
 	task        domain.Task
 	preparation ManagedRunPreparation
 	mutation    TaskHandbackMutation
+	resume      TaskResumeMutation
+	resumeCalls int
 	replay      MutationResult
 	replayFound bool
 	replayErr   error
@@ -127,6 +129,17 @@ func (store *interventionStore) CommitTaskHandback(_ context.Context, mutation T
 		return MutationResult{}, store.commitErr
 	}
 	return MutationResult{Task: store.task}, nil
+}
+
+func (store *interventionStore) CommitTaskResume(_ context.Context, mutation TaskResumeMutation) (MutationResult, error) {
+	store.resumeCalls++
+	store.resume = mutation
+	if store.commitErr != nil {
+		return MutationResult{}, store.commitErr
+	}
+	resumed := store.task
+	resumed.State = domain.TaskWorking
+	return MutationResult{Task: resumed}, nil
 }
 
 type interventionInspector struct {

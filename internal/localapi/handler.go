@@ -169,13 +169,23 @@ func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 		return handler.taskMutationOutcome(request.OperationID, MethodHandbackTask, result, err)
 	case MethodPauseTask:
 		return handleTaskHandleMutation(ctx, handler, request, MethodPauseTask,
+			handler.mutations == nil, "task mutation service is unavailable",
 			func(ctx context.Context, taskHandle string) (application.MutationResult, error) {
 				return handler.mutations.PauseTask(ctx, application.PauseTaskCommand{
 					OperationID: request.OperationID, TaskHandle: taskHandle,
 				})
 			})
+	case MethodResumeTask:
+		return handleTaskHandleMutation(ctx, handler, request, MethodResumeTask,
+			handler.interventions == nil, "task intervention service is unavailable",
+			func(ctx context.Context, taskHandle string) (application.MutationResult, error) {
+				return handler.interventions.ResumeTask(ctx, application.ResumeTaskCommand{
+					OperationID: request.OperationID, TaskHandle: taskHandle,
+				})
+			})
 	case MethodCancelTask:
 		return handleTaskHandleMutation(ctx, handler, request, MethodCancelTask,
+			handler.mutations == nil, "task mutation service is unavailable",
 			func(ctx context.Context, taskHandle string) (application.MutationResult, error) {
 				return handler.mutations.CancelTask(ctx, application.CancelTaskCommand{
 					OperationID: request.OperationID, TaskHandle: taskHandle,
@@ -326,15 +336,20 @@ func handleTaskHandleMutation(
 	handler *Handler,
 	request Request,
 	method Method,
+	surfaceAbsent bool,
+	absentMessage string,
 	invoke func(context.Context, string) (application.MutationResult, error),
 ) Outcome {
 	var input taskHandleMutationInput
 	if err := decodeObject(request.Payload, &input); err != nil {
 		return invalidPayload(request.OperationID, err)
 	}
-	if handler.mutations == nil {
+	// An absent surface is reported unavailable and retryable, never as though
+	// the caller's request were malformed: the request was fine, the deployment
+	// is not composed for it.
+	if surfaceAbsent {
 		return rejectedOutcome(request.OperationID, domain.ErrorUnavailable, true,
-			"task mutation service is unavailable", "inspect service configuration", nil)
+			absentMessage, "inspect service configuration", nil)
 	}
 	result, err := invoke(ctx, input.TaskHandle)
 	return handler.taskMutationOutcome(request.OperationID, method, result, err)

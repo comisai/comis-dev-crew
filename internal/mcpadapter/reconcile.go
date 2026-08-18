@@ -153,3 +153,14 @@ func (facade *Facade) reconcileCancel(
 		facade, ctx, operationID, "CancelTask", input, facade.client.CancelTask, original,
 	)
 }
+
+func (facade *Facade) reconcileResume(
+	ctx context.Context,
+	operationID string,
+	input localapi.ResumeTaskInput,
+	original error,
+) (localapi.TaskMutationResult, error) {
+	return reconcileTaskMutation(
+		facade, ctx, operationID, "ResumeTask", input, facade.client.ResumeTask, original,
+	)
+}

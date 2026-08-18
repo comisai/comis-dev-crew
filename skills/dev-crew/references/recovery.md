@@ -62,6 +62,18 @@ free disk, and never describe a cancel as having cleaned anything up.
 Cancelling a task that is already cancelled reports the settled task instead of
 refusing, so a repeat is safe.
 
+## Resume
+
+`resume_task` returns a paused task to the worker already running it. It is
+refused when the worktree has uncommitted changes, and that refusal is the point
+of the command: the paused worker holds a brief and an evidence set describing
+the tree it stopped on, and neither would notice an edit.
+
+A refusal is a routing signal, not an obstacle. Do not retry it and do not look
+for a force flag — there is none. Hand the work back with
+`action: "validate-developer-work"` so the edit is revalidated, or replace the
+worker. Resume selects no worker of its own.
+
 ## Handback
 
 Handback is what follows a settled pause: a developer deliberately edited a

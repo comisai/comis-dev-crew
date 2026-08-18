@@ -90,6 +90,7 @@ type InterventionStore interface {
 	GetTask(context.Context, string) (domain.Task, error)
 	GetManagedRunPreparation(context.Context, string) (ManagedRunPreparation, error)
 	CommitTaskHandback(context.Context, TaskHandbackMutation) (MutationResult, error)
+	CommitTaskResume(context.Context, TaskResumeMutation) (MutationResult, error)
 }
 
 // InterventionConfig supplies independent workspace truth and durable state.
@@ -142,19 +143,9 @@ func (interventions *Interventions) HandbackTask(
 	if task.State != domain.TaskPaused {
 		return MutationResult{}, mutationCommitFailure(ErrPrecondition)
 	}
-	preparation, err := interventions.store.GetManagedRunPreparation(ctx, task.Handle)
-	if err != nil || preparation.RequestedWorkspaceRoot == "" {
-		return MutationResult{}, &dependencyFailure{message: "handback workspace is unavailable", cause: err}
-	}
-	snapshot, err := interventions.workspaces.InspectWorkspace(ctx, WorkspaceSnapshotRequest{
-		TaskHandle: task.Handle, RepositoryID: task.RepositoryID, WorktreePath: preparation.RequestedWorkspaceRoot,
-	})
+	snapshot, err := interventions.inspectPausedWorkspace(ctx, task)
 	if err != nil {
-		return MutationResult{}, &dependencyFailure{message: "handback workspace inspection failed", cause: err}
-	}
-	if snapshot.Validate() != nil || snapshot.TaskHandle != task.Handle || snapshot.RepositoryID != task.RepositoryID ||
-		snapshot.WorktreePath != preparation.RequestedWorkspaceRoot {
-		return MutationResult{}, &dependencyFailure{message: "handback workspace inspection returned different authority"}
+		return MutationResult{}, err
 	}
 	candidateReport := domain.WorkerReport{
 		SchemaVersion: 1, LocalReportID: command.OperationID,

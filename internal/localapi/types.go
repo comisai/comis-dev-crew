@@ -56,13 +56,14 @@ const (
 	MethodCleanupTask    Method = "CleanupTask"
 	MethodPauseTask      Method = "PauseTask"
 	MethodCancelTask     Method = "CancelTask"
+	MethodResumeTask     Method = "ResumeTask"
 )
 
 func (method Method) valid() bool {
 	switch method {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
 		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
-		MethodPauseTask, MethodCancelTask:
+		MethodPauseTask, MethodCancelTask, MethodResumeTask:
 		return true
 	default:
 		return false
@@ -82,7 +83,7 @@ const (
 func (method Method) SideEffect() SideEffectClass {
 	switch method {
 	case MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
-		MethodPauseTask, MethodCancelTask:
+		MethodPauseTask, MethodCancelTask, MethodResumeTask:
 		return SideEffectMutate
 	default:
 		return SideEffectRead
@@ -137,6 +138,7 @@ type TaskMutations interface {
 
 // TaskInterventions is the canonical paused-worktree handback surface.
 type TaskInterventions interface {
+	ResumeTask(context.Context, application.ResumeTaskCommand) (application.MutationResult, error)
 	HandbackTask(context.Context, application.HandbackTaskCommand) (application.MutationResult, error)
 }
 
@@ -178,6 +180,11 @@ type ReconcileTaskInput struct {
 // carries no instruction and no interrupt: pause asks the worker to stop
 // cleanly, and anything more is a different command.
 type PauseTaskInput = taskHandleMutationInput
+
+// ResumeTaskInput selects one paused task to continue. It names no worker:
+// resume continues what was already running, and choosing a different worker is
+// replacement.
+type ResumeTaskInput = taskHandleMutationInput
 
 // CancelTaskInput selects one task to stop. It names no disposition: cancel
 // preserves artifacts, and removing them is cleanup's separate, evidence-gated

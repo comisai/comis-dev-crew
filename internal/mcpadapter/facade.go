@@ -60,6 +60,11 @@ func (facade *Facade) registerTools() {
 	mcp.AddTool(facade.server, cleanupTool(), facade.cleanupTask)
 	mcp.AddTool(facade.server, cancelTool(), facade.cancelTask)
 	mcp.AddTool(facade.server, tool(
+		ToolResumeTask,
+		"Return one paused task to the worker already running it. Refused when the worktree has uncommitted changes; hand the work back instead so the edit is revalidated.",
+		false,
+	), facade.resumeTask)
+	mcp.AddTool(facade.server, tool(
 		ToolPauseTask,
 		"Ask one task's worker to reach a safe boundary and stop. It carries no instruction and no interrupt, and does not itself pause the task: the worker settles and reports.",
 		false,
@@ -291,6 +296,24 @@ func (facade *Facade) cancelTask(
 	result, err := facade.client.CancelTask(ctx, operationID, localInput)
 	if err != nil && uncertainMutation(ctx, err) {
 		result, err = facade.reconcileCancel(ctx, operationID, localInput, err)
+	}
+	return nil, result, err
+}
+
+func (facade *Facade) resumeTask(
+	ctx context.Context,
+	request *mcp.CallToolRequest,
+	input TaskInput,
+) (*mcp.CallToolResult, localapi.TaskMutationResult, error) {
+	callContext, err := facade.authorize(request)
+	if err != nil {
+		return nil, localapi.TaskMutationResult{}, err
+	}
+	operationID := string(callContext.OperationID)
+	localInput := localapi.ResumeTaskInput{TaskHandle: input.TaskHandle}
+	result, err := facade.client.ResumeTask(ctx, operationID, localInput)
+	if err != nil && uncertainMutation(ctx, err) {
+		result, err = facade.reconcileResume(ctx, operationID, localInput, err)
 	}
 	return nil, result, err
 }

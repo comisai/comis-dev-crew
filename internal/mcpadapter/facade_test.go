@@ -382,7 +382,7 @@ func TestFacade_UncertainTerminalMutationsReconcileBeforeExactRetry(t *testing.T
 
 func assertToolCatalog(t *testing.T, tools []*mcp.Tool) {
 	t.Helper()
-	want := map[string]bool{ToolPrepareTask: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolPauseTask: false, ToolCancelTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
+	want := map[string]bool{ToolPrepareTask: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolPauseTask: false, ToolCancelTask: false, ToolResumeTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
 	if len(tools) != len(want) {
 		t.Fatalf("tool count = %d, want %d", len(tools), len(want))
 	}
@@ -456,6 +456,8 @@ type fakeClient struct {
 	profiles        application.WorkerProfileList
 	pauseResult     localapi.TaskMutationResult
 	cancelResult    localapi.TaskMutationResult
+	resumeResult    localapi.TaskMutationResult
+	resumeErrors    []error
 	cancelErrors    []error
 	pauseErrors     []error
 	prepareResults  []localapi.PrepareTaskResult
@@ -482,6 +484,23 @@ func (client *fakeClient) ReconcileTask(
 	err := client.reconcileErrors[0]
 	client.reconcileErrors = client.reconcileErrors[1:]
 	return client.reconcileResult, err
+}
+
+func (client *fakeClient) ResumeTask(
+	_ context.Context,
+	operationID string,
+	input localapi.ResumeTaskInput,
+) (localapi.TaskMutationResult, error) {
+	client.calls = append(client.calls, "resume:"+operationID+":"+input.TaskHandle)
+	if len(client.resumeErrors) == 0 {
+		return client.resumeResult, nil
+	}
+	failure := client.resumeErrors[0]
+	client.resumeErrors = client.resumeErrors[1:]
+	if failure == nil {
+		return client.resumeResult, nil
+	}
+	return localapi.TaskMutationResult{}, failure
 }
 
 func (client *fakeClient) CancelTask(

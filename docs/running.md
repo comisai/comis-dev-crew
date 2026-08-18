@@ -166,9 +166,10 @@ devcrew-mcp \
   --service-instance service-instance-devcrew
 ```
 
-The facade defines twelve tools: `prepare_task`, `reconcile_task`,
-`handback_task`, `cleanup_task`, `pause_task`, `cancel_task`, `list_tasks`,
-`get_task`, `explain_task`, `get_launch_plan`, `worker_profiles`, and `doctor`.
+The facade defines thirteen tools: `prepare_task`, `reconcile_task`,
+`handback_task`, `cleanup_task`, `pause_task`, `cancel_task`, `resume_task`,
+`list_tasks`, `get_task`, `explain_task`, `get_launch_plan`, `worker_profiles`,
+and `doctor`.
 `cancel_task` is destructive — it ends work an operator asked for and repeating
 it does not undo that — but it is not removal.
 `pause_task` is a non-destructive mutation: it preserves all work and asks the
@@ -296,6 +297,7 @@ devcrew [--socket PATH] task reconcile TASK --action validate-clean-candidate [-
 devcrew [--socket PATH] task handback TASK --action validate-developer-work [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task pause TASK [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task cancel TASK [--operation OPERATION] [--format json]
+devcrew [--socket PATH] task resume TASK [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task cleanup TASK [--operation OPERATION] [--format json]
 ```
 
@@ -306,6 +308,15 @@ worker's own paused report is what settles the state. That ordering is what
 makes the worktree safe to hand to a developer — a task marked paused while its
 worker kept committing would be changing under their editor. The request carries
 no instruction text and no interrupt, and a repeat replays rather than stacking.
+
+`task resume` returns one paused task to the worker already running it. It is
+refused when the worktree has uncommitted changes: the paused worker still holds
+a brief, a base revision and an evidence set describing the tree it stopped on,
+and none of them would notice a developer's edit, so resuming onto a changed
+tree would continue from a description of a tree that no longer exists. The
+refusal names the way out — `task handback --action validate-developer-work`,
+which captures the fresh head, invalidates the evidence the edit stales and
+revalidates. Resume selects no worker; choosing a different one is replacement.
 
 `task cancel` stops work on one task and preserves its worktree, artifacts, run
 binding and lease. It names no disposition: stopping and discarding are separate

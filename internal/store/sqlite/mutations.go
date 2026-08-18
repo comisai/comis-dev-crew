@@ -287,6 +287,7 @@ const (
 	commandAcknowledgeWorkerLaunch = "AcknowledgeWorkerLaunch"
 	commandPauseTask               = "PauseTask"
 	commandCancelTask              = "CancelTask"
+	commandResumeTask              = "ResumeTask"
 )
 
 func updateTaskState(ctx context.Context, transaction *sql.Tx, task domain.Task) error {

@@ -414,6 +414,15 @@ func (client *fakeClient) ReconcileTask(
 	return client.taskMutation, client.err
 }
 
+func (client *fakeClient) ResumeTask(
+	_ context.Context,
+	operationID string,
+	input localapi.ResumeTaskInput,
+) (localapi.TaskMutationResult, error) {
+	client.record(operationID, "resume:"+input.TaskHandle)
+	return client.taskMutation, client.err
+}
+
 func (client *fakeClient) CancelTask(
 	_ context.Context,
 	operationID string,

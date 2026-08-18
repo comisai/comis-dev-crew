@@ -63,6 +63,7 @@ product does, and this list is not permission to guess a name.
 | Start work | `prepare_task` | Creates a prepared task and worktree |
 | Settle a worker safely | `pause_task` | Asks the worker to stop at a safe boundary; changes no state itself |
 | Stop work, keep it | `cancel_task` | Stops the task; worktree and artifacts survive |
+| Continue a paused task | `resume_task` | Returns it to the same worker; refused on a dirty worktree |
 | Recover an exited worker | `reconcile_task` | Validates one exact clean candidate |
 | Resume after a developer edit | `handback_task` | Revalidates the developer's work |
 | Retire a task | `cleanup_task` | Evidence-gated release and removal |

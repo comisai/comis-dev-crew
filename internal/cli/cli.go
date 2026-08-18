@@ -37,6 +37,7 @@ Commands:
   task handback TASK --action validate-developer-work [--operation OPERATION] [--format json]
   task pause TASK [--operation OPERATION] [--format json]
   task cancel TASK [--operation OPERATION] [--format json]
+  task resume TASK [--operation OPERATION] [--format json]
   task cleanup TASK [--operation OPERATION] [--format json]
 
 Global options:
@@ -53,6 +54,7 @@ type ReadClient interface {
 	ListWorkerProfiles(context.Context, string) (application.WorkerProfileList, error)
 	PauseTask(context.Context, string, localapi.PauseTaskInput) (localapi.TaskMutationResult, error)
 	CancelTask(context.Context, string, localapi.CancelTaskInput) (localapi.TaskMutationResult, error)
+	ResumeTask(context.Context, string, localapi.ResumeTaskInput) (localapi.TaskMutationResult, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
 	GetLaunchPlan(context.Context, string, string) (application.LaunchPlan, error)
@@ -91,6 +93,7 @@ const (
 	commandCleanupTask
 	commandPauseTask
 	commandCancelTask
+	commandResumeTask
 )
 
 type parsedCommand struct {
@@ -228,6 +231,9 @@ func parseTaskCommand(command parsedCommand, args []string) (parsedCommand, erro
 	}
 	if len(args) > 0 && args[0] == "cancel" {
 		return parseCancelTaskCommand(command, args[1:])
+	}
+	if len(args) > 0 && args[0] == "resume" {
+		return parseResumeTaskCommand(command, args[1:])
 	}
 	if len(args) < 2 {
 		return parsedCommand{}, errors.New("task subcommand and reference are required")
@@ -383,6 +389,8 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 		return client.PauseTask(ctx, operationID, localapi.PauseTaskInput{TaskHandle: command.reference})
 	case commandCancelTask:
 		return client.CancelTask(ctx, operationID, localapi.CancelTaskInput{TaskHandle: command.reference})
+	case commandResumeTask:
+		return client.ResumeTask(ctx, operationID, localapi.ResumeTaskInput{TaskHandle: command.reference})
 	default:
 		return nil, errors.New("unknown parsed command")
 	}
