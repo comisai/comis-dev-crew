@@ -133,6 +133,17 @@ func (facade *Facade) reconcileCleanup(
 	)
 }
 
+func (facade *Facade) reconcileDiscard(
+	ctx context.Context,
+	operationID string,
+	input localapi.DiscardTaskInput,
+	original error,
+) (localapi.TaskMutationResult, error) {
+	return reconcileTaskMutation(
+		facade, ctx, operationID, "DiscardTask", input, facade.client.DiscardTask, original,
+	)
+}
+
 func (facade *Facade) reconcilePause(
 	ctx context.Context,
 	operationID string,

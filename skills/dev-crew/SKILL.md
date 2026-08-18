@@ -71,6 +71,7 @@ product does, and this list is not permission to guess a name.
 | Recover an exited worker | `reconcile_task` | Validates one exact clean candidate |
 | Resume after a developer edit | `handback_task` | Revalidates the developer's work |
 | Retire a task | `cleanup_task` | Evidence-gated release and removal |
+| Remove work that never delivered | `discard_task` | Permanently removes the worktree; requires an explicit acknowledgement |
 
 Read each tool's own side-effect metadata before calling it. Destructive tools
 require the normal approval; never describe an approval as a formality, and

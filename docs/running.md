@@ -166,14 +166,19 @@ devcrew-mcp \
   --service-instance service-instance-devcrew
 ```
 
-The facade defines seventeen tools: `prepare_task`, `promote_scout`,
-`reconcile_task`, `handback_task`, `cleanup_task`, `pause_task`, `cancel_task`,
-`resume_task`, `replace_worker`, `steer_task`, `verify_task`, `list_tasks`,
-`get_task`, `explain_task`, `get_launch_plan`, `worker_profiles`, and `doctor`. `promote_scout` returns the
+The facade defines eighteen tools: `prepare_task`, `promote_scout`,
+`reconcile_task`, `handback_task`, `cleanup_task`, `discard_task`, `pause_task`,
+`cancel_task`, `resume_task`, `replace_worker`, `steer_task`, `verify_task`,
+`list_tasks`, `get_task`, `explain_task`, `get_launch_plan`, `worker_profiles`,
+and `doctor`. `promote_scout` returns the
 same private managed-run registration metadata preparation does, because it
 mints a task the same way.
 `cancel_task` is destructive — it ends work an operator asked for and repeating
 it does not undo that — but it is not removal.
+`discard_task` is the removal a cancelled task has no other route to: cleanup
+requires delivery evidence that a task which never delivered will never have.
+It removes uncommitted work permanently and takes the operator's explicit
+`acknowledged` argument, which is the only gate it has.
 `pause_task` is a non-destructive mutation: it preserves all work and asks the
 worker to settle, so it is not gated behind the confirmation that guards
 cleanup. `worker_profiles` reports the reviewed dispatch
