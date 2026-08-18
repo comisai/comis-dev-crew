@@ -523,6 +523,7 @@ type mutationStore struct {
 	pauseRequest  TaskPauseRequestMutation
 	cancelTask    TaskCancelMutation
 	verifyTask    TaskVerifyMutation
+	steerTask     TaskSteerMutation
 	prepareCalls  int
 	replayResult  MutationResult
 	replayFound   bool
@@ -616,6 +617,17 @@ func testWorkspacePreparer() *workspacePreparer {
 }
 
 // Cancellation joins the same durable mutation surface; the double accepts it.
+func (store *mutationStore) CommitTaskSteer(
+	_ context.Context,
+	mutation TaskSteerMutation,
+) (MutationResult, error) {
+	store.steerTask = mutation
+	return MutationResult{
+		Task:      domain.Task{Handle: mutation.TaskHandle, State: domain.TaskWorking},
+		Operation: domain.OperationRecord{ID: mutation.OperationID},
+	}, nil
+}
+
 func (store *mutationStore) CommitTaskVerify(
 	_ context.Context,
 	mutation TaskVerifyMutation,

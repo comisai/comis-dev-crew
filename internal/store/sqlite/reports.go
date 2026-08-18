@@ -69,11 +69,16 @@ func (store *Store) CommitReport(ctx context.Context, mutation application.Repor
 	if err != nil {
 		return domain.ReportReceipt{}, err
 	}
+	instruction, err := consumeSteeringInstruction(ctx, transaction, task.Handle, formatTime(mutation.AcceptedAt))
+	if err != nil {
+		return domain.ReportReceipt{}, err
+	}
 	if err := transaction.Commit(); err != nil {
 		return domain.ReportReceipt{}, fmt.Errorf("commit report mutation: %w", err)
 	}
 	receipt := reportReceipt(accepted)
 	receipt.PauseRequested = pauseRequested
+	receipt.Instruction = instruction
 	return receipt, nil
 }
 

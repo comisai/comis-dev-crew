@@ -414,6 +414,15 @@ func (client *fakeClient) ReconcileTask(
 	return client.taskMutation, client.err
 }
 
+func (client *fakeClient) SteerTask(
+	_ context.Context,
+	operationID string,
+	input localapi.SteerTaskInput,
+) (localapi.TaskMutationResult, error) {
+	client.record(operationID, "steer:"+input.TaskHandle+":"+input.Instruction)
+	return client.taskMutation, client.err
+}
+
 func (client *fakeClient) ReplaceWorker(
 	_ context.Context,
 	operationID string,

@@ -60,13 +60,14 @@ const (
 	MethodVerifyTask     Method = "VerifyTask"
 	MethodPromoteScout   Method = "PromoteScout"
 	MethodReplaceWorker  Method = "ReplaceWorker"
+	MethodSteerTask      Method = "SteerTask"
 )
 
 func (method Method) valid() bool {
 	switch method {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
 		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
-		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker:
+		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask:
 		return true
 	default:
 		return false
@@ -86,7 +87,7 @@ const (
 func (method Method) SideEffect() SideEffectClass {
 	switch method {
 	case MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
-		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker:
+		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask:
 		return SideEffectMutate
 	default:
 		return SideEffectRead
@@ -137,6 +138,7 @@ type TaskMutations interface {
 	PrepareTask(context.Context, application.PrepareTaskCommand) (application.MutationResult, error)
 	PauseTask(context.Context, application.PauseTaskCommand) (application.MutationResult, error)
 	VerifyTask(context.Context, application.VerifyTaskCommand) (application.MutationResult, error)
+	SteerTask(context.Context, application.SteerTaskCommand) (application.MutationResult, error)
 	PromoteScout(context.Context, application.PromoteScoutCommand) (application.MutationResult, error)
 	CancelTask(context.Context, application.CancelTaskCommand) (application.MutationResult, error)
 }
@@ -186,6 +188,12 @@ type ReconcileTaskInput struct {
 // carries no instruction and no interrupt: pause asks the worker to stop
 // cleanly, and anything more is a different command.
 type PauseTaskInput = taskHandleMutationInput
+
+// SteerTaskInput carries one bounded instruction for a task's current worker.
+type SteerTaskInput struct {
+	TaskHandle  string `json:"taskHandle"`
+	Instruction string `json:"instruction"`
+}
 
 // ReplaceWorkerInput names the task and the reviewed profile that takes over.
 // It carries no disposition: replacement preserves the work, and stopping or

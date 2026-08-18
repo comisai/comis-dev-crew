@@ -359,3 +359,50 @@ func parseReplaceWorkerCommand(command parsedCommand, args []string) (parsedComm
 	}
 	return command, nil
 }
+
+// parseSteerTaskCommand reads the task and one bounded instruction.
+//
+// The instruction is typed once, on the command line, and the service stores it
+// once. There is no retry flag: an uncertain send is reconciled against its
+// operation rather than re-typed, because re-sending would queue the same words
+// twice and the worker would act on them twice.
+func parseSteerTaskCommand(command parsedCommand, args []string) (parsedCommand, error) {
+	if len(args) < 1 || domain.ValidateTaskHandle(args[0]) != nil {
+		return parsedCommand{}, errors.New("steer task reference is required")
+	}
+	command.kind = commandSteerTask
+	command.reference = args[0]
+	command.format = "json"
+	args = args[1:]
+	seen := make(map[string]bool)
+	for len(args) > 0 {
+		if len(args) < 2 || seen[args[0]] {
+			return parsedCommand{}, errors.New("invalid steer arguments")
+		}
+		name, value := args[0], args[1]
+		seen[name] = true
+		switch name {
+		case "--instruction":
+			if domain.ValidateSteeringInstruction(value) != nil {
+				return parsedCommand{}, errors.New("invalid steering instruction")
+			}
+			command.instruction = value
+		case "--operation":
+			if domain.ValidateOperationID(value) != nil {
+				return parsedCommand{}, errors.New("invalid steer operation")
+			}
+			command.operationID = value
+		case "--format":
+			if value != "json" {
+				return parsedCommand{}, errors.New("steer format must be JSON")
+			}
+		default:
+			return parsedCommand{}, errors.New("unknown steer option")
+		}
+		args = args[2:]
+	}
+	if command.instruction == "" {
+		return parsedCommand{}, errors.New("steering instruction is required")
+	}
+	return command, nil
+}

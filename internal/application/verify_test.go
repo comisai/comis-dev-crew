@@ -113,3 +113,45 @@ func TestMutations_CancelTask_RefusesForgedIdentityAndDeadContexts(t *testing.T)
 		t.Error("CancelTask(nil) error = nil")
 	}
 }
+
+// The instruction is validated before anything durable happens, so text that
+// could smuggle terminal escape sequences never reaches storage.
+func TestMutations_SteerTask_RefusesAnInstructionThatIsNotPlainText(t *testing.T) {
+	store := &mutationStore{}
+	mutations := newTestMutations(t, store)
+
+	for name, instruction := range map[string]string{
+		"empty":           "",
+		"escape sequence": "clear \x1b[2J now",
+		"newline":         "one\ntwo",
+	} {
+		if _, err := mutations.SteerTask(context.Background(), SteerTaskCommand{
+			OperationID: "operation-steer-0001", TaskHandle: "task-0001", Instruction: instruction,
+		}); err == nil {
+			t.Errorf("%s: expected the steer to be refused", name)
+		}
+		if store.steerTask.OperationID != "" {
+			t.Errorf("%s: a refused steer must not reach the durable layer", name)
+		}
+	}
+}
+
+func TestMutations_SteerTask_CarriesTheInstructionToTheDurableLayer(t *testing.T) {
+	store := &mutationStore{}
+	mutations := newTestMutations(t, store)
+
+	result, err := mutations.SteerTask(context.Background(), SteerTaskCommand{
+		OperationID: "operation-steer-0001", TaskHandle: "task-0001",
+		Instruction: "Prefer the existing parser.",
+	})
+	if err != nil {
+		t.Fatalf("SteerTask() error = %v", err)
+	}
+	if store.steerTask.Instruction != "Prefer the existing parser." {
+		t.Errorf("steer mutation = %+v", store.steerTask)
+	}
+	// Steering says something to a worker that is still working.
+	if result.Task.State != domain.TaskWorking {
+		t.Errorf("steer result state = %q", result.Task.State)
+	}
+}

@@ -164,3 +164,64 @@ func TestLocalAPI_PromotionRefusesAForgedPayload(t *testing.T) {
 		t.Fatalf("forged promotion payload outcome = %+v, want a rejection", outcome)
 	}
 }
+
+// Steering carries content, so the transport must refuse text that could
+// smuggle terminal escape sequences before the handler ever runs.
+func TestLocalAPI_SteerReachesTheCanonicalCommandAndRefusesUnsafeText(t *testing.T) {
+	mutations := &apiMutations{steerResult: application.MutationResult{
+		Task: domain.Task{Handle: "task-0001", State: domain.TaskWorking, StateVersion: 19},
+		Operation: domain.OperationRecord{
+			ID: "operation-steer-0001", Command: "SteerTask", Status: domain.OperationCompleted,
+			ResultRef: "task-0001", StateVersion: 19,
+		},
+	}}
+	handler, err := NewHandler(HandlerConfig{
+		Queries: &apiQueries{}, Mutations: mutations,
+		ServiceInstanceID: "service-instance_a", Clock: time.Now,
+	})
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	socketPath := startHandlerServer(t, handler, CallerMCPFacade)
+	client, err := NewClient(socketPath, time.Second)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	if _, err := client.SteerTask(context.Background(), "operation-steer-0001", SteerTaskInput{
+		TaskHandle: "task-0001", Instruction: "Prefer the existing parser.",
+	}); err != nil {
+		t.Fatalf("SteerTask() error = %v", err)
+	}
+	if mutations.steerCommand.Instruction != "Prefer the existing parser." {
+		t.Fatalf("steer command = %+v", mutations.steerCommand)
+	}
+
+	outcome := handler.handle(context.Background(), CallerMCPFacade, []byte(
+		`{"protocolVersion":"`+ProtocolVersion+`","operationId":"operation-steer-0002",`+
+			`"method":"SteerTask","payload":{"taskHandle":"task-0001","instruction":"a",`+
+			`"retries":3}}`,
+	))
+	if outcome.Status != domain.OperationRejected {
+		t.Fatalf("forged steer payload outcome = %+v, want a rejection", outcome)
+	}
+}
+
+func TestLocalAPI_SteerReportsAnAbsentMutationSurfaceAsUnavailable(t *testing.T) {
+	handler, err := NewHandler(HandlerConfig{
+		Queries: &apiQueries{}, ServiceInstanceID: "service-instance_a", Clock: time.Now,
+	})
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	outcome := handler.handle(context.Background(), CallerMCPFacade, []byte(
+		`{"protocolVersion":"`+ProtocolVersion+`","operationId":"operation-steer-0001",`+
+			`"method":"SteerTask","payload":{"taskHandle":"task-0001","instruction":"Do it."}}`,
+	))
+
+	if outcome.Status != domain.OperationRejected || outcome.Error == nil ||
+		outcome.Error.Code != domain.ErrorUnavailable {
+		t.Fatalf("absent mutation surface outcome = %+v", outcome)
+	}
+}

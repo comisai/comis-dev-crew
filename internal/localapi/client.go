@@ -165,6 +165,13 @@ func (client *Client) ReplaceWorker(ctx context.Context, operationID string, inp
 	return result, err
 }
 
+// SteerTask sends one bounded instruction to a task's current worker.
+func (client *Client) SteerTask(ctx context.Context, operationID string, input SteerTaskInput) (TaskMutationResult, error) {
+	var result TaskMutationResult
+	err := client.call(ctx, operationID, MethodSteerTask, input, &result)
+	return result, err
+}
+
 func (client *Client) call(ctx context.Context, operationID string, method Method, payload any, result any) error {
 	if ctx == nil {
 		return errors.New("call local API: context is required")

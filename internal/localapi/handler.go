@@ -220,6 +220,19 @@ func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 			WorkerProfileID: input.WorkerProfileID,
 		})
 		return handler.taskMutationOutcome(request.OperationID, MethodReplaceWorker, result, err)
+	case MethodSteerTask:
+		var input SteerTaskInput
+		if err := decodeObject(request.Payload, &input); err != nil {
+			return invalidPayload(request.OperationID, err)
+		}
+		if handler.mutations == nil {
+			return rejectedOutcome(request.OperationID, domain.ErrorUnavailable, true, "task mutation service is unavailable", "inspect service configuration", nil)
+		}
+		result, err := handler.mutations.SteerTask(ctx, application.SteerTaskCommand{
+			OperationID: request.OperationID, TaskHandle: input.TaskHandle,
+			Instruction: input.Instruction,
+		})
+		return handler.taskMutationOutcome(request.OperationID, MethodSteerTask, result, err)
 	case MethodCancelTask:
 		return handleTaskHandleMutation(ctx, handler, request, MethodCancelTask,
 			handler.mutations == nil, "task mutation service is unavailable",

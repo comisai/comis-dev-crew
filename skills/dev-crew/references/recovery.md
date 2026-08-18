@@ -37,6 +37,21 @@ Never add a worktree path, repository, branch, head, run, lease, terminal, or
 attachment field to the call. Those are derived and re-proved server-side, and a
 refused recovery must leave the task and worktree exactly as they were.
 
+## Steer
+
+`steer_task` sends one bounded instruction to a task's current worker. The
+worker reads it on its next report, so a successful call means the instruction
+is queued — not that the worker has seen it, and not that it has acted on it.
+Never report a steer as having changed anything.
+
+Say it once. Instructions queue in order rather than overwriting, so sending the
+same words again because you did not see the first call land means the worker
+hears them twice. An uncertain send is reconciled against its operation instead.
+
+The instruction is plain text: no control characters, no escape sequences, and
+bounded in length. If it is refused, rewrite it as plain prose rather than
+looking for a way around the check.
+
 ## Pause
 
 `pause_task` asks one task's worker to reach a safe boundary and stop. It takes

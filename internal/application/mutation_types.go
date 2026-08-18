@@ -262,6 +262,7 @@ type MutationStore interface {
 	CommitTaskPauseRequest(context.Context, TaskPauseRequestMutation) (MutationResult, error)
 	CommitTaskCancel(context.Context, TaskCancelMutation) (MutationResult, error)
 	CommitTaskVerify(context.Context, TaskVerifyMutation) (MutationResult, error)
+	CommitTaskSteer(context.Context, TaskSteerMutation) (MutationResult, error)
 	CommitTaskStart(context.Context, TaskStartMutation) (MutationResult, error)
 	CommitTerminalEvent(context.Context, TerminalEventMutation) (MutationResult, error)
 	CommitWorkerLaunchAcknowledgement(context.Context, WorkerLaunchAcknowledgementMutation) (MutationResult, error)

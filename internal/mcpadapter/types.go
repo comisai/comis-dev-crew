@@ -22,6 +22,7 @@ const (
 	ToolVerifyTask     = "verify_task"
 	ToolPromoteScout   = "promote_scout"
 	ToolReplaceWorker  = "replace_worker"
+	ToolSteerTask      = "steer_task"
 	ToolListTasks      = "list_tasks"
 	ToolWorkerProfiles = "worker_profiles"
 	ToolGetTask        = "get_task"
@@ -48,6 +49,7 @@ type Client interface {
 	VerifyTask(context.Context, string, localapi.VerifyTaskInput) (localapi.TaskMutationResult, error)
 	PromoteScout(context.Context, string, localapi.PromoteScoutInput) (localapi.PrepareTaskResult, error)
 	ReplaceWorker(context.Context, string, localapi.ReplaceWorkerInput) (localapi.TaskMutationResult, error)
+	SteerTask(context.Context, string, localapi.SteerTaskInput) (localapi.TaskMutationResult, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
 	GetLaunchPlan(context.Context, string, string) (application.LaunchPlan, error)
@@ -127,6 +129,12 @@ func (input PromoteScoutInput) local() localapi.PromoteScoutInput {
 		ValidationProfile:  input.ValidationProfile, DeliveryMode: input.DeliveryMode,
 		WorkerProfileID: input.WorkerProfileID,
 	}
+}
+
+// SteerTaskInput carries one bounded instruction for a task's current worker.
+type SteerTaskInput struct {
+	TaskHandle  string `json:"taskHandle" jsonschema:"opaque task handle"`
+	Instruction string `json:"instruction" jsonschema:"one bounded instruction for the worker; plain text, no control characters"`
 }
 
 // ReplaceWorkerInput names the task and the reviewed profile that takes over.

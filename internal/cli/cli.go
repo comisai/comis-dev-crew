@@ -41,6 +41,7 @@ Commands:
   task verify TASK [--operation OPERATION] [--format json]
   task promote SCOUT --input FILE|- [--operation OPERATION] [--format json]
   task replace TASK --worker PROFILE [--operation OPERATION] [--format json]
+  task steer TASK --instruction TEXT [--operation OPERATION] [--format json]
   task cleanup TASK [--operation OPERATION] [--format json]
 
 Global options:
@@ -61,6 +62,7 @@ type ReadClient interface {
 	VerifyTask(context.Context, string, localapi.VerifyTaskInput) (localapi.TaskMutationResult, error)
 	PromoteScout(context.Context, string, localapi.PromoteScoutInput) (localapi.PrepareTaskResult, error)
 	ReplaceWorker(context.Context, string, localapi.ReplaceWorkerInput) (localapi.TaskMutationResult, error)
+	SteerTask(context.Context, string, localapi.SteerTaskInput) (localapi.TaskMutationResult, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
 	GetLaunchPlan(context.Context, string, string) (application.LaunchPlan, error)
@@ -103,6 +105,7 @@ const (
 	commandVerifyTask
 	commandPromoteScout
 	commandReplaceWorker
+	commandSteerTask
 )
 
 type parsedCommand struct {
@@ -115,6 +118,7 @@ type parsedCommand struct {
 	prepareInput    *localapi.PrepareTaskInput
 	promoteInput    *localapi.PromoteScoutInput
 	workerProfileID string
+	instruction     string
 	reconcileAction application.ReconcileTaskAction
 	handbackAction  application.HandbackAction
 }
@@ -263,6 +267,9 @@ func parseTaskCommand(command parsedCommand, args []string) (parsedCommand, erro
 	if len(args) > 0 && args[0] == "replace" {
 		return parseReplaceWorkerCommand(command, args[1:])
 	}
+	if len(args) > 0 && args[0] == "steer" {
+		return parseSteerTaskCommand(command, args[1:])
+	}
 	if len(args) < 2 {
 		return parsedCommand{}, errors.New("task subcommand and reference are required")
 	}
@@ -400,61 +407,6 @@ func parseFormat(args []string, defaultFormat string, allowed ...string) (string
 		}
 	}
 	return "", errors.New("unsupported format")
-}
-
-func execute(ctx context.Context, client ReadClient, operationID string, command parsedCommand) (any, error) {
-	switch command.kind {
-	case commandServiceStatus, commandDoctor:
-		return client.Diagnose(ctx, operationID)
-	case commandFleet:
-		return client.Fleet(ctx, operationID)
-	case commandListTasks:
-		return client.ListTasks(ctx, operationID)
-	case commandWorkerProfiles:
-		return client.ListWorkerProfiles(ctx, operationID)
-	case commandShowTask:
-		return client.ShowTask(ctx, operationID, command.reference)
-	case commandExplainTask:
-		return client.ExplainTask(ctx, operationID, command.reference)
-	case commandGetLaunchPlan:
-		return client.GetLaunchPlan(ctx, operationID, command.reference)
-	case commandOperation:
-		return client.Operation(ctx, operationID, command.reference)
-	case commandPrepareTask:
-		if command.prepareInput == nil {
-			return nil, errors.New("prepare input is unavailable")
-		}
-		return client.PrepareTask(ctx, operationID, *command.prepareInput)
-	case commandPromoteScout:
-		if command.promoteInput == nil {
-			return nil, errors.New("promotion input is unavailable")
-		}
-		return client.PromoteScout(ctx, operationID, *command.promoteInput)
-	case commandReconcileTask:
-		return client.ReconcileTask(ctx, operationID, localapi.ReconcileTaskInput{
-			TaskHandle: command.reference, Action: command.reconcileAction,
-		})
-	case commandHandbackTask:
-		return client.HandbackTask(ctx, operationID, localapi.HandbackTaskInput{
-			TaskHandle: command.reference, Action: command.handbackAction,
-		})
-	case commandCleanupTask:
-		return client.CleanupTask(ctx, operationID, localapi.CleanupTaskInput{TaskHandle: command.reference})
-	case commandPauseTask:
-		return client.PauseTask(ctx, operationID, localapi.PauseTaskInput{TaskHandle: command.reference})
-	case commandCancelTask:
-		return client.CancelTask(ctx, operationID, localapi.CancelTaskInput{TaskHandle: command.reference})
-	case commandResumeTask:
-		return client.ResumeTask(ctx, operationID, localapi.ResumeTaskInput{TaskHandle: command.reference})
-	case commandVerifyTask:
-		return client.VerifyTask(ctx, operationID, localapi.VerifyTaskInput{TaskHandle: command.reference})
-	case commandReplaceWorker:
-		return client.ReplaceWorker(ctx, operationID, localapi.ReplaceWorkerInput{
-			TaskHandle: command.reference, WorkerProfileID: command.workerProfileID,
-		})
-	default:
-		return nil, errors.New("unknown parsed command")
-	}
 }
 
 func renderFailure(stderr io.Writer, err error) int {

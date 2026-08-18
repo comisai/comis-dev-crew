@@ -80,6 +80,11 @@ func (facade *Facade) registerTools() {
 		false,
 	), facade.replaceWorker)
 	mcp.AddTool(facade.server, tool(
+		ToolSteerTask,
+		"Send one bounded instruction to a task's current worker. The worker reads it on its next report; the task does not change state.",
+		false,
+	), facade.steerTask)
+	mcp.AddTool(facade.server, tool(
 		ToolPauseTask,
 		"Ask one task's worker to reach a safe boundary and stop. It carries no instruction and no interrupt, and does not itself pause the task: the worker settles and reports.",
 		false,
@@ -263,6 +268,30 @@ func (facade *Facade) replaceWorker(
 		result, err = reconcileTaskMutation(
 			facade, ctx, operationID, "ReplaceWorker", localInput,
 			facade.client.ReplaceWorker, err,
+		)
+	}
+	return nil, result, err
+}
+
+func (facade *Facade) steerTask(
+	ctx context.Context,
+	request *mcp.CallToolRequest,
+	input SteerTaskInput,
+) (*mcp.CallToolResult, localapi.TaskMutationResult, error) {
+	callContext, err := facade.authorize(request)
+	if err != nil {
+		return nil, localapi.TaskMutationResult{}, err
+	}
+	operationID := string(callContext.OperationID)
+	localInput := localapi.SteerTaskInput{
+		TaskHandle: input.TaskHandle, Instruction: input.Instruction,
+	}
+	result, err := facade.client.SteerTask(ctx, operationID, localInput)
+	if err != nil && uncertainMutation(ctx, err) {
+		// An uncertain steer is reconciled, never re-sent: re-sending would queue
+		// the same instruction twice and the worker would act on it twice.
+		result, err = reconcileTaskMutation(
+			facade, ctx, operationID, "SteerTask", localInput, facade.client.SteerTask, err,
 		)
 	}
 	return nil, result, err

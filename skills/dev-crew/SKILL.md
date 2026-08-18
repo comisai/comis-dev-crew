@@ -67,6 +67,7 @@ product does, and this list is not permission to guess a name.
 | Validate now | `verify_task` | Opens validation against the reviewed profile; reports no verdict |
 | Act on a scout's findings | `promote_scout` | Mints a new ship task; the scout and its evidence are preserved |
 | Swap a wedged worker | `replace_worker` | Readies the same work for a different reviewed worker |
+| Tell a worker something | `steer_task` | Queues one instruction it reads on its next report |
 | Recover an exited worker | `reconcile_task` | Validates one exact clean candidate |
 | Resume after a developer edit | `handback_task` | Revalidates the developer's work |
 | Retire a task | `cleanup_task` | Evidence-gated release and removal |

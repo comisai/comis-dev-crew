@@ -101,6 +101,12 @@ type ReportReceipt struct {
 	// pushed into the worker's terminal: a request the worker pulls at a moment
 	// it chose cannot land mid-edit, and needs no keystroke path to deliver.
 	PauseRequested bool
+	// Instruction is one operator steering instruction the worker has not seen
+	// yet, empty when there is none. It rides the receipt for the same reason a
+	// pause request does: the worker reads it at a moment it chose, so an
+	// instruction cannot land in the middle of an edit and needs no keystroke
+	// path to deliver.
+	Instruction string
 }
 
 // AcceptedReport is the exact durable sparse-report evidence joined to the

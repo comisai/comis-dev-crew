@@ -20,16 +20,19 @@ type apiMutations struct {
 	pauseCommand   application.PauseTaskCommand
 	cancelCommand  application.CancelTaskCommand
 	verifyCommand  application.VerifyTaskCommand
+	steerCommand   application.SteerTaskCommand
 	promoteCommand application.PromoteScoutCommand
 	result         application.MutationResult
 	pauseResult    application.MutationResult
 	cancelResult   application.MutationResult
 	verifyResult   application.MutationResult
+	steerResult    application.MutationResult
 	promoteResult  application.MutationResult
 	err            error
 	pauseErr       error
 	cancelErr      error
 	verifyErr      error
+	steerErr       error
 	promoteErr     error
 }
 
@@ -127,6 +130,14 @@ func (mutations *apiMutations) PromoteScout(
 ) (application.MutationResult, error) {
 	mutations.promoteCommand = command
 	return mutations.promoteResult, mutations.promoteErr
+}
+
+func (mutations *apiMutations) SteerTask(
+	_ context.Context,
+	command application.SteerTaskCommand,
+) (application.MutationResult, error) {
+	mutations.steerCommand = command
+	return mutations.steerResult, mutations.steerErr
 }
 
 func (mutations *apiMutations) VerifyTask(

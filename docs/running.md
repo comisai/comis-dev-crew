@@ -166,10 +166,10 @@ devcrew-mcp \
   --service-instance service-instance-devcrew
 ```
 
-The facade defines sixteen tools: `prepare_task`, `promote_scout`,
+The facade defines seventeen tools: `prepare_task`, `promote_scout`,
 `reconcile_task`, `handback_task`, `cleanup_task`, `pause_task`, `cancel_task`,
-`resume_task`, `replace_worker`, `verify_task`, `list_tasks`, `get_task`,
-`explain_task`, `get_launch_plan`, `worker_profiles`, and `doctor`. `promote_scout` returns the
+`resume_task`, `replace_worker`, `steer_task`, `verify_task`, `list_tasks`,
+`get_task`, `explain_task`, `get_launch_plan`, `worker_profiles`, and `doctor`. `promote_scout` returns the
 same private managed-run registration metadata preparation does, because it
 mints a task the same way.
 `cancel_task` is destructive — it ends work an operator asked for and repeating
@@ -303,6 +303,7 @@ devcrew [--socket PATH] task resume TASK [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task verify TASK [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task promote SCOUT --input FILE|- [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task replace TASK --worker PROFILE [--operation OPERATION] [--format json]
+devcrew [--socket PATH] task steer TASK --instruction TEXT [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task cleanup TASK [--operation OPERATION] [--format json]
 ```
 
@@ -313,6 +314,21 @@ worker's own paused report is what settles the state. That ordering is what
 makes the worktree safe to hand to a developer — a task marked paused while its
 worker kept committing would be changing under their editor. The request carries
 no instruction text and no interrupt, and a repeat replays rather than stacking.
+
+`task steer` sends one bounded instruction to a task's current worker. The
+worker reads it on its next report receipt, so an instruction arrives at a
+boundary the worker chose rather than being injected into a terminal — there is
+no keystroke path to get wrong, and nothing can land mid-edit.
+
+The instruction is stored once and delivered once. Instructions queue in the
+order they were sent rather than overwriting one another, because two
+instructions are two things the operator said. A repeat of the same operation
+replays instead of queueing the words twice, and an uncertain send is reconciled
+against its operation for the same reason. Control characters are refused: the
+instruction is text a human wrote, not a command sequence, and must not smuggle
+terminal escapes into whatever renders it later. Steering does not move the
+task — a state change would claim the instruction had an effect nobody has yet
+observed.
 
 `task replace` hands one paused task to a different reviewed worker. The
 worktree, the run binding and the lease are all preserved — replacement is for

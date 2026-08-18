@@ -382,7 +382,7 @@ func TestFacade_UncertainTerminalMutationsReconcileBeforeExactRetry(t *testing.T
 
 func assertToolCatalog(t *testing.T, tools []*mcp.Tool) {
 	t.Helper()
-	want := map[string]bool{ToolPrepareTask: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolPauseTask: false, ToolCancelTask: false, ToolResumeTask: false, ToolVerifyTask: false, ToolPromoteScout: false, ToolReplaceWorker: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
+	want := map[string]bool{ToolPrepareTask: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolPauseTask: false, ToolCancelTask: false, ToolResumeTask: false, ToolVerifyTask: false, ToolPromoteScout: false, ToolReplaceWorker: false, ToolSteerTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
 	if len(tools) != len(want) {
 		t.Fatalf("tool count = %d, want %d", len(tools), len(want))
 	}
@@ -460,6 +460,8 @@ type fakeClient struct {
 	verifyResult    localapi.TaskMutationResult
 	promoteResult   localapi.PrepareTaskResult
 	replaceResult   localapi.TaskMutationResult
+	steerResult     localapi.TaskMutationResult
+	steerErrors     []error
 	replaceErrors   []error
 	promoteErrors   []error
 	verifyErrors    []error
@@ -490,6 +492,23 @@ func (client *fakeClient) ReconcileTask(
 	err := client.reconcileErrors[0]
 	client.reconcileErrors = client.reconcileErrors[1:]
 	return client.reconcileResult, err
+}
+
+func (client *fakeClient) SteerTask(
+	_ context.Context,
+	operationID string,
+	input localapi.SteerTaskInput,
+) (localapi.TaskMutationResult, error) {
+	client.calls = append(client.calls, "steer:"+operationID+":"+input.TaskHandle+":"+input.Instruction)
+	if len(client.steerErrors) == 0 {
+		return client.steerResult, nil
+	}
+	failure := client.steerErrors[0]
+	client.steerErrors = client.steerErrors[1:]
+	if failure == nil {
+		return client.steerResult, nil
+	}
+	return localapi.TaskMutationResult{}, failure
 }
 
 func (client *fakeClient) ReplaceWorker(

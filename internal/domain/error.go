@@ -80,6 +80,14 @@ func (failure *ValidationError) Error() string {
 	return fmt.Sprintf("invalid %s: %s", failure.Field, failure.Reason)
 }
 
+// ValidateSteeringInstruction bounds one operator instruction bound for a
+// worker. It rejects control characters, which is what keeps an instruction
+// from carrying terminal escape sequences into whatever renders it — the
+// instruction is text a human wrote, not a command sequence.
+func ValidateSteeringInstruction(value string) error {
+	return validateBoundedSafeText("instruction", value, 2048)
+}
+
 func validateSafeText(field, value string) error {
 	return validateBoundedSafeText(field, value, 512)
 }

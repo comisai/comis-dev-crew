@@ -84,3 +84,24 @@ type TaskVerifyMutation struct {
 	SubjectDigest string
 	At            time.Time
 }
+
+// SteerTaskCommand sends one bounded instruction to a task's current worker.
+//
+// It is the one command in this file that carries content, and deliberately the
+// only one: an operator who needs to say something says it here, where the text
+// is bounded, stored once and delivered once. Pause and cancel carry none, so
+// neither can be mistaken for a way to talk to a worker.
+type SteerTaskCommand struct {
+	OperationID string `json:"operationId"`
+	TaskHandle  string `json:"taskHandle"`
+	Instruction string `json:"instruction"`
+}
+
+// TaskSteerMutation is the durable half of one steering instruction.
+type TaskSteerMutation struct {
+	TaskHandle    string
+	OperationID   string
+	SubjectDigest string
+	Instruction   string
+	At            time.Time
+}

@@ -111,10 +111,37 @@ func (mutations *Mutations) VerifyTask(
 	)
 }
 
+// SteerTask sends one bounded instruction to a task's current worker.
+//
+// The instruction is validated before anything durable happens: it is bounded
+// and free of control characters, so it cannot carry terminal escape sequences
+// into whatever renders it later. It does not move the task — steering says
+// something to a worker that is still working, and a state change would claim
+// the instruction had an effect nobody has observed.
+func (mutations *Mutations) SteerTask(
+	ctx context.Context,
+	command SteerTaskCommand,
+) (MutationResult, error) {
+	if err := domain.ValidateSteeringInstruction(command.Instruction); err != nil {
+		return MutationResult{}, mutationValidationFailure("steering instruction is invalid")
+	}
+	return taskHandleMutation(
+		mutations, ctx, command.OperationID, command.TaskHandle, commandSteerTaskName, command,
+		func(ctx context.Context, subjectDigest, taskHandle string) (MutationResult, error) {
+			return mutations.store.CommitTaskSteer(ctx, TaskSteerMutation{
+				TaskHandle: taskHandle, OperationID: command.OperationID,
+				SubjectDigest: subjectDigest, Instruction: command.Instruction,
+				At: mutations.clock(),
+			})
+		},
+	)
+}
+
 // The command names are shared with the durable layer's replay index; a mismatch
 // would make a repeated command commit twice rather than replay.
 const (
 	commandPauseTaskName  = "PauseTask"
 	commandCancelTaskName = "CancelTask"
 	commandVerifyTaskName = "VerifyTask"
+	commandSteerTaskName  = "SteerTask"
 )
