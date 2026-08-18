@@ -14,7 +14,8 @@ import (
 const defaultReconcileTimeout = 2 * time.Second
 const maximumReconcileTimeout = 10 * time.Second
 
-// New creates the exact eight-tool official-SDK facade.
+// New creates the official-SDK facade over the durable task-control surface;
+// registerTools pins its exact tool set and assertToolCatalog guards it.
 func New(config Config) (*Facade, error) {
 	if config.Client == nil || config.NewOperationID == nil {
 		return nil, errors.New("create MCP facade: local client and operation source are required")

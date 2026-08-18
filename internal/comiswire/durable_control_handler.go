@@ -138,7 +138,7 @@ func (handler *DurableControlHandler) Cancel(ctx context.Context, params CancelR
 	}, nil
 }
 
-// Abandon closes the exact preparation// Abandon closes the exact preparation and returns its fixed terminal mapping.
+// Abandon closes the exact preparation and returns its fixed terminal mapping.
 func (handler *DurableControlHandler) Abandon(ctx context.Context, params AbandonRequestParams) (AbandonResponseResult, error) {
 	result, err := handler.mutations.AbandonManagedRun(ctx, application.AbandonManagedRunCommand{
 		OperationID: string(params.OperationID), ServiceInstanceID: handler.serviceInstanceID,

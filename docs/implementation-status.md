@@ -7,8 +7,10 @@ It is maintained alongside the behavior it describes.
 ## Summary
 
 The service owns durable SQLite state and a strict owner-only local API. The
-operator CLI provides service, fleet, task, operation, reconciliation, handback, and cleanup
-views and commands. The
+operator CLI provides service, fleet, task, operation, and worker-profile views
+alongside the task lifecycle commands: prepare, reconcile, handback, cleanup, and
+the intervention set — pause, resume, cancel, verify, promote, replace, steer,
+and the acknowledged operator-only discard. The
 protocol foundation pins the 30-artifact Comis capability-service contract at
 source commit `46bea003df4f28422dcf54a7a42a81e107d2b3c5` and bundle digest
 `86f5f5eb3d8147ccf85200adb475ccfecdbe28f6acdeb5446b8b8a71edfa9b33`, and generates
@@ -235,9 +237,12 @@ redirect the protected attachment, or advance task state.
 
 ## Local client and MCP adapter
 
-The typed local client and strict handler expose `PrepareTask`, `ReconcileTask`,
-`HandbackTask`, and `CleanupTask` as canonical mutations. Preparation contains
-only task-contract fields: the
+The typed local client and strict handler expose the canonical task mutations:
+preparation, reconciliation, handback, and cleanup, alongside the on-request
+lifecycle and intervention set — pause, resume, cancel, verify, promote, replace,
+steer, and the operator-only discard. Each is idempotent under its stable
+operation ID and reconciles rather than re-sends an uncertain outcome.
+Preparation contains only task-contract fields: the
 stable operation ID comes from the request envelope and the configured service
 instance comes from endpoint composition. The result classifies the operation as
 `mutate` and carries the private durable registration for the MCP adapter.
@@ -259,9 +264,10 @@ normalized task, operation, state version, and `mutate` classification across al
 three paths. Repeated calls create one task, and an altered stable operation
 remains the same non-retryable `conflict`. List, get, explain, and launch plan
 return identical versioned projections through all adapters and retain their
-`read` classification. The official-SDK facade exposes eight tools;
-`reconcile_task` is non-read-only, idempotent, closed-world, and uses the same
-stable result and side-effect semantics as the CLI and typed local client.
+`read` classification. The official-SDK facade exposes the same task-control
+surface as the CLI and typed local client; `reconcile_task` and the other
+non-read-only tools are idempotent, closed-world, and use the same stable result
+and side-effect semantics across all three paths.
 
 A tagged integration test builds and kills the real stdio `devcrew-mcp` process,
 replaces it, and proves the prepared task, completed operation, exact private
