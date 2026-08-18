@@ -168,17 +168,19 @@ func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 		})
 		return handler.taskMutationOutcome(request.OperationID, MethodHandbackTask, result, err)
 	case MethodPauseTask:
-		var input PauseTaskInput
-		if err := decodeObject(request.Payload, &input); err != nil {
-			return invalidPayload(request.OperationID, err)
-		}
-		if handler.mutations == nil {
-			return rejectedOutcome(request.OperationID, domain.ErrorUnavailable, true, "task mutation service is unavailable", "inspect service configuration", nil)
-		}
-		result, err := handler.mutations.PauseTask(ctx, application.PauseTaskCommand{
-			OperationID: request.OperationID, TaskHandle: input.TaskHandle,
-		})
-		return handler.taskMutationOutcome(request.OperationID, MethodPauseTask, result, err)
+		return handleTaskHandleMutation(ctx, handler, request, MethodPauseTask,
+			func(ctx context.Context, taskHandle string) (application.MutationResult, error) {
+				return handler.mutations.PauseTask(ctx, application.PauseTaskCommand{
+					OperationID: request.OperationID, TaskHandle: taskHandle,
+				})
+			})
+	case MethodCancelTask:
+		return handleTaskHandleMutation(ctx, handler, request, MethodCancelTask,
+			func(ctx context.Context, taskHandle string) (application.MutationResult, error) {
+				return handler.mutations.CancelTask(ctx, application.CancelTaskCommand{
+					OperationID: request.OperationID, TaskHandle: taskHandle,
+				})
+			})
 	case MethodCleanupTask:
 		var input CleanupTaskInput
 		if err := decodeObject(request.Payload, &input); err != nil {
@@ -307,4 +309,33 @@ func rejectedOutcome(operationID string, code domain.ErrorCode, retryable bool, 
 		Status:          domain.OperationRejected,
 		Error:           &WireError{Code: code, Message: message, Retryable: retryable, Hint: hint},
 	}
+}
+
+// taskHandleMutationInput is the payload every by-handle task mutation takes:
+// one task reference and nothing else. Sharing the type is what keeps a new
+// command from quietly accepting an extra authority field.
+type taskHandleMutationInput struct {
+	TaskHandle string `json:"taskHandle"`
+}
+
+// handleTaskHandleMutation decodes, checks the mutation surface exists, and
+// projects the outcome. Every by-handle command needs exactly this, and a copy
+// per command adds two failure branches that say nothing new about the command.
+func handleTaskHandleMutation(
+	ctx context.Context,
+	handler *Handler,
+	request Request,
+	method Method,
+	invoke func(context.Context, string) (application.MutationResult, error),
+) Outcome {
+	var input taskHandleMutationInput
+	if err := decodeObject(request.Payload, &input); err != nil {
+		return invalidPayload(request.OperationID, err)
+	}
+	if handler.mutations == nil {
+		return rejectedOutcome(request.OperationID, domain.ErrorUnavailable, true,
+			"task mutation service is unavailable", "inspect service configuration", nil)
+	}
+	result, err := invoke(ctx, input.TaskHandle)
+	return handler.taskMutationOutcome(request.OperationID, method, result, err)
 }

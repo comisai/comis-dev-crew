@@ -97,11 +97,8 @@ func consumeTaskPauseRequest(
 	if kind != domain.ReportPaused {
 		return true, nil
 	}
-	if _, err := transaction.ExecContext(ctx,
-		`UPDATE tasks SET pause_requested_operation_id = '', pause_requested_at = '' WHERE handle = ?`,
-		taskHandle,
-	); err != nil {
-		return false, fmt.Errorf("clear task pause request: %w", err)
+	if err := clearPauseRequest(ctx, transaction, taskHandle); err != nil {
+		return false, err
 	}
 	return false, nil
 }

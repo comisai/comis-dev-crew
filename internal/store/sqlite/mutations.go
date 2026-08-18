@@ -286,6 +286,7 @@ const (
 	commandRecordTerminalEvent     = "RecordTerminalEvent"
 	commandAcknowledgeWorkerLaunch = "AcknowledgeWorkerLaunch"
 	commandPauseTask               = "PauseTask"
+	commandCancelTask              = "CancelTask"
 )
 
 func updateTaskState(ctx context.Context, transaction *sql.Tx, task domain.Task) error {

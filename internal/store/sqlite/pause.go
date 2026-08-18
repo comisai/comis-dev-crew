@@ -77,6 +77,20 @@ func (store *Store) PauseRequest(ctx context.Context, taskHandle string) (bool, 
 	return operationID != "", nil
 }
 
+// clearPauseRequest drops a standing request. Three paths need it — the worker
+// answering with a paused report, a cancel that leaves no worker to answer, and
+// any future command that ends the run — so it is written once rather than
+// copied with its own unreachable failure branch each time.
+func clearPauseRequest(ctx context.Context, transaction *sql.Tx, taskHandle string) error {
+	if _, err := transaction.ExecContext(ctx,
+		`UPDATE tasks SET pause_requested_operation_id = '', pause_requested_at = '' WHERE handle = ?`,
+		taskHandle,
+	); err != nil {
+		return fmt.Errorf("clear task pause request: %w", err)
+	}
+	return nil
+}
+
 // A task holds a worker while it is between an accepted launch and a settled
 // outcome. Only those states have something that can reach a safe boundary.
 func taskHoldsAWorker(state domain.TaskState) bool {

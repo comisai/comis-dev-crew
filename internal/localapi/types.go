@@ -55,13 +55,14 @@ const (
 	MethodHandbackTask   Method = "HandbackTask"
 	MethodCleanupTask    Method = "CleanupTask"
 	MethodPauseTask      Method = "PauseTask"
+	MethodCancelTask     Method = "CancelTask"
 )
 
 func (method Method) valid() bool {
 	switch method {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
 		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
-		MethodPauseTask:
+		MethodPauseTask, MethodCancelTask:
 		return true
 	default:
 		return false
@@ -80,7 +81,8 @@ const (
 // SideEffect returns the authoritative method classification.
 func (method Method) SideEffect() SideEffectClass {
 	switch method {
-	case MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask, MethodPauseTask:
+	case MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
+		MethodPauseTask, MethodCancelTask:
 		return SideEffectMutate
 	default:
 		return SideEffectRead
@@ -130,6 +132,7 @@ type ReadQueries interface {
 type TaskMutations interface {
 	PrepareTask(context.Context, application.PrepareTaskCommand) (application.MutationResult, error)
 	PauseTask(context.Context, application.PauseTaskCommand) (application.MutationResult, error)
+	CancelTask(context.Context, application.CancelTaskCommand) (application.MutationResult, error)
 }
 
 // TaskInterventions is the canonical paused-worktree handback surface.
@@ -174,9 +177,12 @@ type ReconcileTaskInput struct {
 // PauseTaskInput selects one task whose worker should reach a safe boundary. It
 // carries no instruction and no interrupt: pause asks the worker to stop
 // cleanly, and anything more is a different command.
-type PauseTaskInput struct {
-	TaskHandle string `json:"taskHandle"`
-}
+type PauseTaskInput = taskHandleMutationInput
+
+// CancelTaskInput selects one task to stop. It names no disposition: cancel
+// preserves artifacts, and removing them is cleanup's separate, evidence-gated
+// decision.
+type CancelTaskInput = taskHandleMutationInput
 
 // CleanupTaskInput selects one durably delivered task.
 type CleanupTaskInput struct {

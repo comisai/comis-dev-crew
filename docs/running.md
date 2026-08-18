@@ -166,9 +166,11 @@ devcrew-mcp \
   --service-instance service-instance-devcrew
 ```
 
-The facade defines eleven tools: `prepare_task`, `reconcile_task`,
-`handback_task`, `cleanup_task`, `pause_task`, `list_tasks`, `get_task`,
-`explain_task`, `get_launch_plan`, `worker_profiles`, and `doctor`.
+The facade defines twelve tools: `prepare_task`, `reconcile_task`,
+`handback_task`, `cleanup_task`, `pause_task`, `cancel_task`, `list_tasks`,
+`get_task`, `explain_task`, `get_launch_plan`, `worker_profiles`, and `doctor`.
+`cancel_task` is destructive — it ends work an operator asked for and repeating
+it does not undo that — but it is not removal.
 `pause_task` is a non-destructive mutation: it preserves all work and asks the
 worker to settle, so it is not gated behind the confirmation that guards
 cleanup. `worker_profiles` reports the reviewed dispatch
@@ -293,6 +295,7 @@ devcrew [--socket PATH] task prepare --input FILE|- [--operation OPERATION] [--f
 devcrew [--socket PATH] task reconcile TASK --action validate-clean-candidate [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task handback TASK --action validate-developer-work [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task pause TASK [--operation OPERATION] [--format json]
+devcrew [--socket PATH] task cancel TASK [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task cleanup TASK [--operation OPERATION] [--format json]
 ```
 
@@ -303,6 +306,13 @@ worker's own paused report is what settles the state. That ordering is what
 makes the worktree safe to hand to a developer — a task marked paused while its
 worker kept committing would be changing under their editor. The request carries
 no instruction text and no interrupt, and a repeat replays rather than stacking.
+
+`task cancel` stops work on one task and preserves its worktree, artifacts, run
+binding and lease. It names no disposition: stopping and discarding are separate
+decisions with deliberately different evidence requirements, and removal stays
+behind `task cleanup`. Cancelling an already-cancelled task reports the settled
+task rather than refusing, and cancelling clears any pause request standing
+against it — a cancelled task has no worker left to answer one.
 
 `workers list` reports the reviewed dispatch catalog: each profile's identity,
 the task shapes it accepts, whether its harness is available and why not, and

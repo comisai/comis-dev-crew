@@ -260,6 +260,7 @@ type MutationStore interface {
 	CommitManagedRunAbandon(context.Context, ManagedRunAbandonMutation) (MutationResult, error)
 	CommitManagedRunCancel(context.Context, ManagedRunCancelMutation) (MutationResult, error)
 	CommitTaskPauseRequest(context.Context, TaskPauseRequestMutation) (MutationResult, error)
+	CommitTaskCancel(context.Context, TaskCancelMutation) (MutationResult, error)
 	CommitTaskStart(context.Context, TaskStartMutation) (MutationResult, error)
 	CommitTerminalEvent(context.Context, TerminalEventMutation) (MutationResult, error)
 	CommitWorkerLaunchAcknowledgement(context.Context, WorkerLaunchAcknowledgementMutation) (MutationResult, error)
@@ -434,6 +435,25 @@ type PauseTaskCommand struct {
 
 // TaskPauseRequestMutation is the durable half of one pause request.
 type TaskPauseRequestMutation struct {
+	TaskHandle    string
+	OperationID   string
+	SubjectDigest string
+	At            time.Time
+}
+
+// CancelTaskCommand stops one task at an operator's request.
+//
+// It preserves artifacts. Stopping work and discarding it are separate
+// decisions with separate evidence requirements, and a cancel that also removed
+// the worktree would make the stop irreversible at the moment an operator is
+// least certain.
+type CancelTaskCommand struct {
+	OperationID string `json:"operationId"`
+	TaskHandle  string `json:"taskHandle"`
+}
+
+// TaskCancelMutation is the durable half of one operator cancellation.
+type TaskCancelMutation struct {
 	TaskHandle    string
 	OperationID   string
 	SubjectDigest string

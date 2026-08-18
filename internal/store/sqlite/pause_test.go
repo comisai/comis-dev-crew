@@ -122,3 +122,53 @@ func TestStore_ARepeatedPauseRequestReplays(t *testing.T) {
 		t.Errorf("replayed pause = %+v, want the first result %+v", second.Operation, first.Operation)
 	}
 }
+
+// Every durable timestamp is UTC. A local-zone time would be stored as a wall
+// clock reading whose meaning depends on where the service happened to run, and
+// two records written either side of a DST change would compare wrongly.
+func TestStore_RefusesNonUTCMutationTimes(t *testing.T) {
+	store, task := openReportFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	local := time.FixedZone("local", 3600)
+	at := time.Date(2026, time.August, 9, 16, 0, 0, 0, local)
+
+	if _, err := store.CommitTaskPauseRequest(context.Background(),
+		pauseMutation(task.Handle, "operation-pause-0001", at)); !errors.Is(err, application.ErrPrecondition) {
+		t.Errorf("CommitTaskPauseRequest(local time) error = %v, want a precondition refusal", err)
+	}
+	if _, err := store.CommitTaskCancel(context.Background(),
+		cancelTaskMutation(task.Handle, "operation-cancel-0001", at)); !errors.Is(err, application.ErrPrecondition) {
+		t.Errorf("CommitTaskCancel(local time) error = %v, want a precondition refusal", err)
+	}
+}
+
+// A command naming a task that does not exist is refused, never treated as a
+// no-op success: an operator who mistyped a handle must not be told the work
+// they meant to stop has stopped.
+func TestStore_RefusesTaskCommandsForAnUnknownHandle(t *testing.T) {
+	store, _ := openReportFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	at := time.Date(2026, time.August, 9, 16, 0, 0, 0, time.UTC)
+
+	if _, err := store.CommitTaskPauseRequest(context.Background(),
+		pauseMutation("task-absent-0001", "operation-pause-0001", at)); !errors.Is(err, application.ErrNotFound) {
+		t.Errorf("CommitTaskPauseRequest(unknown) error = %v, want not-found", err)
+	}
+	if _, err := store.CommitTaskCancel(context.Background(),
+		cancelTaskMutation("task-absent-0001", "operation-cancel-0001", at)); !errors.Is(err, application.ErrNotFound) {
+		t.Errorf("CommitTaskCancel(unknown) error = %v, want not-found", err)
+	}
+	if _, err := store.PauseRequest(context.Background(), "task-absent-0001"); err == nil {
+		t.Error("PauseRequest(unknown) error = nil")
+	}
+}
+
+func TestStore_PauseRequestRefusesAnAbsentContext(t *testing.T) {
+	store, task := openReportFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+
+	if _, err := store.PauseRequest(nilPauseStoreContext(), task.Handle); err == nil {
+		t.Error("PauseRequest(nil) error = nil")
+	}
+}
+
+// Returned through a function so the nil is not a literal argument at the call
+// site, matching how this package's own tests exercise the guard.
+func nilPauseStoreContext() context.Context { return nil }

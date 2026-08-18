@@ -130,6 +130,13 @@ func (client *Client) PauseTask(ctx context.Context, operationID string, input P
 	return result, err
 }
 
+// CancelTask stops one task while preserving its artifacts.
+func (client *Client) CancelTask(ctx context.Context, operationID string, input CancelTaskInput) (TaskMutationResult, error) {
+	var result TaskMutationResult
+	err := client.call(ctx, operationID, MethodCancelTask, input, &result)
+	return result, err
+}
+
 func (client *Client) call(ctx context.Context, operationID string, method Method, payload any, result any) error {
 	if ctx == nil {
 		return errors.New("call local API: context is required")

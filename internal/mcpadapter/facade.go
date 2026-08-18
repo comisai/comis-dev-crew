@@ -58,6 +58,7 @@ func (facade *Facade) registerTools() {
 	mcp.AddTool(facade.server, tool(ToolReconcileTask, "Validate one exact clean candidate after its worker terminal ended without a candidate report.", false), facade.reconcileTask)
 	mcp.AddTool(facade.server, tool(ToolHandbackTask, "Validate developer work after one safe paused worker exits.", false), facade.handbackTask)
 	mcp.AddTool(facade.server, cleanupTool(), facade.cleanupTask)
+	mcp.AddTool(facade.server, cancelTool(), facade.cancelTask)
 	mcp.AddTool(facade.server, tool(
 		ToolPauseTask,
 		"Ask one task's worker to reach a safe boundary and stop. It carries no instruction and no interrupt, and does not itself pause the task: the worker settles and reports.",
@@ -135,6 +136,22 @@ func tool(name, description string, readOnly bool) *mcp.Tool {
 		Name: name, Description: description,
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint: readOnly, DestructiveHint: &destructive,
+			IdempotentHint: true, OpenWorldHint: &openWorld,
+		},
+	}
+}
+
+// Cancel is destructive because it ends work an operator asked for and cannot
+// be undone by asking again. It is not, however, removal: the worktree and every
+// artifact survive, and discarding them stays behind cleanup's evidence gate.
+func cancelTool() *mcp.Tool {
+	destructive, openWorld := true, true
+	return &mcp.Tool{
+		Name: ToolCancelTask,
+		Description: "Stop work on one task while preserving its worktree and artifacts. " +
+			"Removal is a separate evidence-gated cleanup.",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint: false, DestructiveHint: &destructive,
 			IdempotentHint: true, OpenWorldHint: &openWorld,
 		},
 	}
@@ -256,6 +273,24 @@ func (facade *Facade) pauseTask(
 	result, err := facade.client.PauseTask(ctx, operationID, localInput)
 	if err != nil && uncertainMutation(ctx, err) {
 		result, err = facade.reconcilePause(ctx, operationID, localInput, err)
+	}
+	return nil, result, err
+}
+
+func (facade *Facade) cancelTask(
+	ctx context.Context,
+	request *mcp.CallToolRequest,
+	input TaskInput,
+) (*mcp.CallToolResult, localapi.TaskMutationResult, error) {
+	callContext, err := facade.authorize(request)
+	if err != nil {
+		return nil, localapi.TaskMutationResult{}, err
+	}
+	operationID := string(callContext.OperationID)
+	localInput := localapi.CancelTaskInput{TaskHandle: input.TaskHandle}
+	result, err := facade.client.CancelTask(ctx, operationID, localInput)
+	if err != nil && uncertainMutation(ctx, err) {
+		result, err = facade.reconcileCancel(ctx, operationID, localInput, err)
 	}
 	return nil, result, err
 }

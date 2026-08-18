@@ -52,6 +52,16 @@ complete on the strength of the call returning.
 A repeated pause replays rather than stacking, so retrying a call whose outcome
 you did not see is safe.
 
+## Cancel
+
+`cancel_task` stops work and keeps it. The worktree, the artifacts, the run
+binding and the lease all survive; removing them is `cleanup_task`, which is
+evidence-gated for that reason. Never reach for cancel when the intent is to
+free disk, and never describe a cancel as having cleaned anything up.
+
+Cancelling a task that is already cancelled reports the settled task instead of
+refusing, so a repeat is safe.
+
 ## Handback
 
 Handback is what follows a settled pause: a developer deliberately edited a

@@ -382,13 +382,17 @@ func TestFacade_UncertainTerminalMutationsReconcileBeforeExactRetry(t *testing.T
 
 func assertToolCatalog(t *testing.T, tools []*mcp.Tool) {
 	t.Helper()
-	want := map[string]bool{ToolPrepareTask: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolPauseTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
+	want := map[string]bool{ToolPrepareTask: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolPauseTask: false, ToolCancelTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
 	if len(tools) != len(want) {
 		t.Fatalf("tool count = %d, want %d", len(tools), len(want))
 	}
+	// Destructive is an explicit set, not a single name. A tool that quietly
+	// became destructive would otherwise fail this test with an annotation dump
+	// rather than a statement about which tools may destroy work.
+	destructiveTools := map[string]bool{ToolCleanupTask: true, ToolCancelTask: true}
 	for _, tool := range tools {
 		readOnly, ok := want[tool.Name]
-		destructive := tool.Name == ToolCleanupTask
+		destructive := destructiveTools[tool.Name]
 		if !ok || tool.Annotations == nil || tool.Annotations.ReadOnlyHint != readOnly ||
 			!tool.Annotations.IdempotentHint || tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint != destructive ||
 			tool.Annotations.OpenWorldHint == nil || *tool.Annotations.OpenWorldHint != destructive {
@@ -451,6 +455,8 @@ type fakeClient struct {
 	calls           []string
 	profiles        application.WorkerProfileList
 	pauseResult     localapi.TaskMutationResult
+	cancelResult    localapi.TaskMutationResult
+	cancelErrors    []error
 	pauseErrors     []error
 	prepareResults  []localapi.PrepareTaskResult
 	prepareErrors   []error
@@ -476,6 +482,23 @@ func (client *fakeClient) ReconcileTask(
 	err := client.reconcileErrors[0]
 	client.reconcileErrors = client.reconcileErrors[1:]
 	return client.reconcileResult, err
+}
+
+func (client *fakeClient) CancelTask(
+	_ context.Context,
+	operationID string,
+	input localapi.CancelTaskInput,
+) (localapi.TaskMutationResult, error) {
+	client.calls = append(client.calls, "cancel:"+operationID+":"+input.TaskHandle)
+	if len(client.cancelErrors) == 0 {
+		return client.cancelResult, nil
+	}
+	failure := client.cancelErrors[0]
+	client.cancelErrors = client.cancelErrors[1:]
+	if failure == nil {
+		return client.cancelResult, nil
+	}
+	return localapi.TaskMutationResult{}, failure
 }
 
 func (client *fakeClient) PauseTask(

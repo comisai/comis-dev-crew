@@ -16,12 +16,15 @@ import (
 )
 
 type apiMutations struct {
-	command      application.PrepareTaskCommand
-	pauseCommand application.PauseTaskCommand
-	result       application.MutationResult
-	pauseResult  application.MutationResult
-	err          error
-	pauseErr     error
+	command       application.PrepareTaskCommand
+	pauseCommand  application.PauseTaskCommand
+	cancelCommand application.CancelTaskCommand
+	result        application.MutationResult
+	pauseResult   application.MutationResult
+	cancelResult  application.MutationResult
+	err           error
+	pauseErr      error
+	cancelErr     error
 }
 
 type apiInterventions struct {
@@ -88,6 +91,14 @@ func (interventions *apiInterventions) HandbackTask(
 func (mutations *apiMutations) PrepareTask(_ context.Context, command application.PrepareTaskCommand) (application.MutationResult, error) {
 	mutations.command = command
 	return mutations.result, mutations.err
+}
+
+func (mutations *apiMutations) CancelTask(
+	_ context.Context,
+	command application.CancelTaskCommand,
+) (application.MutationResult, error) {
+	mutations.cancelCommand = command
+	return mutations.cancelResult, mutations.cancelErr
 }
 
 func (mutations *apiMutations) PauseTask(
