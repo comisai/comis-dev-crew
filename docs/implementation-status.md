@@ -100,8 +100,9 @@ service. Each beat carries its own deadline, because the control connection
 waits for an authenticated session and a beat delayed past the host's staleness
 bound proves nothing.
 
-Inbound `managedRuns.cancel` is generated and passes the corpus but is not
-dispatched to a running worker yet. Nothing here claims that behavior.
+Inbound `managedRuns.cancel` is dispatched to the durable task record: it stops
+an activated run, preserves its artifacts, and reports an already-settled run
+rather than refusing, so a second operator cancelling the same run is safe.
 
 ## Comis adapter
 
