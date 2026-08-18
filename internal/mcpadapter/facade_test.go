@@ -478,6 +478,8 @@ type fakeClient struct {
 	handbackErrors  []error
 	reconcileErrors []error
 	cleanupErrors   []error
+	discardResult   localapi.TaskMutationResult
+	discardErrors   []error
 }
 
 func (client *fakeClient) ReconcileTask(
