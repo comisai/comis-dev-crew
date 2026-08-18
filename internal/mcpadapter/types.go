@@ -12,15 +12,16 @@ import (
 )
 
 const (
-	ToolPrepareTask   = "prepare_task"
-	ToolReconcileTask = "reconcile_task"
-	ToolHandbackTask  = "handback_task"
-	ToolCleanupTask   = "cleanup_task"
-	ToolListTasks     = "list_tasks"
-	ToolGetTask       = "get_task"
-	ToolExplainTask   = "explain_task"
-	ToolGetLaunchPlan = "get_launch_plan"
-	ToolDoctor        = "doctor"
+	ToolPrepareTask    = "prepare_task"
+	ToolReconcileTask  = "reconcile_task"
+	ToolHandbackTask   = "handback_task"
+	ToolCleanupTask    = "cleanup_task"
+	ToolListTasks      = "list_tasks"
+	ToolWorkerProfiles = "worker_profiles"
+	ToolGetTask        = "get_task"
+	ToolExplainTask    = "explain_task"
+	ToolGetLaunchPlan  = "get_launch_plan"
+	ToolDoctor         = "doctor"
 
 	CallContextMetaKey      = "comis.callContext"
 	ManagedRunResultMetaKey = "comis.managedRun"
@@ -34,6 +35,7 @@ type Client interface {
 	CleanupTask(context.Context, string, localapi.CleanupTaskInput) (localapi.TaskMutationResult, error)
 	Diagnose(context.Context, string) (application.DiagnosticReport, error)
 	ListTasks(context.Context, string) (application.TaskList, error)
+	ListWorkerProfiles(context.Context, string) (application.WorkerProfileList, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
 	GetLaunchPlan(context.Context, string, string) (application.LaunchPlan, error)

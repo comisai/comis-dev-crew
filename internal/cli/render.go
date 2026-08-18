@@ -25,6 +25,8 @@ func renderResult(destination io.Writer, command parsedCommand, result any) erro
 		return renderFleet(destination, result.(application.FleetSnapshot))
 	case commandListTasks:
 		return renderTaskList(destination, result.(application.TaskList))
+	case commandWorkerProfiles:
+		return renderWorkerProfiles(destination, result.(application.WorkerProfileList))
 	case commandShowTask:
 		return renderTaskYAML(destination, result.(application.TaskDetail))
 	case commandExplainTask:
@@ -93,6 +95,33 @@ func renderTaskList(destination io.Writer, list application.TaskList) error {
 		}
 		for _, task := range list.Tasks {
 			if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", task.TaskHandle, task.State, task.WorkerProfileID, task.RepositoryID, joinActions(task.NextSafeActions)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// An unavailable profile renders its reason in the same row. An operator asking
+// "why can nothing start" gets the answer from the listing itself, without a
+// second command to find out what "unavailable" meant.
+func renderWorkerProfiles(destination io.Writer, list application.WorkerProfileList) error {
+	return writeTable(destination, func(table *tabwriter.Writer) error {
+		if _, err := fmt.Fprintln(table, "PROFILE\tHARNESS\tSHAPES\tAVAILABILITY\tUNATTENDED\tLIMIT"); err != nil {
+			return err
+		}
+		for _, profile := range list.Profiles {
+			availability := profile.Availability
+			if profile.AvailabilityReason != "" {
+				availability += " (" + profile.AvailabilityReason + ")"
+			}
+			shapes := make([]string, 0, len(profile.AllowedShapes))
+			for _, shape := range profile.AllowedShapes {
+				shapes = append(shapes, string(shape))
+			}
+			if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%t\t%d\n",
+				profile.ProfileID, profile.Harness, strings.Join(shapes, ","),
+				availability, profile.Unattended, profile.ConcurrencyLimit); err != nil {
 				return err
 			}
 		}

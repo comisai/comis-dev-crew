@@ -393,6 +393,7 @@ type fakeClient struct {
 	diagnostic   application.DiagnosticReport
 	fleet        application.FleetSnapshot
 	list         application.TaskList
+	profiles     application.WorkerProfileList
 	detail       application.TaskDetail
 	explanation  application.TaskExplanation
 	operation    application.OperationView
@@ -449,6 +450,14 @@ func (client *fakeClient) Diagnose(_ context.Context, operationID string) (appli
 func (client *fakeClient) Fleet(_ context.Context, operationID string) (application.FleetSnapshot, error) {
 	client.record(operationID, "fleet")
 	return client.fleet, client.err
+}
+
+func (client *fakeClient) ListWorkerProfiles(
+	_ context.Context,
+	operationID string,
+) (application.WorkerProfileList, error) {
+	client.record(operationID, "workers")
+	return client.profiles, client.err
 }
 
 func (client *fakeClient) ListTasks(_ context.Context, operationID string) (application.TaskList, error) {

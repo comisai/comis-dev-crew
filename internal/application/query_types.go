@@ -212,3 +212,37 @@ type LaunchPlan struct {
 	BriefRevisionHash    string           `json:"briefRevisionHash"`
 	AttachmentTargetName string           `json:"attachmentTargetName"`
 }
+
+// WorkerProfileSummary is one reviewed dispatch configuration as the read side
+// renders it. It carries the identity and posture an operator or liaison needs
+// to pick a profile or explain why none is usable — never the executable, the
+// argument vector, or the environment allowlist, which are launch authority and
+// belong only to the adapter that builds the descriptor.
+type WorkerProfileSummary struct {
+	ProfileID     string             `json:"profileId"`
+	Harness       string             `json:"harness"`
+	AllowedShapes []domain.TaskShape `json:"allowedShapes"`
+	Availability  string             `json:"availability"`
+	// A closed reason code, present only when the profile is not available.
+	AvailabilityReason string `json:"availabilityReason,omitempty"`
+	// False when the harness cannot prove a worker turn settled. Such a profile
+	// is usable but must never be trusted unattended, so the posture is reported
+	// rather than inferred from availability.
+	Unattended       bool `json:"unattended"`
+	ConcurrencyLimit int  `json:"concurrencyLimit"`
+}
+
+// WorkerProfileList is the canonical bounded catalog read. It carries the same
+// state version the envelope does: the transport treats that value as the
+// connection's read-after-write token and checks the two agree, so a projection
+// without one cannot travel over the local API at all.
+type WorkerProfileList struct {
+	SchemaVersion int                    `json:"schemaVersion"`
+	CapturedAtMs  int64                  `json:"capturedAtMs"`
+	StateVersion  int64                  `json:"stateVersion"`
+	Profiles      []WorkerProfileSummary `json:"profiles"`
+}
+
+// WorkerProfileCatalog lists the operator-reviewed profiles this deployment
+// configured. It is a read: it never ranks, selects, or falls back.
+type WorkerProfileCatalog func() []WorkerProfileSummary

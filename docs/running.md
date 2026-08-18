@@ -166,9 +166,14 @@ devcrew-mcp \
   --service-instance service-instance-devcrew
 ```
 
-The facade defines nine tools: `prepare_task`, `reconcile_task`, `handback_task`,
-`cleanup_task`, `list_tasks`, `get_task`, `explain_task`, `get_launch_plan`, and
-`doctor`. Readiness is reachable from the agent surface as well as the operator
+The facade defines ten tools: `prepare_task`, `reconcile_task`, `handback_task`,
+`cleanup_task`, `list_tasks`, `get_task`, `explain_task`, `get_launch_plan`,
+`worker_profiles`, and `doctor`. `worker_profiles` reports the reviewed dispatch
+catalog — identity, accepted shapes, harness availability and its reason, and
+whether a profile can run unattended — so a caller can tell "no profile accepts
+this shape" from "the profile that accepts it cannot run" without provoking a
+preparation failure. It carries no launch authority: never the executable, its
+argument vector, or the environment keys a profile may read. Readiness is reachable from the agent surface as well as the operator
 CLI because it is the one read that answers "why can nothing start"; it reports
 what is configured and reachable, never a credential, a path, or a secret
 reference. Every call must carry a
@@ -276,6 +281,7 @@ devcrew [--socket PATH] service status
 devcrew [--socket PATH] doctor [--format table|json]
 devcrew [--socket PATH] status [--format table|json]
 devcrew [--socket PATH] tasks list [--format table|json]
+devcrew [--socket PATH] workers list [--format table|json]
 devcrew [--socket PATH] task show TASK [--format yaml|json]
 devcrew [--socket PATH] task explain TASK [--format text|json]
 devcrew [--socket PATH] task launch-plan TASK [--format json]
@@ -285,6 +291,13 @@ devcrew [--socket PATH] task reconcile TASK --action validate-clean-candidate [-
 devcrew [--socket PATH] task handback TASK --action validate-developer-work [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task cleanup TASK [--operation OPERATION] [--format json]
 ```
+
+`workers list` reports the reviewed dispatch catalog: each profile's identity,
+the task shapes it accepts, whether its harness is available and why not, and
+whether it can prove a turn settled unattended. It answers "why can nothing
+start" before a task exists to fail. It never renders the executable, its
+argument vector, or the environment keys a profile may read — those stay launch
+authority, reviewed once by an operator and used only to build a descriptor.
 
 JSON outputs are stable versioned projections. Human and YAML views are
 presentation only and carry no authority. The CLI never opens SQLite as a

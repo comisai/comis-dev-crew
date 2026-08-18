@@ -155,6 +155,12 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 		_, resolveErr := profiles.ResolveProfile(profileID, shape)
 		return resolveErr
 	}
+	// The catalog read publishes identity and posture only. The projection is
+	// built by the workers package, so launch authority never reaches this
+	// composition — this hop only maps one published view onto the read DTO.
+	config.WorkerProfileCatalog = func() []application.WorkerProfileSummary {
+		return publishedWorkerProfileSummaries(profiles.PublishedProfiles())
+	}
 	config.ValidationProfiles = func(profileID string, shape domain.TaskShape) error {
 		_, resolveErr := catalog.ResolveProfileForShape(profileID, shape)
 		return resolveErr
@@ -332,4 +338,24 @@ func readOwnerCredential(path string) (string, error) {
 		return "", errors.New("run service Comis credential: content is invalid")
 	}
 	return credential, nil
+}
+
+// publishedWorkerProfileSummaries maps the workers package's published view onto
+// the read DTO. It is a total mapping of that view and adds no field of its own:
+// anything the catalog reports an operator could already read from the reviewed
+// configuration, and anything it must not report was never in the input.
+func publishedWorkerProfileSummaries(published []workers.PublishedProfile) []application.WorkerProfileSummary {
+	summaries := make([]application.WorkerProfileSummary, 0, len(published))
+	for _, profile := range published {
+		summaries = append(summaries, application.WorkerProfileSummary{
+			ProfileID:          profile.ID,
+			Harness:            string(profile.Harness),
+			AllowedShapes:      profile.AllowedShapes,
+			Availability:       string(profile.Availability),
+			AvailabilityReason: string(profile.AvailabilityReason),
+			Unattended:         profile.Unattended,
+			ConcurrencyLimit:   profile.ConcurrencyLimit,
+		})
+	}
+	return summaries
 }

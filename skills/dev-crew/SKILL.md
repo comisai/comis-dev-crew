@@ -27,6 +27,12 @@ identities separate. Never copy authority from one task to another.
 4. `get_launch_plan` only for a task whose durable posture says it is ready for
    launch. Treat returned run and lease references as opaque.
 
+Before proposing a worker profile, read `worker_profiles`. It distinguishes the
+three answers a preparation failure collapses into one: no profile accepts this
+shape, the profile exists but its harness is unavailable, and it is usable but
+cannot prove a turn settled unattended. Name a profile that read returned —
+never one you inferred.
+
 A terminal or coding-CLI exit is not candidate evidence and never means success.
 Quiet output is not idle. When the service reports `unknown`, that is the answer
 until fresh evidence changes it — do not narrate a guess as a state.
@@ -52,6 +58,7 @@ product does, and this list is not permission to guess a name.
 | Intent | Tool | Changes |
 |---|---|---|
 | Look | `list_tasks`, `get_task`, `explain_task`, `get_launch_plan` | Nothing |
+| See what can run | `worker_profiles` | Nothing |
 | Check readiness | `doctor` | Nothing |
 | Start work | `prepare_task` | Creates a prepared task and worktree |
 | Recover an exited worker | `reconcile_task` | Validates one exact clean candidate |

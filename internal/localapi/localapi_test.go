@@ -187,6 +187,7 @@ type apiQueries struct {
 	explanation application.TaskExplanation
 	operation   application.OperationView
 	launchPlan  application.LaunchPlan
+	profiles    application.WorkerProfileList
 	diagnose    func(context.Context) (application.DiagnosticReport, error)
 }
 
@@ -203,6 +204,12 @@ func (queries *apiQueries) Fleet(context.Context) (application.FleetSnapshot, er
 
 func (queries *apiQueries) ListTasks(context.Context) (application.TaskList, error) {
 	return queries.list, nil
+}
+
+func (queries *apiQueries) ListWorkerProfiles(
+	context.Context,
+) (application.WorkerProfileList, error) {
+	return queries.profiles, nil
 }
 
 func (queries *apiQueries) ShowTask(context.Context, string) (application.TaskDetail, error) {

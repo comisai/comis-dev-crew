@@ -27,6 +27,7 @@ Commands:
   doctor [--format table|json]
   status [--format table|json]
   tasks list [--format table|json]
+  workers list [--format table|json]
   task show TASK [--format yaml|json]
   task explain TASK [--format text|json]
   task launch-plan TASK [--format json]
@@ -47,6 +48,7 @@ type ReadClient interface {
 	Diagnose(context.Context, string) (application.DiagnosticReport, error)
 	Fleet(context.Context, string) (application.FleetSnapshot, error)
 	ListTasks(context.Context, string) (application.TaskList, error)
+	ListWorkerProfiles(context.Context, string) (application.WorkerProfileList, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
 	GetLaunchPlan(context.Context, string, string) (application.LaunchPlan, error)
@@ -74,6 +76,7 @@ const (
 	commandDoctor
 	commandFleet
 	commandListTasks
+	commandWorkerProfiles
 	commandShowTask
 	commandExplainTask
 	commandGetLaunchPlan
@@ -184,6 +187,15 @@ func parseCommand(args []string, defaultSocketPath string) (parsedCommand, error
 			return parsedCommand{}, err
 		}
 		command.kind, command.format = commandListTasks, format
+	case "workers":
+		if len(args) < 2 || args[1] != "list" {
+			return parsedCommand{}, errors.New("workers list is required")
+		}
+		format, err := parseFormat(args[2:], "table", "table", "json")
+		if err != nil {
+			return parsedCommand{}, err
+		}
+		command.kind, command.format = commandWorkerProfiles, format
 	case "task":
 		return parseTaskCommand(command, args[1:])
 	default:
@@ -330,6 +342,8 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 		return client.Fleet(ctx, operationID)
 	case commandListTasks:
 		return client.ListTasks(ctx, operationID)
+	case commandWorkerProfiles:
+		return client.ListWorkerProfiles(ctx, operationID)
 	case commandShowTask:
 		return client.ShowTask(ctx, operationID, command.reference)
 	case commandExplainTask:

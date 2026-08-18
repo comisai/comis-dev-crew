@@ -133,6 +133,7 @@ func TestFacade_ReadToolsUseOneCanonicalCommandAndIgnoreForgedRunMetadata(t *tes
 		{name: ToolExplainTask, args: TaskInput{TaskHandle: "task-0001"}, want: "explain:read-0001:task-0001"},
 		{name: ToolGetLaunchPlan, args: TaskInput{TaskHandle: "task-0001"}, want: "launch-plan:read-0001:task-0001"},
 		{name: ToolDoctor, args: EmptyInput{}, want: "doctor:read-0001"},
+		{name: ToolWorkerProfiles, args: EmptyInput{}, want: "profiles:read-0001"},
 	}
 	for _, test := range tests {
 		client.calls = nil
@@ -381,7 +382,7 @@ func TestFacade_UncertainTerminalMutationsReconcileBeforeExactRetry(t *testing.T
 
 func assertToolCatalog(t *testing.T, tools []*mcp.Tool) {
 	t.Helper()
-	want := map[string]bool{ToolPrepareTask: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true}
+	want := map[string]bool{ToolPrepareTask: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
 	if len(tools) != len(want) {
 		t.Fatalf("tool count = %d, want %d", len(tools), len(want))
 	}
@@ -448,6 +449,7 @@ func preparedResult() localapi.PrepareTaskResult {
 
 type fakeClient struct {
 	calls           []string
+	profiles        application.WorkerProfileList
 	prepareResults  []localapi.PrepareTaskResult
 	prepareErrors   []error
 	operation       application.OperationView
@@ -517,6 +519,14 @@ func (client *fakeClient) PrepareTask(_ context.Context, operationID string, _ l
 	result := client.prepareResults[0]
 	client.prepareResults = client.prepareResults[1:]
 	return result, nil
+}
+
+func (client *fakeClient) ListWorkerProfiles(
+	_ context.Context,
+	operationID string,
+) (application.WorkerProfileList, error) {
+	client.calls = append(client.calls, "profiles:"+operationID)
+	return client.profiles, nil
 }
 
 func (client *fakeClient) ListTasks(_ context.Context, operationID string) (application.TaskList, error) {

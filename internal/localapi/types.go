@@ -42,22 +42,23 @@ func (caller CallerClass) valid() bool {
 type Method string
 
 const (
-	MethodDiagnose      Method = "Diagnose"
-	MethodFleet         Method = "FleetStatus"
-	MethodListTasks     Method = "ListTasks"
-	MethodShowTask      Method = "ShowTask"
-	MethodExplainTask   Method = "ExplainTask"
-	MethodGetLaunchPlan Method = "GetLaunchPlan"
-	MethodOperation     Method = "GetOperation"
-	MethodPrepareTask   Method = "PrepareTask"
-	MethodReconcileTask Method = "ReconcileTask"
-	MethodHandbackTask  Method = "HandbackTask"
-	MethodCleanupTask   Method = "CleanupTask"
+	MethodDiagnose       Method = "Diagnose"
+	MethodFleet          Method = "FleetStatus"
+	MethodListTasks      Method = "ListTasks"
+	MethodWorkerProfiles Method = "ListWorkerProfiles"
+	MethodShowTask       Method = "ShowTask"
+	MethodExplainTask    Method = "ExplainTask"
+	MethodGetLaunchPlan  Method = "GetLaunchPlan"
+	MethodOperation      Method = "GetOperation"
+	MethodPrepareTask    Method = "PrepareTask"
+	MethodReconcileTask  Method = "ReconcileTask"
+	MethodHandbackTask   Method = "HandbackTask"
+	MethodCleanupTask    Method = "CleanupTask"
 )
 
 func (method Method) valid() bool {
 	switch method {
-	case MethodDiagnose, MethodFleet, MethodListTasks, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
+	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
 		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask:
 		return true
 	default:
@@ -114,6 +115,7 @@ type ReadQueries interface {
 	Diagnose(context.Context) (application.DiagnosticReport, error)
 	Fleet(context.Context) (application.FleetSnapshot, error)
 	ListTasks(context.Context) (application.TaskList, error)
+	ListWorkerProfiles(context.Context) (application.WorkerProfileList, error)
 	ShowTask(context.Context, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string) (application.TaskExplanation, error)
 	GetLaunchPlan(context.Context, string) (application.LaunchPlan, error)

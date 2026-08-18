@@ -59,6 +59,11 @@ func (facade *Facade) registerTools() {
 	mcp.AddTool(facade.server, tool(ToolHandbackTask, "Validate developer work after one safe paused worker exits.", false), facade.handbackTask)
 	mcp.AddTool(facade.server, cleanupTool(), facade.cleanupTask)
 	mcp.AddTool(facade.server, tool(ToolListTasks, "List durable development tasks.", true), facade.listTasks)
+	mcp.AddTool(facade.server, tool(
+		ToolWorkerProfiles,
+		"List the reviewed worker profiles this deployment configured, with the shapes each accepts and whether its harness is available.",
+		true,
+	), facade.workerProfiles)
 	mcp.AddTool(facade.server, tool(ToolGetTask, "Get one durable development task.", true), facade.getTask)
 	mcp.AddTool(facade.server, tool(ToolExplainTask, "Explain one durable task posture.", true), facade.explainTask)
 	mcp.AddTool(facade.server, tool(ToolGetLaunchPlan, "Get reviewed launch requirements for one ready task.", true), facade.getLaunchPlan)
@@ -172,6 +177,21 @@ func (facade *Facade) listTasks(ctx context.Context, request *mcp.CallToolReques
 		return nil, application.TaskList{}, err
 	}
 	result, err := facade.client.ListTasks(ctx, string(callContext.OperationID))
+	return nil, result, err
+}
+
+// A liaison that cannot start work needs to distinguish "no profile accepts this
+// shape" from "the profile exists but its harness is unavailable" — a
+// preparation failure reports neither. The catalog carries identity and posture
+// only: never the executable, the argument vector, or the environment
+// allowlist, which are launch authority and stay with the adapter that builds
+// the descriptor.
+func (facade *Facade) workerProfiles(ctx context.Context, request *mcp.CallToolRequest, _ EmptyInput) (*mcp.CallToolResult, application.WorkerProfileList, error) {
+	callContext, err := facade.authorize(request)
+	if err != nil {
+		return nil, application.WorkerProfileList{}, err
+	}
+	result, err := facade.client.ListWorkerProfiles(ctx, string(callContext.OperationID))
 	return nil, result, err
 }
 

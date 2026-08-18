@@ -57,6 +57,16 @@ func (client *Client) ListTasks(ctx context.Context, operationID string) (applic
 	return result, err
 }
 
+// ListWorkerProfiles reads the reviewed dispatch catalog and its posture.
+func (client *Client) ListWorkerProfiles(
+	ctx context.Context,
+	operationID string,
+) (application.WorkerProfileList, error) {
+	var result application.WorkerProfileList
+	err := client.call(ctx, operationID, MethodWorkerProfiles, emptyPayload{}, &result)
+	return result, err
+}
+
 // ShowTask reads durable detail for one task handle.
 func (client *Client) ShowTask(ctx context.Context, operationID, taskHandle string) (application.TaskDetail, error) {
 	var result application.TaskDetail
@@ -183,6 +193,8 @@ func projectedStateVersion(result any) (int64, bool) {
 	case *application.FleetSnapshot:
 		return projection.StateVersion, true
 	case *application.TaskList:
+		return projection.StateVersion, true
+	case *application.WorkerProfileList:
 		return projection.StateVersion, true
 	case *application.TaskDetail:
 		return projection.StateVersion, true

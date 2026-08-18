@@ -50,6 +50,7 @@ type Config struct {
 	ServiceInstanceID        string
 	Repositories             application.RepositoryCatalog
 	WorkerProfiles           application.WorkerProfileValidator
+	WorkerProfileCatalog     application.WorkerProfileCatalog
 	ValidationProfiles       application.ValidationProfileValidator
 	Workspaces               application.WorkspacePreparer
 	RuntimeAttachments       application.RuntimeAttachmentCoordinator
@@ -284,7 +285,8 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	}
 	queries, err := application.NewQueries(application.QueryConfig{
 		Repository: store, Harnesses: config.WorkerHarnesses, Host: control,
-		ReconciliationWorkspaces: config.reconciliationInspector, Clock: clock,
+		ReconciliationWorkspaces: config.reconciliationInspector,
+		WorkerProfiles:           config.WorkerProfileCatalog, Clock: clock,
 	})
 	if err != nil {
 		return fmt.Errorf("run service queries: %w", err)

@@ -93,6 +93,12 @@ func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 		}
 		result, err := handler.queries.ListTasks(ctx)
 		return queryOutcome(request.OperationID, result.StateVersion, result, err)
+	case MethodWorkerProfiles:
+		if err := decodeObject(request.Payload, &emptyPayload{}); err != nil {
+			return invalidPayload(request.OperationID, err)
+		}
+		result, err := handler.queries.ListWorkerProfiles(ctx)
+		return queryOutcome(request.OperationID, result.StateVersion, result, err)
 	case MethodShowTask:
 		var payload taskPayload
 		if err := decodeObject(request.Payload, &payload); err != nil {

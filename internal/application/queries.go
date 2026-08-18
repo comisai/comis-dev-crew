@@ -41,6 +41,7 @@ type Queries struct {
 	harnesses                WorkerHarnessResolver
 	host                     HostIntegrationStatus
 	reconciliationWorkspaces ReconciliationWorkspaceInspector
+	workerProfiles           WorkerProfileCatalog
 	clock                    Clock
 }
 
@@ -51,7 +52,10 @@ type QueryConfig struct {
 	Harnesses                WorkerHarnessResolver
 	Host                     HostIntegrationStatus
 	ReconciliationWorkspaces ReconciliationWorkspaceInspector
-	Clock                    Clock
+	// Absent when the deployment configured no worker profile; the read then
+	// reports an empty catalog, which is the honest answer to "what can run".
+	WorkerProfiles WorkerProfileCatalog
+	Clock          Clock
 }
 
 // NewQueries validates and binds the read-side dependencies.
@@ -64,7 +68,8 @@ func NewQueries(config QueryConfig) (*Queries, error) {
 	}
 	return &Queries{
 		repository: config.Repository, harnesses: config.Harnesses, host: config.Host,
-		reconciliationWorkspaces: config.ReconciliationWorkspaces, clock: config.Clock,
+		reconciliationWorkspaces: config.ReconciliationWorkspaces,
+		workerProfiles:           config.WorkerProfiles, clock: config.Clock,
 	}, nil
 }
 
