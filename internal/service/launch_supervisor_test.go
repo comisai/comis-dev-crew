@@ -306,6 +306,26 @@ func (*productionLaunchHarnessAdapter) ClassifySemanticActivity(application.Harn
 	return application.SemanticActivityResult{State: application.ActivityUnknown, Reason: application.SemanticReasonMissing}
 }
 
+// Launch supervision never reaches a running worker; the stub refuses so a
+// supervisor that started to would fail loudly rather than plan a keystroke.
+func (*productionLaunchHarnessAdapter) SendInput(
+	context.Context, application.WorkerInputRequest,
+) (application.WorkerInputPlan, error) {
+	return application.WorkerInputPlan{}, errors.New("launch harness adapter does not deliver input")
+}
+
+func (*productionLaunchHarnessAdapter) RequestPause(
+	context.Context, application.WorkerControlRequest,
+) (application.WorkerInputPlan, error) {
+	return application.WorkerInputPlan{}, errors.New("launch harness adapter does not deliver control")
+}
+
+func (*productionLaunchHarnessAdapter) RequestStop(
+	context.Context, application.WorkerControlRequest,
+) (application.WorkerInputPlan, error) {
+	return application.WorkerInputPlan{}, errors.New("launch harness adapter does not deliver control")
+}
+
 // Cancellation joins the same durable mutation surface; the stub accepts it.
 func (*productionLaunchMutationStub) CancelManagedRun(
 	_ context.Context,

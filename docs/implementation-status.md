@@ -394,6 +394,21 @@ task, run, lease, brief, and attachment authority never enter argv or stdin.
 Fresh `system`, `assistant`, and tool-result `user` events prove activity, while a
 `result` without a task report remains `unknown`.
 
+Both families answer the same intervention contract, which is what makes the
+adapter boundary a frozen contract rather than one harness's shape. Reaching a
+running worker returns a reviewed plan the service performs through its scoped
+host control operation; no adapter owns a terminal. An instruction is delivered
+only into an affirmatively empty composer, and a pending or unknown composer
+defers instead of injecting. The instruction is typed exactly once while the
+submission keystroke alone may be retried, since a resent instruction is a
+second instruction the worker cannot distinguish from the first. A slash, skill,
+or mention invocation waits on a longer harness-specific pause, because
+submitting into a picker that is still resolving selects an entry instead of
+sending the line. An instruction carrying its own newline, a control sequence,
+or more than 8192 bytes is refused rather than sanitized. Pause and stop carry
+no operator text and use distinct keystrokes, and every unconfirmed submission
+is reconciled rather than silently resent.
+
 The canonical `GetLaunchPlan` read accepts `ready` and recovery-reread `launching`
 tasks, then invokes that configured adapter with the durable task, workspace,
 brief, and activation binding. It projects the profile ID, terminal allow-entry

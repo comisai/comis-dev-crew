@@ -186,6 +186,12 @@ type WorkerHarnessAdapter interface {
 	ProbeVersion(context.Context) (HarnessVersionProbe, error)
 	BuildLaunchDescriptor(context.Context, WorkerLaunchRequest) (WorkerLaunchDescriptor, error)
 	ClassifySemanticActivity(HarnessObservation) SemanticActivityResult
+	// SendInput, RequestPause and RequestStop state how to reach a worker that
+	// is already running. They return a reviewed plan; the service performs it
+	// through the scoped host control operation, so no adapter owns a terminal.
+	SendInput(context.Context, WorkerInputRequest) (WorkerInputPlan, error)
+	RequestPause(context.Context, WorkerControlRequest) (WorkerInputPlan, error)
+	RequestStop(context.Context, WorkerControlRequest) (WorkerInputPlan, error)
 }
 
 // WorkerHarnessResolver returns only the exact operator-reviewed adapter for a
