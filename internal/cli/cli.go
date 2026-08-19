@@ -32,6 +32,7 @@ Commands:
   task show TASK [--format yaml|json]
   task explain TASK [--format text|json]
   task diff TASK [--stat|--name-only] [--format text|json]
+  task logs TASK [--source worker|service|validation] [--follow [--passes N]] [--format text|json]
   task launch-plan TASK [--format json]
   task operation OPERATION [--format text|json]
   task prepare --input FILE|- [--operation OPERATION] [--format json]
@@ -75,6 +76,7 @@ type ReadClient interface {
 	DiffTask(context.Context, string, string) (application.TaskDiffView, error)
 	SurveyRepairs(context.Context, string, localapi.SurveyRepairsInput) (application.RepairSurvey, error)
 	ReadEvents(context.Context, string, localapi.ReadEventsInput) (application.EventPage, error)
+	ReadTaskLogs(context.Context, string, localapi.ReadTaskLogsInput) (application.TaskLogPage, error)
 	ListDecisions(context.Context, string, localapi.ListDecisionsInput) (application.DecisionList, error)
 	ShowDecision(context.Context, string, localapi.ShowDecisionInput) (application.TaskDecision, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
@@ -130,6 +132,7 @@ const (
 	commandDiffTask
 	commandSurveyRepairs
 	commandReadEvents
+	commandReadTaskLogs
 )
 
 type parsedCommand struct {
@@ -140,6 +143,8 @@ type parsedCommand struct {
 	decisionKey     string
 	diffSelector    diffSelector
 	eventCursor     int64
+	logSource       application.TaskLogSource
+	logCursor       int64
 	watchPasses     int
 	watchInterval   time.Duration
 	inputPath       string
@@ -304,6 +309,9 @@ func parseTaskCommand(command parsedCommand, args []string) (parsedCommand, erro
 	}
 	if len(args) > 0 && args[0] == "attest" {
 		return parseAttestScoutCommand(command, args[1:])
+	}
+	if len(args) > 0 && args[0] == "logs" {
+		return parseTaskLogsCommand(command, args[1:])
 	}
 	if len(args) > 0 && args[0] == "diff" {
 		return parseTaskDiffCommand(command, args[1:])

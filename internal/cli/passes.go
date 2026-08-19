@@ -5,6 +5,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
@@ -48,6 +49,22 @@ func runPasses(
 		if err := renderResult(stdout, command, result); err != nil {
 			return writeCLIOutput(stderr, "devcrew: output is unavailable\nHint: inspect the output destination\n", ExitUnavailable)
 		}
+		command = advanceCursor(command, result)
 	}
 	return ExitSuccess
+}
+
+// advanceCursor carries a resumable read forward to where its last page ended.
+//
+// Following re-reads from the returned cursor rather than from the beginning, so
+// a long-running follow neither reprints what it already showed nor grows the
+// page it asks for.
+func advanceCursor(command parsedCommand, result any) parsedCommand {
+	switch page := result.(type) {
+	case application.TaskLogPage:
+		command.logCursor = page.NextCursor
+	case application.EventPage:
+		command.eventCursor = page.NextCursor
+	}
+	return command
 }

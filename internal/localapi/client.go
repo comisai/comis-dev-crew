@@ -50,6 +50,17 @@ func (client *Client) Fleet(ctx context.Context, operationID string) (applicatio
 	return result, err
 }
 
+// ReadTaskLogs reads one bounded page of one task's private history.
+func (client *Client) ReadTaskLogs(
+	ctx context.Context,
+	operationID string,
+	input ReadTaskLogsInput,
+) (application.TaskLogPage, error) {
+	var result application.TaskLogPage
+	err := client.call(ctx, operationID, MethodReadTaskLogs, input, &result)
+	return result, err
+}
+
 // ReadEvents follows the content-free service event stream from a cursor.
 func (client *Client) ReadEvents(
 	ctx context.Context,
@@ -329,6 +340,8 @@ func projectedStateVersion(result any) (int64, bool) {
 		return projection.StateVersion, true
 	case *application.RepairSurvey:
 		return projection.StateVersion, true
+	case *application.TaskLogPage:
+		return projection.NextCursor, true
 	case *application.EventPage:
 		// The stream's read-after-write marker is its cursor: the log is
 		// append-only and advances independently of task state versions.

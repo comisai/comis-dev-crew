@@ -69,6 +69,7 @@ const (
 	MethodDiffTask       Method = "DiffTask"
 	MethodSurveyRepairs  Method = "SurveyRepairs"
 	MethodReadEvents     Method = "ReadEvents"
+	MethodReadTaskLogs   Method = "ReadTaskLogs"
 )
 
 func (method Method) valid() bool {
@@ -76,7 +77,7 @@ func (method Method) valid() bool {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
 		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
-		MethodSyncPrimary, MethodAttestScout, MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs, MethodReadEvents:
+		MethodSyncPrimary, MethodAttestScout, MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs, MethodReadEvents, MethodReadTaskLogs:
 		return true
 	default:
 		return false
@@ -108,6 +109,15 @@ func (method Method) SideEffect() SideEffectClass {
 // reads the whole fleet.
 type ListDecisionsInput struct {
 	TaskHandle string `json:"taskHandle,omitempty"`
+}
+
+// ReadTaskLogsInput names one task's history and where to resume it. An absent
+// source reads the worker's own account.
+type ReadTaskLogsInput struct {
+	TaskHandle    string                    `json:"taskHandle"`
+	Source        application.TaskLogSource `json:"source,omitempty"`
+	AfterSequence int64                     `json:"afterSequence,omitempty"`
+	Limit         int                       `json:"limit,omitempty"`
 }
 
 // ReadEventsInput resumes the content-free event stream from a cursor. A zero
@@ -164,7 +174,7 @@ type Outcome struct {
 // the operator console was meant to hold alone.
 func (method Method) operatorOnly() bool {
 	switch method {
-	case MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs:
+	case MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs, MethodReadTaskLogs:
 		return true
 	default:
 		return false
@@ -174,6 +184,7 @@ func (method Method) operatorOnly() bool {
 // ReadQueries is the narrow application surface consumed by the local boundary.
 type ReadQueries interface {
 	ReadEvents(context.Context, int64, int) (application.EventPage, error)
+	ReadTaskLogs(context.Context, string, application.TaskLogSource, int64, int) (application.TaskLogPage, error)
 	DiffTask(context.Context, string) (application.TaskDiffView, error)
 	SurveyRepairs(context.Context, string) (application.RepairSurvey, error)
 	ListDecisions(context.Context, string) (application.DecisionList, error)

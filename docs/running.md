@@ -328,6 +328,7 @@ devcrew [--socket PATH] workers list [--format table|json]
 devcrew [--socket PATH] task show TASK [--format yaml|json]
 devcrew [--socket PATH] task explain TASK [--format text|json]
 devcrew [--socket PATH] task diff TASK [--stat|--name-only] [--format text|json]
+devcrew [--socket PATH] task logs TASK [--source worker|service|validation] [--follow [--passes N]] [--format text|json]
 devcrew [--socket PATH] task launch-plan TASK [--format json]
 devcrew [--socket PATH] task operation OPERATION [--format text|json]
 devcrew [--socket PATH] task prepare --input FILE|- [--operation OPERATION] [--format json]
@@ -381,6 +382,26 @@ explicit `task reconcile TASK --action ...` command holds, and a survey that
 reconciled on its own would become a second writer of that transition. One task
 whose evidence cannot be read becomes its own posture rather than an error, so a
 single stuck task never hides the rest of the fleet.
+
+`task logs` reads one task's private history from one durable source, and the
+sources stay separate because they carry different authority. `worker` is what the
+worker reported about its own progress — a claim. `service` is the task's slice of
+the durable event log — what the service actually did. `validation` is which
+reviewed programs ran and how they ended. Blending them would leave an operator
+unable to tell a claim from a fact, which is the distinction the precedence model
+in §13.2 rests on. An unspecified source reads the worker's account, which is what
+"what has this task been doing" means.
+
+Worker text is bounded and rejected for control characters when the report is
+accepted, so it cannot carry a terminal escape sequence into whatever renders it;
+validation entries carry only the operator-sanitized executable label, never a
+host path or an argument vector. Every source exposes the same monotonic cursor,
+so `--follow` behaves identically whichever one is watched and each pass resumes
+where the last page ended. It is bounded by `--passes` so the command always
+terminates. Reading a task's history proves the task exists first, so an unknown
+handle is a not-found rather than an empty page that would read as "this task did
+nothing". Like `task diff`, it is operator-only: raw private history is not a
+model surface.
 
 `task diff` answers "what did the worker actually change". Committed and
 uncommitted work are shown apart because they mean different things: committed

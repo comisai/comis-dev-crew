@@ -189,6 +189,22 @@ detail and a facade that later grew a tool must not thereby gain the authority t
 read it. Neither read can submit or close an answer: that stays on the generic
 Comis attention path.
 
+## Task history
+
+One task's history is readable from three durable sources that are never blended:
+the reports its worker authored, the task's slice of the service event log, and
+the reviewed validation programs that ran. They stay apart because they carry
+different authority — a worker entry is a claim, a service entry is a durable
+fact, and a validation entry is what actually executed — and the precedence model
+depends on an operator being able to tell them apart.
+
+Nothing new is stored to serve this: each source is a projection of a record the
+service already keeps, so the history cannot drift from the state it describes.
+Worker text was bounded and rejected for control characters at report acceptance,
+so it is safe to render, and validation entries expose only the sanitized
+executable label. All three share one monotonic cursor, so following behaves
+identically across sources.
+
 ## Service event stream
 
 Task state changes and decision openings and closings are recorded as a durable,

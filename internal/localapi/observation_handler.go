@@ -6,6 +6,15 @@ import "context"
 // handled the method so the caller can fall through to the transition surface.
 func (handler *Handler) dispatchObservation(ctx context.Context, request Request) (Outcome, bool) {
 	switch request.Method {
+	case MethodReadTaskLogs:
+		var payload ReadTaskLogsInput
+		if err := decodeObject(request.Payload, &payload); err != nil {
+			return invalidPayload(request.OperationID, err), true
+		}
+		result, err := handler.queries.ReadTaskLogs(
+			ctx, payload.TaskHandle, payload.Source, payload.AfterSequence, payload.Limit,
+		)
+		return queryOutcome(request.OperationID, result.NextCursor, result, err), true
 	case MethodReadEvents:
 		var payload ReadEventsInput
 		if err := decodeObject(request.Payload, &payload); err != nil {
