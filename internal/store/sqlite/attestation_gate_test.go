@@ -272,25 +272,22 @@ func TestOpenDecisionsAwaitingHuman_ExcludesResolvedKeysAndCarriesTheLedger(t *t
 
 // A real decision report is open until a resolution carries its key, and the
 // ledger travels with it so the cadence survives a restart.
+//
+// Delivering the report is what asks the question, so the count starts at one
+// airing and the ledger adds the repeats on top of it.
 func TestOpenDecisionsAwaitingHuman_TracksARealDecisionThroughItsResolution(t *testing.T) {
 	store, scout := attestationFixture(t, domain.ShapeScout)
 	at := scout.UpdatedAt.Add(time.Minute)
 
-	decision := sqliteWorkerReport(scout, "report-decision-0001", domain.ReportDecision)
-	decision.ExternalKey = "schema-choice"
-	if _, err := store.CommitReport(context.Background(), directReportMutation(scout, decision, at)); err != nil {
-		t.Fatalf("CommitReport(decision) error = %v", err)
-	}
+	reportDecision(t, store, scout, "schema-choice", at)
+	askTheHuman(t, store, at.Add(time.Second))
 
 	open, err := store.OpenDecisionsAwaitingHuman(context.Background())
 	if err != nil {
 		t.Fatalf("OpenDecisionsAwaitingHuman() error = %v", err)
 	}
-	if len(open) != 1 || open[0].ExternalKey != "schema-choice" || open[0].SurfaceCount != 0 {
+	if len(open) != 1 || open[0].ExternalKey != "schema-choice" || open[0].SurfaceCount != 1 {
 		t.Fatalf("open decisions = %+v", open)
-	}
-	if !open[0].LastSurfacedAt.IsZero() {
-		t.Error("a decision nobody raised carries no last sighting")
 	}
 
 	if err := store.RecordDecisionSurfaced(context.Background(), application.DecisionSurfacedMutation{
@@ -302,7 +299,7 @@ func TestOpenDecisionsAwaitingHuman_TracksARealDecisionThroughItsResolution(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(raised) != 1 || raised[0].SurfaceCount != 1 || raised[0].LastSurfacedAt.IsZero() {
+	if len(raised) != 1 || raised[0].SurfaceCount != 2 || raised[0].LastSurfacedAt.IsZero() {
 		t.Fatalf("raised decision = %+v", raised)
 	}
 
@@ -343,6 +340,7 @@ func TestDecisionSurfacing_RefusesCanceledCallersAndCorruptLedgerRows(t *testing
 	if _, err := store.CommitReport(context.Background(), directReportMutation(scout, decision, at)); err != nil {
 		t.Fatalf("CommitReport(decision) error = %v", err)
 	}
+	askTheHuman(t, store, at.Add(time.Second))
 	if err := store.RecordDecisionSurfaced(context.Background(), application.DecisionSurfacedMutation{
 		TaskHandle: scout.Handle, ExternalKey: "schema-choice", At: at,
 	}); err != nil {
