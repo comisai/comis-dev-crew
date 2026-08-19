@@ -526,6 +526,7 @@ type mutationStore struct {
 	steerTask       TaskSteerMutation
 	cancelDecision  DecisionCancellationMutation
 	respondDecision DecisionResponseMutation
+	respondErr      error
 	prepareCalls    int
 	replayResult    MutationResult
 	replayFound     bool
@@ -624,6 +625,9 @@ func (store *mutationStore) CommitDecisionResponse(
 	mutation DecisionResponseMutation,
 ) (MutationResult, error) {
 	store.respondDecision = mutation
+	if store.respondErr != nil {
+		return MutationResult{}, store.respondErr
+	}
 	return MutationResult{
 		Task:      domain.Task{Handle: mutation.TaskHandle, State: domain.TaskWorking},
 		Operation: domain.OperationRecord{ID: mutation.OperationID},

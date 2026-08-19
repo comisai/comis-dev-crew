@@ -192,3 +192,34 @@ func validOperation() OperationRecord {
 		UpdatedAt:     created,
 	}
 }
+
+// An answer is human text a worker will read. Newlines and tabs are ordinary
+// prose, but every other control character would reach a terminal as a command
+// rather than as words, so the boundary refuses them instead of escaping them
+// into a different answer.
+func TestValidateDecisionResponse(t *testing.T) {
+	for name, response := range map[string]string{
+		"plain":          "use the versioned schema",
+		"with newline":   "use the versioned schema\nand keep the adapter",
+		"with tab":       "use\tthe versioned schema",
+		"at the bound":   strings.Repeat("a", MaximumDecisionResponseBytes),
+		"non-ascii text": "használd a meglévő adaptert",
+	} {
+		if err := ValidateDecisionResponse(response); err != nil {
+			t.Errorf("%s: ValidateDecisionResponse() error = %v", name, err)
+		}
+	}
+	for name, response := range map[string]string{
+		"empty":           "",
+		"over the bound":  strings.Repeat("a", MaximumDecisionResponseBytes+1),
+		"escape sequence": "clear \x1b[2J now",
+		"carriage return": "one\rtwo",
+		"null byte":       "one\x00two",
+		"delete":          "one\x7ftwo",
+		"invalid text":    string([]byte{0xff, 0xfe}),
+	} {
+		if err := ValidateDecisionResponse(response); err == nil {
+			t.Errorf("%s: ValidateDecisionResponse() error = nil", name)
+		}
+	}
+}
