@@ -3,6 +3,7 @@ package domain
 import (
 	"regexp"
 	"time"
+	"unicode/utf8"
 )
 
 var (
@@ -80,6 +81,38 @@ func ValidateAuthorityReference(field, value string) error {
 func validateRevision(value string) error {
 	if !revisionPattern.MatchString(value) {
 		return &ValidationError{Field: "baseRevision", Reason: "must be a lowercase Git object identity"}
+	}
+	return nil
+}
+
+// MaximumDecisionResponseBytes bounds one answer before it is stored, so an
+// oversized reply is refused rather than truncated into a different answer.
+const MaximumDecisionResponseBytes = 8192
+
+// ValidateDecisionResponse rejects an answer that is empty, oversized, not valid
+// text, or carries control characters.
+//
+// The answer is human input that a worker will read, so a control sequence in it
+// would reach a terminal as a command rather than as text. Refusing is right
+// rather than escaping: an answer nobody can read as written is worth stopping
+// on, not silently rewriting into a different one.
+func ValidateDecisionResponse(value string) error {
+	if value == "" {
+		return &ValidationError{Field: "response", Reason: "must not be empty"}
+	}
+	if len(value) > MaximumDecisionResponseBytes {
+		return &ValidationError{Field: "response", Reason: "must stay within its byte bound"}
+	}
+	if !utf8.ValidString(value) {
+		return &ValidationError{Field: "response", Reason: "must be valid text"}
+	}
+	for _, character := range value {
+		if character == '\n' || character == '\t' {
+			continue
+		}
+		if character < 0x20 || character == 0x7f {
+			return &ValidationError{Field: "response", Reason: "must not carry control characters"}
+		}
 	}
 	return nil
 }
