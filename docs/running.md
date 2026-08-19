@@ -327,6 +327,7 @@ devcrew [--socket PATH] tasks list [--format table|json]
 devcrew [--socket PATH] workers list [--format table|json]
 devcrew [--socket PATH] task show TASK [--format yaml|json]
 devcrew [--socket PATH] task explain TASK [--format text|json]
+devcrew [--socket PATH] task diff TASK [--stat|--name-only] [--format text|json]
 devcrew [--socket PATH] task launch-plan TASK [--format json]
 devcrew [--socket PATH] task operation OPERATION [--format text|json]
 devcrew [--socket PATH] task prepare --input FILE|- [--operation OPERATION] [--format json]
@@ -345,6 +346,25 @@ devcrew [--socket PATH] decisions list [--task TASK] [--format table|json]
 devcrew [--socket PATH] decision show TASK DECISION [--format text|json]
 ```
 
+`task diff` answers "what did the worker actually change". Committed and
+uncommitted work are shown apart because they mean different things: committed
+work is what the worker stands behind, while uncommitted work is what a handback
+would land in a developer's editor. The base revision and the worktree are read
+from durable state rather than from the request, so a caller cannot aim the read
+at a tree the task does not own or measure the work from a revision nobody
+pinned.
+
+Only bounded summaries exist. `--stat` reports per-file line counts and totals and
+`--name-only` reports paths; there is no flag that produces a patch body, because
+a patch is unbounded worker-authored content. A binary change is marked as binary
+rather than counted as zero lines, a rename keeps its previous path attached so
+the work is never attributed to a file that no longer exists, and a change set
+larger than the read bounds says its file list is truncated instead of presenting
+a partial listing as complete. Change paths arrive verbatim from Git, so a path
+carrying control characters or invalid encoding is refused rather than escaped —
+an anomalous filename is worth stopping on, not displaying. Untracked files are
+not part of a diff; the task's cleanliness in `task show` is what reports them.
+
 `decisions list` and `decision show` answer "what is waiting on me". A decision is
 named by its task and its key, because that pair is what identifies it durably;
 there is no separate decision identity to quote. The task scope is applied by the
@@ -361,7 +381,10 @@ cadence the service runs so the console cannot publish a schedule the supervisor
 does not keep. An absent airing renders as `unknown` rather than as an epoch,
 which would read as long overdue.
 
-Both are read-only and operator-only, and the refusal lives in the canonical
+`task diff` is read-only and operator-only for the same reason the decision reads
+are: it is private task detail.
+
+Both decision reads are read-only and operator-only, and the refusal lives in the canonical
 handler rather than only in the set of tools the model facade exposes: an open
 question is private task detail, and a facade that later grew a tool must not
 thereby gain the authority to read it. Answering a question stays on the generic

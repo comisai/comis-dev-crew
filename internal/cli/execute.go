@@ -20,6 +20,8 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 		return client.ListTasks(ctx, operationID)
 	case commandWorkerProfiles:
 		return client.ListWorkerProfiles(ctx, operationID)
+	case commandDiffTask:
+		return client.DiffTask(ctx, operationID, command.reference)
 	case commandListDecisions:
 		return client.ListDecisions(ctx, operationID, localapi.ListDecisionsInput{TaskHandle: command.reference})
 	case commandShowDecision:

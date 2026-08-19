@@ -189,6 +189,22 @@ detail and a facade that later grew a tool must not thereby gain the authority t
 read it. Neither read can submit or close an answer: that stays on the generic
 Comis attention path.
 
+## Task change summaries
+
+What a task changed is readable from the operator console as two bounded
+summaries: committed work and work still in the tree. The split is the point —
+committed work is what the worker stands behind, while uncommitted work is what a
+handback would land in a developer's editor.
+
+The base revision and the worktree come from durable state, never from the
+request, so a read cannot be aimed at a tree the task does not own or measured
+from a revision nobody pinned, and the same exact worktree identity checks as
+candidate validation run first. Only counts and paths leave the adapter: a patch
+body is unbounded worker-authored content and no surface asks for one. A binary
+change is marked rather than counted as zero, a rename keeps both paths, a change
+set larger than the read bounds reports its listing as truncated, and a path
+carrying control characters or invalid encoding is refused rather than escaped.
+
 ## Comis adapter
 
 The adapter contains the supervised persistent bidirectional connection used by

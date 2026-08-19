@@ -30,6 +30,7 @@ Commands:
   workers list [--format table|json]
   task show TASK [--format yaml|json]
   task explain TASK [--format text|json]
+  task diff TASK [--stat|--name-only] [--format text|json]
   task launch-plan TASK [--format json]
   task operation OPERATION [--format text|json]
   task prepare --input FILE|- [--operation OPERATION] [--format json]
@@ -68,6 +69,7 @@ type ReadClient interface {
 	SteerTask(context.Context, string, localapi.SteerTaskInput) (localapi.TaskMutationResult, error)
 	AttestScoutDecisions(context.Context, string, localapi.AttestScoutDecisionsInput) (localapi.TaskMutationResult, error)
 	DiscardTask(context.Context, string, localapi.DiscardTaskInput) (localapi.TaskMutationResult, error)
+	DiffTask(context.Context, string, string) (application.TaskDiffView, error)
 	ListDecisions(context.Context, string, localapi.ListDecisionsInput) (application.DecisionList, error)
 	ShowDecision(context.Context, string, localapi.ShowDecisionInput) (application.TaskDecision, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
@@ -117,6 +119,7 @@ const (
 	commandAttestScout
 	commandListDecisions
 	commandShowDecision
+	commandDiffTask
 )
 
 type parsedCommand struct {
@@ -125,6 +128,7 @@ type parsedCommand struct {
 	format          string
 	reference       string
 	decisionKey     string
+	diffSelector    diffSelector
 	inputPath       string
 	operationID     string
 	prepareInput    *localapi.PrepareTaskInput
@@ -294,6 +298,9 @@ func parseTaskCommand(command parsedCommand, args []string) (parsedCommand, erro
 	}
 	if len(args) > 0 && args[0] == "attest" {
 		return parseAttestScoutCommand(command, args[1:])
+	}
+	if len(args) > 0 && args[0] == "diff" {
+		return parseTaskDiffCommand(command, args[1:])
 	}
 	if len(args) < 2 {
 		return parsedCommand{}, errors.New("task subcommand and reference are required")
