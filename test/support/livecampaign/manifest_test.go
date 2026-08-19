@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -231,5 +232,79 @@ func TestManifestRequiresExactServiceUnitDigests(t *testing.T) {
 	manifest.Services.ComisUnitSHA256 = "untrusted"
 	if _, err := LoadManifest(writeManifest(t, manifest, "-unit-digest")); err == nil || !strings.Contains(err.Error(), "unit definition") {
 		t.Fatalf("expected service-unit-digest refusal, got %v", err)
+	}
+}
+
+// campaignKindJSON rewrites the manifest's campaign-kind discriminator, inserting it when the
+// encoded manifest does not already carry one, so one helper serves every kind under test.
+func campaignKindJSON(kind string) func(string) string {
+	return func(contents string) string {
+		if strings.Contains(contents, `"campaignKind":`) {
+			return campaignKindValuePattern.ReplaceAllString(contents, `"campaignKind":"`+kind+`"`)
+		}
+		return strings.Replace(contents, `"schemaVersion":1`, `"schemaVersion":1,"campaignKind":"`+kind+`"`, 1)
+	}
+}
+
+func withoutCampaignKind(contents string) string {
+	return campaignKindFieldPattern.ReplaceAllString(contents, "")
+}
+
+var (
+	// The value pattern rewrites a kind in place; the field pattern removes the whole
+	// member, trailing separator included, so the result stays well-formed JSON.
+	campaignKindValuePattern = regexp.MustCompile(`"campaignKind":"[^"]*"`)
+	campaignKindFieldPattern = regexp.MustCompile(`"campaignKind":"[^"]*",?`)
+)
+
+func writeManifestJSON(t *testing.T, manifest Manifest, suffix string, edit func(string) string) string {
+	t.Helper()
+	contents, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "campaign"+suffix+".json")
+	if err := os.WriteFile(path, []byte(edit(string(contents))), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	return path
+}
+
+// A campaign declares only the checkpoint arc its channel can actually drive. The eleven
+// e0cp markers are sent by a human from the Telegram app, so a campaign driven by the
+// loopback emulator has no sender that could ever satisfy them.
+func TestManifestBindsCheckpointDeclarabilityToCampaignKind(t *testing.T) {
+	realTelegram := validManifest()
+	if _, err := LoadManifest(writeManifestJSON(t, realTelegram, "-real", campaignKindJSON("real_telegram"))); err != nil {
+		t.Fatalf("LoadManifest(real_telegram campaign) error = %v", err)
+	}
+
+	emulator := validManifest()
+	emulator.Telegram.Checkpoints = nil
+	if _, err := LoadManifest(writeManifestJSON(t, emulator, "-emulator", campaignKindJSON("emulator"))); err != nil {
+		t.Fatalf("LoadManifest(emulator campaign without the human arc) error = %v", err)
+	}
+
+	declared := validManifest()
+	if _, err := LoadManifest(writeManifestJSON(t, declared, "-emulator-declared", campaignKindJSON("emulator"))); err == nil ||
+		!strings.Contains(err.Error(), "emulator") {
+		t.Fatalf("expected emulator checkpoint-declaration refusal, got %v", err)
+	}
+
+	missingArc := validManifest()
+	missingArc.Telegram.Checkpoints = nil
+	if _, err := LoadManifest(writeManifestJSON(t, missingArc, "-real-missing", campaignKindJSON("real_telegram"))); err == nil ||
+		!strings.Contains(err.Error(), "task_request") {
+		t.Fatalf("expected real_telegram missing-checkpoint refusal, got %v", err)
+	}
+
+	if _, err := LoadManifest(writeManifestJSON(t, validManifest(), "-unknown-kind", campaignKindJSON("paper"))); err == nil ||
+		!strings.Contains(err.Error(), "campaignKind") {
+		t.Fatalf("expected unknown campaign-kind refusal, got %v", err)
+	}
+
+	if _, err := LoadManifest(writeManifestJSON(t, validManifest(), "-absent-kind", withoutCampaignKind)); err == nil ||
+		!strings.Contains(err.Error(), "campaignKind") {
+		t.Fatalf("expected absent campaign-kind refusal, got %v", err)
 	}
 }
