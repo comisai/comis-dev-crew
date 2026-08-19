@@ -342,9 +342,24 @@ devcrew [--socket PATH] task replace TASK --worker PROFILE [--operation OPERATIO
 devcrew [--socket PATH] task steer TASK --instruction TEXT [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task cleanup TASK [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task discard TASK --yes [--operation OPERATION] [--format json]
+devcrew [--socket PATH] repair reconcile [--task TASK] [--format table|json]
 devcrew [--socket PATH] decisions list [--task TASK] [--format table|json]
 devcrew [--socket PATH] decision show TASK DECISION [--format text|json]
 ```
+
+`repair reconcile` answers "what is stuck, and what would fix it". It surveys the
+tasks in the unknown state — the only state the reconcile command accepts — and
+classifies each against the same evidence that command requires: whether the
+durable authority and terminal settlement are proven, whether the registered
+worktree verifies, whether it is clean, and whether it holds a commit ahead of
+the pinned base. Each posture carries the move it calls for, so an operator does
+not have to re-derive from the code what the service already knows.
+
+It reports and never acts. Choosing an action from evidence is the authority the
+explicit `task reconcile TASK --action ...` command holds, and a survey that
+reconciled on its own would become a second writer of that transition. One task
+whose evidence cannot be read becomes its own posture rather than an error, so a
+single stuck task never hides the rest of the fleet.
 
 `task diff` answers "what did the worker actually change". Committed and
 uncommitted work are shown apart because they mean different things: committed

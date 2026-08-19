@@ -27,6 +27,8 @@ func renderResult(destination io.Writer, command parsedCommand, result any) erro
 		return renderTaskList(destination, result.(application.TaskList))
 	case commandWorkerProfiles:
 		return renderWorkerProfiles(destination, result.(application.WorkerProfileList))
+	case commandSurveyRepairs:
+		return renderRepairSurvey(destination, result.(application.RepairSurvey))
 	case commandDiffTask:
 		return renderTaskDiff(destination, command, result.(application.TaskDiffView))
 	case commandListDecisions:

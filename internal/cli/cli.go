@@ -45,6 +45,7 @@ Commands:
   task steer TASK --instruction TEXT [--operation OPERATION] [--format json]
   task cleanup TASK [--operation OPERATION] [--format json]
   task discard TASK --yes [--operation OPERATION] [--format json]
+  repair reconcile [--task TASK] [--format table|json]
   decisions list [--task TASK] [--format table|json]
   decision show TASK DECISION [--format text|json]
 
@@ -70,6 +71,7 @@ type ReadClient interface {
 	AttestScoutDecisions(context.Context, string, localapi.AttestScoutDecisionsInput) (localapi.TaskMutationResult, error)
 	DiscardTask(context.Context, string, localapi.DiscardTaskInput) (localapi.TaskMutationResult, error)
 	DiffTask(context.Context, string, string) (application.TaskDiffView, error)
+	SurveyRepairs(context.Context, string, localapi.SurveyRepairsInput) (application.RepairSurvey, error)
 	ListDecisions(context.Context, string, localapi.ListDecisionsInput) (application.DecisionList, error)
 	ShowDecision(context.Context, string, localapi.ShowDecisionInput) (application.TaskDecision, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
@@ -120,6 +122,7 @@ const (
 	commandListDecisions
 	commandShowDecision
 	commandDiffTask
+	commandSurveyRepairs
 )
 
 type parsedCommand struct {
@@ -247,6 +250,8 @@ func parseCommand(args []string, defaultSocketPath string) (parsedCommand, error
 			return parsedCommand{}, err
 		}
 		command.kind, command.format = commandWorkerProfiles, format
+	case "repair":
+		return parseRepairCommand(command, args[1:])
 	case "decisions":
 		return parseDecisionsCommand(command, args[1:])
 	case "decision":

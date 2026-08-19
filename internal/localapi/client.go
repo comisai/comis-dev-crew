@@ -50,6 +50,18 @@ func (client *Client) Fleet(ctx context.Context, operationID string) (applicatio
 	return result, err
 }
 
+// SurveyRepairs reads which unknown tasks can be reconciled and why the rest
+// cannot.
+func (client *Client) SurveyRepairs(
+	ctx context.Context,
+	operationID string,
+	input SurveyRepairsInput,
+) (application.RepairSurvey, error) {
+	var result application.RepairSurvey
+	err := client.call(ctx, operationID, MethodSurveyRepairs, input, &result)
+	return result, err
+}
+
 // DiffTask reads the bounded summary of what one task changed.
 func (client *Client) DiffTask(
 	ctx context.Context,
@@ -303,6 +315,8 @@ func projectedStateVersion(result any) (int64, bool) {
 	case *application.TaskDetail:
 		return projection.StateVersion, true
 	case *application.TaskDiffView:
+		return projection.StateVersion, true
+	case *application.RepairSurvey:
 		return projection.StateVersion, true
 	case *application.DecisionList:
 		return projection.StateVersion, true

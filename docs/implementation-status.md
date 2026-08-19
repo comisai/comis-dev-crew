@@ -189,6 +189,21 @@ detail and a facade that later grew a tool must not thereby gain the authority t
 read it. Neither read can submit or close an answer: that stays on the generic
 Comis attention path.
 
+## Reconciliation survey
+
+Which unknown tasks a reconcile would accept is readable from the operator
+console. Each task is classified against the same evidence the reconcile command
+requires — durable authority, terminal settlement, worktree verification,
+cleanliness, and whether a commit exists ahead of the pinned base — using the
+read-only half of the reconciliation inspector.
+
+The survey reports and never acts, because choosing an action from evidence is
+the authority the explicit per-task command holds and a survey that reconciled on
+its own would be a second writer of that transition. Only the unknown state is
+surveyed, since listing anything else would offer an action the service would
+refuse. Every way the evidence falls short is its own closed posture rather than
+an error, so one unreadable task never hides the rest of the fleet.
+
 ## Task change summaries
 
 What a task changed is readable from the operator console as two bounded
