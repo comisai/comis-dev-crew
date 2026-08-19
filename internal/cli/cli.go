@@ -47,7 +47,7 @@ Commands:
   task steer TASK --instruction TEXT [--operation OPERATION] [--format json]
   task cleanup TASK [--operation OPERATION] [--format json]
   task discard TASK --yes [--operation OPERATION] [--format json]
-  events tail [--after SEQUENCE] [--format text|jsonl]
+  events tail [--after SEQUENCE] [--task TASK] [--format text|jsonl]
   repair reconcile [--task TASK] [--format table|json]
   decisions list [--task TASK] [--format table|json]
   decision show TASK DECISION [--format text|json]

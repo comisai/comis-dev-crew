@@ -46,7 +46,7 @@ func TestReadServiceEvents_RefusesRowsItCannotDecode(t *testing.T) {
 			if _, err := store.db.Exec(corrupt); err != nil {
 				t.Fatalf("corrupt %s: %v", name, err)
 			}
-			if _, err := store.ReadServiceEvents(context.Background(), 0, 10); err == nil {
+			if _, err := store.ReadServiceEvents(context.Background(), 0, 10, ""); err == nil {
 				t.Fatalf("ReadServiceEvents(corrupt %s) error = nil, want a refusal", name)
 			}
 		})
@@ -92,7 +92,7 @@ func TestStateChange_RefusesWhenTheEventLogIsUnavailable(t *testing.T) {
 	if _, err := store.CommitReport(context.Background(), directReportMutation(task, decision, at)); err == nil {
 		t.Error("CommitReport(no event log) error = nil")
 	}
-	if _, err := store.ReadServiceEvents(context.Background(), 0, 10); err == nil {
+	if _, err := store.ReadServiceEvents(context.Background(), 0, 10, ""); err == nil {
 		t.Error("ReadServiceEvents(no event log) error = nil")
 	}
 }

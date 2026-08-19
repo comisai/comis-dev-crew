@@ -18,6 +18,7 @@ func (stub *serviceEventStub) ReadServiceEvents(
 	_ context.Context,
 	afterSequence int64,
 	limit int,
+	_ string,
 ) ([]ServiceEvent, error) {
 	stub.cursors = append(stub.cursors, afterSequence)
 	stub.limits = append(stub.limits, limit)
@@ -48,7 +49,7 @@ func TestReadEvents_HandsBackTheCursorToResumeFrom(t *testing.T) {
 	}}
 	queries := eventQueryFixture(t, stub)
 
-	page, err := queries.ReadEvents(context.Background(), 4, 50)
+	page, err := queries.ReadEvents(context.Background(), 4, 50, "")
 	if err != nil {
 		t.Fatalf("ReadEvents() error = %v", err)
 	}
@@ -63,7 +64,7 @@ func TestReadEvents_HandsBackTheCursorToResumeFrom(t *testing.T) {
 	}
 
 	empty := eventQueryFixture(t, &serviceEventStub{})
-	quiet, err := empty.ReadEvents(context.Background(), 9, 50)
+	quiet, err := empty.ReadEvents(context.Background(), 9, 50, "")
 	if err != nil {
 		t.Fatalf("ReadEvents(quiet) error = %v", err)
 	}
@@ -81,20 +82,20 @@ func TestReadEvents_BoundsThePageTheCallerAsksFor(t *testing.T) {
 	stub := &serviceEventStub{}
 	queries := eventQueryFixture(t, stub)
 
-	if _, err := queries.ReadEvents(context.Background(), 0, 100_000); err != nil {
+	if _, err := queries.ReadEvents(context.Background(), 0, 100_000, ""); err != nil {
 		t.Fatalf("ReadEvents(oversize) error = %v", err)
 	}
 	if len(stub.limits) != 1 || stub.limits[0] > MaximumEventPage {
 		t.Errorf("store limits = %v, want it capped at %d", stub.limits, MaximumEventPage)
 	}
 
-	if _, err := queries.ReadEvents(context.Background(), 0, 0); err != nil {
+	if _, err := queries.ReadEvents(context.Background(), 0, 0, ""); err != nil {
 		t.Fatalf("ReadEvents(unspecified) error = %v", err)
 	}
 	if stub.limits[1] <= 0 {
 		t.Errorf("an unspecified page size became %d", stub.limits[1])
 	}
-	if _, err := queries.ReadEvents(context.Background(), -1, 10); err == nil {
+	if _, err := queries.ReadEvents(context.Background(), -1, 10, ""); err == nil {
 		t.Error("ReadEvents(negative cursor) error = nil")
 	}
 }
@@ -103,7 +104,7 @@ func TestReadEvents_BoundsThePageTheCallerAsksFor(t *testing.T) {
 // happened" would keep redrawing a display it believes is current.
 func TestReadEvents_RefusesUnavailableReads(t *testing.T) {
 	failing := eventQueryFixture(t, &serviceEventStub{err: errors.New("durable read failed")})
-	if _, err := failing.ReadEvents(context.Background(), 0, 10); err == nil {
+	if _, err := failing.ReadEvents(context.Background(), 0, 10, ""); err == nil {
 		t.Error("ReadEvents(store failure) error = nil")
 	}
 
@@ -114,7 +115,7 @@ func TestReadEvents_RefusesUnavailableReads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewQueries() error = %v", err)
 	}
-	if _, err := unconfigured.ReadEvents(context.Background(), 0, 10); err == nil {
+	if _, err := unconfigured.ReadEvents(context.Background(), 0, 10, ""); err == nil {
 		t.Error("ReadEvents(no event store) error = nil")
 	}
 }

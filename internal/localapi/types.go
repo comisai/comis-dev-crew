@@ -142,8 +142,9 @@ type ReadTaskLogsInput struct {
 // ReadEventsInput resumes the content-free event stream from a cursor. A zero
 // cursor starts at the beginning and a zero limit takes the service default.
 type ReadEventsInput struct {
-	AfterSequence int64 `json:"afterSequence,omitempty"`
-	Limit         int   `json:"limit,omitempty"`
+	AfterSequence int64  `json:"afterSequence,omitempty"`
+	Limit         int    `json:"limit,omitempty"`
+	TaskHandle    string `json:"taskHandle,omitempty"`
 }
 
 // SurveyRepairsInput scopes the repair survey. An absent task handle surveys the
@@ -203,7 +204,7 @@ func (method Method) operatorOnly() bool {
 
 // ReadQueries is the narrow application surface consumed by the local boundary.
 type ReadQueries interface {
-	ReadEvents(context.Context, int64, int) (application.EventPage, error)
+	ReadEvents(context.Context, int64, int, string) (application.EventPage, error)
 	ReadTaskLogs(context.Context, string, application.TaskLogSource, int64, int) (application.TaskLogPage, error)
 	DiffTask(context.Context, string) (application.TaskDiffView, error)
 	SurveyRepairs(context.Context, string) (application.RepairSurvey, error)

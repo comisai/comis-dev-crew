@@ -213,7 +213,7 @@ func (queries *apiQueries) ReadTaskLogs(
 	return page, nil
 }
 
-func (queries *apiQueries) ReadEvents(_ context.Context, afterSequence int64, _ int) (application.EventPage, error) {
+func (queries *apiQueries) ReadEvents(_ context.Context, afterSequence int64, _ int, _ string) (application.EventPage, error) {
 	if afterSequence > queries.events.NextCursor {
 		return application.EventPage{SchemaVersion: 1, NextCursor: afterSequence, Events: []application.ServiceEvent{}}, nil
 	}

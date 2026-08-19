@@ -68,7 +68,7 @@ func (client *fakeClient) ReadEvents(
 	operationID string,
 	input localapi.ReadEventsInput,
 ) (application.EventPage, error) {
-	client.record(operationID, "events:"+strconv.FormatInt(input.AfterSequence, 10))
+	client.record(operationID, "events:"+strconv.FormatInt(input.AfterSequence, 10)+":"+input.TaskHandle)
 	return client.events, client.err
 }
 

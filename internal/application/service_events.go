@@ -61,7 +61,7 @@ type ServiceEvent struct {
 
 // ServiceEventStore reads the durable event log from a cursor.
 type ServiceEventStore interface {
-	ReadServiceEvents(context.Context, int64, int) ([]ServiceEvent, error)
+	ReadServiceEvents(context.Context, int64, int, string) ([]ServiceEvent, error)
 }
 
 // MaximumEventPage bounds one event page. A caller may ask for less; asking for
@@ -86,9 +86,12 @@ type EventPage struct {
 // costs a follower nothing: without it, a follower that saw no events would have
 // to re-read from its last known sequence and could never distinguish "nothing
 // happened" from "I lost my place".
-func (queries *Queries) ReadEvents(ctx context.Context, afterSequence int64, limit int) (EventPage, error) {
+func (queries *Queries) ReadEvents(ctx context.Context, afterSequence int64, limit int, taskHandle string) (EventPage, error) {
 	if afterSequence < 0 {
 		return EventPage{}, invalidReferenceFailure("event cursor", errors.New("cursor must not be negative"))
+	}
+	if taskHandle != "" && domain.ValidateTaskHandle(taskHandle) != nil {
+		return EventPage{}, invalidReferenceFailure("event task scope", errors.New("task handle is invalid"))
 	}
 	if queries.events == nil {
 		return EventPage{}, translateReadError(nil, "event stream")
@@ -99,7 +102,7 @@ func (queries *Queries) ReadEvents(ctx context.Context, afterSequence int64, lim
 	if limit > MaximumEventPage {
 		limit = MaximumEventPage
 	}
-	events, err := queries.events.ReadServiceEvents(ctx, afterSequence, limit)
+	events, err := queries.events.ReadServiceEvents(ctx, afterSequence, limit, taskHandle)
 	if err != nil {
 		return EventPage{}, translateReadError(err, "event stream")
 	}
