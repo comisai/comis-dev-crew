@@ -314,7 +314,7 @@ func (harness *restartHarness) reportClient(t *testing.T) *reporter.Client {
 	}
 	endpoint, err := reporter.NewEndpoint(reporter.EndpointConfig{
 		TaskHandle: task.Handle, BriefRevision: task.BriefRevision, BriefRevisionHash: task.BriefRevisionHash,
-		Credential: matrixCredential, Sink: sink,
+		Credential: matrixCredential, Sink: sink, Auditor: matrixAuditor{},
 	})
 	if err != nil {
 		t.Fatalf("compose reporter endpoint: %v", err)
@@ -535,3 +535,7 @@ func matrixProgressReport(task domain.Task) domain.WorkerReport {
 		Summary: "restart fixture accepted the pinned brief", WorkerObservedAt: &observed,
 	}
 }
+
+type matrixAuditor struct{}
+
+func (matrixAuditor) RecordReportAuthenticationFailure(context.Context, string) error { return nil }

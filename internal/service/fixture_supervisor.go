@@ -18,6 +18,7 @@ type fixtureSupervisorStore interface {
 	ListTasks(context.Context) ([]domain.Task, error)
 	GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error)
 	application.ReportMutationStore
+	application.AuditRecorder
 }
 
 type fixtureTaskStarter interface {
@@ -147,6 +148,7 @@ func (supervisor *fixtureSupervisor) runFixture(ctx context.Context, ready domai
 	endpoint, err := reporter.NewEndpoint(reporter.EndpointConfig{
 		TaskHandle: started.Task.Handle, BriefRevision: started.Task.BriefRevision,
 		BriefRevisionHash: started.Task.BriefRevisionHash, Credential: credential, Sink: sink,
+		Auditor: supervisor,
 	})
 	if err != nil {
 		return fmt.Errorf("fixture supervisor reporter endpoint: %w", err)
@@ -190,4 +192,20 @@ func fixtureDecisionKey(taskHandle string) string {
 func fixtureIdentityDigest(taskHandle string) string {
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(taskHandle)))
 	return digest[:24]
+}
+
+// RecordReportAuthenticationFailure implements the reporter's narrow
+// authentication trail. The deterministic fixture holds the same boundary as a
+// real worker: an endpoint that could not record a rejection would be an
+// unreviewable one, and the fixture is exactly where that regression would hide.
+func (supervisor *fixtureSupervisor) RecordReportAuthenticationFailure(
+	ctx context.Context,
+	taskHandle string,
+) error {
+	return supervisor.store.RecordAuditEvent(ctx, application.AuditEvent{
+		OccurredAt: supervisor.clock(),
+		Kind:       application.AuditReportAuthenticationFailed,
+		TaskHandle: taskHandle,
+		Reason:     application.AuditCredentialMismatch,
+	})
 }

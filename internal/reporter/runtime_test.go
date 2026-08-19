@@ -251,7 +251,7 @@ func newRuntimeHarnessWithLaunch(t *testing.T, taskHandle, localReportID string,
 	}}
 	endpoint, err := reporter.NewEndpoint(reporter.EndpointConfig{
 		TaskHandle: taskHandle, BriefRevision: brief.Revision, BriefRevisionHash: brief.RevisionHash,
-		Credential: validCredential, Sink: sink,
+		Credential: validCredential, Sink: sink, Auditor: &recordingAuditor{},
 	})
 	if err != nil {
 		t.Fatal(err)

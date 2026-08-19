@@ -181,7 +181,7 @@ func newFixtureHarness(t *testing.T, fault workers.FaultPoint, clientCredential 
 	sink := &fixtureSink{acceptedAt: clock}
 	endpoint, err := reporter.NewEndpoint(reporter.EndpointConfig{
 		TaskHandle: "task-0001", BriefRevision: brief.Revision, BriefRevisionHash: brief.RevisionHash,
-		Credential: fixtureCredential, Sink: sink,
+		Credential: fixtureCredential, Sink: sink, Auditor: fixtureAuditor{},
 	})
 	if err != nil {
 		t.Fatalf("NewEndpoint() error = %v", err)
@@ -235,3 +235,7 @@ func fixtureBrief() domain.WorkerBrief {
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
 	return domain.WorkerBrief{Revision: 1, RevisionHash: digest, Content: content}
 }
+
+type fixtureAuditor struct{}
+
+func (fixtureAuditor) RecordReportAuthenticationFailure(context.Context, string) error { return nil }

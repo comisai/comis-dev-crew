@@ -193,3 +193,7 @@ func (store *runtimeRelayBoundaryStore) CompleteRuntimeRelayIdentityUpgrade(
 ) error {
 	return store.completeErr
 }
+
+func (store *runtimeRelayBoundaryStore) RecordAuditEvent(context.Context, application.AuditEvent) error {
+	return nil
+}

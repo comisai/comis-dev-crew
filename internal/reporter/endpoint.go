@@ -36,6 +36,16 @@ type ReportSink interface {
 	AcceptReport(context.Context, domain.AuthenticatedReport) (domain.ReportReceipt, error)
 }
 
+// AuthenticationAuditor records one rejected worker credential.
+//
+// It is narrow on purpose. This boundary must be able to say that authority was
+// presented and refused, and nothing more: the presented credential, the report
+// body and the reason a correctly credentialed worker was wrong are all outside
+// what an authentication trail should carry.
+type AuthenticationAuditor interface {
+	RecordReportAuthenticationFailure(context.Context, string) error
+}
+
 // EndpointConfig binds one credential and brief revision to exactly one task.
 type EndpointConfig struct {
 	TaskHandle        string
@@ -43,6 +53,7 @@ type EndpointConfig struct {
 	BriefRevisionHash string
 	Credential        string
 	Sink              ReportSink
+	Auditor           AuthenticationAuditor
 }
 
 // Endpoint contains only a credential digest and immutable task scope.
@@ -52,6 +63,7 @@ type Endpoint struct {
 	briefRevisionHash string
 	credentialHash    [sha256.Size]byte
 	sink              ReportSink
+	auditor           AuthenticationAuditor
 }
 
 // NewEndpoint validates and hashes one protected task reporter capability.
@@ -71,10 +83,14 @@ func NewEndpoint(config EndpointConfig) (*Endpoint, error) {
 	if config.Sink == nil {
 		return nil, errors.New("create reporter endpoint: report sink is required")
 	}
+	if config.Auditor == nil {
+		return nil, errors.New("create reporter endpoint: authentication auditor is required")
+	}
 	return &Endpoint{
 		taskHandle: config.TaskHandle, briefRevision: config.BriefRevision,
 		briefRevisionHash: config.BriefRevisionHash,
 		credentialHash:    sha256.Sum256([]byte(config.Credential)), sink: config.Sink,
+		auditor: config.Auditor,
 	}, nil
 }
 
@@ -112,6 +128,12 @@ func (endpoint *Endpoint) submit(ctx context.Context, credential string, report 
 	}
 	presentedHash := sha256.Sum256([]byte(credential))
 	if subtle.ConstantTimeCompare(presentedHash[:], endpoint.credentialHash[:]) != 1 {
+		// The rejection stands whatever the trail does. A failed audit write is
+		// reported beside it, never instead of it: an unauthorized report must
+		// not become acceptable because the record of it could not be kept.
+		if auditErr := endpoint.auditor.RecordReportAuthenticationFailure(ctx, endpoint.taskHandle); auditErr != nil {
+			return domain.ReportReceipt{}, errors.Join(ErrUnauthorized, fmt.Errorf("audit rejected credential: %w", auditErr))
+		}
 		return domain.ReportReceipt{}, ErrUnauthorized
 	}
 	if err := report.Validate(); err != nil {

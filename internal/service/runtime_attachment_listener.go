@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -31,6 +32,7 @@ func (coordinator *runtimeAttachmentCoordinator) listenRuntimeAttachment(
 	endpoint, err := reporter.NewEndpoint(reporter.EndpointConfig{
 		TaskHandle: request.TaskHandle, BriefRevision: request.BriefRevision,
 		BriefRevisionHash: request.BriefRevisionHash, Credential: credential, Sink: coordinator.reportSink,
+		Auditor: coordinator,
 	})
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("prepare runtime attachment endpoint: %w", err), pinned.close())
@@ -236,4 +238,18 @@ func (coordinator *runtimeAttachmentCoordinator) prepareRuntimeAttachmentDirecto
 		}
 	}
 	return pinned, temporaryName, priorRecord, proposedRelaySeed, nil
+}
+
+// RecordReportAuthenticationFailure implements the reporter's narrow
+// authentication trail using the coordinator's durable store.
+func (coordinator *runtimeAttachmentCoordinator) RecordReportAuthenticationFailure(
+	ctx context.Context,
+	taskHandle string,
+) error {
+	return coordinator.store.RecordAuditEvent(ctx, application.AuditEvent{
+		OccurredAt: coordinator.clock(),
+		Kind:       application.AuditReportAuthenticationFailed,
+		TaskHandle: taskHandle,
+		Reason:     application.AuditCredentialMismatch,
+	})
 }

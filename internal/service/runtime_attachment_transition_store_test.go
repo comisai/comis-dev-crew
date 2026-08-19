@@ -89,3 +89,7 @@ func (store *runtimeTransitionStore) ReadDecisionResponseForManagedRun(
 ) (application.DecisionResponse, bool, error) {
 	return application.DecisionResponse{}, false, nil
 }
+
+func (store *runtimeTransitionStore) RecordAuditEvent(context.Context, application.AuditEvent) error {
+	return nil
+}

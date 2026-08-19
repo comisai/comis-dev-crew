@@ -20,7 +20,7 @@ func TestEndpoint_DerivesTaskAuthorityAndAcceptsPinnedSparseReport(t *testing.T)
 	}}
 	endpoint, err := reporter.NewEndpoint(reporter.EndpointConfig{
 		TaskHandle: "task-0001", BriefRevision: 3, BriefRevisionHash: strings.Repeat("a", 64),
-		Credential: validCredential, Sink: sink,
+		Credential: validCredential, Sink: sink, Auditor: &recordingAuditor{},
 	})
 	if err != nil {
 		t.Fatalf("NewEndpoint() error = %v", err)
@@ -46,7 +46,7 @@ func TestEndpoint_RejectsWrongCredentialAndStaleBriefWithoutCallingSink(t *testi
 	sink := &recordingSink{}
 	endpoint, err := reporter.NewEndpoint(reporter.EndpointConfig{
 		TaskHandle: "task-0001", BriefRevision: 3, BriefRevisionHash: strings.Repeat("a", 64),
-		Credential: validCredential, Sink: sink,
+		Credential: validCredential, Sink: sink, Auditor: &recordingAuditor{},
 	})
 	if err != nil {
 		t.Fatalf("NewEndpoint() error = %v", err)
@@ -88,7 +88,7 @@ func TestEndpoint_RejectsInvalidPayloadAndMismatchedReceipt(t *testing.T) {
 	}}
 	endpoint, err := reporter.NewEndpoint(reporter.EndpointConfig{
 		TaskHandle: "task-0001", BriefRevision: 3, BriefRevisionHash: strings.Repeat("a", 64),
-		Credential: validCredential, Sink: sink,
+		Credential: validCredential, Sink: sink, Auditor: &recordingAuditor{},
 	})
 	if err != nil {
 		t.Fatalf("NewEndpoint() error = %v", err)
@@ -110,7 +110,7 @@ func TestEndpoint_RejectsInvalidPayloadAndMismatchedReceipt(t *testing.T) {
 func TestEndpoint_ValidatesConfigurationContextAndSinkFailure(t *testing.T) {
 	valid := reporter.EndpointConfig{
 		TaskHandle: "task-0001", BriefRevision: 3, BriefRevisionHash: strings.Repeat("a", 64),
-		Credential: validCredential, Sink: &recordingSink{},
+		Credential: validCredential, Sink: &recordingSink{}, Auditor: &recordingAuditor{},
 	}
 	tests := []struct {
 		name   string
@@ -121,6 +121,7 @@ func TestEndpoint_ValidatesConfigurationContextAndSinkFailure(t *testing.T) {
 		{name: "hash", mutate: func(config *reporter.EndpointConfig) { config.BriefRevisionHash = "bad" }},
 		{name: "short credential", mutate: func(config *reporter.EndpointConfig) { config.Credential = "short" }},
 		{name: "missing sink", mutate: func(config *reporter.EndpointConfig) { config.Sink = nil }},
+		{name: "missing auditor", mutate: func(config *reporter.EndpointConfig) { config.Auditor = nil }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -146,7 +147,7 @@ func TestEndpoint_ValidatesConfigurationContextAndSinkFailure(t *testing.T) {
 	sink := &recordingSink{err: sinkFailure}
 	endpoint, err := reporter.NewEndpoint(reporter.EndpointConfig{
 		TaskHandle: "task-0001", BriefRevision: 3, BriefRevisionHash: strings.Repeat("a", 64),
-		Credential: validCredential, Sink: sink,
+		Credential: validCredential, Sink: sink, Auditor: &recordingAuditor{},
 	})
 	if err != nil {
 		t.Fatalf("NewEndpoint() error = %v", err)

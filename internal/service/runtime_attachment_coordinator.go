@@ -16,6 +16,7 @@ import (
 
 type runtimeAttachmentStore interface {
 	application.ReportMutationStore
+	application.AuditRecorder
 	ListRuntimeRelayIdentityUpgrades(context.Context) ([]application.RuntimeRelayIdentityUpgrade, error)
 	ListRuntimeRelayIdentityRefusals(context.Context) ([]application.RuntimeRelayIdentityRefusal, error)
 	CompleteRuntimeRelayIdentityUpgrade(context.Context, application.RuntimeRelayIdentityUpgrade) error
