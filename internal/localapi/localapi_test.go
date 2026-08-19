@@ -190,7 +190,21 @@ type apiQueries struct {
 	profiles    application.WorkerProfileList
 	decisions   application.DecisionList
 	diff        application.TaskDiffView
+	repairs     application.RepairSurvey
 	diagnose    func(context.Context) (application.DiagnosticReport, error)
+}
+
+func (queries *apiQueries) SurveyRepairs(_ context.Context, taskHandle string) (application.RepairSurvey, error) {
+	if taskHandle == "" {
+		return queries.repairs, nil
+	}
+	scoped := application.RepairSurvey{SchemaVersion: queries.repairs.SchemaVersion, StateVersion: queries.repairs.StateVersion}
+	for _, task := range queries.repairs.Tasks {
+		if task.TaskHandle == taskHandle {
+			scoped.Tasks = append(scoped.Tasks, task)
+		}
+	}
+	return scoped, nil
 }
 
 func (queries *apiQueries) DiffTask(_ context.Context, taskHandle string) (application.TaskDiffView, error) {
