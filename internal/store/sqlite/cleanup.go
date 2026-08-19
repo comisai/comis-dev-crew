@@ -62,6 +62,27 @@ func (store *Store) BeginTaskCleanup(
 	ctx context.Context,
 	mutation application.TaskCleanupMutation,
 ) (application.TaskCleanupRecord, error) {
+	record, err := store.beginTaskCleanup(ctx, mutation)
+	if err == nil || !errors.Is(err, application.ErrPrecondition) {
+		return record, err
+	}
+	// Recorded outside the refused transaction, which has already rolled back.
+	// A failure to audit is reported beside the refusal rather than replacing
+	// it: the operator still needs to know cleanup was refused and why, and a
+	// missing record must not read as a missing refusal.
+	if auditErr := store.RecordAuditEvent(ctx, application.AuditEvent{
+		OccurredAt: mutation.At, Kind: application.AuditCleanupRefused,
+		TaskHandle: mutation.TaskHandle, Reason: auditCleanupReason(err),
+	}); auditErr != nil {
+		return record, errors.Join(err, fmt.Errorf("audit refused cleanup: %w", auditErr))
+	}
+	return record, err
+}
+
+func (store *Store) beginTaskCleanup(
+	ctx context.Context,
+	mutation application.TaskCleanupMutation,
+) (application.TaskCleanupRecord, error) {
 	if err := validateCleanupMutation(store, ctx, mutation); err != nil {
 		return application.TaskCleanupRecord{}, err
 	}
