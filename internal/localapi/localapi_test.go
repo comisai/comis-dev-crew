@@ -188,7 +188,34 @@ type apiQueries struct {
 	operation   application.OperationView
 	launchPlan  application.LaunchPlan
 	profiles    application.WorkerProfileList
+	decisions   application.DecisionList
 	diagnose    func(context.Context) (application.DiagnosticReport, error)
+}
+
+func (queries *apiQueries) ListDecisions(_ context.Context, taskHandle string) (application.DecisionList, error) {
+	if taskHandle == "" {
+		return queries.decisions, nil
+	}
+	scoped := application.DecisionList{SchemaVersion: queries.decisions.SchemaVersion, CapturedAt: queries.decisions.CapturedAt}
+	for _, decision := range queries.decisions.Decisions {
+		if decision.TaskHandle == taskHandle {
+			scoped.Decisions = append(scoped.Decisions, decision)
+		}
+	}
+	return scoped, nil
+}
+
+func (queries *apiQueries) ShowDecision(
+	_ context.Context,
+	taskHandle string,
+	externalKey string,
+) (application.TaskDecision, error) {
+	for _, decision := range queries.decisions.Decisions {
+		if decision.TaskHandle == taskHandle && decision.ExternalKey == externalKey {
+			return decision, nil
+		}
+	}
+	return application.TaskDecision{}, application.ErrNotFound
 }
 
 func (queries *apiQueries) Diagnose(ctx context.Context) (application.DiagnosticReport, error) {
