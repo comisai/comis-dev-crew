@@ -66,6 +66,7 @@ const (
 	MethodAttestScout    Method = "AttestScoutDecisions"
 	MethodListDecisions  Method = "ListTaskDecisions"
 	MethodShowDecision   Method = "ShowTaskDecision"
+	MethodDiffTask       Method = "DiffTask"
 )
 
 func (method Method) valid() bool {
@@ -73,7 +74,7 @@ func (method Method) valid() bool {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
 		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
-		MethodSyncPrimary, MethodAttestScout, MethodListDecisions, MethodShowDecision:
+		MethodSyncPrimary, MethodAttestScout, MethodListDecisions, MethodShowDecision, MethodDiffTask:
 		return true
 	default:
 		return false
@@ -148,7 +149,7 @@ type Outcome struct {
 // the operator console was meant to hold alone.
 func (method Method) operatorOnly() bool {
 	switch method {
-	case MethodListDecisions, MethodShowDecision:
+	case MethodListDecisions, MethodShowDecision, MethodDiffTask:
 		return true
 	default:
 		return false
@@ -157,6 +158,7 @@ func (method Method) operatorOnly() bool {
 
 // ReadQueries is the narrow application surface consumed by the local boundary.
 type ReadQueries interface {
+	DiffTask(context.Context, string) (application.TaskDiffView, error)
 	ListDecisions(context.Context, string) (application.DecisionList, error)
 	ShowDecision(context.Context, string, string) (application.TaskDecision, error)
 	Diagnose(context.Context) (application.DiagnosticReport, error)

@@ -50,6 +50,17 @@ func (client *Client) Fleet(ctx context.Context, operationID string) (applicatio
 	return result, err
 }
 
+// DiffTask reads the bounded summary of what one task changed.
+func (client *Client) DiffTask(
+	ctx context.Context,
+	operationID string,
+	taskHandle string,
+) (application.TaskDiffView, error) {
+	var result application.TaskDiffView
+	err := client.call(ctx, operationID, MethodDiffTask, taskPayload{TaskHandle: taskHandle}, &result)
+	return result, err
+}
+
 // ListDecisions reads the bounded inventory of open decisions.
 func (client *Client) ListDecisions(
 	ctx context.Context,
@@ -290,6 +301,8 @@ func projectedStateVersion(result any) (int64, bool) {
 	case *application.WorkerProfileList:
 		return projection.StateVersion, true
 	case *application.TaskDetail:
+		return projection.StateVersion, true
+	case *application.TaskDiffView:
 		return projection.StateVersion, true
 	case *application.DecisionList:
 		return projection.StateVersion, true
