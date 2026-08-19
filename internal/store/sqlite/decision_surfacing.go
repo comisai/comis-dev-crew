@@ -28,12 +28,18 @@ INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (29, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 `
 
-// OpenDecisionsAwaitingHuman lists every decision with no matching resolution,
-// together with how often it has already been raised.
+// OpenDecisionsAwaitingHuman lists every already-asked decision with no matching
+// resolution, together with how often it has been raised and when it was last
+// put in front of the liaison.
 //
 // Open is decided by the same predicate cleanup uses: a decision report with no
 // resolution carrying its key. Deriving it from one place is what stops cleanup
 // and re-surfacing from disagreeing about which questions are still live.
+//
+// The delivery of the decision report is the question's first airing, so a
+// report still waiting in the outbox is excluded and the delivered ones start at
+// one. Counting only the ledger would ask the liaison twice for a brand-new
+// question — once through the outbox and once immediately through the cadence.
 func (store *Store) OpenDecisionsAwaitingHuman(ctx context.Context) ([]application.OpenDecision, error) {
 	if ctx == nil {
 		return nil, errors.New("read open decisions: context is required")
@@ -43,12 +49,14 @@ func (store *Store) OpenDecisionsAwaitingHuman(ctx context.Context) ([]applicati
 	}
 	rows, err := store.db.QueryContext(ctx, `
         SELECT d.task_handle, t.managed_run_id, d.external_key, d.summary, d.details,
-               COALESCE(s.surface_count, 0), COALESCE(s.last_surfaced_at, '')
+               COALESCE(s.surface_count, 0), COALESCE(s.last_surfaced_at, ''), o.delivered_at
         FROM reports d
         JOIN tasks t ON t.handle = d.task_handle
+        JOIN comis_report_outbox o
+            ON o.task_handle = d.task_handle AND o.local_report_id = d.local_report_id
         LEFT JOIN task_decision_surfacings s
             ON s.task_handle = d.task_handle AND s.external_key = d.external_key
-        WHERE d.kind = 'decision' AND NOT EXISTS (
+        WHERE d.kind = 'decision' AND o.delivered_at IS NOT NULL AND NOT EXISTS (
             SELECT 1 FROM reports r
             WHERE r.task_handle = d.task_handle
               AND r.kind = 'resolution' AND r.external_key = d.external_key
@@ -62,10 +70,10 @@ func (store *Store) OpenDecisionsAwaitingHuman(ctx context.Context) ([]applicati
 	var open []application.OpenDecision
 	for rows.Next() {
 		var decision application.OpenDecision
-		var lastSurfaced string
+		var lastSurfaced, askedAt string
 		if err := rows.Scan(
 			&decision.TaskHandle, &decision.ManagedRunID, &decision.ExternalKey,
-			&decision.Summary, &decision.Details, &decision.SurfaceCount, &lastSurfaced,
+			&decision.Summary, &decision.Details, &decision.SurfaceCount, &lastSurfaced, &askedAt,
 		); err != nil {
 			return nil, fmt.Errorf("decode open decision: %w", err)
 		}
@@ -76,12 +84,23 @@ func (store *Store) OpenDecisionsAwaitingHuman(ctx context.Context) ([]applicati
 		if domain.ValidateAuthorityReference("managedRunId", decision.ManagedRunID) != nil {
 			return nil, errors.New("read open decisions: managed run identity is unavailable")
 		}
+		asked, err := parseTime(askedAt)
+		if err != nil {
+			return nil, fmt.Errorf("decode decision delivery time: %w", err)
+		}
+		decision.SurfaceCount++
+		decision.LastSurfacedAt = asked
 		if lastSurfaced != "" {
 			observed, parseErr := parseTime(lastSurfaced)
 			if parseErr != nil {
 				return nil, fmt.Errorf("decode decision surfacing time: %w", parseErr)
 			}
-			decision.LastSurfacedAt = observed
+			// The stored times are compared as instants rather than as strings:
+			// the stored form omits trailing fractional zeros, so a later time
+			// can sort before an earlier one lexicographically.
+			if observed.After(asked) {
+				decision.LastSurfacedAt = observed
+			}
 		}
 		open = append(open, decision)
 	}
