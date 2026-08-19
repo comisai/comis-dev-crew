@@ -145,10 +145,19 @@ second reconciliation. Cleanup accepts exactly one origin and refuses missing or
 ambiguous evidence.
 
 `task explain` reads the latest durable candidate judgment for failed and
-validating tasks. It distinguishes required local-validation and forge-check
-failures, and identifies an unverified worktree when current Git truth is dirty,
-base-equal, or otherwise not a clean non-base candidate. Other terminal failures
-retain the generic failed-task explanation.
+validating tasks and names every verdict the judge can reach, not only the ones
+that reject. A candidate held because required local checks or forge checks have
+not concluded, because evidence expired, conflicts with the task record, or
+cannot be parsed, because decisions remain open, or because a scout report
+artifact is absent, each reads as its own `candidate_*` reason code. An
+unverified worktree additionally says which Git fact is missing — dirty,
+base-equal, or otherwise not a clean non-base candidate — because the closed
+reason alone cannot. A judgment whose reason this build does not know reads as
+`candidate_posture_unrecognized` rather than falling through to lifecycle text:
+generic text states that no blocking reason is recorded, which would be false
+while a verdict sits in durable evidence. Only an accepted judgment leaves the
+lifecycle explanation in place. Every reason string is fixed prose, so this read
+stays content-free where it is reachable from the model facade.
 `task show` and JSON `explain_task` output also include a content-free `evidence`
 projection. It joins the candidate head and digest, latest authenticated report,
 decision and resolution references, validation status, forge and outbox delivery
