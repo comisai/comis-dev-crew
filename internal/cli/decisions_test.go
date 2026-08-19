@@ -161,3 +161,41 @@ func TestCLI_DocumentsTheDecisionCommands(t *testing.T) {
 		}
 	}
 }
+
+// Cancelling withdraws a question the human no longer wants answered. It is the
+// operator's half of the decision lifecycle: without it a question asked in
+// error blocks completion and cleanup forever, because only a worker resolution
+// or a human cancellation can close one.
+func TestCLI_CancellingADecisionWithdrawsIt(t *testing.T) {
+	client := &fakeClient{}
+	var output bytes.Buffer
+
+	args := []string{"decision", "cancel", "task-0001", "schema-choice"}
+	if code := Run(context.Background(), args, &output, &output, testConfig(client)); code != 0 {
+		t.Fatalf("Run(decision cancel) = %d: %s", code, output.String())
+	}
+	if len(client.calls) != 1 || client.calls[0] != "cancel-decision:task-0001:schema-choice" {
+		t.Errorf("client calls = %v, want one withdrawal", client.calls)
+	}
+}
+
+func TestCLI_RefusesMalformedDecisionCancellations(t *testing.T) {
+	for name, args := range map[string][]string{
+		"no key":        {"decision", "cancel", "task-0001"},
+		"bad handle":    {"decision", "cancel", "not a handle", "schema-choice"},
+		"bad key":       {"decision", "cancel", "task-0001", "not a key"},
+		"bad operation": {"decision", "cancel", "task-0001", "schema-choice", "--operation", "bad id"},
+		"bad format":    {"decision", "cancel", "task-0001", "schema-choice", "--format", "text"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := &fakeClient{}
+			var output bytes.Buffer
+			if code := Run(context.Background(), args, &output, &output, testConfig(client)); code != ExitUsage {
+				t.Fatalf("Run(%v) = %d, want %d: %s", args, code, ExitUsage, output.String())
+			}
+			if len(client.calls) != 0 {
+				t.Fatalf("a malformed cancellation reached the service: %v", client.calls)
+			}
+		})
+	}
+}

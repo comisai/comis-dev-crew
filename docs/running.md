@@ -347,6 +347,7 @@ devcrew [--socket PATH] events tail [--after SEQUENCE] [--format text|jsonl]
 devcrew [--socket PATH] repair reconcile [--task TASK] [--format table|json]
 devcrew [--socket PATH] decisions list [--task TASK] [--format table|json]
 devcrew [--socket PATH] decision show TASK DECISION [--format text|json]
+devcrew [--socket PATH] decision cancel TASK DECISION [--operation OPERATION] [--format json]
 ```
 
 `events tail` follows the service event stream. The stream is content-free by
@@ -440,6 +441,24 @@ which would read as long overdue.
 
 `task diff` is read-only and operator-only for the same reason the decision reads
 are: it is private task detail.
+
+`decision cancel` withdraws a question the human no longer wants answered. Only a
+worker resolution or a human cancellation closes a decision, so without it a
+question asked in error blocks completion and cleanup permanently with no way
+out. It answers nothing on the worker's behalf and is recorded as its own fact
+rather than as a resolution: a resolution says the work may proceed on an answer
+somebody gave, and attributing that to a worker who never answered would be a
+false record.
+
+A withdrawn question is closed for every gate at once — cleanup safety, the
+re-surfacing cadence, the operator inventory, candidate reconciliation and the
+evidence view all consult one shared definition of "still awaiting a human". They
+share it precisely so a withdrawn question cannot keep blocking cleanup in one
+layer while reading as closed in another.
+
+Answering a decision is deliberately not here. Under §14.2 the answer arrives
+from Comis over the attention path, and the wire has no method for submitting one
+from this side; adding one is a coordinated contract revision, not a local change.
 
 Both decision reads are read-only and operator-only, and the refusal lives in the canonical
 handler rather than only in the set of tools the model facade exposes: an open

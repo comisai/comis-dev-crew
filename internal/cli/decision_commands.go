@@ -40,6 +40,9 @@ func parseDecisionsCommand(command parsedCommand, args []string) (parsedCommand,
 // A decision is named by its task and its key because that is what identifies it
 // durably; there is no separate decision identity to quote.
 func parseDecisionCommand(command parsedCommand, args []string) (parsedCommand, error) {
+	if len(args) >= 3 && args[0] == "cancel" {
+		return parseDecisionCancelCommand(command, args[1:])
+	}
 	if len(args) < 3 || args[0] != "show" {
 		return parsedCommand{}, errors.New("decision show requires a task and a decision key")
 	}
@@ -111,4 +114,35 @@ func renderDecisionTime(value *time.Time) string {
 		return "unknown"
 	}
 	return value.UTC().Format(time.RFC3339)
+}
+
+// parseDecisionCancelCommand parses one withdrawal of an open question.
+//
+// Cancelling answers nothing on the worker's behalf: it records that the human
+// no longer wants the question answered, so the work stops waiting on a reply
+// that is never coming.
+func parseDecisionCancelCommand(command parsedCommand, args []string) (parsedCommand, error) {
+	if len(args) < 2 {
+		return parsedCommand{}, errors.New("decision cancel requires a task and a decision key")
+	}
+	if err := domain.ValidateTaskHandle(args[0]); err != nil {
+		return parsedCommand{}, err
+	}
+	if err := domain.ValidateDecisionKey(args[1]); err != nil {
+		return parsedCommand{}, err
+	}
+	command.reference, command.decisionKey = args[0], args[1]
+	rest := args[2:]
+	if len(rest) >= 2 && rest[0] == "--operation" {
+		if err := domain.ValidateOperationID(rest[1]); err != nil {
+			return parsedCommand{}, err
+		}
+		command.operationID, rest = rest[1], rest[2:]
+	}
+	format, err := parseFormat(rest, "json", "json")
+	if err != nil {
+		return parsedCommand{}, err
+	}
+	command.kind, command.format = commandCancelDecision, format
+	return command, nil
 }

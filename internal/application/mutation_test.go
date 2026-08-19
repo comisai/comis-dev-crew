@@ -513,23 +513,24 @@ func testRuntimeAttachments() *runtimeAttachmentCoordinator {
 }
 
 type mutationStore struct {
-	intent        TaskPreparationIntent
-	prepared      PreparedTaskMutation
-	activation    ManagedRunActivationMutation
-	abandon       ManagedRunAbandonMutation
-	start         TaskStartMutation
-	terminal      TerminalEventMutation
-	launchAck     WorkerLaunchAcknowledgementMutation
-	pauseRequest  TaskPauseRequestMutation
-	cancelTask    TaskCancelMutation
-	verifyTask    TaskVerifyMutation
-	steerTask     TaskSteerMutation
-	prepareCalls  int
-	replayResult  MutationResult
-	replayFound   bool
-	replayErr     error
-	activationErr error
-	abandonErr    error
+	intent         TaskPreparationIntent
+	prepared       PreparedTaskMutation
+	activation     ManagedRunActivationMutation
+	abandon        ManagedRunAbandonMutation
+	start          TaskStartMutation
+	terminal       TerminalEventMutation
+	launchAck      WorkerLaunchAcknowledgementMutation
+	pauseRequest   TaskPauseRequestMutation
+	cancelTask     TaskCancelMutation
+	verifyTask     TaskVerifyMutation
+	steerTask      TaskSteerMutation
+	cancelDecision DecisionCancellationMutation
+	prepareCalls   int
+	replayResult   MutationResult
+	replayFound    bool
+	replayErr      error
+	activationErr  error
+	abandonErr     error
 }
 
 func (store *mutationStore) RecordTaskPreparationIntent(
@@ -617,6 +618,17 @@ func testWorkspacePreparer() *workspacePreparer {
 }
 
 // Cancellation joins the same durable mutation surface; the double accepts it.
+func (store *mutationStore) CommitDecisionCancellation(
+	_ context.Context,
+	mutation DecisionCancellationMutation,
+) (MutationResult, error) {
+	store.cancelDecision = mutation
+	return MutationResult{
+		Task:      domain.Task{Handle: mutation.TaskHandle, State: domain.TaskWorking},
+		Operation: domain.OperationRecord{ID: mutation.OperationID},
+	}, nil
+}
+
 func (store *mutationStore) CommitTaskSteer(
 	_ context.Context,
 	mutation TaskSteerMutation,

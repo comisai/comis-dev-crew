@@ -365,6 +365,9 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if scoutReviews != nil {
 		handlerConfig.ScoutReviews = scoutReviews
 	}
+	if mutations != nil {
+		handlerConfig.Decisions = mutations
+	}
 	handler, err := localapi.NewHandler(handlerConfig)
 	if err != nil {
 		return fmt.Errorf("run service local handler: %w", err)

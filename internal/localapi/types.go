@@ -70,6 +70,7 @@ const (
 	MethodSurveyRepairs  Method = "SurveyRepairs"
 	MethodReadEvents     Method = "ReadEvents"
 	MethodReadTaskLogs   Method = "ReadTaskLogs"
+	MethodCancelDecision Method = "CancelDecision"
 )
 
 func (method Method) valid() bool {
@@ -77,7 +78,7 @@ func (method Method) valid() bool {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
 		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
-		MethodSyncPrimary, MethodAttestScout, MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs, MethodReadEvents, MethodReadTaskLogs:
+		MethodSyncPrimary, MethodAttestScout, MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs, MethodReadEvents, MethodReadTaskLogs, MethodCancelDecision:
 		return true
 	default:
 		return false
@@ -96,6 +97,8 @@ const (
 // SideEffect returns the authoritative method classification.
 func (method Method) SideEffect() SideEffectClass {
 	switch method {
+	case MethodCancelDecision:
+		return SideEffectMutate
 	case MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
 		MethodSyncPrimary, MethodAttestScout:
@@ -109,6 +112,12 @@ func (method Method) SideEffect() SideEffectClass {
 // reads the whole fleet.
 type ListDecisionsInput struct {
 	TaskHandle string `json:"taskHandle,omitempty"`
+}
+
+// CancelDecisionInput withdraws one open question.
+type CancelDecisionInput struct {
+	TaskHandle  string `json:"taskHandle"`
+	ExternalKey string `json:"externalKey"`
 }
 
 // ReadTaskLogsInput names one task's history and where to resume it. An absent
@@ -174,7 +183,8 @@ type Outcome struct {
 // the operator console was meant to hold alone.
 func (method Method) operatorOnly() bool {
 	switch method {
-	case MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs, MethodReadTaskLogs:
+	case MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs,
+		MethodReadTaskLogs, MethodCancelDecision:
 		return true
 	default:
 		return false
@@ -227,6 +237,12 @@ type TaskCleanup interface {
 	DiscardTask(context.Context, application.DiscardTaskCommand) (application.MutationResult, error)
 }
 
+// DecisionWithdrawal is the canonical surface for closing a question the human
+// no longer wants answered.
+type DecisionWithdrawal interface {
+	CancelDecision(context.Context, application.CancelDecisionCommand) (application.MutationResult, error)
+}
+
 // ScoutReviewAttestation is the canonical review-completion surface.
 type ScoutReviewAttestation interface {
 	AttestScoutDecisions(context.Context, application.AttestScoutDecisionsCommand) (application.MutationResult, error)
@@ -248,6 +264,7 @@ type HandlerConfig struct {
 	Cleanup           TaskCleanup
 	PrimaryCheckouts  PrimaryCheckoutSync
 	ScoutReviews      ScoutReviewAttestation
+	Decisions         DecisionWithdrawal
 	ServiceInstanceID string
 	Clock             application.Clock
 }

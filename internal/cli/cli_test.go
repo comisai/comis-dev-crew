@@ -416,6 +416,15 @@ type fakeClient struct {
 	operationID  string
 }
 
+func (client *fakeClient) CancelDecision(
+	_ context.Context,
+	operationID string,
+	input localapi.CancelDecisionInput,
+) (localapi.TaskMutationResult, error) {
+	client.record(operationID, "cancel-decision:"+input.TaskHandle+":"+input.ExternalKey)
+	return client.taskMutation, client.err
+}
+
 func (client *fakeClient) ReadTaskLogs(
 	_ context.Context,
 	operationID string,

@@ -51,6 +51,7 @@ Commands:
   repair reconcile [--task TASK] [--format table|json]
   decisions list [--task TASK] [--format table|json]
   decision show TASK DECISION [--format text|json]
+  decision cancel TASK DECISION [--operation OPERATION] [--format json]
 
 Global options:
   --socket PATH  Owner-only service Unix socket
@@ -79,6 +80,7 @@ type ReadClient interface {
 	ReadTaskLogs(context.Context, string, localapi.ReadTaskLogsInput) (application.TaskLogPage, error)
 	ListDecisions(context.Context, string, localapi.ListDecisionsInput) (application.DecisionList, error)
 	ShowDecision(context.Context, string, localapi.ShowDecisionInput) (application.TaskDecision, error)
+	CancelDecision(context.Context, string, localapi.CancelDecisionInput) (localapi.TaskMutationResult, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
 	GetLaunchPlan(context.Context, string, string) (application.LaunchPlan, error)
@@ -133,6 +135,7 @@ const (
 	commandSurveyRepairs
 	commandReadEvents
 	commandReadTaskLogs
+	commandCancelDecision
 )
 
 type parsedCommand struct {

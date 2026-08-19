@@ -32,6 +32,10 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 		return client.DiffTask(ctx, operationID, command.reference)
 	case commandListDecisions:
 		return client.ListDecisions(ctx, operationID, localapi.ListDecisionsInput{TaskHandle: command.reference})
+	case commandCancelDecision:
+		return client.CancelDecision(ctx, operationID, localapi.CancelDecisionInput{
+			TaskHandle: command.reference, ExternalKey: command.decisionKey,
+		})
 	case commandShowDecision:
 		return client.ShowDecision(ctx, operationID, localapi.ShowDecisionInput{
 			TaskHandle: command.reference, ExternalKey: command.decisionKey,

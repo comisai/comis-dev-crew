@@ -22,6 +22,7 @@ type Handler struct {
 	cleanup           TaskCleanup
 	primaryCheckouts  PrimaryCheckoutSync
 	scoutReviews      ScoutReviewAttestation
+	decisions         DecisionWithdrawal
 	serviceInstanceID string
 	clock             application.Clock
 }
@@ -44,6 +45,7 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 		interventions: config.Interventions, cleanup: config.Cleanup,
 		primaryCheckouts:  config.PrimaryCheckouts,
 		scoutReviews:      config.ScoutReviews,
+		decisions:         config.Decisions,
 		serviceInstanceID: config.ServiceInstanceID, clock: config.Clock,
 	}, nil
 }
@@ -84,6 +86,18 @@ func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 		return outcome
 	}
 	switch request.Method {
+	case MethodCancelDecision:
+		var input CancelDecisionInput
+		if err := decodeObject(request.Payload, &input); err != nil {
+			return invalidPayload(request.OperationID, err)
+		}
+		if handler.decisions == nil {
+			return rejectedOutcome(request.OperationID, domain.ErrorUnavailable, true, "decision withdrawal is unavailable", "inspect service configuration", nil)
+		}
+		result, err := handler.decisions.CancelDecision(ctx, application.CancelDecisionCommand{
+			OperationID: request.OperationID, TaskHandle: input.TaskHandle, ExternalKey: input.ExternalKey,
+		})
+		return handler.taskMutationOutcome(request.OperationID, MethodCancelDecision, result, err)
 	case MethodAttestScout:
 		var input AttestScoutDecisionsInput
 		if err := decodeObject(request.Payload, &input); err != nil {

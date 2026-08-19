@@ -50,6 +50,17 @@ func (client *Client) Fleet(ctx context.Context, operationID string) (applicatio
 	return result, err
 }
 
+// CancelDecision withdraws one open question.
+func (client *Client) CancelDecision(
+	ctx context.Context,
+	operationID string,
+	input CancelDecisionInput,
+) (TaskMutationResult, error) {
+	var result TaskMutationResult
+	err := client.call(ctx, operationID, MethodCancelDecision, input, &result)
+	return result, err
+}
+
 // ReadTaskLogs reads one bounded page of one task's private history.
 func (client *Client) ReadTaskLogs(
 	ctx context.Context,
