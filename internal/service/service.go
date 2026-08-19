@@ -181,6 +181,11 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
+	lock, err := acquireWriterAuthority(config.DatabasePath)
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, lock.Release()) }()
 	store, err := sqlite.Open(ctx, config.DatabasePath)
 	if err != nil {
 		return fmt.Errorf("run service store: %w", err)
@@ -188,25 +193,9 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	defer func() {
 		resultErr = errors.Join(resultErr, store.Close())
 	}()
-	var attachmentSupervisor *runtimeAttachmentCoordinator
-	if config.RuntimeAttachments == nil && config.RuntimeRoot != "" {
-		attachmentSupervisor, err = newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
-			RuntimeRoot: config.RuntimeRoot, Store: store, Clock: clock,
-			NewCredential:           func() (string, error) { return randomIdentity("runtime-credential", 16) },
-			NewAttentionOperationID: func() (string, error) { return randomIdentity("attention-response", 16) },
-		})
-		if err != nil {
-			return fmt.Errorf("run service runtime attachments: %w", err)
-		}
-		config.RuntimeAttachments = attachmentSupervisor
-		if err := attachmentSupervisor.recoverRuntimeRelayIdentityUpgrades(ctx); err != nil {
-			return fmt.Errorf("run service runtime relay identity upgrade: %w", err)
-		}
-	} else {
-		upgrades, upgradeErr := store.ListRuntimeRelayIdentityUpgrades(ctx)
-		if upgradeErr != nil || len(upgrades) != 0 {
-			return errors.New("run service runtime relay identity upgrade requires service-owned attachments")
-		}
+	attachmentSupervisor, err := composeRuntimeAttachments(ctx, &config, store, clock)
+	if err != nil {
+		return err
 	}
 	reconciler, err := application.NewStartupReconciler(application.StartupReconcilerConfig{Store: store, Clock: clock})
 	if err != nil {

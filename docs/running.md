@@ -20,6 +20,17 @@ broad-root, non-regular, live, or identity-ambiguous targets. Without explicit
 flags, `devcrew-service` and `devcrew` derive the same paths under the operating
 system's user configuration directory.
 
+One instance owns a data directory. The claim is an advisory lock on the
+directory holding the database, taken before the store is opened, and it is the
+directory rather than the endpoint that is exclusive: a second instance aimed at
+the same state through any other `--socket` would otherwise migrate the store and
+run startup recovery — which converts running work to unknown — before reaching
+the endpoint that would have refused it. A refused start exits with a `conflict`
+naming the condition and stops without touching durable state; the running
+instance keeps serving reads on its own socket throughout. A lock file left by a
+killed process blocks nothing, because ownership is the held kernel lock and not
+the file.
+
 ## Full Comis and coding-worker lane
 
 Prerequisites, all of which fail closed if unmet:

@@ -7,6 +7,7 @@
     "internal/application",
     "internal/service",
     "internal/store/sqlite",
+    "internal/store/writerlock",
     "internal/localapi",
     "internal/mcpadapter",
     "internal/git",
