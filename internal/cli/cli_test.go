@@ -483,3 +483,30 @@ func TestRun_PrepareTaskRefusesUnreadableAndUnboundedInput(t *testing.T) {
 		}
 	}
 }
+
+// Listing every task on a busy fleet buries the ones an operator is looking
+// for. The state travels to the service as a closed discriminator, so an
+// unknown state is refused rather than silently returning everything.
+func TestCLI_ScopesTheTaskListToOneState(t *testing.T) {
+	client := &fakeClient{}
+	var output bytes.Buffer
+	args := []string{"tasks", "list", "--state", "working"}
+	if code := Run(context.Background(), args, &output, &output, testConfig(client)); code != 0 {
+		t.Fatalf("Run(tasks list --state) = %d: %s", code, output.String())
+	}
+	if len(client.calls) != 1 || client.calls[0] != "list-tasks:working" {
+		t.Fatalf("client calls = %v, want a state-scoped list", client.calls)
+	}
+}
+
+func TestCLI_RefusesAnUnknownTaskListState(t *testing.T) {
+	client := &fakeClient{}
+	var output bytes.Buffer
+	args := []string{"tasks", "list", "--state", "nearly-done"}
+	if code := Run(context.Background(), args, &output, &output, testConfig(client)); code != ExitUsage {
+		t.Fatalf("Run(tasks list bad state) = %d, want %d", code, ExitUsage)
+	}
+	if len(client.calls) != 0 {
+		t.Fatalf("an unknown state reached the service: %v", client.calls)
+	}
+}
