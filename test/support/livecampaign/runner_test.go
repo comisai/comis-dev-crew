@@ -235,3 +235,22 @@ func mustMarshalJSON(t *testing.T, value any) []byte {
 	}
 	return contents
 }
+
+// The protected runner drives the human checkpoint arc, so it refuses an emulator
+// campaign at entry rather than stalling on a checkpoint that was never declared.
+func TestCampaignRunnerRefusesAnEmulatorCampaignAtEntry(t *testing.T) {
+	manifest := validManifest()
+	manifest.CampaignKind = CampaignKindEmulator
+	manifest.Telegram.Checkpoints = nil
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, err := (CampaignRunner{
+		Executor: &fixtureExecutor{manifest: manifest}, PollInterval: time.Millisecond,
+		NowMs:            func() int64 { return manifest.EndedAtMs },
+		CaptureResources: resourceCaptureFixture(manifest),
+		VerifyRecovery:   recoveryEvidenceFixture(manifest),
+	}).Run(ctx, manifest, filepath.Join(t.TempDir(), "evidence"))
+	if err == nil || !strings.Contains(err.Error(), "emulator") {
+		t.Fatalf("expected emulator campaign refusal, got %v", err)
+	}
+}
