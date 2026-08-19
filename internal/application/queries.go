@@ -42,6 +42,8 @@ type Queries struct {
 	host                     HostIntegrationStatus
 	reconciliationWorkspaces ReconciliationWorkspaceInspector
 	workerProfiles           WorkerProfileCatalog
+	decisions                DecisionInventoryStore
+	decisionSurfacing        DecisionSurfacingPolicy
 	clock                    Clock
 }
 
@@ -55,7 +57,13 @@ type QueryConfig struct {
 	// Absent when the deployment configured no worker profile; the read then
 	// reports an empty catalog, which is the honest answer to "what can run".
 	WorkerProfiles WorkerProfileCatalog
-	Clock          Clock
+	// Absent when the deployment exposes no decision inventory; the read then
+	// reports unavailable rather than an empty set of open questions.
+	Decisions DecisionInventoryStore
+	// Zero when the deployment configures no cadence; the reviewed default is
+	// used so the published return schedule matches the running supervisor.
+	DecisionSurfacing DecisionSurfacingPolicy
+	Clock             Clock
 }
 
 // NewQueries validates and binds the read-side dependencies.
@@ -69,7 +77,8 @@ func NewQueries(config QueryConfig) (*Queries, error) {
 	return &Queries{
 		repository: config.Repository, harnesses: config.Harnesses, host: config.Host,
 		reconciliationWorkspaces: config.ReconciliationWorkspaces,
-		workerProfiles:           config.WorkerProfiles, clock: config.Clock,
+		workerProfiles:           config.WorkerProfiles, decisions: config.Decisions,
+		decisionSurfacing: config.DecisionSurfacing, clock: config.Clock,
 	}, nil
 }
 
