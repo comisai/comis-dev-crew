@@ -400,11 +400,21 @@ type fakeClient struct {
 	launchPlan   application.LaunchPlan
 	decisions    application.DecisionList
 	decision     application.TaskDecision
+	diff         application.TaskDiffView
 	prepared     localapi.PrepareTaskResult
 	taskMutation localapi.TaskMutationResult
 	err          error
 	calls        []string
 	operationID  string
+}
+
+func (client *fakeClient) DiffTask(
+	_ context.Context,
+	operationID string,
+	taskHandle string,
+) (application.TaskDiffView, error) {
+	client.record(operationID, "diff:"+taskHandle)
+	return client.diff, client.err
 }
 
 func (client *fakeClient) ListDecisions(
