@@ -30,6 +30,7 @@ const (
 	ToolExplainTask    = "explain_task"
 	ToolGetLaunchPlan  = "get_launch_plan"
 	ToolSyncPrimary    = "sync_primary"
+	ToolAttestScout    = "attest_scout_decisions"
 	ToolDoctor         = "doctor"
 
 	CallContextMetaKey      = "comis.callContext"
@@ -58,6 +59,7 @@ type Client interface {
 	GetLaunchPlan(context.Context, string, string) (application.LaunchPlan, error)
 	Operation(context.Context, string, string) (application.OperationView, error)
 	SyncPrimary(context.Context, string, localapi.SyncPrimaryInput) (application.PrimarySyncReport, error)
+	AttestScoutDecisions(context.Context, string, localapi.AttestScoutDecisionsInput) (localapi.TaskMutationResult, error)
 }
 
 // Config injects the local client and bounded reconciliation dependencies.
@@ -84,6 +86,19 @@ type TaskInput struct {
 type DiscardTaskInput struct {
 	TaskHandle   string `json:"taskHandle" jsonschema:"opaque task handle"`
 	Acknowledged bool   `json:"acknowledged" jsonschema:"set true only when the operator accepted that uncommitted work is removed permanently"`
+}
+
+// AttestScoutDecisionsInput records the liaison's inventory of a scout's still
+// open human decisions.
+//
+// The finding is a stated discriminator, not an inference from an empty list. A
+// request that named no finding would be indistinguishable from one that found
+// nothing, and reading silence as "nothing was open" is what buries a question
+// until the worktree holding it is removed.
+type AttestScoutDecisionsInput struct {
+	TaskHandle       string                              `json:"taskHandle" jsonschema:"opaque handle of the scout whose surface was inventoried"`
+	Finding          application.ScoutAttestationFinding `json:"finding" jsonschema:"use exactly open_decisions when questions remain, or no_open_decisions to state that none do"`
+	OpenDecisionKeys []string                            `json:"openDecisionKeys" jsonschema:"decision keys still awaiting a human; a JSON array, non-empty for open_decisions and empty for no_open_decisions"`
 }
 
 // SyncPrimaryInput names the configured repository to synchronize. There is no

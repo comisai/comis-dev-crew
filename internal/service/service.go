@@ -310,6 +310,7 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 			return fmt.Errorf("run service cleanup coordinator: %w", err)
 		}
 	}
+	var scoutReviews *application.ScoutReviews
 	var primaryCheckouts *application.PrimaryCheckouts
 	var fixture *fixtureSupervisor
 	if config.FixtureComposition != nil {
@@ -333,6 +334,13 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		}
 		primaryCheckouts = checkouts
 	}
+	if mutations != nil {
+		reviews, reviewErr := application.NewScoutReviews(application.ScoutReviewConfig{Store: store, Clock: clock})
+		if reviewErr != nil {
+			return fmt.Errorf("run service scout reviews: %w", reviewErr)
+		}
+		scoutReviews = reviews
+	}
 	handlerConfig := localapi.HandlerConfig{Queries: queries, Clock: clock}
 	if mutations != nil {
 		handlerConfig.Mutations = mutations
@@ -349,6 +357,9 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	}
 	if primaryCheckouts != nil {
 		handlerConfig.PrimaryCheckouts = primaryCheckouts
+	}
+	if scoutReviews != nil {
+		handlerConfig.ScoutReviews = scoutReviews
 	}
 	handler, err := localapi.NewHandler(handlerConfig)
 	if err != nil {

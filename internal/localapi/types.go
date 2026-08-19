@@ -63,6 +63,7 @@ const (
 	MethodSteerTask      Method = "SteerTask"
 	MethodDiscardTask    Method = "DiscardTask"
 	MethodSyncPrimary    Method = "SyncPrimary"
+	MethodAttestScout    Method = "AttestScoutDecisions"
 )
 
 func (method Method) valid() bool {
@@ -70,7 +71,7 @@ func (method Method) valid() bool {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
 		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
-		MethodSyncPrimary:
+		MethodSyncPrimary, MethodAttestScout:
 		return true
 	default:
 		return false
@@ -91,7 +92,7 @@ func (method Method) SideEffect() SideEffectClass {
 	switch method {
 	case MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
-		MethodSyncPrimary:
+		MethodSyncPrimary, MethodAttestScout:
 		return SideEffectMutate
 	default:
 		return SideEffectRead
@@ -165,6 +166,11 @@ type TaskCleanup interface {
 	DiscardTask(context.Context, application.DiscardTaskCommand) (application.MutationResult, error)
 }
 
+// ScoutReviewAttestation is the canonical review-completion surface.
+type ScoutReviewAttestation interface {
+	AttestScoutDecisions(context.Context, application.AttestScoutDecisionsCommand) (application.MutationResult, error)
+}
+
 // PrimaryCheckoutSync is the canonical repository synchronization surface. It
 // is separate from the task surfaces because it moves no task: it advances the
 // developer's own checkout and touches no durable task state.
@@ -180,6 +186,7 @@ type HandlerConfig struct {
 	Interventions     TaskInterventions
 	Cleanup           TaskCleanup
 	PrimaryCheckouts  PrimaryCheckoutSync
+	ScoutReviews      ScoutReviewAttestation
 	ServiceInstanceID string
 	Clock             application.Clock
 }
@@ -215,6 +222,15 @@ type DiscardTaskInput struct {
 // configuration, so a caller cannot aim the update at another tree.
 type SyncPrimaryInput struct {
 	RepositoryID string `json:"repositoryId"`
+}
+
+// AttestScoutDecisionsInput records one liaison inventory of a scout's still
+// open human decisions. The finding is stated rather than inferred from an
+// empty list, so "nothing was open" can never be reached by omission.
+type AttestScoutDecisionsInput struct {
+	TaskHandle       string                              `json:"taskHandle"`
+	Finding          application.ScoutAttestationFinding `json:"finding"`
+	OpenDecisionKeys []string                            `json:"openDecisionKeys"`
 }
 
 // SteerTaskInput carries one bounded instruction for a task's current worker.

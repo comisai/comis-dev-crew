@@ -101,6 +101,14 @@ func (facade *Facade) registerTools() {
 	mcp.AddTool(facade.server, tool(ToolExplainTask, "Explain one durable task posture.", true), facade.explainTask)
 	mcp.AddTool(facade.server, tool(ToolGetLaunchPlan, "Get reviewed launch requirements for one ready task.", true), facade.getLaunchPlan)
 	mcp.AddTool(facade.server, tool(
+		ToolAttestScout,
+		"Record your inventory of a scout's still-open human decisions after reading its whole reviewed "+
+			"surface. State the finding explicitly: open_decisions with the keys that remain, or "+
+			"no_open_decisions to attest that none do. Cleanup will not remove a scout's worktree, and it "+
+			"cannot be promoted, until this is recorded — an unread question is otherwise erased with the tree.",
+		false,
+	), facade.attestScoutDecisions)
+	mcp.AddTool(facade.server, tool(
 		ToolSyncPrimary,
 		"Fast-forward one configured repository's primary checkout to its upstream. It never resets, "+
 			"merges, stashes, or switches branches: any posture it cannot fast-forward is refused by name "+

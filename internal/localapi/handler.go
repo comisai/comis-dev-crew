@@ -21,6 +21,7 @@ type Handler struct {
 	interventions     TaskInterventions
 	cleanup           TaskCleanup
 	primaryCheckouts  PrimaryCheckoutSync
+	scoutReviews      ScoutReviewAttestation
 	serviceInstanceID string
 	clock             application.Clock
 }
@@ -42,6 +43,7 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 		queries: config.Queries, mutations: config.Mutations, reconciliation: config.Reconciliation,
 		interventions: config.Interventions, cleanup: config.Cleanup,
 		primaryCheckouts:  config.PrimaryCheckouts,
+		scoutReviews:      config.ScoutReviews,
 		serviceInstanceID: config.ServiceInstanceID, clock: config.Clock,
 	}, nil
 }
@@ -77,6 +79,20 @@ func (handler *Handler) handle(ctx context.Context, caller CallerClass, data []b
 
 func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 	switch request.Method {
+	case MethodAttestScout:
+		var input AttestScoutDecisionsInput
+		if err := decodeObject(request.Payload, &input); err != nil {
+			return invalidPayload(request.OperationID, err)
+		}
+		if handler.scoutReviews == nil {
+			return rejectedOutcome(request.OperationID, domain.ErrorUnavailable, true, "scout review attestation is unavailable", "inspect service configuration", nil)
+		}
+		result, err := handler.scoutReviews.AttestScoutDecisions(ctx, application.AttestScoutDecisionsCommand{
+			OperationID: request.OperationID, TaskHandle: input.TaskHandle,
+			Finding:          input.Finding,
+			OpenDecisionKeys: append([]string(nil), input.OpenDecisionKeys...),
+		})
+		return handler.taskMutationOutcome(request.OperationID, MethodAttestScout, result, err)
 	case MethodSyncPrimary:
 		var input SyncPrimaryInput
 		if err := decodeObject(request.Payload, &input); err != nil {

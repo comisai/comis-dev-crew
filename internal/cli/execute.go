@@ -64,6 +64,11 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 		return client.SteerTask(ctx, operationID, localapi.SteerTaskInput{
 			TaskHandle: command.reference, Instruction: command.instruction,
 		})
+	case commandAttestScout:
+		return client.AttestScoutDecisions(ctx, operationID, localapi.AttestScoutDecisionsInput{
+			TaskHandle: command.reference, Finding: command.attestFinding,
+			OpenDecisionKeys: append([]string(nil), command.attestKeys...),
+		})
 	case commandReplaceWorker:
 		return client.ReplaceWorker(ctx, operationID, localapi.ReplaceWorkerInput{
 			TaskHandle: command.reference, WorkerProfileID: command.workerProfileID,

@@ -179,6 +179,13 @@ func (client *Client) DiscardTask(ctx context.Context, operationID string, input
 	return result, err
 }
 
+// AttestScoutDecisions records one liaison inventory of a scout's open decisions.
+func (client *Client) AttestScoutDecisions(ctx context.Context, operationID string, input AttestScoutDecisionsInput) (TaskMutationResult, error) {
+	var result TaskMutationResult
+	err := client.call(ctx, operationID, MethodAttestScout, input, &result)
+	return result, err
+}
+
 // SyncPrimary fast-forwards one configured primary checkout, or reports the
 // posture that refused.
 func (client *Client) SyncPrimary(ctx context.Context, operationID string, input SyncPrimaryInput) (application.PrimarySyncReport, error) {

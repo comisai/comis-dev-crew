@@ -64,6 +64,7 @@ type ReadClient interface {
 	PromoteScout(context.Context, string, localapi.PromoteScoutInput) (localapi.PrepareTaskResult, error)
 	ReplaceWorker(context.Context, string, localapi.ReplaceWorkerInput) (localapi.TaskMutationResult, error)
 	SteerTask(context.Context, string, localapi.SteerTaskInput) (localapi.TaskMutationResult, error)
+	AttestScoutDecisions(context.Context, string, localapi.AttestScoutDecisionsInput) (localapi.TaskMutationResult, error)
 	DiscardTask(context.Context, string, localapi.DiscardTaskInput) (localapi.TaskMutationResult, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
@@ -109,6 +110,7 @@ const (
 	commandPromoteScout
 	commandReplaceWorker
 	commandSteerTask
+	commandAttestScout
 )
 
 type parsedCommand struct {
@@ -123,6 +125,8 @@ type parsedCommand struct {
 	workerProfileID string
 	instruction     string
 	acknowledged    bool
+	attestFinding   application.ScoutAttestationFinding
+	attestKeys      []string
 	reconcileAction application.ReconcileTaskAction
 	handbackAction  application.HandbackAction
 }
@@ -276,6 +280,9 @@ func parseTaskCommand(command parsedCommand, args []string) (parsedCommand, erro
 	}
 	if len(args) > 0 && args[0] == "steer" {
 		return parseSteerTaskCommand(command, args[1:])
+	}
+	if len(args) > 0 && args[0] == "attest" {
+		return parseAttestScoutCommand(command, args[1:])
 	}
 	if len(args) < 2 {
 		return parsedCommand{}, errors.New("task subcommand and reference are required")

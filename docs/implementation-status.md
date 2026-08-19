@@ -106,6 +106,26 @@ Inbound `managedRuns.cancel` is dispatched to the durable task record: it stops
 an activated run, preserves its artifacts, and reports an already-settled run
 rather than refusing, so a second operator cancelling the same run is safe.
 
+## Scout review attestation
+
+A scout's worktree holds the only copy of its investigation, so removing it
+before anybody has inventoried the report's open questions is how a buried
+question disappears with the tree that held it. Cleanup therefore refuses a
+scout until a recorded inventory states that no human decision remains open.
+
+The inventory is a recorded semantic judgement, never a derived one: only a
+model can read open questions out of prose. The finding is an explicit
+discriminator rather than an inference from an empty key list, so neither
+`open_decisions` nor `no_open_decisions` can be reached by omission, and a
+request that states no finding is refused. Absence of a record and a record
+finding nothing are kept distinct throughout — the first says nobody looked.
+
+One row exists per scout and a later inventory replaces an earlier one, so a
+stale look never outvotes a fresher inspection of the same surface. Recording an
+attestation moves no task: inventorying open questions observes the work rather
+than finishing, delivering, or retiring it. Ship tasks are outside the gate;
+their open decisions remain governed by the ordinary decision blocker.
+
 ## Comis adapter
 
 The adapter contains the supervised persistent bidirectional connection used by
