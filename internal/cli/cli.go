@@ -27,7 +27,7 @@ Commands:
   service status
   doctor [--format table|json]
   status [--watch [--passes N] [--interval DURATION]] [--format table|json]
-  tasks list [--format table|json]
+  tasks list [--state STATE] [--format table|json]
   workers list [--format table|json]
   task show TASK [--format yaml|json]
   task explain TASK [--format text|json]
@@ -64,7 +64,7 @@ Global options:
 type ReadClient interface {
 	Diagnose(context.Context, string) (application.DiagnosticReport, error)
 	Fleet(context.Context, string) (application.FleetSnapshot, error)
-	ListTasks(context.Context, string) (application.TaskList, error)
+	ListTasks(context.Context, string, localapi.ListTasksInput) (application.TaskList, error)
 	ListWorkerProfiles(context.Context, string) (application.WorkerProfileList, error)
 	PauseTask(context.Context, string, localapi.PauseTaskInput) (localapi.TaskMutationResult, error)
 	CancelTask(context.Context, string, localapi.CancelTaskInput) (localapi.TaskMutationResult, error)
@@ -154,6 +154,7 @@ type parsedCommand struct {
 	watchPasses     int
 	watchInterval   time.Duration
 	inputPath       string
+	taskState       string
 	decisionAnswer  string
 	operationID     string
 	prepareInput    *localapi.PrepareTaskInput
@@ -235,7 +236,14 @@ func parseCommand(args []string, defaultSocketPath string) (parsedCommand, error
 		if len(args) < 2 || args[1] != "list" {
 			return parsedCommand{}, errors.New("tasks list is required")
 		}
-		format, err := parseFormat(args[2:], "table", "table", "json")
+		rest := args[2:]
+		if len(rest) >= 2 && rest[0] == "--state" {
+			if err := domain.ValidateTaskState(domain.TaskState(rest[1])); err != nil {
+				return parsedCommand{}, err
+			}
+			command.taskState, rest = rest[1], rest[2:]
+		}
+		format, err := parseFormat(rest, "table", "table", "json")
 		if err != nil {
 			return parsedCommand{}, err
 		}

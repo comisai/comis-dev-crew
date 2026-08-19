@@ -96,7 +96,7 @@ func TestQueries_ListShowExplainAndOperationShareCanonicalProjections(t *testing
 		t.Fatalf("NewQueries() error = %v", err)
 	}
 
-	list, err := queries.ListTasks(context.Background())
+	list, err := queries.ListTasks(context.Background(), "")
 	if err != nil {
 		t.Fatalf("ListTasks() error = %v", err)
 	}
@@ -404,7 +404,7 @@ func TestQueries_RejectInvalidRefsAndTranslateRepositoryFailuresSafely(t *testin
 		{
 			name: "cancelled read",
 			invoke: func(queries *Queries) error {
-				_, err := queries.ListTasks(context.Background())
+				_, err := queries.ListTasks(context.Background(), "")
 				return err
 			},
 			repoErr:  context.Canceled,
@@ -471,7 +471,7 @@ func TestQueries_FailureBranchesAndClosedStateExplanations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewQueries() error = %v", err)
 		}
-		if _, err := queries.ListTasks(context.Background()); failureCode(err) != domain.ErrorInternal {
+		if _, err := queries.ListTasks(context.Background(), ""); failureCode(err) != domain.ErrorInternal {
 			t.Fatalf("ListTasks() error = %v, want internal failure", err)
 		}
 	})

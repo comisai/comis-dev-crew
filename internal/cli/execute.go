@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/comisai/comis-dev-crew/internal/domain"
 	"github.com/comisai/comis-dev-crew/internal/localapi"
 )
 
@@ -17,7 +18,7 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 	case commandFleet:
 		return client.Fleet(ctx, operationID)
 	case commandListTasks:
-		return client.ListTasks(ctx, operationID)
+		return client.ListTasks(ctx, operationID, localapi.ListTasksInput{State: domain.TaskState(command.taskState)})
 	case commandWorkerProfiles:
 		return client.ListWorkerProfiles(ctx, operationID)
 	case commandReadTaskLogs:

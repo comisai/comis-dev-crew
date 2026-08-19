@@ -85,6 +85,18 @@ func validateRevision(value string) error {
 	return nil
 }
 
+// ValidateTaskState rejects a task state outside the closed set.
+//
+// Scoping a read by state must refuse an unknown one rather than quietly
+// matching nothing, which would read as "no such work" instead of "no such
+// state".
+func ValidateTaskState(value TaskState) error {
+	if !value.valid() {
+		return &ValidationError{Field: "state", Reason: "must be a known task state"}
+	}
+	return nil
+}
+
 // MaximumDecisionResponseBytes bounds one answer before it is stored, so an
 // oversized reply is refused rather than truncated into a different answer.
 const MaximumDecisionResponseBytes = 8192

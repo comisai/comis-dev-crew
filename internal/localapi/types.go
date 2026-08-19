@@ -110,6 +110,11 @@ func (method Method) SideEffect() SideEffectClass {
 	}
 }
 
+// ListTasksInput scopes the durable task list. An absent state lists them all.
+type ListTasksInput struct {
+	State domain.TaskState `json:"state,omitempty"`
+}
+
 // ListDecisionsInput scopes the open-decision inventory. An absent task handle
 // reads the whole fleet.
 type ListDecisionsInput struct {
@@ -212,7 +217,7 @@ type ReadQueries interface {
 	ShowDecision(context.Context, string, string) (application.TaskDecision, error)
 	Diagnose(context.Context) (application.DiagnosticReport, error)
 	Fleet(context.Context) (application.FleetSnapshot, error)
-	ListTasks(context.Context) (application.TaskList, error)
+	ListTasks(context.Context, domain.TaskState) (application.TaskList, error)
 	ListWorkerProfiles(context.Context) (application.WorkerProfileList, error)
 	ShowTask(context.Context, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string) (application.TaskExplanation, error)

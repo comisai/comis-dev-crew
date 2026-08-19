@@ -165,10 +165,22 @@ func (queries *Queries) hostHealth() (Completeness, HealthStatus, HealthStatus, 
 }
 
 // ListTasks returns the same task rows used by the fleet projection.
-func (queries *Queries) ListTasks(ctx context.Context) (TaskList, error) {
+func (queries *Queries) ListTasks(ctx context.Context, state domain.TaskState) (TaskList, error) {
+	if state != "" && domain.ValidateTaskState(state) != nil {
+		return TaskList{}, invalidReferenceFailure("task state", errors.New("state is not a known task state"))
+	}
 	tasks, stateVersion, err := queries.taskSnapshot(ctx)
 	if err != nil {
 		return TaskList{}, err
+	}
+	if state != "" {
+		scoped := make([]TaskObservation, 0, len(tasks))
+		for _, task := range tasks {
+			if task.Task.State == state {
+				scoped = append(scoped, task)
+			}
+		}
+		tasks = scoped
 	}
 	now := queries.now()
 	projected, err := queries.projectTasks(ctx, tasks, now)

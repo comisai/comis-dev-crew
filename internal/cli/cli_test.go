@@ -215,7 +215,7 @@ func TestRun_HumanReadCommandsUseOneCanonicalClient(t *testing.T) {
 		{name: "service status", args: []string{"service", "status"}, wantCall: "diagnose", wantOutput: "SERVICE"},
 		{name: "doctor", args: []string{"doctor"}, wantCall: "diagnose", wantOutput: "CHECK"},
 		{name: "fleet status", args: []string{"status"}, wantCall: "fleet", wantOutput: "INIT/COMPONENT"},
-		{name: "task list", args: []string{"tasks", "list"}, wantCall: "list", wantOutput: "task-0001"},
+		{name: "task list", args: []string{"tasks", "list"}, wantCall: "list-tasks:", wantOutput: "task-0001"},
 		{name: "task show", args: []string{"task", "show", "task-0001"}, wantCall: "show:task-0001", wantOutput: "preparationOperationId: \"prepare-view-0001\""},
 		{name: "task explain", args: []string{"task", "explain", "task-0001"}, wantCall: "explain:task-0001", wantOutput: "REASON"},
 		{name: "task operation", args: []string{"task", "operation", "op-0001"}, wantCall: "operation:op-0001", wantOutput: "OPERATION"},
