@@ -38,6 +38,9 @@ func (status DecisionStatus) Valid() bool {
 // nobody has asked has no asking time, and one whose cadence cannot be computed
 // has no next airing. Rendering those as an epoch would read as "long overdue".
 type TaskDecision struct {
+	// StateVersion marks the durable snapshot this row was read in, so a single
+	// decision read carries the same read-after-write marker the list does.
+	StateVersion int64          `json:"stateVersion"`
 	TaskHandle   string         `json:"taskHandle"`
 	ExternalKey  string         `json:"externalKey"`
 	Status       DecisionStatus `json:"status"`
@@ -54,6 +57,7 @@ type TaskDecision struct {
 type DecisionList struct {
 	SchemaVersion int            `json:"schemaVersion"`
 	CapturedAt    time.Time      `json:"capturedAt"`
+	StateVersion  int64          `json:"stateVersion"`
 	Decisions     []TaskDecision `json:"decisions"`
 }
 

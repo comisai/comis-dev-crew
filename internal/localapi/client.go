@@ -50,6 +50,28 @@ func (client *Client) Fleet(ctx context.Context, operationID string) (applicatio
 	return result, err
 }
 
+// ListDecisions reads the bounded inventory of open decisions.
+func (client *Client) ListDecisions(
+	ctx context.Context,
+	operationID string,
+	input ListDecisionsInput,
+) (application.DecisionList, error) {
+	var result application.DecisionList
+	err := client.call(ctx, operationID, MethodListDecisions, input, &result)
+	return result, err
+}
+
+// ShowDecision reads one keyed open decision.
+func (client *Client) ShowDecision(
+	ctx context.Context,
+	operationID string,
+	input ShowDecisionInput,
+) (application.TaskDecision, error) {
+	var result application.TaskDecision
+	err := client.call(ctx, operationID, MethodShowDecision, input, &result)
+	return result, err
+}
+
 // ListTasks reads the canonical task list.
 func (client *Client) ListTasks(ctx context.Context, operationID string) (application.TaskList, error) {
 	var result application.TaskList
@@ -268,6 +290,10 @@ func projectedStateVersion(result any) (int64, bool) {
 	case *application.WorkerProfileList:
 		return projection.StateVersion, true
 	case *application.TaskDetail:
+		return projection.StateVersion, true
+	case *application.DecisionList:
+		return projection.StateVersion, true
+	case *application.TaskDecision:
 		return projection.StateVersion, true
 	case *application.TaskExplanation:
 		return projection.Summary.StateVersion, true

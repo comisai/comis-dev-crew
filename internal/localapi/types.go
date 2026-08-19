@@ -64,6 +64,8 @@ const (
 	MethodDiscardTask    Method = "DiscardTask"
 	MethodSyncPrimary    Method = "SyncPrimary"
 	MethodAttestScout    Method = "AttestScoutDecisions"
+	MethodListDecisions  Method = "ListTaskDecisions"
+	MethodShowDecision   Method = "ShowTaskDecision"
 )
 
 func (method Method) valid() bool {
@@ -71,7 +73,7 @@ func (method Method) valid() bool {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
 		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
-		MethodSyncPrimary, MethodAttestScout:
+		MethodSyncPrimary, MethodAttestScout, MethodListDecisions, MethodShowDecision:
 		return true
 	default:
 		return false
@@ -97,6 +99,18 @@ func (method Method) SideEffect() SideEffectClass {
 	default:
 		return SideEffectRead
 	}
+}
+
+// ListDecisionsInput scopes the open-decision inventory. An absent task handle
+// reads the whole fleet.
+type ListDecisionsInput struct {
+	TaskHandle string `json:"taskHandle,omitempty"`
+}
+
+// ShowDecisionInput names exactly one keyed decision.
+type ShowDecisionInput struct {
+	TaskHandle  string `json:"taskHandle"`
+	ExternalKey string `json:"externalKey"`
 }
 
 // Request is one strict newline-delimited local service request.
@@ -126,8 +140,25 @@ type Outcome struct {
 	Error           *WireError             `json:"error,omitempty"`
 }
 
+// operatorOnly reports whether a method carries private task detail that §20.3
+// keeps off the model surface.
+//
+// The boundary lives here rather than only in the set of tools the facade
+// exposes, so a facade that later grows a tool cannot thereby gain an authority
+// the operator console was meant to hold alone.
+func (method Method) operatorOnly() bool {
+	switch method {
+	case MethodListDecisions, MethodShowDecision:
+		return true
+	default:
+		return false
+	}
+}
+
 // ReadQueries is the narrow application surface consumed by the local boundary.
 type ReadQueries interface {
+	ListDecisions(context.Context, string) (application.DecisionList, error)
+	ShowDecision(context.Context, string, string) (application.TaskDecision, error)
 	Diagnose(context.Context) (application.DiagnosticReport, error)
 	Fleet(context.Context) (application.FleetSnapshot, error)
 	ListTasks(context.Context) (application.TaskList, error)

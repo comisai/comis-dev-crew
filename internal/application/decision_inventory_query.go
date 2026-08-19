@@ -16,11 +16,14 @@ func (queries *Queries) ListDecisions(ctx context.Context, taskHandle string) (D
 			return DecisionList{}, invalidReferenceFailure("task reference", err)
 		}
 	}
-	decisions, err := queries.readDecisions(ctx, taskHandle)
+	decisions, stateVersion, err := queries.readDecisions(ctx, taskHandle)
 	if err != nil {
 		return DecisionList{}, err
 	}
-	return DecisionList{SchemaVersion: 1, CapturedAt: queries.now(), Decisions: decisions}, nil
+	return DecisionList{
+		SchemaVersion: 1, CapturedAt: queries.now(),
+		StateVersion: stateVersion, Decisions: decisions,
+	}, nil
 }
 
 // ShowDecision reads one keyed decision.
@@ -38,7 +41,7 @@ func (queries *Queries) ShowDecision(
 	if err := domain.ValidateDecisionKey(externalKey); err != nil {
 		return TaskDecision{}, invalidReferenceFailure("decision reference", err)
 	}
-	decisions, err := queries.readDecisions(ctx, taskHandle)
+	decisions, _, err := queries.readDecisions(ctx, taskHandle)
 	if err != nil {
 		return TaskDecision{}, err
 	}
@@ -55,19 +58,27 @@ func (queries *Queries) ShowDecision(
 // An unconfigured inventory is reported as unavailable rather than as an empty
 // set: "nothing is waiting on you" is the one answer this read must never give
 // when it simply could not look.
-func (queries *Queries) readDecisions(ctx context.Context, taskHandle string) ([]TaskDecision, error) {
+func (queries *Queries) readDecisions(
+	ctx context.Context,
+	taskHandle string,
+) ([]TaskDecision, int64, error) {
 	if queries.decisions == nil {
-		return nil, translateReadError(nil, "decision inventory")
+		return nil, 0, translateReadError(nil, "decision inventory")
+	}
+	stateVersion, err := queries.repository.CurrentStateVersion(ctx)
+	if err != nil {
+		return nil, 0, translateReadError(err, "decision inventory")
 	}
 	decisions, err := queries.decisions.ListTaskDecisions(ctx, taskHandle)
 	if err != nil {
-		return nil, translateReadError(err, "decision inventory")
+		return nil, 0, translateReadError(err, "decision inventory")
 	}
 	policy := queries.decisionSurfacing
 	if policy == (DecisionSurfacingPolicy{}) {
 		policy = DefaultDecisionSurfacingPolicy
 	}
 	for index := range decisions {
+		decisions[index].StateVersion = stateVersion
 		// Only an already-asked question has a cadence; the first airing is owed
 		// by the durable outbox, so promising a repeat before it would schedule
 		// a repeat of something nobody has asked.
@@ -77,5 +88,5 @@ func (queries *Queries) readDecisions(ctx context.Context, taskHandle string) ([
 		next := decisions[index].LastAiringAt.Add(policy.Interval(decisions[index].Airings))
 		decisions[index].NextAiringAt = &next
 	}
-	return decisions, nil
+	return decisions, stateVersion, nil
 }

@@ -129,6 +129,20 @@ func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 		}
 		result, err := handler.queries.ListWorkerProfiles(ctx)
 		return queryOutcome(request.OperationID, result.StateVersion, result, err)
+	case MethodListDecisions:
+		var payload ListDecisionsInput
+		if err := decodeObject(request.Payload, &payload); err != nil {
+			return invalidPayload(request.OperationID, err)
+		}
+		result, err := handler.queries.ListDecisions(ctx, payload.TaskHandle)
+		return queryOutcome(request.OperationID, result.StateVersion, result, err)
+	case MethodShowDecision:
+		var payload ShowDecisionInput
+		if err := decodeObject(request.Payload, &payload); err != nil {
+			return invalidPayload(request.OperationID, err)
+		}
+		result, err := handler.queries.ShowDecision(ctx, payload.TaskHandle, payload.ExternalKey)
+		return queryOutcome(request.OperationID, result.StateVersion, result, err)
 	case MethodShowTask:
 		var payload taskPayload
 		if err := decodeObject(request.Payload, &payload); err != nil {
@@ -361,8 +375,10 @@ func (handler *Handler) prepareOutcome(operationID string, mutation application.
 
 func methodAllowed(caller CallerClass, method Method) bool {
 	switch caller {
-	case CallerOperatorCLI, CallerMCPFacade:
+	case CallerOperatorCLI:
 		return method.valid()
+	case CallerMCPFacade:
+		return method.valid() && !method.operatorOnly()
 	case CallerWorkerReport, CallerComisControl:
 		return false
 	default:

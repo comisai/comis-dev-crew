@@ -292,7 +292,8 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	queries, err := application.NewQueries(application.QueryConfig{
 		Repository: store, Harnesses: config.WorkerHarnesses, Host: control,
 		ReconciliationWorkspaces: config.reconciliationInspector,
-		WorkerProfiles:           config.WorkerProfileCatalog, Clock: clock,
+		WorkerProfiles:           config.WorkerProfileCatalog, Decisions: store,
+		DecisionSurfacing: config.DecisionSurfacing, Clock: clock,
 	})
 	if err != nil {
 		return fmt.Errorf("run service queries: %w", err)
