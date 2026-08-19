@@ -617,7 +617,9 @@ milestone evidence is refused.
 human sends anything, so an emulator campaign declares no checkpoints at all. A
 manifest that declares an arc its channel cannot drive is refused before the
 campaign starts, and the closeout records `real_human_telegram_checkpoints` with
-status `not_claimed` rather than crediting a pass no human could have earned.
+status `not_claimed` rather than crediting a pass no human could have earned. The
+protected runner below drives that human arc, so it accepts a `real_telegram`
+manifest only.
 
 The runner first observes both tasks simultaneously in `working`. It then replaces
 the stateless MCP facade, waits for the human acknowledgement, waits for decision,

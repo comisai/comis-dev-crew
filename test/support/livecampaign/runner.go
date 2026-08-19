@@ -31,6 +31,10 @@ func (runner CampaignRunner) Run(ctx context.Context, manifest Manifest, evidenc
 	if err := manifest.validate(); err != nil {
 		return Verdict{}, fmt.Errorf("run protected live campaign: %w", err)
 	}
+	if manifest.CampaignKind != CampaignKindRealTelegram {
+		return Verdict{}, errors.New(
+			"run protected live campaign: this runner drives the human checkpoint arc and an emulator campaign has no human sender")
+	}
 	runner.log("waiting for the human Telegram task request")
 	if _, err := runner.waitCheckpoint(ctx, manifest, "task_request", manifest.StartedAtMs); err != nil {
 		return Verdict{}, err
