@@ -150,3 +150,31 @@ func TestCLI_DocumentsTheEventAndWatchSurface(t *testing.T) {
 		}
 	}
 }
+
+// An operator following one task should not have to read the whole fleet's
+// stream to find it. The scope travels to the service rather than filtering a
+// full page locally, so a busy fleet cannot push one task's events off the page
+// before the console ever sees them.
+func TestCLI_ScopesTheEventStreamToOneTask(t *testing.T) {
+	client := &fakeClient{}
+	var output bytes.Buffer
+	args := []string{"events", "tail", "--task", "task-0001"}
+	if code := Run(context.Background(), args, &output, &output, testConfig(client)); code != 0 {
+		t.Fatalf("Run(events tail --task) = %d: %s", code, output.String())
+	}
+	if len(client.calls) != 1 || client.calls[0] != "events:0:task-0001" {
+		t.Fatalf("client calls = %v, want a task-scoped read", client.calls)
+	}
+}
+
+func TestCLI_RefusesAnInvalidEventTaskScope(t *testing.T) {
+	client := &fakeClient{}
+	var output bytes.Buffer
+	args := []string{"events", "tail", "--task", "not a handle"}
+	if code := Run(context.Background(), args, &output, &output, testConfig(client)); code != ExitUsage {
+		t.Fatalf("Run(events tail bad task) = %d, want %d", code, ExitUsage)
+	}
+	if len(client.calls) != 0 {
+		t.Fatalf("an invalid scope reached the service: %v", client.calls)
+	}
+}
