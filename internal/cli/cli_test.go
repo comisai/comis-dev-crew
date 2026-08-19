@@ -408,11 +408,21 @@ type fakeClient struct {
 	diff         application.TaskDiffView
 	repairs      application.RepairSurvey
 	events       application.EventPage
+	logs         application.TaskLogPage
 	prepared     localapi.PrepareTaskResult
 	taskMutation localapi.TaskMutationResult
 	err          error
 	calls        []string
 	operationID  string
+}
+
+func (client *fakeClient) ReadTaskLogs(
+	_ context.Context,
+	operationID string,
+	input localapi.ReadTaskLogsInput,
+) (application.TaskLogPage, error) {
+	client.record(operationID, "logs:"+input.TaskHandle+":"+string(input.Source)+":"+strconv.FormatInt(input.AfterSequence, 10))
+	return client.logs, client.err
 }
 
 func (client *fakeClient) ReadEvents(
