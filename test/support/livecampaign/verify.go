@@ -135,7 +135,12 @@ func VerifyOperation(expectation OperationExpectation, view application.Operatio
 	return nil
 }
 
+// VerifyMessages resolves the human checkpoint arc. Only a real-Telegram campaign can claim
+// it; an emulator campaign has no human sender and must not reach this verifier at all.
 func VerifyMessages(manifest Manifest, report MessageReport) ([]CheckpointEvidence, error) {
+	if manifest.CampaignKind != CampaignKindRealTelegram {
+		return nil, errors.New("the human checkpoint arc is not claimable for an emulator campaign")
+	}
 	if report.Schema != "comis-offline-channel-messages-report" || report.SchemaVersion != 2 {
 		return nil, errors.New("telegram message report has an unsupported schema")
 	}

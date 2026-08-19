@@ -1,5 +1,12 @@
 package livecampaign
 
+// Evidence statuses are closed. A check is claimed and proven, or explicitly not claimed
+// by this campaign kind; there is no third reading of a missing row.
+const (
+	evidenceStatusPass       = "pass"
+	evidenceStatusNotClaimed = "not_claimed"
+)
+
 type EvidenceCheck struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
