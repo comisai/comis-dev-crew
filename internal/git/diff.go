@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -32,33 +31,20 @@ func (registry *Registry) InspectCandidateDiff(
 	if err := ctx.Err(); err != nil {
 		return CandidateDiff{}, err
 	}
-	if !repositoryIDPattern.MatchString(request.TaskHandle) || !repositoryIDPattern.MatchString(request.RepositoryID) {
-		return CandidateDiff{}, errors.New("inspect task diff: request identity is invalid")
-	}
 	if !gitRevisionPattern.MatchString(request.BaseRevision) {
 		return CandidateDiff{}, errors.New("inspect task diff: base revision is invalid")
 	}
-	repository, err := registry.Resolve(request.RepositoryID)
+	// Worktree identity is proven by the same inspection candidate validation
+	// uses. Re-deriving it here would be a second authority on which tree a task
+	// owns, and the two could disagree.
+	snapshot, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
+		TaskHandle: request.TaskHandle, RepositoryID: request.RepositoryID,
+		WorktreePath: request.WorktreePath,
+	})
 	if err != nil {
-		return CandidateDiff{}, errors.New("inspect task diff: repository is unavailable")
+		return CandidateDiff{}, fmt.Errorf("inspect task diff: %w", err)
 	}
-	if request.WorktreePath != filepath.Join(repository.WorktreeRoot, request.TaskHandle) {
-		return CandidateDiff{}, errors.New("inspect task diff: worktree does not match task root")
-	}
-	if _, err := registry.ValidateWorktree(ctx, request.RepositoryID, request.WorktreePath); err != nil {
-		if ctx.Err() != nil {
-			return CandidateDiff{}, ctx.Err()
-		}
-		return CandidateDiff{}, fmt.Errorf("inspect task diff: worktree inspection failed: %w", err)
-	}
-	head, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.WorktreePath,
-		"rev-parse", "--verify", "HEAD^{commit}")
-	if err != nil {
-		if ctx.Err() != nil {
-			return CandidateDiff{}, ctx.Err()
-		}
-		return CandidateDiff{}, errors.New("inspect task diff: head is unavailable")
-	}
+	head := snapshot.HeadRevision
 	// The base must be an object this repository actually knows; otherwise the
 	// comparison would silently describe a different history.
 	if _, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.WorktreePath,
