@@ -49,17 +49,15 @@ on `PATH`. To install a specific release or change the destination:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/comisai/comis-dev-crew/main/docs/install.sh \
-  | DEVCREW_VERSION=v0.1.0 \
+  | DEVCREW_VERSION=v0.3.0 \
     DEVCREW_INSTALL_DIR="$HOME/.comis-dev-crew/bin" \
     DEVCREW_LINK_DIR="$HOME/.local/bin" sh
 ```
 
-Replace `v0.1.0` with the required tag. The installer exits without changing the
+Replace `v0.3.0` with the required tag. The installer exits without changing the
 system if it cannot find a release or verify its checksum.
 
-The current published pre-release is `v0.1.0`. Recovery work on branches newer
-than that tag is available only from source until a subsequent pre-release is
-published.
+The current published pre-release is `v0.3.0`.
 
 ### Build from source
 
