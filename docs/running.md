@@ -340,7 +340,7 @@ devcrew [--socket PATH] task resume TASK [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task verify TASK [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task promote SCOUT --input FILE|- [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task replace TASK --worker PROFILE [--operation OPERATION] [--format json]
-devcrew [--socket PATH] task steer TASK --instruction TEXT [--operation OPERATION] [--format json]
+devcrew [--socket PATH] task steer TASK --input FILE|- [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task cleanup TASK [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task discard TASK --yes [--operation OPERATION] [--format json]
 devcrew [--socket PATH] events tail [--after SEQUENCE] [--task TASK] [--format text|jsonl]
@@ -525,6 +525,11 @@ the removal, so an audit can tell delivered-work removal from acknowledged
 removal.
 
 `task steer` sends one bounded instruction to a task's current worker. The
+instruction arrives as a JSON contract (`{"schemaVersion": 1, "instruction": "…"}`)
+from a file or standard input rather than on the command line: it is
+worker-visible text that can be long, and argv is visible in process listings and
+shell history. Control characters are refused before the service sees them, so an
+instruction cannot smuggle a terminal escape sequence into whatever renders it. The
 worker reads it on its next report receipt, so an instruction arrives at a
 boundary the worker chose rather than being injected into a terminal — there is
 no keystroke path to get wrong, and nothing can land mid-edit.

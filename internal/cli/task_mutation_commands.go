@@ -360,12 +360,14 @@ func parseReplaceWorkerCommand(command parsedCommand, args []string) (parsedComm
 	return command, nil
 }
 
-// parseSteerTaskCommand reads the task and one bounded instruction.
+// parseSteerTaskCommand reads the task and one bounded instruction contract.
 //
-// The instruction is typed once, on the command line, and the service stores it
-// once. There is no retry flag: an uncertain send is reconciled against its
-// operation rather than re-typed, because re-sending would queue the same words
-// twice and the worker would act on them twice.
+// The instruction arrives as a contract from a file or standard input rather
+// than on the command line: it is worker-visible text that can be long, and argv
+// is visible in process listings and shell history. There is no retry flag: an
+// uncertain send is reconciled against its operation rather than re-sent,
+// because re-sending would queue the same words twice and the worker would act
+// on them twice.
 func parseSteerTaskCommand(command parsedCommand, args []string) (parsedCommand, error) {
 	if len(args) < 1 || domain.ValidateTaskHandle(args[0]) != nil {
 		return parsedCommand{}, errors.New("steer task reference is required")
@@ -382,11 +384,11 @@ func parseSteerTaskCommand(command parsedCommand, args []string) (parsedCommand,
 		name, value := args[0], args[1]
 		seen[name] = true
 		switch name {
-		case "--instruction":
-			if domain.ValidateSteeringInstruction(value) != nil {
-				return parsedCommand{}, errors.New("invalid steering instruction")
+		case "--input":
+			if value == "" {
+				return parsedCommand{}, errors.New("invalid steer input")
 			}
-			command.instruction = value
+			command.inputPath = value
 		case "--operation":
 			if domain.ValidateOperationID(value) != nil {
 				return parsedCommand{}, errors.New("invalid steer operation")
@@ -401,8 +403,8 @@ func parseSteerTaskCommand(command parsedCommand, args []string) (parsedCommand,
 		}
 		args = args[2:]
 	}
-	if command.instruction == "" {
-		return parsedCommand{}, errors.New("steering instruction is required")
+	if command.inputPath == "" {
+		return parsedCommand{}, errors.New("steering instruction contract is required")
 	}
 	return command, nil
 }
