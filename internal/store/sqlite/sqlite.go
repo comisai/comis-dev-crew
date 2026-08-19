@@ -392,7 +392,10 @@ func (store *Store) migrate(ctx context.Context) error {
 	if err := store.applyVersionedMigration(ctx, 29, decisionSurfacingMigration); err != nil {
 		return err
 	}
-	return store.applyVersionedMigration(ctx, 30, serviceEventMigration)
+	if err := store.applyVersionedMigration(ctx, 30, serviceEventMigration); err != nil {
+		return err
+	}
+	return store.applyVersionedMigration(ctx, 31, decisionCancellationMigration)
 }
 func (store *Store) applyVersionedMigration(ctx context.Context, version int, migration string) error {
 	var applied int

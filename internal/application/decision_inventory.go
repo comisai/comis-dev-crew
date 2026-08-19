@@ -65,3 +65,17 @@ type DecisionList struct {
 type DecisionInventoryStore interface {
 	ListTaskDecisions(context.Context, string) ([]TaskDecision, error)
 }
+
+// DecisionCancellationMutation withdraws one open question.
+//
+// Withdrawing is recorded as its own fact rather than as a worker resolution:
+// a resolution says the work may proceed on an answer somebody gave, while a
+// cancellation says the question no longer applies. Auditing them the same way
+// would attribute to a worker an answer nobody ever provided.
+type DecisionCancellationMutation struct {
+	OperationID   string
+	SubjectDigest string
+	TaskHandle    string
+	ExternalKey   string
+	At            time.Time
+}

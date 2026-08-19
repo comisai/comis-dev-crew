@@ -113,14 +113,9 @@ func (store *Store) CommitTaskCandidateReconciliation(
 		return application.MutationResult{}, fmt.Errorf("task reconciliation validation process remains: %w", application.ErrPrecondition)
 	}
 	var unresolvedDecisions int
-	if err := transaction.QueryRowContext(ctx, `SELECT COUNT(*) FROM reports AS decision
-		WHERE decision.task_handle = ? AND decision.kind = 'decision'
-		AND NOT EXISTS (
-			SELECT 1 FROM reports AS resolution
-			WHERE resolution.task_handle = decision.task_handle
-			AND resolution.kind = 'resolution'
-			AND resolution.external_key = decision.external_key
-		)`, mutation.TaskHandle).Scan(&unresolvedDecisions); err != nil {
+	if err := transaction.QueryRowContext(ctx, `SELECT COUNT(*) FROM reports AS d
+		WHERE d.task_handle = ? AND d.kind = 'decision' AND `+
+		decisionStillOpenClause("d"), mutation.TaskHandle).Scan(&unresolvedDecisions); err != nil {
 		return application.MutationResult{}, fmt.Errorf("inspect task reconciliation decisions: %w", err)
 	}
 	if unresolvedDecisions != 0 {

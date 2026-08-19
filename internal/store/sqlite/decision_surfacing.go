@@ -56,11 +56,8 @@ func (store *Store) OpenDecisionsAwaitingHuman(ctx context.Context) ([]applicati
             ON o.task_handle = d.task_handle AND o.local_report_id = d.local_report_id
         LEFT JOIN task_decision_surfacings s
             ON s.task_handle = d.task_handle AND s.external_key = d.external_key
-        WHERE d.kind = 'decision' AND o.delivered_at IS NOT NULL AND NOT EXISTS (
-            SELECT 1 FROM reports r
-            WHERE r.task_handle = d.task_handle
-              AND r.kind = 'resolution' AND r.external_key = d.external_key
-        )
+        WHERE d.kind = 'decision' AND o.delivered_at IS NOT NULL AND `+
+		decisionStillOpenClause("d")+`
         ORDER BY d.task_handle, d.external_key`)
 	if err != nil {
 		return nil, fmt.Errorf("read open decisions: %w", err)

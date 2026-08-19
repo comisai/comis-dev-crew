@@ -232,13 +232,10 @@ func readDecisionDiagnostic(
 	taskHandle string,
 	evidence *application.TaskEvidenceView,
 ) error {
-	const openQuery = `SELECT decision.local_report_id FROM reports decision
-		WHERE decision.task_handle = ? AND decision.kind = 'decision'
-		AND NOT EXISTS (SELECT 1 FROM reports resolution
-			WHERE resolution.task_handle = decision.task_handle
-			AND resolution.kind = 'resolution'
-			AND resolution.external_key = decision.external_key)
-		ORDER BY decision.state_version DESC, decision.local_report_id LIMIT 1`
+	openQuery := `SELECT d.local_report_id FROM reports d
+		WHERE d.task_handle = ? AND d.kind = 'decision' AND ` +
+		decisionStillOpenClause("d") + `
+		ORDER BY d.state_version DESC, d.local_report_id LIMIT 1`
 	var decisionID string
 	if err := source.QueryRowContext(ctx, openQuery, taskHandle).Scan(&decisionID); err == nil {
 		evidence.Decision = application.DecisionEvidenceView{

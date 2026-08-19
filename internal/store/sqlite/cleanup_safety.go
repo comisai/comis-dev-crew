@@ -35,10 +35,8 @@ func proveCleanupDatabaseSafety(ctx context.Context, transaction *sql.Tx, task d
 		{name: "active validation", query: `SELECT COUNT(*) FROM validation_processes
 		    WHERE task_handle = ? AND state NOT IN ('exited', 'absent')`, args: []any{task.Handle}, blocker: application.ErrCleanupActiveExecution},
 		{name: "unresolved decision", query: `SELECT COUNT(*) FROM reports d
-            WHERE d.task_handle = ? AND d.kind = 'decision' AND NOT EXISTS (
-                SELECT 1 FROM reports r WHERE r.task_handle = d.task_handle
-                AND r.kind = 'resolution' AND r.external_key = d.external_key
-			)`, args: []any{task.Handle}, blocker: application.ErrCleanupOpenDecision},
+            WHERE d.task_handle = ? AND d.kind = 'decision' AND ` +
+			decisionStillOpenClause("d"), args: []any{task.Handle}, blocker: application.ErrCleanupOpenDecision},
 	}
 	// A scout is the only shape whose worktree holds an investigation nobody
 	// else has a copy of. The gate turns on the absence of a record as much as

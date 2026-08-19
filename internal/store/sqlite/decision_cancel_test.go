@@ -85,8 +85,8 @@ func TestDecisionCancellation_ReplaysByIdentityAndRefusesReuse(t *testing.T) {
 
 	first := cancelDecision(t, store, scout, "schema-choice", "operation-cancel-0001")
 	replay := cancelDecision(t, store, scout, "schema-choice", "operation-cancel-0001")
-	if replay.StateVersion != first.StateVersion {
-		t.Errorf("replay state version = %d, want %d", replay.StateVersion, first.StateVersion)
+	if replay.Task.StateVersion != first.Task.StateVersion {
+		t.Errorf("replay state version = %d, want %d", replay.Task.StateVersion, first.Task.StateVersion)
 	}
 
 	if _, err := store.CommitDecisionCancellation(context.Background(), application.DecisionCancellationMutation{
