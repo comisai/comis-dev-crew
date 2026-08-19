@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -36,5 +37,19 @@ func TestExecuteGitReportsAnOversizeReadRegardlessOfChildExitStatus(t *testing.T
 	_, _, err := executeGit(context.Background(), writeOversizeThenFailScript(t))
 	if !errors.Is(err, errGitOutputTooLarge) {
 		t.Fatalf("executeGit(oversize child that exits non-zero) error = %v, want errGitOutputTooLarge", err)
+	}
+}
+
+// A failing child names the status it exited with. The status is a number rather
+// than child output, so it stays content-free while still saying which failure
+// class an operator is looking at.
+func TestRunGitBytesNamesTheChildExitStatus(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fail")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 3\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := runGitBytes(context.Background(), path)
+	if err == nil || !strings.Contains(err.Error(), "3") {
+		t.Fatalf("runGitBytes(child exiting 3) error = %v, want the exit status named", err)
 	}
 }
