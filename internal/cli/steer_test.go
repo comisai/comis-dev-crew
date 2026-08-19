@@ -62,3 +62,37 @@ func TestCLI_SteerAppearsInTheOperatorSurface(t *testing.T) {
 		t.Fatal("task steer is missing from the CLI usage text")
 	}
 }
+
+// A steering instruction is worker-visible text, so it arrives as a bounded
+// contract from a file or standard input rather than on the command line.
+// Argv is visible in process listings and shell history, and an instruction
+// long enough to be useful does not belong there.
+func TestCLI_SteersFromABoundedContract(t *testing.T) {
+	client := steerClient()
+	var output bytes.Buffer
+	config := testConfig(client)
+	config.Stdin = strings.NewReader(`{"schemaVersion":1,"instruction":"Prefer the existing parser."}`)
+
+	args := []string{"task", "steer", "task-0001", "--input", "-", "--operation", "operation-steer-0001"}
+	if code := Run(context.Background(), args, &output, &output, config); code != 0 {
+		t.Fatalf("Run(task steer --input) = %d: %s", code, output.String())
+	}
+	if len(client.calls) != 1 ||
+		!strings.HasSuffix(client.calls[0], "steer:task-0001:Prefer the existing parser.") {
+		t.Fatalf("client calls = %v", client.calls)
+	}
+}
+
+func TestCLI_RefusesSteeringWithoutAContract(t *testing.T) {
+	client := steerClient()
+	var output bytes.Buffer
+	config := testConfig(client)
+	config.Stdin = strings.NewReader("")
+	args := []string{"task", "steer", "task-0001"}
+	if code := Run(context.Background(), args, &output, &output, config); code != ExitUsage {
+		t.Fatalf("Run(task steer without a contract) = %d, want %d", code, ExitUsage)
+	}
+	if len(client.calls) != 0 {
+		t.Fatalf("a steer without a contract reached the service: %v", client.calls)
+	}
+}
