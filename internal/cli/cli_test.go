@@ -398,11 +398,31 @@ type fakeClient struct {
 	explanation  application.TaskExplanation
 	operation    application.OperationView
 	launchPlan   application.LaunchPlan
+	decisions    application.DecisionList
+	decision     application.TaskDecision
 	prepared     localapi.PrepareTaskResult
 	taskMutation localapi.TaskMutationResult
 	err          error
 	calls        []string
 	operationID  string
+}
+
+func (client *fakeClient) ListDecisions(
+	_ context.Context,
+	operationID string,
+	input localapi.ListDecisionsInput,
+) (application.DecisionList, error) {
+	client.record(operationID, "decisions:"+input.TaskHandle)
+	return client.decisions, client.err
+}
+
+func (client *fakeClient) ShowDecision(
+	_ context.Context,
+	operationID string,
+	input localapi.ShowDecisionInput,
+) (application.TaskDecision, error) {
+	client.record(operationID, "decision:"+input.TaskHandle+":"+input.ExternalKey)
+	return client.decision, client.err
 }
 
 func (client *fakeClient) ReconcileTask(
