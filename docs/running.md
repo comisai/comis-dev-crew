@@ -347,6 +347,7 @@ devcrew [--socket PATH] events tail [--after SEQUENCE] [--format text|jsonl]
 devcrew [--socket PATH] repair reconcile [--task TASK] [--format table|json]
 devcrew [--socket PATH] decisions list [--task TASK] [--format table|json]
 devcrew [--socket PATH] decision show TASK DECISION [--format text|json]
+devcrew [--socket PATH] decision respond TASK DECISION --input FILE|- [--operation OPERATION] [--format json]
 devcrew [--socket PATH] decision cancel TASK DECISION [--operation OPERATION] [--format json]
 ```
 
@@ -441,6 +442,27 @@ which would read as long overdue.
 
 `task diff` is read-only and operator-only for the same reason the decision reads
 are: it is private task detail.
+
+`decision respond` answers an open question from the console. The console exists
+so the product stays usable without an agent or MCP connection, and a question
+answerable only through a chat route leaves a task wedged whenever that route is
+unavailable. The task and the question are named on the command line while the
+reply arrives as a bounded JSON contract (`{"schemaVersion": 1, "response": "…"}`)
+from a file or standard input, so a worker-visible reply is never assembled out
+of argv text, and an oversized answer or one carrying control characters is
+refused rather than truncated or escaped into a different answer.
+
+An answer and a withdrawal close different things. Answering stops the question
+owing the human a prompt the moment the reply lands, but the question stays open
+until the worker reports it resolved: an answer nobody applied has changed
+nothing about the work, so completion and cleanup keep waiting for it. The asking
+cadence therefore consults a narrower condition than the completion gates, and
+each is defined exactly once so the two disagree deliberately rather than by
+drift.
+
+Answering is operator-only, like withdrawal. The model facade raises questions
+and applies answers; a facade that could also supply one would let a worker
+satisfy its own decision hold with no human ever replying.
 
 `decision cancel` withdraws a question the human no longer wants answered. Only a
 worker resolution or a human cancellation closes a decision, so without it a

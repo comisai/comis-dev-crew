@@ -51,6 +51,7 @@ Commands:
   repair reconcile [--task TASK] [--format table|json]
   decisions list [--task TASK] [--format table|json]
   decision show TASK DECISION [--format text|json]
+  decision respond TASK DECISION --input FILE|- [--operation OPERATION] [--format json]
   decision cancel TASK DECISION [--operation OPERATION] [--format json]
 
 Global options:
@@ -81,6 +82,7 @@ type ReadClient interface {
 	ListDecisions(context.Context, string, localapi.ListDecisionsInput) (application.DecisionList, error)
 	ShowDecision(context.Context, string, localapi.ShowDecisionInput) (application.TaskDecision, error)
 	CancelDecision(context.Context, string, localapi.CancelDecisionInput) (localapi.TaskMutationResult, error)
+	RespondDecision(context.Context, string, localapi.RespondDecisionInput) (localapi.TaskMutationResult, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
 	GetLaunchPlan(context.Context, string, string) (application.LaunchPlan, error)
@@ -136,6 +138,7 @@ const (
 	commandReadEvents
 	commandReadTaskLogs
 	commandCancelDecision
+	commandRespondDecision
 )
 
 type parsedCommand struct {
@@ -151,6 +154,7 @@ type parsedCommand struct {
 	watchPasses     int
 	watchInterval   time.Duration
 	inputPath       string
+	decisionAnswer  string
 	operationID     string
 	prepareInput    *localapi.PrepareTaskInput
 	promoteInput    *localapi.PromoteScoutInput
@@ -180,20 +184,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, config Co
 	if err != nil {
 		return writeCLIOutput(stderr, "devcrew: invalid command\nHint: run devcrew --help\n", ExitUsage)
 	}
-	if command.kind == commandPrepareTask {
-		input, readErr := readPrepareInput(command.inputPath, config)
-		if readErr != nil {
-			return writeCLIOutput(stderr, "devcrew: invalid task contract\nHint: provide one strict bounded JSON input\n", ExitUsage)
-		}
-		command.prepareInput = &input
-	}
-	if command.kind == commandPromoteScout {
-		input, readErr := readPromoteInput(command.inputPath, config)
-		if readErr != nil {
-			return writeCLIOutput(stderr, "devcrew: invalid promotion contract\nHint: provide one strict bounded JSON input that does not name a scout\n", ExitUsage)
-		}
-		input.ScoutTaskHandle = command.reference
-		command.promoteInput = &input
+	if message, code, applied := applyContractInput(&command, config); applied {
+		return writeCLIOutput(stderr, message, code)
 	}
 	if ctx == nil || config.NewClient == nil || config.NewOperationID == nil || command.socketPath == "" {
 		return writeCLIOutput(stderr, "devcrew: local client is unavailable\nHint: inspect CLI configuration\n", ExitUnavailable)
@@ -391,56 +383,6 @@ func parsePrepareTaskCommand(command parsedCommand, args []string) (parsedComman
 		return parsedCommand{}, errors.New("prepare input is required")
 	}
 	return command, nil
-}
-
-func readPrepareInput(path string, config Config) (localapi.PrepareTaskInput, error) {
-	data, err := readBoundedContract(path, config)
-	if err != nil {
-		return localapi.PrepareTaskInput{}, err
-	}
-	return localapi.DecodePrepareTaskInput(data)
-}
-
-// readBoundedContract reads one strict bounded JSON contract from a file or
-// stdin. Every command that accepts a contract shares it, so the size bound and
-// the refusal to read an unavailable source cannot drift apart between them.
-func readBoundedContract(path string, config Config) ([]byte, error) {
-	var reader io.Reader
-	var closer io.Closer
-	if path == "-" {
-		reader = config.Stdin
-	} else {
-		if config.OpenInput == nil {
-			return nil, errors.New("input file access is unavailable")
-		}
-		opened, err := config.OpenInput(path)
-		if err != nil {
-			return nil, err
-		}
-		reader, closer = opened, opened
-	}
-	if reader == nil {
-		return nil, errors.New("input is unavailable")
-	}
-	if closer != nil {
-		defer func() { _ = closer.Close() }()
-	}
-	data, err := io.ReadAll(io.LimitReader(reader, localapi.MaxRequestBytes+1))
-	if err != nil || len(data) > localapi.MaxRequestBytes {
-		return nil, errors.New("read bounded contract")
-	}
-	return data, nil
-}
-
-// The promotion contract is read the same bounded way a preparation contract is.
-// Sharing the reader keeps one size bound and one decode path rather than a
-// second, subtly different one per command.
-func readPromoteInput(path string, config Config) (localapi.PromoteScoutInput, error) {
-	data, err := readBoundedContract(path, config)
-	if err != nil {
-		return localapi.PromoteScoutInput{}, err
-	}
-	return localapi.DecodePromoteScoutInput(data)
 }
 
 func parseFormat(args []string, defaultFormat string, allowed ...string) (string, error) {
