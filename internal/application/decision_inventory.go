@@ -79,3 +79,27 @@ type DecisionCancellationMutation struct {
 	ExternalKey   string
 	At            time.Time
 }
+
+// DecisionResponseMutation records one operator answer to an open question.
+//
+// An answer and a withdrawal are audited differently and close different things:
+// a withdrawal says the question no longer applies and settles it outright, while
+// an answer says the human has replied and the worker has yet to apply it.
+type DecisionResponseMutation struct {
+	OperationID   string
+	SubjectDigest string
+	TaskHandle    string
+	ExternalKey   string
+	Response      string
+	At            time.Time
+}
+
+// DecisionResponse is one stored answer to a question, read back for the worker
+// that asked it and for the operator surfaces that report who has replied.
+type DecisionResponse struct {
+	TaskHandle  string
+	ExternalKey string
+	Response    string
+	OperationID string
+	RespondedAt time.Time
+}

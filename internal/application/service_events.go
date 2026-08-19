@@ -23,12 +23,17 @@ const (
 	EventDecisionOpened ServiceEventKind = "decision_opened"
 	// EventDecisionResolved is a keyed question that no longer does.
 	EventDecisionResolved ServiceEventKind = "decision_resolved"
+
+	// EventDecisionAnswered records that the human replied. It is deliberately
+	// distinct from a resolution: the answer has landed, but the worker has not
+	// yet applied it, and an operator watching the fleet needs to see both.
+	EventDecisionAnswered ServiceEventKind = "decision_answered"
 )
 
 // Valid reports whether the kind is one this service can produce.
 func (kind ServiceEventKind) Valid() bool {
 	switch kind {
-	case EventTaskStateChanged, EventDecisionOpened, EventDecisionResolved:
+	case EventTaskStateChanged, EventDecisionOpened, EventDecisionResolved, EventDecisionAnswered:
 		return true
 	default:
 		return false
