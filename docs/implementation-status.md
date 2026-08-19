@@ -639,6 +639,35 @@ only with deterministic reviewed inputs. Candidate
 completion advances only to `validating`; it never claims validation, delivery, or
 terminal success.
 
+## Deliberately not built at E0
+
+Three surfaces are absent for a reason worth stating, because each would be easy
+to add badly.
+
+**There is no `task processes` projection.** A per-process view is meant to join
+what this service launched with what the host observed beneath the task's
+terminal, and only the first half has a source here. The service registry covers
+validation processes it started itself; nothing constructs a terminal-descendant
+observation, because E0 has no durable process-observation contract to construct
+one from. A command rendering half that join would read as a complete process
+list and quietly answer "nothing else is running" whenever the missing half was
+the interesting part. The validation half is reachable through the task views;
+the joined projection waits for the contract that makes it honest.
+
+**Cleanup proves delivery, not reachability.** A worktree is removable when its
+recorded pull request is open at exactly the evidence head with every required
+check passed, or when a report artifact hash is recorded — plus a clean tree.
+It does not search for a merged pull request by head branch, walk
+remote-tracking branches, or test containment in the default branch. Those
+questions matter once work can land; at E0 delivery is an open pull request under
+branch protection and this service holds no merge credential, so none of them can
+be true yet and a check for them would be untestable code guarding an
+unreachable state.
+
+**Process signals are not exposed.** No interrupt, terminate, or kill verb
+exists. Stopping a task's execution runs through terminal lifecycle rather than
+process control, so no surface accepts a process reference as authority.
+
 ## Design record
 
 The detailed design and ratification record is maintained privately by the
