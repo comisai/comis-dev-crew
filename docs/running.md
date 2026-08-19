@@ -322,7 +322,7 @@ enforce the boundary in code regardless of what the prose says.
 ```text
 devcrew [--socket PATH] service status
 devcrew [--socket PATH] doctor [--format table|json]
-devcrew [--socket PATH] status [--format table|json]
+devcrew [--socket PATH] status [--watch [--passes N] [--interval DURATION]] [--format table|json]
 devcrew [--socket PATH] tasks list [--format table|json]
 devcrew [--socket PATH] workers list [--format table|json]
 devcrew [--socket PATH] task show TASK [--format yaml|json]
@@ -342,10 +342,31 @@ devcrew [--socket PATH] task replace TASK --worker PROFILE [--operation OPERATIO
 devcrew [--socket PATH] task steer TASK --instruction TEXT [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task cleanup TASK [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task discard TASK --yes [--operation OPERATION] [--format json]
+devcrew [--socket PATH] events tail [--after SEQUENCE] [--format text|jsonl]
 devcrew [--socket PATH] repair reconcile [--task TASK] [--format table|json]
 devcrew [--socket PATH] decisions list [--task TASK] [--format table|json]
 devcrew [--socket PATH] decision show TASK DECISION [--format text|json]
 ```
+
+`events tail` follows the service event stream. The stream is content-free by
+construction: every column is an identity, a closed discriminator, a version or a
+time, so no column can hold a question, an objective, a path or a branch. That is
+what makes it safe to read beside unrelated work; anything that identifies what a
+task is about stays in the authenticated per-task reads.
+
+Events are appended in the same transaction as the change they describe, so the
+log can never claim a transition the durable state did not take, and a crash can
+never keep a state whose event was lost. Each page reports the cursor to resume
+from — including when it is empty — so following is a caller-side loop over
+`--after` rather than a held connection: a follower that drops reconnects at the
+sequence it last saw and neither replays nor skips. `--format jsonl` emits one
+event per line so a consumer reads it incrementally.
+
+`status --watch` re-reads the authoritative snapshot on every pass rather than
+mutating a display from events. A dropped or reordered event therefore cannot
+leave the view claiming a state the service is not in — the snapshot is the truth
+and the stream only says when to look again. `--passes` bounds the run so the
+command always terminates, and `--interval` paces it.
 
 `repair reconcile` answers "what is stuck, and what would fix it". It surveys the
 tasks in the unknown state — the only state the reconcile command accepts — and

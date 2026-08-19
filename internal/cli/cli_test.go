@@ -280,7 +280,11 @@ func TestRun_RejectsInvalidSyntaxAndReferencesBeforeConnecting(t *testing.T) {
 		{"--socket"},
 		{"--unknown", privateArgument},
 		{"doctor", "--format", "yaml"},
-		{"status", "--watch"},
+		// status --watch is a supported surface; its malformed forms are rejected
+		// below and its behavior is proven in the watch test.
+		{"status", "--watch", "--passes", "0"},
+		{"status", "--watch", "--passes", "x"},
+		{"status", "--watch", "--interval", "soon"},
 		{"tasks"},
 		{"tasks", "list", "extra"},
 		{"task", "show"},
@@ -702,6 +706,9 @@ func testConfig(client *fakeClient) Config {
 			return client, nil
 		},
 		NewOperationID: func() (string, error) { return "read-0001", nil },
+		// Watch passes are paced by an injected sleep so a bounded watch runs
+		// without wall-clock delay.
+		Sleep: func(time.Duration) {},
 	}
 }
 

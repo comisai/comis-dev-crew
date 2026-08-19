@@ -20,6 +20,8 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 		return client.ListTasks(ctx, operationID)
 	case commandWorkerProfiles:
 		return client.ListWorkerProfiles(ctx, operationID)
+	case commandReadEvents:
+		return client.ReadEvents(ctx, operationID, localapi.ReadEventsInput{AfterSequence: command.eventCursor})
 	case commandSurveyRepairs:
 		return client.SurveyRepairs(ctx, operationID, localapi.SurveyRepairsInput{TaskHandle: command.reference})
 	case commandDiffTask:

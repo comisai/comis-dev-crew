@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -25,7 +26,7 @@ const usage = `Usage: devcrew [--socket PATH] <command>
 Commands:
   service status
   doctor [--format table|json]
-  status [--format table|json]
+  status [--watch [--passes N] [--interval DURATION]] [--format table|json]
   tasks list [--format table|json]
   workers list [--format table|json]
   task show TASK [--format yaml|json]
@@ -45,6 +46,7 @@ Commands:
   task steer TASK --instruction TEXT [--operation OPERATION] [--format json]
   task cleanup TASK [--operation OPERATION] [--format json]
   task discard TASK --yes [--operation OPERATION] [--format json]
+  events tail [--after SEQUENCE] [--format text|jsonl]
   repair reconcile [--task TASK] [--format table|json]
   decisions list [--task TASK] [--format table|json]
   decision show TASK DECISION [--format text|json]
@@ -72,6 +74,7 @@ type ReadClient interface {
 	DiscardTask(context.Context, string, localapi.DiscardTaskInput) (localapi.TaskMutationResult, error)
 	DiffTask(context.Context, string, string) (application.TaskDiffView, error)
 	SurveyRepairs(context.Context, string, localapi.SurveyRepairsInput) (application.RepairSurvey, error)
+	ReadEvents(context.Context, string, localapi.ReadEventsInput) (application.EventPage, error)
 	ListDecisions(context.Context, string, localapi.ListDecisionsInput) (application.DecisionList, error)
 	ShowDecision(context.Context, string, localapi.ShowDecisionInput) (application.TaskDecision, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
@@ -91,7 +94,10 @@ type Config struct {
 	NewClient         func(string) (ReadClient, error)
 	NewOperationID    func() (string, error)
 	Stdin             io.Reader
-	OpenInput         func(string) (io.ReadCloser, error)
+	// Sleep paces watch passes. It is injected so a watch can be driven without
+	// wall-clock delay.
+	Sleep     func(time.Duration)
+	OpenInput func(string) (io.ReadCloser, error)
 }
 
 type commandKind int
@@ -123,6 +129,7 @@ const (
 	commandShowDecision
 	commandDiffTask
 	commandSurveyRepairs
+	commandReadEvents
 )
 
 type parsedCommand struct {
@@ -132,6 +139,9 @@ type parsedCommand struct {
 	reference       string
 	decisionKey     string
 	diffSelector    diffSelector
+	eventCursor     int64
+	watchPasses     int
+	watchInterval   time.Duration
 	inputPath       string
 	operationID     string
 	prepareInput    *localapi.PrepareTaskInput
@@ -191,14 +201,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, config Co
 	if err != nil || domain.ValidateOperationID(operationID) != nil {
 		return writeCLIOutput(stderr, "devcrew: request identity is unavailable\nHint: retry after checking local entropy\n", ExitUnavailable)
 	}
-	result, err := execute(ctx, client, operationID, command)
-	if err != nil {
-		return renderFailure(stderr, err)
-	}
-	if err := renderResult(stdout, command, result); err != nil {
-		return writeCLIOutput(stderr, "devcrew: output is unavailable\nHint: inspect the output destination\n", ExitUnavailable)
-	}
-	return ExitSuccess
+	return runPasses(ctx, client, operationID, command, stdout, stderr, config)
 }
 
 func parseCommand(args []string, defaultSocketPath string) (parsedCommand, error) {
@@ -227,11 +230,7 @@ func parseCommand(args []string, defaultSocketPath string) (parsedCommand, error
 		}
 		command.kind, command.format = commandDoctor, format
 	case "status":
-		format, err := parseFormat(args[1:], "table", "table", "json")
-		if err != nil {
-			return parsedCommand{}, err
-		}
-		command.kind, command.format = commandFleet, format
+		return parseStatusCommand(command, args[1:])
 	case "tasks":
 		if len(args) < 2 || args[1] != "list" {
 			return parsedCommand{}, errors.New("tasks list is required")
@@ -250,6 +249,8 @@ func parseCommand(args []string, defaultSocketPath string) (parsedCommand, error
 			return parsedCommand{}, err
 		}
 		command.kind, command.format = commandWorkerProfiles, format
+	case "events":
+		return parseEventsCommand(command, args[1:])
 	case "repair":
 		return parseRepairCommand(command, args[1:])
 	case "decisions":

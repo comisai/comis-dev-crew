@@ -189,6 +189,29 @@ detail and a facade that later grew a tool must not thereby gain the authority t
 read it. Neither read can submit or close an answer: that stays on the generic
 Comis attention path.
 
+## Service event stream
+
+Task state changes and decision openings and closings are recorded as a durable,
+append-only event log, and the log is readable from a cursor.
+
+Each event is written in the same transaction as the change it describes. That
+placement is the guarantee: an event appended after the commit can be lost by a
+crash, and one appended before it can describe a transition that rolled back, so
+an operator watching the stream would see a state the service never reached or
+miss one it did. Because task state has exactly one durable writer, recording the
+event there makes divergence structurally impossible rather than a discipline.
+
+The stream is content-free by construction. Every column is an identity, a closed
+discriminator, a version or a time, so there is no column a question, objective,
+path or branch could occupy. It is consequently reachable from the model facade
+as well as the operator console, unlike the private task reads.
+
+Reading is a bounded page plus the cursor to resume from, returned even when the
+page is empty. Following is therefore a caller-side loop rather than a held
+connection, which keeps the request/response transport and its bounded reads
+unchanged, survives a restart, and lets a dropped follower resume exactly where it
+stopped.
+
 ## Reconciliation survey
 
 Which unknown tasks a reconcile would accept is readable from the operator

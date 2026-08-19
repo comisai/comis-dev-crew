@@ -78,6 +78,11 @@ func (handler *Handler) handle(ctx context.Context, caller CallerClass, data []b
 }
 
 func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
+	// Observation reads are dispatched first and live beside each other, so
+	// the transition surface below stays readable as reads accumulate.
+	if outcome, handled := handler.dispatchObservation(ctx, request); handled {
+		return outcome
+	}
 	switch request.Method {
 	case MethodAttestScout:
 		var input AttestScoutDecisionsInput
@@ -128,41 +133,6 @@ func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 			return invalidPayload(request.OperationID, err)
 		}
 		result, err := handler.queries.ListWorkerProfiles(ctx)
-		return queryOutcome(request.OperationID, result.StateVersion, result, err)
-	case MethodReadEvents:
-		var payload ReadEventsInput
-		if err := decodeObject(request.Payload, &payload); err != nil {
-			return invalidPayload(request.OperationID, err)
-		}
-		result, err := handler.queries.ReadEvents(ctx, payload.AfterSequence, payload.Limit)
-		return queryOutcome(request.OperationID, result.NextCursor, result, err)
-	case MethodSurveyRepairs:
-		var payload SurveyRepairsInput
-		if err := decodeObject(request.Payload, &payload); err != nil {
-			return invalidPayload(request.OperationID, err)
-		}
-		result, err := handler.queries.SurveyRepairs(ctx, payload.TaskHandle)
-		return queryOutcome(request.OperationID, result.StateVersion, result, err)
-	case MethodDiffTask:
-		var payload taskPayload
-		if err := decodeObject(request.Payload, &payload); err != nil {
-			return invalidPayload(request.OperationID, err)
-		}
-		result, err := handler.queries.DiffTask(ctx, payload.TaskHandle)
-		return queryOutcome(request.OperationID, result.StateVersion, result, err)
-	case MethodListDecisions:
-		var payload ListDecisionsInput
-		if err := decodeObject(request.Payload, &payload); err != nil {
-			return invalidPayload(request.OperationID, err)
-		}
-		result, err := handler.queries.ListDecisions(ctx, payload.TaskHandle)
-		return queryOutcome(request.OperationID, result.StateVersion, result, err)
-	case MethodShowDecision:
-		var payload ShowDecisionInput
-		if err := decodeObject(request.Payload, &payload); err != nil {
-			return invalidPayload(request.OperationID, err)
-		}
-		result, err := handler.queries.ShowDecision(ctx, payload.TaskHandle, payload.ExternalKey)
 		return queryOutcome(request.OperationID, result.StateVersion, result, err)
 	case MethodShowTask:
 		var payload taskPayload
