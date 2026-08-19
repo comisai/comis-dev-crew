@@ -69,7 +69,7 @@ func TestAdapterParity_PrepareReplayAndErrorsMatchAcrossDirectCLIAndMCP(t *testi
 	}
 	assertToolReadOnly(t, harness.mcpSession, mcpadapter.ToolPrepareTask, false)
 
-	listed, err := harness.operator.ListTasks(context.Background(), "parity-list-count")
+	listed, err := harness.operator.ListTasks(context.Background(), "parity-list-count", localapi.ListTasksInput{})
 	if err != nil || len(listed.Tasks) != 1 || listed.Tasks[0].TaskHandle != direct.TaskHandle {
 		t.Fatalf("task list after three replays = %#v, %v", listed, err)
 	}
@@ -117,7 +117,7 @@ func TestAdapterParity_ReadOutcomesAndClassificationsMatch(t *testing.T) {
 			cliArgs: []string{"--socket", harness.operatorSocket, "tasks", "list", "--format", "json"},
 			mcpArgs: mcpadapter.EmptyInput{},
 			direct: func(operation string) (any, error) {
-				return harness.operator.ListTasks(context.Background(), operation)
+				return harness.operator.ListTasks(context.Background(), operation, localapi.ListTasksInput{})
 			},
 			newResult: func() any { return &application.TaskList{} },
 		},
