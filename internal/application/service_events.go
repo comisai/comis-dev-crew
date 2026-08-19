@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -56,4 +57,55 @@ type ServiceEvent struct {
 // ServiceEventStore reads the durable event log from a cursor.
 type ServiceEventStore interface {
 	ReadServiceEvents(context.Context, int64, int) ([]ServiceEvent, error)
+}
+
+// MaximumEventPage bounds one event page. A caller may ask for less; asking for
+// more is capped rather than refused, so a follower written against a later
+// release still makes progress.
+const MaximumEventPage = 200
+
+// defaultEventPage is used when a caller states no preference.
+const defaultEventPage = 100
+
+// EventPage is one bounded, resumable slice of the service event stream.
+type EventPage struct {
+	SchemaVersion int            `json:"schemaVersion"`
+	CapturedAt    time.Time      `json:"capturedAt"`
+	NextCursor    int64          `json:"nextCursor"`
+	Events        []ServiceEvent `json:"events"`
+}
+
+// ReadEvents returns the events after a cursor and the cursor to resume from.
+//
+// The next cursor is returned even when the page is empty, so a quiet interval
+// costs a follower nothing: without it, a follower that saw no events would have
+// to re-read from its last known sequence and could never distinguish "nothing
+// happened" from "I lost my place".
+func (queries *Queries) ReadEvents(ctx context.Context, afterSequence int64, limit int) (EventPage, error) {
+	if afterSequence < 0 {
+		return EventPage{}, invalidReferenceFailure("event cursor", errors.New("cursor must not be negative"))
+	}
+	if queries.events == nil {
+		return EventPage{}, translateReadError(nil, "event stream")
+	}
+	if limit <= 0 {
+		limit = defaultEventPage
+	}
+	if limit > MaximumEventPage {
+		limit = MaximumEventPage
+	}
+	events, err := queries.events.ReadServiceEvents(ctx, afterSequence, limit)
+	if err != nil {
+		return EventPage{}, translateReadError(err, "event stream")
+	}
+	if events == nil {
+		events = []ServiceEvent{}
+	}
+	next := afterSequence
+	if len(events) != 0 {
+		next = events[len(events)-1].Sequence
+	}
+	return EventPage{
+		SchemaVersion: 1, CapturedAt: queries.now(), NextCursor: next, Events: events,
+	}, nil
 }
