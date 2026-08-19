@@ -81,3 +81,11 @@ func (*runtimeTransitionStore) GetTaskCleanupRecord(context.Context, string) (ap
 func (*runtimeTransitionStore) CommitReport(context.Context, application.ReportMutation) (domain.ReportReceipt, error) {
 	return domain.ReportReceipt{}, nil
 }
+
+func (store *runtimeTransitionStore) ReadDecisionResponseForManagedRun(
+	_ context.Context,
+	_ string,
+	_ string,
+) (application.DecisionResponse, bool, error) {
+	return application.DecisionResponse{}, false, nil
+}

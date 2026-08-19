@@ -33,6 +33,18 @@ func (coordinator *runtimeAttachmentCoordinator) ReceiveRuntimeAttentionResponse
 		domain.ValidateDecisionKey(request.ExternalKey) != nil {
 		return reporter.AttentionResponse{}, errors.New("receive runtime attention response: request is invalid")
 	}
+	// A locally recorded answer is served first. The operator console exists so
+	// the product stays usable when no channel is available, so an answer given
+	// there must reach the worker even while Comis cannot be reached at all —
+	// otherwise the console can record an answer that never arrives anywhere.
+	if answer, found, err := coordinator.store.ReadDecisionResponseForManagedRun(
+		ctx, request.ManagedRunID, request.ExternalKey,
+	); err == nil && found {
+		return reporter.AttentionResponse{
+			ManagedRunID: request.ManagedRunID, ExternalKey: request.ExternalKey,
+			State: reporter.AttentionResponseDelivered, Response: answer.Response,
+		}, nil
+	}
 	coordinator.mu.Lock()
 	receiver := coordinator.attentionResponses
 	coordinator.mu.Unlock()
