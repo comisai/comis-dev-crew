@@ -39,7 +39,7 @@ func TestCLI_EventsTailPrintsOnePassAndReturns(t *testing.T) {
 			t.Errorf("stream omitted %q: %s", want, rendered)
 		}
 	}
-	if len(client.calls) != 1 || client.calls[0] != "events:0" {
+	if len(client.calls) != 1 || client.calls[0] != "events:0:" {
 		t.Errorf("client calls = %v, want one read from the start", client.calls)
 	}
 }
@@ -52,7 +52,7 @@ func TestCLI_EventsTailResumesFromTheGivenCursor(t *testing.T) {
 	if code := Run(context.Background(), []string{"events", "tail", "--after", "4"}, &output, &output, testConfig(client)); code != 0 {
 		t.Fatalf("Run(events tail --after) = %d: %s", code, output.String())
 	}
-	if len(client.calls) != 1 || client.calls[0] != "events:4" {
+	if len(client.calls) != 1 || client.calls[0] != "events:4:" {
 		t.Errorf("client calls = %v, want the resumed cursor", client.calls)
 	}
 }

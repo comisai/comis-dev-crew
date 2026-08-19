@@ -20,7 +20,7 @@ import (
 func TestServiceEvents_RecordEveryStateChangeInTheSameTransaction(t *testing.T) {
 	store, task := attestationFixture(t, domain.ShapeScout)
 
-	events, err := store.ReadServiceEvents(context.Background(), 0, 50)
+	events, err := store.ReadServiceEvents(context.Background(), 0, 50, "")
 	if err != nil {
 		t.Fatalf("ReadServiceEvents() error = %v", err)
 	}
@@ -50,7 +50,7 @@ func TestServiceEvents_ResumeFromACursorWithoutRepeatingOrSkipping(t *testing.T)
 	at := task.UpdatedAt.Add(time.Minute)
 	reportDecision(t, store, task, "schema-choice", at)
 
-	all, err := store.ReadServiceEvents(context.Background(), 0, 100)
+	all, err := store.ReadServiceEvents(context.Background(), 0, 100, "")
 	if err != nil {
 		t.Fatalf("ReadServiceEvents() error = %v", err)
 	}
@@ -63,7 +63,7 @@ func TestServiceEvents_ResumeFromACursorWithoutRepeatingOrSkipping(t *testing.T)
 		}
 	}
 
-	tail, err := store.ReadServiceEvents(context.Background(), all[0].Sequence, 100)
+	tail, err := store.ReadServiceEvents(context.Background(), all[0].Sequence, 100, "")
 	if err != nil {
 		t.Fatalf("ReadServiceEvents(cursor) error = %v", err)
 	}
@@ -71,7 +71,7 @@ func TestServiceEvents_ResumeFromACursorWithoutRepeatingOrSkipping(t *testing.T)
 		t.Fatalf("resumed events = %#v, want everything after the first", tail)
 	}
 
-	drained, err := store.ReadServiceEvents(context.Background(), all[len(all)-1].Sequence, 100)
+	drained, err := store.ReadServiceEvents(context.Background(), all[len(all)-1].Sequence, 100, "")
 	if err != nil {
 		t.Fatalf("ReadServiceEvents(drained) error = %v", err)
 	}
@@ -87,7 +87,7 @@ func TestServiceEvents_NameTheTransitionsAnOperatorMustActOn(t *testing.T) {
 	at := task.UpdatedAt.Add(time.Minute)
 	reportDecision(t, store, task, "schema-choice", at)
 
-	events, err := store.ReadServiceEvents(context.Background(), 0, 100)
+	events, err := store.ReadServiceEvents(context.Background(), 0, 100, "")
 	if err != nil {
 		t.Fatalf("ReadServiceEvents() error = %v", err)
 	}
@@ -114,7 +114,7 @@ func TestServiceEvents_CarryNoTaskContent(t *testing.T) {
 	at := task.UpdatedAt.Add(time.Minute)
 	decision := reportDecision(t, store, task, "schema-choice", at)
 
-	events, err := store.ReadServiceEvents(context.Background(), 0, 100)
+	events, err := store.ReadServiceEvents(context.Background(), 0, 100, "")
 	if err != nil {
 		t.Fatalf("ReadServiceEvents() error = %v", err)
 	}
@@ -134,22 +134,55 @@ func TestServiceEvents_RefuseCanceledCallersAndUnavailableDatabases(t *testing.T
 	store, _ := attestationFixture(t, domain.ShapeScout)
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := store.ReadServiceEvents(canceled, 0, 10); err == nil {
+	if _, err := store.ReadServiceEvents(canceled, 0, 10, ""); err == nil {
 		t.Error("ReadServiceEvents(canceled) error = nil")
 	}
-	if _, err := store.ReadServiceEvents(missingStoreContext(), 0, 10); err == nil {
+	if _, err := store.ReadServiceEvents(missingStoreContext(), 0, 10, ""); err == nil {
 		t.Error("ReadServiceEvents(no context) error = nil")
 	}
-	if _, err := store.ReadServiceEvents(context.Background(), -1, 10); err == nil {
+	if _, err := store.ReadServiceEvents(context.Background(), -1, 10, ""); err == nil {
 		t.Error("ReadServiceEvents(negative cursor) error = nil")
 	}
-	if _, err := store.ReadServiceEvents(context.Background(), 0, 0); err == nil {
+	if _, err := store.ReadServiceEvents(context.Background(), 0, 0, ""); err == nil {
 		t.Error("ReadServiceEvents(zero limit) error = nil")
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	if _, err := store.ReadServiceEvents(context.Background(), 0, 10); err == nil {
+	if _, err := store.ReadServiceEvents(context.Background(), 0, 10, ""); err == nil {
 		t.Error("ReadServiceEvents(closed store) error = nil")
+	}
+}
+
+// A scoped read returns one task's events and nothing else. The scope is applied
+// where the page is built, so a busy fleet cannot crowd the asked-for task off
+// the page before the caller sees it.
+func TestServiceEvents_ScopeOnePageToOneTask(t *testing.T) {
+	store, scout := attestationFixture(t, domain.ShapeScout)
+
+	unscoped, err := store.ReadServiceEvents(context.Background(), 0, 50, "")
+	if err != nil || len(unscoped) == 0 {
+		t.Fatalf("unscoped read = %d events, %v", len(unscoped), err)
+	}
+
+	scoped, err := store.ReadServiceEvents(context.Background(), 0, 50, scout.Handle)
+	if err != nil {
+		t.Fatalf("ReadServiceEvents(scoped) error = %v", err)
+	}
+	if len(scoped) == 0 {
+		t.Fatal("scoping to the only task returned nothing")
+	}
+	for _, event := range scoped {
+		if event.TaskHandle != scout.Handle {
+			t.Fatalf("a scoped page carried another task's event: %#v", event)
+		}
+	}
+
+	absent, err := store.ReadServiceEvents(context.Background(), 0, 50, "task-never-created")
+	if err != nil {
+		t.Fatalf("ReadServiceEvents(absent scope) error = %v", err)
+	}
+	if len(absent) != 0 {
+		t.Fatalf("scoping to an unknown task returned %d events", len(absent))
 	}
 }

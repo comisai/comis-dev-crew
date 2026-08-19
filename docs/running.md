@@ -343,13 +343,18 @@ devcrew [--socket PATH] task replace TASK --worker PROFILE [--operation OPERATIO
 devcrew [--socket PATH] task steer TASK --instruction TEXT [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task cleanup TASK [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task discard TASK --yes [--operation OPERATION] [--format json]
-devcrew [--socket PATH] events tail [--after SEQUENCE] [--format text|jsonl]
+devcrew [--socket PATH] events tail [--after SEQUENCE] [--task TASK] [--format text|jsonl]
 devcrew [--socket PATH] repair reconcile [--task TASK] [--format table|json]
 devcrew [--socket PATH] decisions list [--task TASK] [--format table|json]
 devcrew [--socket PATH] decision show TASK DECISION [--format text|json]
 devcrew [--socket PATH] decision respond TASK DECISION --input FILE|- [--operation OPERATION] [--format json]
 devcrew [--socket PATH] decision cancel TASK DECISION [--operation OPERATION] [--format json]
 ```
+
+`events tail --task` scopes the stream to one task. The scope is applied where
+the page is built rather than by filtering a full page afterwards, so a busy
+fleet cannot push the asked-for task's events off the page before the console
+sees them.
 
 `events tail` follows the service event stream. The stream is content-free by
 construction: every column is an identity, a closed discriminator, a version or a

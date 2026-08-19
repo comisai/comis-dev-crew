@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 // defaultWatchPasses bounds a watch invocation that states no count, so the
@@ -32,6 +33,13 @@ func parseEventsCommand(command parsedCommand, args []string) (parsedCommand, er
 			return parsedCommand{}, errors.New("event cursor must be a non-negative number")
 		}
 		command.eventCursor = cursor
+		args = args[2:]
+	}
+	if len(args) >= 2 && args[0] == "--task" {
+		if err := domain.ValidateTaskHandle(args[1]); err != nil {
+			return parsedCommand{}, err
+		}
+		command.reference = args[1]
 		args = args[2:]
 	}
 	format, err := parseFormat(args, "text", "text", "jsonl")

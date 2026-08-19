@@ -25,7 +25,7 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 			TaskHandle: command.reference, Source: command.logSource, AfterSequence: command.logCursor,
 		})
 	case commandReadEvents:
-		return client.ReadEvents(ctx, operationID, localapi.ReadEventsInput{AfterSequence: command.eventCursor})
+		return client.ReadEvents(ctx, operationID, localapi.ReadEventsInput{AfterSequence: command.eventCursor, TaskHandle: command.reference})
 	case commandSurveyRepairs:
 		return client.SurveyRepairs(ctx, operationID, localapi.SurveyRepairsInput{TaskHandle: command.reference})
 	case commandDiffTask:

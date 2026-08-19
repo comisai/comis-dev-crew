@@ -104,6 +104,7 @@ func (store *Store) ReadServiceEvents(
 	ctx context.Context,
 	afterSequence int64,
 	limit int,
+	taskHandle string,
 ) ([]application.ServiceEvent, error) {
 	if ctx == nil {
 		return nil, errors.New("read service events: context is required")
@@ -117,13 +118,16 @@ func (store *Store) ReadServiceEvents(
 	if limit <= 0 || limit > maximumServiceEventPage {
 		return nil, errors.New("read service events: page size is invalid")
 	}
+	// The scope is applied in the query rather than after the page is built, so
+	// a task's events cannot be pushed off the page by a busy fleet before the
+	// caller ever sees them.
 	rows, err := store.db.QueryContext(ctx, `
         SELECT sequence, occurred_at, kind, COALESCE(task_handle, ''), COALESCE(state, ''),
                COALESCE(reason, ''), COALESCE(state_version, 0)
         FROM service_events
-        WHERE sequence > ?
+        WHERE sequence > ? AND (? = '' OR task_handle = ?)
         ORDER BY sequence
-        LIMIT ?`, afterSequence, limit)
+        LIMIT ?`, afterSequence, taskHandle, taskHandle, limit)
 	if err != nil {
 		return nil, fmt.Errorf("read service events: %w", err)
 	}
