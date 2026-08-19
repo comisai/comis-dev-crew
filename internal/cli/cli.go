@@ -42,6 +42,7 @@ Commands:
   task cancel TASK [--operation OPERATION] [--format json]
   task resume TASK [--operation OPERATION] [--format json]
   task verify TASK [--operation OPERATION] [--format json]
+  task attest SCOUT --finding open_decisions|no_open_decisions [--open-decision KEY ...] [--operation OPERATION] [--format json]
   task promote SCOUT --input FILE|- [--operation OPERATION] [--format json]
   task replace TASK --worker PROFILE [--operation OPERATION] [--format json]
   task steer TASK --input FILE|- [--operation OPERATION] [--format json]
