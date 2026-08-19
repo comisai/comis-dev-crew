@@ -107,3 +107,35 @@ type AuditPage struct {
 	NextCursor    int64        `json:"nextCursor"`
 	Events        []AuditEvent `json:"events"`
 }
+
+// ReadAudit returns one bounded, resumable page of the durable audit trail.
+//
+// It mirrors the event stream's shape deliberately: a cursor is returned even
+// for an empty page, so a reader can tell "nothing was audited" from "I lost my
+// place" without re-reading from a sequence it already saw.
+func (queries *Queries) ReadAudit(ctx context.Context, afterSequence int64, limit int) (AuditPage, error) {
+	if afterSequence < 0 {
+		return AuditPage{}, invalidReferenceFailure("audit cursor", errors.New("cursor must not be negative"))
+	}
+	if queries.audit == nil {
+		return AuditPage{}, translateReadError(nil, "audit trail")
+	}
+	if limit <= 0 {
+		limit = defaultAuditPage
+	}
+	if limit > MaximumAuditPage {
+		limit = MaximumAuditPage
+	}
+	events, err := queries.audit.ReadAuditEvents(ctx, afterSequence, limit)
+	if err != nil {
+		return AuditPage{}, translateReadError(err, "audit trail")
+	}
+	if events == nil {
+		events = []AuditEvent{}
+	}
+	next := afterSequence
+	if len(events) != 0 {
+		next = events[len(events)-1].Sequence
+	}
+	return AuditPage{SchemaVersion: 1, CapturedAt: queries.now(), NextCursor: next, Events: events}, nil
+}

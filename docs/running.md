@@ -337,6 +337,32 @@ and it renders no operator command line: worker credentials, terminal profiles,
 workspace roots, approval gates, forge branch protection, and service scopes
 enforce the boundary in code regardless of what the prose says.
 
+## Audit trail
+
+Two facts change no task state and would otherwise leave no durable trace at
+all: a destructive removal that was refused, and a worker credential that was
+rejected. The transition log records transitions, correctly, and so is silent
+about both. They are recorded instead as a separate append-only audit trail,
+readable from a cursor like the event stream.
+
+A refused cleanup records the closed ground it was refused on — open hold, open
+decision, unattested scout inventory, active execution, unknown execution, or
+missing evidence. It is written outside the refused transaction, because that
+transaction rolls back and would otherwise take the record of the attempt with
+it. A rejected reporter credential records the task whose endpoint was
+addressed and nothing about the credential presented; the rejection itself
+stands whether or not the record could be written, and an endpoint that cannot
+audit is refused at construction rather than serving unreviewably.
+
+Unlike the event stream, the trail is reachable from the operator console only.
+The stream is content-free operational state and is offered to the model facade;
+the audit trail names who was refused and whose authority was rejected, and the
+party most interested in reading it is the one it would name.
+
+```text
+devcrew audit tail [--after SEQUENCE] [--format text|jsonl]
+```
+
 ## Operator CLI surface
 
 ```text

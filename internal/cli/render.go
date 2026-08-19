@@ -31,6 +31,8 @@ func renderResult(destination io.Writer, command parsedCommand, result any) erro
 		return renderTaskLogPage(destination, result.(application.TaskLogPage))
 	case commandReadEvents:
 		return renderEventPage(destination, command, result.(application.EventPage))
+	case commandReadAudit:
+		return renderAuditPage(destination, command, result.(application.AuditPage))
 	case commandSurveyRepairs:
 		return renderRepairSurvey(destination, result.(application.RepairSurvey))
 	case commandDiffTask:

@@ -49,6 +49,7 @@ Commands:
   task cleanup TASK [--operation OPERATION] [--format json]
   task discard TASK --yes [--operation OPERATION] [--format json]
   events tail [--after SEQUENCE] [--task TASK] [--format text|jsonl]
+  audit tail [--after SEQUENCE] [--format text|jsonl]
   repair reconcile [--task TASK] [--format table|json]
   decisions list [--task TASK] [--format table|json]
   decision show TASK DECISION [--format text|json]
@@ -79,6 +80,7 @@ type ReadClient interface {
 	DiffTask(context.Context, string, string) (application.TaskDiffView, error)
 	SurveyRepairs(context.Context, string, localapi.SurveyRepairsInput) (application.RepairSurvey, error)
 	ReadEvents(context.Context, string, localapi.ReadEventsInput) (application.EventPage, error)
+	ReadAudit(context.Context, string, localapi.ReadAuditInput) (application.AuditPage, error)
 	ReadTaskLogs(context.Context, string, localapi.ReadTaskLogsInput) (application.TaskLogPage, error)
 	ListDecisions(context.Context, string, localapi.ListDecisionsInput) (application.DecisionList, error)
 	ShowDecision(context.Context, string, localapi.ShowDecisionInput) (application.TaskDecision, error)
@@ -137,6 +139,7 @@ const (
 	commandDiffTask
 	commandSurveyRepairs
 	commandReadEvents
+	commandReadAudit
 	commandReadTaskLogs
 	commandCancelDecision
 	commandRespondDecision
@@ -260,6 +263,8 @@ func parseCommand(args []string, defaultSocketPath string) (parsedCommand, error
 		command.kind, command.format = commandWorkerProfiles, format
 	case "events":
 		return parseEventsCommand(command, args[1:])
+	case "audit":
+		return parseAuditCommand(command, args[1:])
 	case "repair":
 		return parseRepairCommand(command, args[1:])
 	case "decisions":

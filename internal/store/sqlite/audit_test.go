@@ -172,3 +172,72 @@ func TestAudit_RejectsUnknownKindsAndReasons(t *testing.T) {
 		})
 	}
 }
+
+func TestAudit_RefusesUnusableStoresAndContexts(t *testing.T) {
+	store, task, _ := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	t.Cleanup(func() { _ = store.Close() })
+	valid := application.AuditEvent{
+		OccurredAt: task.UpdatedAt, Kind: application.AuditCleanupRefused,
+		TaskHandle: task.Handle, Reason: application.AuditCleanupOpenHold,
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var absent *Store
+	if err := absent.RecordAuditEvent(context.Background(), valid); err == nil {
+		t.Error("RecordAuditEvent() accepted an unavailable store")
+	}
+	if _, err := absent.ReadAuditEvents(context.Background(), 0, 10); err == nil {
+		t.Error("ReadAuditEvents() accepted an unavailable store")
+	}
+	//lint:ignore SA1012 This boundary proves a nil context cannot reach the trail.
+	if err := store.RecordAuditEvent(nil, valid); err == nil {
+		t.Error("RecordAuditEvent() accepted a nil context")
+	}
+	//lint:ignore SA1012 This boundary proves a nil context cannot reach the trail.
+	if _, err := store.ReadAuditEvents(nil, 0, 10); err == nil {
+		t.Error("ReadAuditEvents() accepted a nil context")
+	}
+	if err := store.RecordAuditEvent(cancelled, valid); err == nil {
+		t.Error("RecordAuditEvent() ignored a cancelled context")
+	}
+	if _, err := store.ReadAuditEvents(cancelled, 0, 10); err == nil {
+		t.Error("ReadAuditEvents() ignored a cancelled context")
+	}
+}
+
+// TestAudit_RefusesToReadARecordItCannotTrust keeps a corrupted row from
+// travelling as a valid one. A trail that renders unreadable rows as if they
+// were findings is worse than one that refuses.
+func TestAudit_RefusesToReadARecordItCannotTrust(t *testing.T) {
+	for name, insert := range map[string]string{
+		"unknown kind": `INSERT INTO audit_events(occurred_at, kind, task_handle, reason)
+            VALUES ('2026-08-19T09:00:00.000Z', 'invented', 'task-0001', 'open_hold')`,
+		"unknown reason": `INSERT INTO audit_events(occurred_at, kind, task_handle, reason)
+            VALUES ('2026-08-19T09:00:00.000Z', 'cleanup_refused', 'task-0001', 'invented')`,
+		"unreadable time": `INSERT INTO audit_events(occurred_at, kind, task_handle, reason)
+            VALUES ('not-a-time', 'cleanup_refused', 'task-0001', 'open_hold')`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			store, _, _ := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+			t.Cleanup(func() { _ = store.Close() })
+			if _, err := store.db.Exec(insert); err != nil {
+				t.Fatalf("seed corrupt audit row: %v", err)
+			}
+			if _, err := store.ReadAuditEvents(context.Background(), 0, 10); err == nil {
+				t.Fatal("ReadAuditEvents() returned a record it cannot trust")
+			}
+		})
+	}
+}
+
+// TestAudit_NamesTheScoutInventoryAndUnclassifiedGrounds covers the two cleanup
+// grounds the refusal table reaches least often.
+func TestAudit_NamesTheScoutInventoryAndUnclassifiedGrounds(t *testing.T) {
+	if reason := auditCleanupReason(application.ErrCleanupUnattestedScout); reason != application.AuditCleanupUnattestedScout {
+		t.Errorf("unattested scout reason = %q", reason)
+	}
+	if reason := auditCleanupReason(application.ErrPrecondition); reason != application.AuditCleanupEvidenceMissing {
+		t.Errorf("unclassified precondition reason = %q", reason)
+	}
+}

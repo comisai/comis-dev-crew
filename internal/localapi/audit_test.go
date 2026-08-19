@@ -1,6 +1,9 @@
 package localapi
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 // TestAudit_ReadIsOperatorOnly keeps the security trail off the model surface.
 //
@@ -25,5 +28,27 @@ func TestAudit_ReadIsOperatorOnly(t *testing.T) {
 	}
 	if MethodReadAudit.SideEffect() != SideEffectRead {
 		t.Errorf("ReadAudit side effect = %q, want read", MethodReadAudit.SideEffect())
+	}
+}
+
+// TestAudit_ReadTravelsTheLocalClientAndHandler proves the transport, not just
+// the allowlist: a method nobody can call over the socket is not a surface.
+func TestAudit_ReadTravelsTheLocalClientAndHandler(t *testing.T) {
+	client := newDecisionClient(t, CallerOperatorCLI, decisionQueriesFixture())
+	page, err := client.ReadAudit(context.Background(), "operation-audit-read", ReadAuditInput{})
+	if err != nil {
+		t.Fatalf("ReadAudit() error = %v", err)
+	}
+	if page.SchemaVersion != 1 {
+		t.Errorf("ReadAudit() = %#v, want the versioned page", page)
+	}
+}
+
+// TestAudit_ReadIsRefusedOverTheModelEndpoint proves the operator-only rule at
+// the transport rather than only in the allowlist table.
+func TestAudit_ReadIsRefusedOverTheModelEndpoint(t *testing.T) {
+	client := newDecisionClient(t, CallerMCPFacade, decisionQueriesFixture())
+	if _, err := client.ReadAudit(context.Background(), "operation-audit-denied", ReadAuditInput{}); err == nil {
+		t.Fatal("the model endpoint served the audit trail")
 	}
 }

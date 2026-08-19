@@ -72,6 +72,7 @@ const (
 	MethodReadTaskLogs    Method = "ReadTaskLogs"
 	MethodCancelDecision  Method = "CancelDecision"
 	MethodRespondDecision Method = "RespondDecision"
+	MethodReadAudit       Method = "ReadAudit"
 )
 
 func (method Method) valid() bool {
@@ -80,7 +81,7 @@ func (method Method) valid() bool {
 		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
 		MethodSyncPrimary, MethodAttestScout, MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs, MethodReadEvents, MethodReadTaskLogs, MethodCancelDecision,
-		MethodRespondDecision:
+		MethodRespondDecision, MethodReadAudit:
 		return true
 	default:
 		return false
@@ -152,6 +153,13 @@ type ReadEventsInput struct {
 	TaskHandle    string `json:"taskHandle,omitempty"`
 }
 
+// ReadAuditInput resumes the durable audit trail from a cursor. A zero cursor
+// starts at the beginning and a zero limit takes the service default.
+type ReadAuditInput struct {
+	AfterSequence int64 `json:"afterSequence,omitempty"`
+	Limit         int   `json:"limit,omitempty"`
+}
+
 // SurveyRepairsInput scopes the repair survey. An absent task handle surveys the
 // whole fleet.
 type SurveyRepairsInput struct {
@@ -200,7 +208,7 @@ type Outcome struct {
 func (method Method) operatorOnly() bool {
 	switch method {
 	case MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs,
-		MethodReadTaskLogs, MethodCancelDecision, MethodRespondDecision:
+		MethodReadTaskLogs, MethodCancelDecision, MethodRespondDecision, MethodReadAudit:
 		return true
 	default:
 		return false
@@ -210,6 +218,7 @@ func (method Method) operatorOnly() bool {
 // ReadQueries is the narrow application surface consumed by the local boundary.
 type ReadQueries interface {
 	ReadEvents(context.Context, int64, int, string) (application.EventPage, error)
+	ReadAudit(context.Context, int64, int) (application.AuditPage, error)
 	ReadTaskLogs(context.Context, string, application.TaskLogSource, int64, int) (application.TaskLogPage, error)
 	DiffTask(context.Context, string) (application.TaskDiffView, error)
 	SurveyRepairs(context.Context, string) (application.RepairSurvey, error)

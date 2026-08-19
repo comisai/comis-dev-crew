@@ -95,6 +95,17 @@ func (client *Client) ReadEvents(
 	return result, err
 }
 
+// ReadAudit follows the durable operator-only audit trail from a cursor.
+func (client *Client) ReadAudit(
+	ctx context.Context,
+	operationID string,
+	input ReadAuditInput,
+) (application.AuditPage, error) {
+	var result application.AuditPage
+	err := client.call(ctx, operationID, MethodReadAudit, input, &result)
+	return result, err
+}
+
 // SurveyRepairs reads which unknown tasks can be reconciled and why the rest
 // cannot.
 func (client *Client) SurveyRepairs(
@@ -372,6 +383,10 @@ func projectedStateVersion(result any) (int64, bool) {
 	case *application.EventPage:
 		// The stream's read-after-write marker is its cursor: the log is
 		// append-only and advances independently of task state versions.
+		return projection.NextCursor, true
+	case *application.AuditPage:
+		// Same reasoning as the event stream: the trail is append-only, so its
+		// cursor is the marker rather than any task's state version.
 		return projection.NextCursor, true
 	case *application.DecisionList:
 		return projection.StateVersion, true

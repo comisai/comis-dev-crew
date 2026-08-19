@@ -228,6 +228,22 @@ connection, which keeps the request/response transport and its bounded reads
 unchanged, survives a restart, and lets a dropped follower resume exactly where it
 stopped.
 
+## Audit trail
+
+A refused cleanup and a rejected reporter credential are recorded as a durable
+append-only audit trail, separate from the transition log.
+
+The separation is the point. The transition log records transitions, so a
+refusal — which changes no state — is invisible there by design, and the
+threat the reporter endpoint exists to stop would succeed or fail with equally
+no trace. The refusal record is written outside the transaction it describes,
+since that transaction rolls back; the credential rejection carries the task
+addressed and nothing of the credential presented.
+
+The trail is operator-only, unlike the event stream. Every column is an
+identity, a closed discriminator, a sequence or a time, so the record stays
+content-free while still naming the ground it was refused on.
+
 ## Reconciliation survey
 
 Which unknown tasks a reconcile would accept is readable from the operator

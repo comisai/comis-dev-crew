@@ -797,7 +797,3 @@ func (runtimeAttachmentAcknowledger) AcknowledgeWorkerLaunch(
 ) (application.MutationResult, error) {
 	return application.MutationResult{}, nil
 }
-
-func (store *runtimeAttachmentRecoveryStore) RecordAuditEvent(context.Context, application.AuditEvent) error {
-	return nil
-}

@@ -105,3 +105,10 @@ func (store capturingFixtureStore) RecordAuditEvent(_ context.Context, event app
 func fixedAuditClock() time.Time {
 	return time.Date(2026, time.August, 19, 9, 0, 0, 0, time.UTC)
 }
+
+// RecordAuditEvent keeps the recovery store usable as a runtimeAttachmentStore.
+// It lives beside the audit tests rather than with the recovery fixtures so the
+// audit surface's scaffolding stays in one place.
+func (store *runtimeAttachmentRecoveryStore) RecordAuditEvent(context.Context, application.AuditEvent) error {
+	return nil
+}

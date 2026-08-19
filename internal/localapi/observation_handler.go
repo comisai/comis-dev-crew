@@ -22,6 +22,13 @@ func (handler *Handler) dispatchObservation(ctx context.Context, request Request
 		}
 		result, err := handler.queries.ReadEvents(ctx, payload.AfterSequence, payload.Limit, payload.TaskHandle)
 		return queryOutcome(request.OperationID, result.NextCursor, result, err), true
+	case MethodReadAudit:
+		var payload ReadAuditInput
+		if err := decodeObject(request.Payload, &payload); err != nil {
+			return invalidPayload(request.OperationID, err), true
+		}
+		result, err := handler.queries.ReadAudit(ctx, payload.AfterSequence, payload.Limit)
+		return queryOutcome(request.OperationID, result.NextCursor, result, err), true
 	case MethodSurveyRepairs:
 		var payload SurveyRepairsInput
 		if err := decodeObject(request.Payload, &payload); err != nil {
