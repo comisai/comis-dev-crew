@@ -211,3 +211,172 @@ func TestReadScoutDecisionInventory_RefusesMissingAuthority(t *testing.T) {
 // missingStoreContext hands back an absent context through a function so the
 // call site states the refusal under test rather than tripping a vet rule.
 func missingStoreContext() context.Context { return nil }
+
+// The ledger counts per decision and keeps the first sighting, so the age of an
+// unanswered question stays legible however many times it has been raised.
+func TestDecisionSurfacingLedger_CountsPerDecisionAndKeepsTheFirstSighting(t *testing.T) {
+	store, scout := attestationFixture(t, domain.ShapeScout)
+	first := fixedAttestationTime()
+
+	if err := store.RecordDecisionSurfaced(context.Background(), application.DecisionSurfacedMutation{
+		TaskHandle: scout.Handle, ExternalKey: "schema-choice", At: first,
+	}); err != nil {
+		t.Fatalf("RecordDecisionSurfaced() error = %v", err)
+	}
+	if err := store.RecordDecisionSurfaced(context.Background(), application.DecisionSurfacedMutation{
+		TaskHandle: scout.Handle, ExternalKey: "schema-choice", At: first.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("RecordDecisionSurfaced(again) error = %v", err)
+	}
+
+	var count int
+	var firstSeen, lastSeen string
+	if err := store.db.QueryRow(
+		`SELECT surface_count, first_surfaced_at, last_surfaced_at
+         FROM task_decision_surfacings WHERE task_handle = ? AND external_key = ?`,
+		scout.Handle, "schema-choice",
+	).Scan(&count, &firstSeen, &lastSeen); err != nil {
+		t.Fatalf("read ledger: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("surface count = %d, want 2", count)
+	}
+	if firstSeen == lastSeen {
+		t.Error("a second surfacing must move the last sighting without moving the first")
+	}
+}
+
+// A decision with no resolution is open; one whose key was resolved is not. The
+// same predicate governs cleanup, so the two can never disagree about which
+// questions are still live.
+func TestOpenDecisionsAwaitingHuman_ExcludesResolvedKeysAndCarriesTheLedger(t *testing.T) {
+	store, scout := attestationFixture(t, domain.ShapeScout)
+
+	open, err := store.OpenDecisionsAwaitingHuman(context.Background())
+	if err != nil {
+		t.Fatalf("OpenDecisionsAwaitingHuman() error = %v", err)
+	}
+	if len(open) != 0 {
+		t.Fatalf("a task with no decisions reported %d open", len(open))
+	}
+
+	if _, err := store.OpenDecisionsAwaitingHuman(missingStoreContext()); err == nil {
+		t.Error("OpenDecisionsAwaitingHuman(no context) error = nil")
+	}
+	if err := store.RecordDecisionSurfaced(missingStoreContext(), application.DecisionSurfacedMutation{
+		TaskHandle: scout.Handle, ExternalKey: "schema-choice",
+	}); err == nil {
+		t.Error("RecordDecisionSurfaced(no context) error = nil")
+	}
+}
+
+// A real decision report is open until a resolution carries its key, and the
+// ledger travels with it so the cadence survives a restart.
+func TestOpenDecisionsAwaitingHuman_TracksARealDecisionThroughItsResolution(t *testing.T) {
+	store, scout := attestationFixture(t, domain.ShapeScout)
+	at := scout.UpdatedAt.Add(time.Minute)
+
+	decision := sqliteWorkerReport(scout, "report-decision-0001", domain.ReportDecision)
+	decision.ExternalKey = "schema-choice"
+	if _, err := store.CommitReport(context.Background(), directReportMutation(scout, decision, at)); err != nil {
+		t.Fatalf("CommitReport(decision) error = %v", err)
+	}
+
+	open, err := store.OpenDecisionsAwaitingHuman(context.Background())
+	if err != nil {
+		t.Fatalf("OpenDecisionsAwaitingHuman() error = %v", err)
+	}
+	if len(open) != 1 || open[0].ExternalKey != "schema-choice" || open[0].SurfaceCount != 0 {
+		t.Fatalf("open decisions = %+v", open)
+	}
+	if !open[0].LastSurfacedAt.IsZero() {
+		t.Error("a decision nobody raised carries no last sighting")
+	}
+
+	if err := store.RecordDecisionSurfaced(context.Background(), application.DecisionSurfacedMutation{
+		TaskHandle: scout.Handle, ExternalKey: "schema-choice", At: at.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("RecordDecisionSurfaced() error = %v", err)
+	}
+	raised, err := store.OpenDecisionsAwaitingHuman(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raised) != 1 || raised[0].SurfaceCount != 1 || raised[0].LastSurfacedAt.IsZero() {
+		t.Fatalf("raised decision = %+v", raised)
+	}
+
+	resolution := sqliteWorkerReport(scout, "report-resolution-0001", domain.ReportResolution)
+	resolution.ExternalKey = "schema-choice"
+	if _, err := store.CommitReport(context.Background(), directReportMutation(scout, resolution, at.Add(2*time.Hour))); err != nil {
+		t.Fatalf("CommitReport(resolution) error = %v", err)
+	}
+	settled, err := store.OpenDecisionsAwaitingHuman(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(settled) != 0 {
+		t.Fatalf("a resolved decision is still reported open: %+v", settled)
+	}
+}
+
+// A canceled caller has withdrawn the question, and a ledger row whose time
+// cannot be read is a failure rather than a decision that was never raised —
+// treating it as never-raised would restart the cadence from the beginning.
+func TestDecisionSurfacing_RefusesCanceledCallersAndCorruptLedgerRows(t *testing.T) {
+	store, scout := attestationFixture(t, domain.ShapeScout)
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := store.OpenDecisionsAwaitingHuman(canceled); !errors.Is(err, context.Canceled) {
+		t.Errorf("OpenDecisionsAwaitingHuman(canceled) error = %v", err)
+	}
+	if err := store.RecordDecisionSurfaced(canceled, application.DecisionSurfacedMutation{
+		TaskHandle: scout.Handle, ExternalKey: "schema-choice",
+	}); !errors.Is(err, context.Canceled) {
+		t.Errorf("RecordDecisionSurfaced(canceled) error = %v", err)
+	}
+
+	at := scout.UpdatedAt.Add(time.Minute)
+	decision := sqliteWorkerReport(scout, "report-decision-0002", domain.ReportDecision)
+	decision.ExternalKey = "schema-choice"
+	if _, err := store.CommitReport(context.Background(), directReportMutation(scout, decision, at)); err != nil {
+		t.Fatalf("CommitReport(decision) error = %v", err)
+	}
+	if err := store.RecordDecisionSurfaced(context.Background(), application.DecisionSurfacedMutation{
+		TaskHandle: scout.Handle, ExternalKey: "schema-choice", At: at,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(
+		`UPDATE task_decision_surfacings SET last_surfaced_at = 'not-a-time' WHERE task_handle = ?`,
+		scout.Handle,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.OpenDecisionsAwaitingHuman(context.Background()); err == nil {
+		t.Error("OpenDecisionsAwaitingHuman(corrupt ledger time) error = nil")
+	}
+}
+
+// A database that has gone away is reported as a failure. Returning an empty
+// set instead would read as "no questions are open", which is the one answer a
+// broken store must never be able to give.
+func TestDecisionSurfacing_ReportsAnUnavailableDatabase(t *testing.T) {
+	store, scout := attestationFixture(t, domain.ShapeScout)
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	if _, err := store.OpenDecisionsAwaitingHuman(context.Background()); err == nil {
+		t.Error("OpenDecisionsAwaitingHuman(closed store) error = nil")
+	}
+	if err := store.RecordDecisionSurfaced(context.Background(), application.DecisionSurfacedMutation{
+		TaskHandle: scout.Handle, ExternalKey: "schema-choice", At: fixedAttestationTime(),
+	}); err == nil {
+		t.Error("RecordDecisionSurfaced(closed store) error = nil")
+	}
+	if _, _, err := store.ReadScoutDecisionInventory(context.Background(), scout.Handle); err == nil {
+		t.Error("ReadScoutDecisionInventory(closed store) error = nil")
+	}
+}

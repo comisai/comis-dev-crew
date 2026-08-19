@@ -131,6 +131,30 @@ attestation moves no task: inventorying open questions observes the work rather
 than finishing, delivering, or retiring it. Ship tasks are outside the gate;
 their open decisions remain governed by the ordinary decision blocker.
 
+## Open decision re-surfacing
+
+An open decision wakes the liaison once as soon as it exists, and keeps coming
+back until it is resolved or cancelled. Bounded describes the rate, not the end:
+a question asked once and then dropped stops existing as far as the system is
+concerned while the work it blocks waits indefinitely.
+
+The interval after each raising doubles from a configured initial wait up to a
+configured maximum, so an unanswered question stops competing with fresh work
+without ever becoming effectively silent. The default cadence is thirty minutes
+growing to four hours. Filtering happens against the decision rather than in the
+caller, so running the loop more often does not repeat anything more often.
+
+Each raising is recorded durably, keyed by the decision and keeping its first
+sighting, so a restart replays at worst one repeat. An in-memory count would
+make every open decision due again on every boot and wake the liaison with the
+whole backlog. Open is decided by the same predicate cleanup uses — a decision
+report with no resolution carrying its key — so the two surfaces can never
+disagree about which questions are still live.
+
+The periodic driver that consumes this on a tick is not yet wired; the cadence,
+the ledger and the due-set are in place and proven, and nothing raises them
+automatically until that supervisor exists.
+
 ## Comis adapter
 
 The adapter contains the supervised persistent bidirectional connection used by
