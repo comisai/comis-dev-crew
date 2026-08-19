@@ -351,6 +351,11 @@ devcrew [--socket PATH] decision respond TASK DECISION --input FILE|- [--operati
 devcrew [--socket PATH] decision cancel TASK DECISION [--operation OPERATION] [--format json]
 ```
 
+The stream records transitions, not writes. A task that is still waiting is
+rewritten on every supervisor pass to refresh its liveness, and those rewrites
+append nothing: a run of "state changed" lines reporting no change would push the
+real transitions off a bounded page and read as movement where there was none.
+
 `events tail --task` scopes the stream to one task. The scope is applied where
 the page is built rather than by filtering a full page afterwards, so a busy
 fleet cannot push the asked-for task's events off the page before the console

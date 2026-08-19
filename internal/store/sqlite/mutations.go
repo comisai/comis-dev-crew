@@ -298,6 +298,15 @@ func updateTaskState(ctx context.Context, transaction *sql.Tx, task domain.Task)
 	if err := task.Validate(); err != nil {
 		return fmt.Errorf("validate task state update: %w", err)
 	}
+	// Read before writing so the event can describe a transition rather than a
+	// write. Both happen in the caller's transaction, so the comparison cannot
+	// race another writer.
+	var previous domain.TaskState
+	if err := transaction.QueryRowContext(ctx,
+		`SELECT state FROM tasks WHERE handle = ?`, task.Handle,
+	).Scan(&previous); err != nil {
+		return fmt.Errorf("read task state before update: %w", err)
+	}
 	const update = `UPDATE tasks SET state = ?, state_version = ?, updated_at = ? WHERE handle = ?`
 	result, err := transaction.ExecContext(ctx, update, task.State, task.StateVersion, formatTime(task.UpdatedAt), task.Handle)
 	if err != nil {
@@ -306,6 +315,12 @@ func updateTaskState(ctx context.Context, transaction *sql.Tx, task domain.Task)
 	rows, err := result.RowsAffected()
 	if err != nil || rows != 1 {
 		return errors.New("update task state: exact task was not updated")
+	}
+	// A rewrite that leaves the state where it was is not a transition and
+	// records none. Refreshing liveness on a task that is still waiting must not
+	// read, on the stream, as the task having moved.
+	if previous == task.State {
+		return nil
 	}
 	// Recorded here, inside the caller's transaction, because this is the sole
 	// writer of task state: an event appended anywhere else could describe a
