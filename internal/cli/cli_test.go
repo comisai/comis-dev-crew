@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -402,11 +403,21 @@ type fakeClient struct {
 	decision     application.TaskDecision
 	diff         application.TaskDiffView
 	repairs      application.RepairSurvey
+	events       application.EventPage
 	prepared     localapi.PrepareTaskResult
 	taskMutation localapi.TaskMutationResult
 	err          error
 	calls        []string
 	operationID  string
+}
+
+func (client *fakeClient) ReadEvents(
+	_ context.Context,
+	operationID string,
+	input localapi.ReadEventsInput,
+) (application.EventPage, error) {
+	client.record(operationID, "events:"+strconv.FormatInt(input.AfterSequence, 10))
+	return client.events, client.err
 }
 
 func (client *fakeClient) SurveyRepairs(
