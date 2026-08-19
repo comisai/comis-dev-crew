@@ -68,6 +68,7 @@ const (
 	MethodShowDecision   Method = "ShowTaskDecision"
 	MethodDiffTask       Method = "DiffTask"
 	MethodSurveyRepairs  Method = "SurveyRepairs"
+	MethodReadEvents     Method = "ReadEvents"
 )
 
 func (method Method) valid() bool {
@@ -75,7 +76,7 @@ func (method Method) valid() bool {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
 		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
-		MethodSyncPrimary, MethodAttestScout, MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs:
+		MethodSyncPrimary, MethodAttestScout, MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs, MethodReadEvents:
 		return true
 	default:
 		return false
@@ -107,6 +108,13 @@ func (method Method) SideEffect() SideEffectClass {
 // reads the whole fleet.
 type ListDecisionsInput struct {
 	TaskHandle string `json:"taskHandle,omitempty"`
+}
+
+// ReadEventsInput resumes the content-free event stream from a cursor. A zero
+// cursor starts at the beginning and a zero limit takes the service default.
+type ReadEventsInput struct {
+	AfterSequence int64 `json:"afterSequence,omitempty"`
+	Limit         int   `json:"limit,omitempty"`
 }
 
 // SurveyRepairsInput scopes the repair survey. An absent task handle surveys the
@@ -165,6 +173,7 @@ func (method Method) operatorOnly() bool {
 
 // ReadQueries is the narrow application surface consumed by the local boundary.
 type ReadQueries interface {
+	ReadEvents(context.Context, int64, int) (application.EventPage, error)
 	DiffTask(context.Context, string) (application.TaskDiffView, error)
 	SurveyRepairs(context.Context, string) (application.RepairSurvey, error)
 	ListDecisions(context.Context, string) (application.DecisionList, error)

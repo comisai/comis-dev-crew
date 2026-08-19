@@ -50,6 +50,17 @@ func (client *Client) Fleet(ctx context.Context, operationID string) (applicatio
 	return result, err
 }
 
+// ReadEvents follows the content-free service event stream from a cursor.
+func (client *Client) ReadEvents(
+	ctx context.Context,
+	operationID string,
+	input ReadEventsInput,
+) (application.EventPage, error) {
+	var result application.EventPage
+	err := client.call(ctx, operationID, MethodReadEvents, input, &result)
+	return result, err
+}
+
 // SurveyRepairs reads which unknown tasks can be reconciled and why the rest
 // cannot.
 func (client *Client) SurveyRepairs(
@@ -318,6 +329,10 @@ func projectedStateVersion(result any) (int64, bool) {
 		return projection.StateVersion, true
 	case *application.RepairSurvey:
 		return projection.StateVersion, true
+	case *application.EventPage:
+		// The stream's read-after-write marker is its cursor: the log is
+		// append-only and advances independently of task state versions.
+		return projection.NextCursor, true
 	case *application.DecisionList:
 		return projection.StateVersion, true
 	case *application.TaskDecision:

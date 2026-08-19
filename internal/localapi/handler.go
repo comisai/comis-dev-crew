@@ -129,6 +129,13 @@ func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 		}
 		result, err := handler.queries.ListWorkerProfiles(ctx)
 		return queryOutcome(request.OperationID, result.StateVersion, result, err)
+	case MethodReadEvents:
+		var payload ReadEventsInput
+		if err := decodeObject(request.Payload, &payload); err != nil {
+			return invalidPayload(request.OperationID, err)
+		}
+		result, err := handler.queries.ReadEvents(ctx, payload.AfterSequence, payload.Limit)
+		return queryOutcome(request.OperationID, result.NextCursor, result, err)
 	case MethodSurveyRepairs:
 		var payload SurveyRepairsInput
 		if err := decodeObject(request.Payload, &payload); err != nil {

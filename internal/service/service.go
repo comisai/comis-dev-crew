@@ -294,7 +294,7 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		Repository: store, Harnesses: config.WorkerHarnesses, Host: control,
 		ReconciliationWorkspaces: config.reconciliationInspector,
 		WorkerProfiles:           config.WorkerProfileCatalog, Decisions: store,
-		TaskDiffs: config.taskDiffs, Repairs: store,
+		TaskDiffs: config.taskDiffs, Repairs: store, Events: store,
 		DecisionSurfacing: config.DecisionSurfacing, Clock: clock,
 	})
 	if err != nil {
