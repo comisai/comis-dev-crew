@@ -264,6 +264,7 @@ type MutationStore interface {
 	CommitTaskVerify(context.Context, TaskVerifyMutation) (MutationResult, error)
 	CommitTaskSteer(context.Context, TaskSteerMutation) (MutationResult, error)
 	CommitDecisionCancellation(context.Context, DecisionCancellationMutation) (MutationResult, error)
+	CommitDecisionResponse(context.Context, DecisionResponseMutation) (MutationResult, error)
 	CommitTaskStart(context.Context, TaskStartMutation) (MutationResult, error)
 	CommitTerminalEvent(context.Context, TerminalEventMutation) (MutationResult, error)
 	CommitWorkerLaunchAcknowledgement(context.Context, WorkerLaunchAcknowledgementMutation) (MutationResult, error)

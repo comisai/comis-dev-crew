@@ -61,6 +61,18 @@ func (client *Client) CancelDecision(
 	return result, err
 }
 
+// RespondDecision answers one open question. The answer does not close it: the
+// worker still has to apply it before the work may proceed.
+func (client *Client) RespondDecision(
+	ctx context.Context,
+	operationID string,
+	input RespondDecisionInput,
+) (TaskMutationResult, error) {
+	var result TaskMutationResult
+	err := client.call(ctx, operationID, MethodRespondDecision, input, &result)
+	return result, err
+}
+
 // ReadTaskLogs reads one bounded page of one task's private history.
 func (client *Client) ReadTaskLogs(
 	ctx context.Context,

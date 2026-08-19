@@ -42,35 +42,36 @@ func (caller CallerClass) valid() bool {
 type Method string
 
 const (
-	MethodDiagnose       Method = "Diagnose"
-	MethodFleet          Method = "FleetStatus"
-	MethodListTasks      Method = "ListTasks"
-	MethodWorkerProfiles Method = "ListWorkerProfiles"
-	MethodShowTask       Method = "ShowTask"
-	MethodExplainTask    Method = "ExplainTask"
-	MethodGetLaunchPlan  Method = "GetLaunchPlan"
-	MethodOperation      Method = "GetOperation"
-	MethodPrepareTask    Method = "PrepareTask"
-	MethodReconcileTask  Method = "ReconcileTask"
-	MethodHandbackTask   Method = "HandbackTask"
-	MethodCleanupTask    Method = "CleanupTask"
-	MethodPauseTask      Method = "PauseTask"
-	MethodCancelTask     Method = "CancelTask"
-	MethodResumeTask     Method = "ResumeTask"
-	MethodVerifyTask     Method = "VerifyTask"
-	MethodPromoteScout   Method = "PromoteScout"
-	MethodReplaceWorker  Method = "ReplaceWorker"
-	MethodSteerTask      Method = "SteerTask"
-	MethodDiscardTask    Method = "DiscardTask"
-	MethodSyncPrimary    Method = "SyncPrimary"
-	MethodAttestScout    Method = "AttestScoutDecisions"
-	MethodListDecisions  Method = "ListTaskDecisions"
-	MethodShowDecision   Method = "ShowTaskDecision"
-	MethodDiffTask       Method = "DiffTask"
-	MethodSurveyRepairs  Method = "SurveyRepairs"
-	MethodReadEvents     Method = "ReadEvents"
-	MethodReadTaskLogs   Method = "ReadTaskLogs"
-	MethodCancelDecision Method = "CancelDecision"
+	MethodDiagnose        Method = "Diagnose"
+	MethodFleet           Method = "FleetStatus"
+	MethodListTasks       Method = "ListTasks"
+	MethodWorkerProfiles  Method = "ListWorkerProfiles"
+	MethodShowTask        Method = "ShowTask"
+	MethodExplainTask     Method = "ExplainTask"
+	MethodGetLaunchPlan   Method = "GetLaunchPlan"
+	MethodOperation       Method = "GetOperation"
+	MethodPrepareTask     Method = "PrepareTask"
+	MethodReconcileTask   Method = "ReconcileTask"
+	MethodHandbackTask    Method = "HandbackTask"
+	MethodCleanupTask     Method = "CleanupTask"
+	MethodPauseTask       Method = "PauseTask"
+	MethodCancelTask      Method = "CancelTask"
+	MethodResumeTask      Method = "ResumeTask"
+	MethodVerifyTask      Method = "VerifyTask"
+	MethodPromoteScout    Method = "PromoteScout"
+	MethodReplaceWorker   Method = "ReplaceWorker"
+	MethodSteerTask       Method = "SteerTask"
+	MethodDiscardTask     Method = "DiscardTask"
+	MethodSyncPrimary     Method = "SyncPrimary"
+	MethodAttestScout     Method = "AttestScoutDecisions"
+	MethodListDecisions   Method = "ListTaskDecisions"
+	MethodShowDecision    Method = "ShowTaskDecision"
+	MethodDiffTask        Method = "DiffTask"
+	MethodSurveyRepairs   Method = "SurveyRepairs"
+	MethodReadEvents      Method = "ReadEvents"
+	MethodReadTaskLogs    Method = "ReadTaskLogs"
+	MethodCancelDecision  Method = "CancelDecision"
+	MethodRespondDecision Method = "RespondDecision"
 )
 
 func (method Method) valid() bool {
@@ -78,7 +79,8 @@ func (method Method) valid() bool {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
 		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
-		MethodSyncPrimary, MethodAttestScout, MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs, MethodReadEvents, MethodReadTaskLogs, MethodCancelDecision:
+		MethodSyncPrimary, MethodAttestScout, MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs, MethodReadEvents, MethodReadTaskLogs, MethodCancelDecision,
+		MethodRespondDecision:
 		return true
 	default:
 		return false
@@ -97,7 +99,7 @@ const (
 // SideEffect returns the authoritative method classification.
 func (method Method) SideEffect() SideEffectClass {
 	switch method {
-	case MethodCancelDecision:
+	case MethodCancelDecision, MethodRespondDecision:
 		return SideEffectMutate
 	case MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
@@ -118,6 +120,14 @@ type ListDecisionsInput struct {
 type CancelDecisionInput struct {
 	TaskHandle  string `json:"taskHandle"`
 	ExternalKey string `json:"externalKey"`
+}
+
+// RespondDecisionInput answers one open question. The answer is private task
+// detail and never appears in a content-free surface.
+type RespondDecisionInput struct {
+	TaskHandle  string `json:"taskHandle"`
+	ExternalKey string `json:"externalKey"`
+	Response    string `json:"response"`
 }
 
 // ReadTaskLogsInput names one task's history and where to resume it. An absent
@@ -184,7 +194,7 @@ type Outcome struct {
 func (method Method) operatorOnly() bool {
 	switch method {
 	case MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs,
-		MethodReadTaskLogs, MethodCancelDecision:
+		MethodReadTaskLogs, MethodCancelDecision, MethodRespondDecision:
 		return true
 	default:
 		return false
@@ -237,10 +247,12 @@ type TaskCleanup interface {
 	DiscardTask(context.Context, application.DiscardTaskCommand) (application.MutationResult, error)
 }
 
-// DecisionWithdrawal is the canonical surface for closing a question the human
-// no longer wants answered.
-type DecisionWithdrawal interface {
+// DecisionAuthority is the canonical operator surface over a question the worker
+// asked: the human either answers it or withdraws it. Both belong to the console
+// rather than the facade, so a worker cannot settle its own hold.
+type DecisionAuthority interface {
 	CancelDecision(context.Context, application.CancelDecisionCommand) (application.MutationResult, error)
+	RespondDecision(context.Context, application.RespondDecisionCommand) (application.MutationResult, error)
 }
 
 // ScoutReviewAttestation is the canonical review-completion surface.
@@ -264,7 +276,7 @@ type HandlerConfig struct {
 	Cleanup           TaskCleanup
 	PrimaryCheckouts  PrimaryCheckoutSync
 	ScoutReviews      ScoutReviewAttestation
-	Decisions         DecisionWithdrawal
+	Decisions         DecisionAuthority
 	ServiceInstanceID string
 	Clock             application.Clock
 }
