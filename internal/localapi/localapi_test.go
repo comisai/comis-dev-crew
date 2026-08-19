@@ -49,7 +49,7 @@ func TestServerClient_ReadQueriesOverOwnerOnlyUnixSocket(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(fleet, queries.fleet) {
 		t.Fatalf("Fleet() = %#v, %v, want %#v", fleet, err, queries.fleet)
 	}
-	list, err := client.ListTasks(context.Background(), "read-0003")
+	list, err := client.ListTasks(context.Background(), "read-0003", ListTasksInput{})
 	if err != nil || !reflect.DeepEqual(list, queries.list) {
 		t.Fatalf("ListTasks() = %#v, %v, want %#v", list, err, queries.list)
 	}
@@ -277,7 +277,7 @@ func (queries *apiQueries) Fleet(context.Context) (application.FleetSnapshot, er
 	return queries.fleet, nil
 }
 
-func (queries *apiQueries) ListTasks(context.Context) (application.TaskList, error) {
+func (queries *apiQueries) ListTasks(context.Context, domain.TaskState) (application.TaskList, error) {
 	return queries.list, nil
 }
 

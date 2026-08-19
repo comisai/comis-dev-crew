@@ -672,7 +672,7 @@ func (client *fakeClient) ListWorkerProfiles(
 	return client.profiles, nil
 }
 
-func (client *fakeClient) ListTasks(_ context.Context, operationID string) (application.TaskList, error) {
+func (client *fakeClient) ListTasks(_ context.Context, operationID string, _ localapi.ListTasksInput) (application.TaskList, error) {
 	client.calls = append(client.calls, "list:"+operationID)
 	return application.TaskList{SchemaVersion: 1, StateVersion: 7, Tasks: []application.TaskSummary{}}, nil
 }

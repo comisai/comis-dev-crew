@@ -319,7 +319,7 @@ func (facade *Facade) listTasks(ctx context.Context, request *mcp.CallToolReques
 	if err != nil {
 		return nil, application.TaskList{}, err
 	}
-	result, err := facade.client.ListTasks(ctx, string(callContext.OperationID))
+	result, err := facade.client.ListTasks(ctx, string(callContext.OperationID), localapi.ListTasksInput{})
 	return nil, result, err
 }
 

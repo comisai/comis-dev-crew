@@ -323,7 +323,7 @@ enforce the boundary in code regardless of what the prose says.
 devcrew [--socket PATH] service status
 devcrew [--socket PATH] doctor [--format table|json]
 devcrew [--socket PATH] status [--watch [--passes N] [--interval DURATION]] [--format table|json]
-devcrew [--socket PATH] tasks list [--format table|json]
+devcrew [--socket PATH] tasks list [--state STATE] [--format table|json]
 devcrew [--socket PATH] workers list [--format table|json]
 devcrew [--socket PATH] task show TASK [--format yaml|json]
 devcrew [--socket PATH] task explain TASK [--format text|json]

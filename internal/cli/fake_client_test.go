@@ -235,8 +235,8 @@ func (client *fakeClient) ListWorkerProfiles(
 	return client.profiles, client.err
 }
 
-func (client *fakeClient) ListTasks(_ context.Context, operationID string) (application.TaskList, error) {
-	client.record(operationID, "list")
+func (client *fakeClient) ListTasks(_ context.Context, operationID string, input localapi.ListTasksInput) (application.TaskList, error) {
+	client.record(operationID, "list-tasks:"+string(input.State))
 	return client.list, client.err
 }
 

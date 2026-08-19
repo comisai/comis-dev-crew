@@ -141,9 +141,13 @@ func (client *Client) ShowDecision(
 }
 
 // ListTasks reads the canonical task list.
-func (client *Client) ListTasks(ctx context.Context, operationID string) (application.TaskList, error) {
+func (client *Client) ListTasks(
+	ctx context.Context,
+	operationID string,
+	input ListTasksInput,
+) (application.TaskList, error) {
 	var result application.TaskList
-	err := client.call(ctx, operationID, MethodListTasks, emptyPayload{}, &result)
+	err := client.call(ctx, operationID, MethodListTasks, input, &result)
 	return result, err
 }
 

@@ -45,7 +45,7 @@ type Client interface {
 	CleanupTask(context.Context, string, localapi.CleanupTaskInput) (localapi.TaskMutationResult, error)
 	DiscardTask(context.Context, string, localapi.DiscardTaskInput) (localapi.TaskMutationResult, error)
 	Diagnose(context.Context, string) (application.DiagnosticReport, error)
-	ListTasks(context.Context, string) (application.TaskList, error)
+	ListTasks(context.Context, string, localapi.ListTasksInput) (application.TaskList, error)
 	ListWorkerProfiles(context.Context, string) (application.WorkerProfileList, error)
 	PauseTask(context.Context, string, localapi.PauseTaskInput) (localapi.TaskMutationResult, error)
 	CancelTask(context.Context, string, localapi.CancelTaskInput) (localapi.TaskMutationResult, error)

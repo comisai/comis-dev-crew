@@ -128,10 +128,11 @@ func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
 		result, err := handler.queries.Fleet(ctx)
 		return queryOutcome(request.OperationID, result.StateVersion, result, err)
 	case MethodListTasks:
-		if err := decodeObject(request.Payload, &emptyPayload{}); err != nil {
+		var input ListTasksInput
+		if err := decodeObject(request.Payload, &input); err != nil {
 			return invalidPayload(request.OperationID, err)
 		}
-		result, err := handler.queries.ListTasks(ctx)
+		result, err := handler.queries.ListTasks(ctx, input.State)
 		return queryOutcome(request.OperationID, result.StateVersion, result, err)
 	case MethodWorkerProfiles:
 		if err := decodeObject(request.Payload, &emptyPayload{}); err != nil {
