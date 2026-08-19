@@ -401,11 +401,21 @@ type fakeClient struct {
 	decisions    application.DecisionList
 	decision     application.TaskDecision
 	diff         application.TaskDiffView
+	repairs      application.RepairSurvey
 	prepared     localapi.PrepareTaskResult
 	taskMutation localapi.TaskMutationResult
 	err          error
 	calls        []string
 	operationID  string
+}
+
+func (client *fakeClient) SurveyRepairs(
+	_ context.Context,
+	operationID string,
+	input localapi.SurveyRepairsInput,
+) (application.RepairSurvey, error) {
+	client.record(operationID, "repairs:"+input.TaskHandle)
+	return client.repairs, client.err
 }
 
 func (client *fakeClient) DiffTask(
