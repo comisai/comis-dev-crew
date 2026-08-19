@@ -189,7 +189,15 @@ type apiQueries struct {
 	launchPlan  application.LaunchPlan
 	profiles    application.WorkerProfileList
 	decisions   application.DecisionList
+	diff        application.TaskDiffView
 	diagnose    func(context.Context) (application.DiagnosticReport, error)
+}
+
+func (queries *apiQueries) DiffTask(_ context.Context, taskHandle string) (application.TaskDiffView, error) {
+	if queries.diff.TaskHandle != taskHandle {
+		return application.TaskDiffView{}, application.ErrNotFound
+	}
+	return queries.diff, nil
 }
 
 func (queries *apiQueries) ListDecisions(_ context.Context, taskHandle string) (application.DecisionList, error) {
