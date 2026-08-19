@@ -20,6 +20,9 @@ func (queries *Queries) ListDecisions(ctx context.Context, taskHandle string) (D
 	if err != nil {
 		return DecisionList{}, err
 	}
+	if decisions == nil {
+		decisions = []TaskDecision{}
+	}
 	return DecisionList{
 		SchemaVersion: 1, CapturedAt: queries.now(),
 		StateVersion: stateVersion, Decisions: decisions,

@@ -87,7 +87,10 @@ func (queries *Queries) SurveyRepairs(ctx context.Context, taskHandle string) (R
 	if err != nil {
 		return RepairSurvey{}, translateReadError(err, "repair survey")
 	}
-	survey := RepairSurvey{SchemaVersion: 1, CapturedAt: queries.now(), StateVersion: stateVersion}
+	survey := RepairSurvey{
+		SchemaVersion: 1, CapturedAt: queries.now(), StateVersion: stateVersion,
+		Tasks: []TaskRepair{},
+	}
 	for _, task := range tasks {
 		if task.State != domain.TaskUnknown {
 			continue

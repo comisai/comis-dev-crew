@@ -47,8 +47,8 @@ type TaskDiffView struct {
 	RepositoryID      string           `json:"repositoryId"`
 	BaseRevision      string           `json:"baseRevision"`
 	HeadRevision      string           `json:"headRevision"`
-	Committed         []TaskFileChange `json:"committed,omitempty"`
-	Uncommitted       []TaskFileChange `json:"uncommitted,omitempty"`
+	Committed         []TaskFileChange `json:"committed"`
+	Uncommitted       []TaskFileChange `json:"uncommitted"`
 	CommittedTotals   TaskDiffTotals   `json:"committedTotals"`
 	UncommittedTotals TaskDiffTotals   `json:"uncommittedTotals"`
 	// FileListTruncated states the change set outgrew this bounded read, so a
@@ -96,6 +96,14 @@ func (queries *Queries) DiffTask(ctx context.Context, taskHandle string) (TaskDi
 	})
 	if err != nil {
 		return TaskDiffView{}, translateReadError(err, "task diff")
+	}
+	// A list-valued field is always an array, so a consumer counting entries
+	// never has to handle three encodings of "none".
+	if view.Committed == nil {
+		view.Committed = []TaskFileChange{}
+	}
+	if view.Uncommitted == nil {
+		view.Uncommitted = []TaskFileChange{}
 	}
 	view.SchemaVersion = 1
 	view.CapturedAt = queries.now()
