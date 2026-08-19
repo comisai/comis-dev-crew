@@ -27,6 +27,7 @@ type runtimeAttachmentStore interface {
 	ListTasks(context.Context) ([]domain.Task, error)
 	GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error)
 	GetTaskCleanupRecord(context.Context, string) (application.TaskCleanupRecord, bool, error)
+	ReadDecisionResponseForManagedRun(context.Context, string, string) (application.DecisionResponse, bool, error)
 }
 
 type runtimeAttachmentCoordinatorConfig struct {

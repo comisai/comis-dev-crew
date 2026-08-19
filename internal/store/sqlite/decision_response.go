@@ -142,6 +142,49 @@ func (store *Store) ReadDecisionResponse(
 	return response, true, nil
 }
 
+// ReadDecisionResponseForManagedRun returns the stored answer for one question
+// asked by one managed run.
+//
+// The worker holds its managed run rather than the task handle, and the run is
+// what proves the question is its own: correlating on it keeps one task's answer
+// from being served to another.
+func (store *Store) ReadDecisionResponseForManagedRun(
+	ctx context.Context,
+	managedRunID string,
+	externalKey string,
+) (application.DecisionResponse, bool, error) {
+	if ctx == nil {
+		return application.DecisionResponse{}, false, errors.New("read decision response: context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return application.DecisionResponse{}, false, err
+	}
+	if managedRunID == "" {
+		return application.DecisionResponse{}, false, errors.New("read decision response: managed run is required")
+	}
+	response := application.DecisionResponse{ExternalKey: externalKey}
+	var respondedAt string
+	err := store.db.QueryRowContext(ctx,
+		`SELECT r.task_handle, r.response, r.operation_id, r.responded_at
+         FROM task_decision_responses r
+         JOIN tasks t ON t.handle = r.task_handle
+         WHERE t.managed_run_id = ? AND r.external_key = ?`,
+		managedRunID, externalKey,
+	).Scan(&response.TaskHandle, &response.Response, &response.OperationID, &respondedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return application.DecisionResponse{}, false, nil
+	}
+	if err != nil {
+		return application.DecisionResponse{}, false, fmt.Errorf("read decision response: %w", err)
+	}
+	at, err := parseTime(respondedAt)
+	if err != nil {
+		return application.DecisionResponse{}, false, fmt.Errorf("decode decision response time: %w", err)
+	}
+	response.RespondedAt = at
+	return response, true, nil
+}
+
 func decisionIsAnswered(ctx context.Context, transaction *sql.Tx, taskHandle, externalKey string) (bool, error) {
 	var answered int
 	if err := transaction.QueryRowContext(ctx,

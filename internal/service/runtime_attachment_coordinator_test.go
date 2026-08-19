@@ -670,6 +670,7 @@ func runtimeAttachmentRequest(t *testing.T, workspace, taskHandle string) applic
 }
 
 type runtimeAttachmentRecoveryStore struct {
+	decisionAnswers     map[string]string
 	tasks               []domain.Task
 	taskReads           int
 	preparationIntents  []application.TaskPreparationIntent

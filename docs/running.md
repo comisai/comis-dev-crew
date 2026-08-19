@@ -460,6 +460,12 @@ cadence therefore consults a narrower condition than the completion gates, and
 each is defined exactly once so the two disagree deliberately rather than by
 drift.
 
+A console answer reaches the worker without Comis. The worker asks for its answer
+by managed run — the identity it holds — and the service serves a locally recorded
+answer before consulting the channel, so an answer given while the channel is down
+still arrives. Without that order the console could record an answer that never
+reached anywhere, which is precisely the outage it exists to survive.
+
 Answering is operator-only, like withdrawal. The model facade raises questions
 and applies answers; a facade that could also supply one would let a worker
 satisfy its own decision hold with no human ever replying.
