@@ -192,7 +192,25 @@ type apiQueries struct {
 	diff        application.TaskDiffView
 	repairs     application.RepairSurvey
 	events      application.EventPage
+	logs        application.TaskLogPage
 	diagnose    func(context.Context) (application.DiagnosticReport, error)
+}
+
+func (queries *apiQueries) ReadTaskLogs(
+	_ context.Context,
+	taskHandle string,
+	source application.TaskLogSource,
+	_ int64,
+	_ int,
+) (application.TaskLogPage, error) {
+	if taskHandle != queries.logs.TaskHandle {
+		return application.TaskLogPage{}, application.ErrNotFound
+	}
+	page := queries.logs
+	if source != "" {
+		page.Source = source
+	}
+	return page, nil
 }
 
 func (queries *apiQueries) ReadEvents(_ context.Context, afterSequence int64, _ int) (application.EventPage, error) {
