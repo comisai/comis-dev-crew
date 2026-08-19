@@ -44,6 +44,7 @@ type Queries struct {
 	workerProfiles           WorkerProfileCatalog
 	decisions                DecisionInventoryStore
 	taskDiffs                TaskDiffInspector
+	repairs                  RepairSurveyStore
 	decisionSurfacing        DecisionSurfacingPolicy
 	clock                    Clock
 }
@@ -64,6 +65,9 @@ type QueryConfig struct {
 	// Absent when the deployment exposes no Git observation; the read then
 	// reports unavailable rather than an empty change set.
 	TaskDiffs TaskDiffInspector
+	// Absent when the deployment exposes no reconciliation authority; the survey
+	// then reports unavailable rather than an empty set of tasks needing repair.
+	Repairs RepairSurveyStore
 	// Zero when the deployment configures no cadence; the reviewed default is
 	// used so the published return schedule matches the running supervisor.
 	DecisionSurfacing DecisionSurfacingPolicy
@@ -82,7 +86,7 @@ func NewQueries(config QueryConfig) (*Queries, error) {
 		repository: config.Repository, harnesses: config.Harnesses, host: config.Host,
 		reconciliationWorkspaces: config.ReconciliationWorkspaces,
 		workerProfiles:           config.WorkerProfiles, decisions: config.Decisions,
-		taskDiffs:         config.TaskDiffs,
+		taskDiffs: config.TaskDiffs, repairs: config.Repairs,
 		decisionSurfacing: config.DecisionSurfacing, clock: config.Clock,
 	}, nil
 }
