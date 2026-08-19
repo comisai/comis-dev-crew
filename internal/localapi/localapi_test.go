@@ -191,7 +191,15 @@ type apiQueries struct {
 	decisions   application.DecisionList
 	diff        application.TaskDiffView
 	repairs     application.RepairSurvey
+	events      application.EventPage
 	diagnose    func(context.Context) (application.DiagnosticReport, error)
+}
+
+func (queries *apiQueries) ReadEvents(_ context.Context, afterSequence int64, _ int) (application.EventPage, error) {
+	if afterSequence > queries.events.NextCursor {
+		return application.EventPage{SchemaVersion: 1, NextCursor: afterSequence, Events: []application.ServiceEvent{}}, nil
+	}
+	return queries.events, nil
 }
 
 func (queries *apiQueries) SurveyRepairs(_ context.Context, taskHandle string) (application.RepairSurvey, error) {
