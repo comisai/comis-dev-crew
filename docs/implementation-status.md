@@ -151,9 +151,13 @@ whole backlog. Open is decided by the same predicate cleanup uses — a decision
 report with no resolution carrying its key — so the two surfaces can never
 disagree about which questions are still live.
 
-The periodic driver that consumes this on a tick is not yet wired; the cadence,
-the ledger and the due-set are in place and proven, and nothing raises them
-automatically until that supervisor exists.
+A bounded supervisor consumes the due-set on its own tick, raising each decision
+through the same generic attention path it took the first time and recording the
+raising only once it succeeded — a decision recorded before it was actually
+raised would sit silent for a whole interval while the work it blocks waits. The
+tick decides only how often the ledger is consulted; the cadence belongs to each
+decision, so inspecting more often asks nobody anything more often. The loop is
+bounded by its context and joins on cancellation.
 
 ## Comis adapter
 
