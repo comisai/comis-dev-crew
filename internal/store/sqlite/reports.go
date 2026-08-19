@@ -61,6 +61,9 @@ func (store *Store) CommitReport(ctx context.Context, mutation application.Repor
 	if err := insertComisReport(ctx, transaction, task, accepted); err != nil {
 		return domain.ReportReceipt{}, err
 	}
+	if err := appendDecisionEvent(ctx, transaction, accepted); err != nil {
+		return domain.ReportReceipt{}, err
+	}
 	// A paused report is the answer to a pause request, so honouring it clears
 	// the request in the same transaction that records the report. Leaving it
 	// standing would ask an already-settled worker to settle again on its next

@@ -17,8 +17,21 @@ const sqliteConstraintCode = 19
 // CreateTask inserts one validated task record. The service mutation
 // coordinator is the only production caller allowed to invoke it.
 func (store *Store) CreateTask(ctx context.Context, task domain.Task) error {
-	if err := insertTask(ctx, store.db, task); err != nil {
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin create task: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	if err := insertTask(ctx, transaction, task); err != nil {
 		return fmt.Errorf("create task: %w", err)
+	}
+	// A task appearing is a transition an operator watching the fleet must see,
+	// and it is recorded here so the log and the row commit together.
+	if err := appendTaskStateEvent(ctx, transaction, task); err != nil {
+		return err
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit create task: %w", err)
 	}
 	return nil
 }

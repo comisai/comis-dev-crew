@@ -307,7 +307,10 @@ func updateTaskState(ctx context.Context, transaction *sql.Tx, task domain.Task)
 	if err != nil || rows != 1 {
 		return errors.New("update task state: exact task was not updated")
 	}
-	return nil
+	// Recorded here, inside the caller's transaction, because this is the sole
+	// writer of task state: an event appended anywhere else could describe a
+	// transition that rolled back, or be lost by a crash that kept the state.
+	return appendTaskStateEvent(ctx, transaction, task)
 }
 
 func mutationReplay(
