@@ -199,3 +199,50 @@ func TestCLI_RefusesMalformedDecisionCancellations(t *testing.T) {
 		})
 	}
 }
+
+// An answer travels as a bounded contract from a file or standard input, never
+// as a command-line string. The console must not assemble a worker-visible reply
+// out of free-form argv text, and an oversized or malformed answer is refused
+// before it can reach a task.
+func TestCLI_AnswersAnOpenDecisionFromABoundedContract(t *testing.T) {
+	client := &fakeClient{}
+	var output bytes.Buffer
+	config := testConfig(client)
+	config.Stdin = strings.NewReader(`{"schemaVersion":1,"response":"use the versioned schema"}`)
+
+	args := []string{"decision", "respond", "task-0001", "schema-choice", "--input", "-"}
+	if code := Run(context.Background(), args, &output, &output, config); code != 0 {
+		t.Fatalf("Run(decision respond) = %d: %s", code, output.String())
+	}
+	if len(client.calls) != 1 ||
+		client.calls[0] != "respond-decision:task-0001:schema-choice:use the versioned schema" {
+		t.Errorf("client calls = %v, want one answer", client.calls)
+	}
+}
+
+func TestCLI_RefusesMalformedDecisionAnswers(t *testing.T) {
+	for name, testCase := range map[string]struct {
+		args     []string
+		contract string
+	}{
+		"no key":        {[]string{"decision", "respond", "task-0001", "--input", "-"}, `{"schemaVersion":1,"response":"a"}`},
+		"bad handle":    {[]string{"decision", "respond", "not a handle", "schema-choice", "--input", "-"}, `{"schemaVersion":1,"response":"a"}`},
+		"no input":      {[]string{"decision", "respond", "task-0001", "schema-choice"}, ``},
+		"empty answer":  {[]string{"decision", "respond", "task-0001", "schema-choice", "--input", "-"}, `{"schemaVersion":1,"response":""}`},
+		"wrong version": {[]string{"decision", "respond", "task-0001", "schema-choice", "--input", "-"}, `{"schemaVersion":2,"response":"a"}`},
+		"unknown field": {[]string{"decision", "respond", "task-0001", "schema-choice", "--input", "-"}, `{"schemaVersion":1,"response":"a","approve":true}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := &fakeClient{}
+			var output bytes.Buffer
+			config := testConfig(client)
+			config.Stdin = strings.NewReader(testCase.contract)
+			if code := Run(context.Background(), testCase.args, &output, &output, config); code == 0 {
+				t.Fatalf("Run(%v) = 0, want a refusal: %s", testCase.args, output.String())
+			}
+			if len(client.calls) != 0 {
+				t.Fatalf("a malformed answer reached the service: %v", client.calls)
+			}
+		})
+	}
+}
