@@ -23,17 +23,20 @@ const (
 )
 
 type boundedBuffer struct {
-	buffer bytes.Buffer
-	limit  int
+	buffer     bytes.Buffer
+	limit      int
+	overflowed bool
 }
 
 func (destination *boundedBuffer) Write(contents []byte) (int, error) {
 	remaining := destination.limit - destination.buffer.Len()
 	if remaining <= 0 {
+		destination.overflowed = true
 		return 0, errGitOutputTooLarge
 	}
 	if len(contents) > remaining {
 		_, _ = destination.buffer.Write(contents[:remaining])
+		destination.overflowed = true
 		return remaining, errGitOutputTooLarge
 	}
 	return destination.buffer.Write(contents)
@@ -182,7 +185,11 @@ func executeGitWithEnvironment(
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, -1, ctxErr
 		}
-		if errors.Is(err, errGitOutputTooLarge) {
+		// An overflowing read stops this reader, which closes the child's pipe and
+		// usually kills it. The resulting exit status describes that consequence,
+		// not the command, so the bound is the authoritative answer and is checked
+		// before any exit status is believed.
+		if errors.Is(err, errGitOutputTooLarge) || stdout.overflowed {
 			return nil, -1, errGitOutputTooLarge
 		}
 		var exit *exec.ExitError
