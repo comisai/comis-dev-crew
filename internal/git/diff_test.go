@@ -2,11 +2,13 @@ package git_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	devgit "github.com/comisai/comis-dev-crew/internal/git"
 )
 
@@ -174,6 +176,14 @@ func TestRegistry_InspectCandidateDiffRefusesUnverifiedAuthority(t *testing.T) {
 			}
 		})
 	}
+	// A task whose worktree is gone has no work to describe. Reporting an empty
+	// change set would say the worker changed nothing.
+	removed := base
+	removed.TaskHandle = "task-absent"
+	removed.WorktreePath = filepath.Join(fixture.worktreeRoot, "task-absent")
+	if _, err := registry.InspectCandidateDiff(context.Background(), removed); err == nil {
+		t.Error("InspectCandidateDiff(missing worktree) error = nil")
+	}
 	if _, err := registry.InspectCandidateDiff(missingGitContext(), base); err == nil {
 		t.Error("InspectCandidateDiff(no context) error = nil")
 	}
@@ -181,5 +191,149 @@ func TestRegistry_InspectCandidateDiffRefusesUnverifiedAuthority(t *testing.T) {
 	cancel()
 	if _, err := registry.InspectCandidateDiff(canceled, base); err == nil {
 		t.Error("InspectCandidateDiff(canceled) error = nil")
+	}
+}
+
+// A change set larger than this read bounds reports a truncated listing instead
+// of an error or a partial listing presented as complete. An operator deciding
+// from a file list has to know when it is not the whole list.
+func TestRegistry_InspectCandidateDiffReportsATruncatedListingRatherThanFailing(t *testing.T) {
+	fixture := newRepositoryFixture(t, "product-api")
+	registry := newLifecycleRegistry(t, fixture)
+	request := lifecycleRequest(t, fixture, "prepare-truncated", "task-truncated")
+	prepared, err := registry.PrepareWorktree(context.Background(), request)
+	if err != nil {
+		t.Fatalf("PrepareWorktree() error = %v", err)
+	}
+	// Enough files that the numeric summary outgrows both the file-count bound
+	// and the byte bound the Git runner enforces.
+	for index := 0; index < 700; index++ {
+		name := fmt.Sprintf("file-%04d.txt", index)
+		if err := os.WriteFile(filepath.Join(prepared.CanonicalPath, name), []byte("one\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath, "add", ".")
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath,
+		"-c", "user.name=DevCrew Fixture", "-c", "user.email=fixture@example.invalid",
+		"commit", "-m", "many files")
+
+	diff, err := registry.InspectCandidateDiff(context.Background(), devgit.CandidateDiffRequest{
+		TaskHandle: request.TaskHandle, RepositoryID: request.RepositoryID,
+		WorktreePath: prepared.CanonicalPath, BaseRevision: request.BaseRevision,
+	})
+	if err != nil {
+		t.Fatalf("InspectCandidateDiff(large change set) error = %v", err)
+	}
+	if !diff.FileListTruncated {
+		t.Fatalf("a %d-file change set did not report truncation: %#v", 700, diff.CommittedTotals)
+	}
+	if len(diff.Committed) > 256 {
+		t.Fatalf("the listing exceeded its own bound: %d rows", len(diff.Committed))
+	}
+	if diff.HeadRevision == request.BaseRevision {
+		t.Fatal("the head was not read for a truncated change set")
+	}
+}
+
+// A change set past the file-count bound but inside the byte bound is trimmed to
+// the bound and says so, rather than being reported as a complete listing.
+func TestRegistry_InspectCandidateDiffTrimsToItsFileBound(t *testing.T) {
+	fixture := newRepositoryFixture(t, "product-api")
+	registry := newLifecycleRegistry(t, fixture)
+	request := lifecycleRequest(t, fixture, "prepare-trimmed", "task-trimmed")
+	prepared, err := registry.PrepareWorktree(context.Background(), request)
+	if err != nil {
+		t.Fatalf("PrepareWorktree() error = %v", err)
+	}
+	for index := 0; index < 260; index++ {
+		name := fmt.Sprintf("f%03d", index)
+		if err := os.WriteFile(filepath.Join(prepared.CanonicalPath, name), []byte("a\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath, "add", ".")
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath,
+		"-c", "user.name=DevCrew Fixture", "-c", "user.email=fixture@example.invalid",
+		"commit", "-m", "just past the bound")
+
+	diff, err := registry.InspectCandidateDiff(context.Background(), devgit.CandidateDiffRequest{
+		TaskHandle: request.TaskHandle, RepositoryID: request.RepositoryID,
+		WorktreePath: prepared.CanonicalPath, BaseRevision: request.BaseRevision,
+	})
+	if err != nil {
+		t.Fatalf("InspectCandidateDiff() error = %v", err)
+	}
+	if !diff.FileListTruncated || len(diff.Committed) != 256 {
+		t.Fatalf("trimmed listing = %d rows, truncated = %t", len(diff.Committed), diff.FileListTruncated)
+	}
+}
+
+// The application port is what the service actually calls, so the change record
+// has to survive the crossing intact: a rename that lost its previous path, or a
+// binary file ported as a zero-line change, would misdescribe the work at the
+// only layer an operator ever sees.
+func TestRegistry_InspectTaskDiffPortsEveryChangeRecordIntact(t *testing.T) {
+	fixture := newRepositoryFixture(t, "product-api")
+	registry := newLifecycleRegistry(t, fixture)
+	request := lifecycleRequest(t, fixture, "prepare-port", "task-port")
+	prepared, err := registry.PrepareWorktree(context.Background(), request)
+	if err != nil {
+		t.Fatalf("PrepareWorktree() error = %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(prepared.CanonicalPath, "asset.bin"), []byte{0x00, 0x01, 0x02, 0x00}, 0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath,
+		"mv", "fixture.txt", "renamed.txt")
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath, "add", ".")
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath,
+		"-c", "user.name=DevCrew Fixture", "-c", "user.email=fixture@example.invalid",
+		"commit", "-m", "ported change")
+	if err := os.WriteFile(filepath.Join(prepared.CanonicalPath, "renamed.txt"), []byte("edited\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var inspector application.TaskDiffInspector = registry
+	view, err := inspector.InspectTaskDiff(context.Background(), application.TaskDiffRequest{
+		TaskHandle: request.TaskHandle, RepositoryID: request.RepositoryID,
+		WorktreePath: prepared.CanonicalPath, BaseRevision: request.BaseRevision,
+	})
+	if err != nil {
+		t.Fatalf("InspectTaskDiff() error = %v", err)
+	}
+	if view.BaseRevision != request.BaseRevision || view.HeadRevision == request.BaseRevision {
+		t.Fatalf("ported revisions = %#v", view)
+	}
+	var binary, renamed bool
+	for _, change := range view.Committed {
+		if change.Path == "asset.bin" && change.Binary {
+			binary = true
+		}
+		if change.Path == "renamed.txt" && change.PreviousPath == "fixture.txt" {
+			renamed = true
+		}
+	}
+	if !binary || !renamed {
+		t.Fatalf("ported committed changes = %#v", view.Committed)
+	}
+	if view.CommittedTotals.BinaryFiles != 1 || view.CommittedTotals.Files != 2 {
+		t.Fatalf("ported committed totals = %#v", view.CommittedTotals)
+	}
+	if len(view.Uncommitted) != 1 || view.Uncommitted[0].Path != "renamed.txt" {
+		t.Fatalf("ported uncommitted changes = %#v", view.Uncommitted)
+	}
+	if view.UncommittedTotals.Files != 1 {
+		t.Fatalf("ported uncommitted totals = %#v", view.UncommittedTotals)
+	}
+
+	// A refusal has to cross the port as a refusal, never as an empty change set.
+	if _, err := inspector.InspectTaskDiff(context.Background(), application.TaskDiffRequest{
+		TaskHandle: "task-absent", RepositoryID: request.RepositoryID,
+		WorktreePath: filepath.Join(fixture.worktreeRoot, "task-absent"), BaseRevision: request.BaseRevision,
+	}); err == nil {
+		t.Error("InspectTaskDiff(missing worktree) error = nil")
 	}
 }

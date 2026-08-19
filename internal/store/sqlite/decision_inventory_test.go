@@ -116,3 +116,55 @@ func TestListTaskDecisions_RefusesACanceledCallerAndAnUnavailableDatabase(t *tes
 		t.Error("ListTaskDecisions(closed store) error = nil")
 	}
 }
+
+// A stored time that cannot be read is a failure, never a decision with no
+// history. Treating an unreadable row as "never asked" would restart the cadence
+// and re-ask a question the human has already seen.
+func TestListTaskDecisions_RefusesRowsWhoseStoredTimesCannotBeRead(t *testing.T) {
+	for name, corrupt := range map[string]string{
+		"report time":    `UPDATE reports SET accepted_at = 'not-a-time' WHERE kind = 'decision'`,
+		"delivery time":  `UPDATE comis_report_outbox SET delivered_at = 'not-a-time'`,
+		"surfacing time": `UPDATE task_decision_surfacings SET last_surfaced_at = 'not-a-time'`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			store, scout := attestationFixture(t, domain.ShapeScout)
+			at := scout.UpdatedAt.Add(time.Minute)
+			reportDecision(t, store, scout, "schema-choice", at)
+			askTheHuman(t, store, at.Add(time.Second))
+			if err := store.RecordDecisionSurfaced(context.Background(), application.DecisionSurfacedMutation{
+				TaskHandle: scout.Handle, ExternalKey: "schema-choice", At: at.Add(time.Hour),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.db.Exec(corrupt); err != nil {
+				t.Fatalf("corrupt %s: %v", name, err)
+			}
+			if _, err := store.ListTaskDecisions(context.Background(), ""); err == nil {
+				t.Fatalf("ListTaskDecisions(corrupt %s) error = nil, want a refusal", name)
+			}
+			if _, err := store.OpenDecisionsAwaitingHuman(context.Background()); err == nil && name != "report time" {
+				t.Fatalf("OpenDecisionsAwaitingHuman(corrupt %s) error = nil, want a refusal", name)
+			}
+		})
+	}
+}
+
+// A row whose columns cannot be decoded is a failure rather than a skipped
+// decision, so a schema drift can never quietly shorten the inventory.
+func TestListTaskDecisions_RefusesARowItCannotDecode(t *testing.T) {
+	store, scout := attestationFixture(t, domain.ShapeScout)
+	at := scout.UpdatedAt.Add(time.Minute)
+	reportDecision(t, store, scout, "schema-choice", at)
+	askTheHuman(t, store, at.Add(time.Second))
+	if err := store.RecordDecisionSurfaced(context.Background(), application.DecisionSurfacedMutation{
+		TaskHandle: scout.Handle, ExternalKey: "schema-choice", At: at.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE task_decision_surfacings SET surface_count = 'not-a-count'`); err != nil {
+		t.Fatalf("corrupt surfacing count: %v", err)
+	}
+	if _, err := store.ListTaskDecisions(context.Background(), ""); err == nil {
+		t.Fatal("ListTaskDecisions(undecodable row) error = nil, want a refusal")
+	}
+}
