@@ -28,6 +28,9 @@ const (
 	// CleanupOpenDecisionMessage is the content-free operator-visible blocker
 	// consumed by the protected campaign oracle.
 	CleanupOpenDecisionMessage = "cleanup is blocked by an unresolved task decision"
+	// CleanupUnattestedScoutMessage is the content-free operator-visible blocker
+	// for a scout whose decision inventory is missing or still unresolved.
+	CleanupUnattestedScoutMessage = "cleanup is blocked by a missing or unresolved scout decision inventory"
 	// CleanupActiveExecutionMessage is the content-free operator-visible blocker
 	// consumed by the protected campaign oracle.
 	CleanupActiveExecutionMessage = "cleanup is blocked by active task execution"
@@ -435,6 +438,9 @@ func cleanupCommitFailure(cause error) error {
 	case errors.Is(cause, ErrCleanupOpenDecision):
 		message = CleanupOpenDecisionMessage
 		hint = "resolve the exact open task decision, then retry cleanup"
+	case errors.Is(cause, ErrCleanupUnattestedScout):
+		message = CleanupUnattestedScoutMessage
+		hint = "record the scout's decision inventory with an attestation that names its open decisions or states there are none, then retry cleanup"
 	case errors.Is(cause, ErrCleanupActiveExecution):
 		message = CleanupActiveExecutionMessage
 		hint = "wait for the exact task execution and validation processes to settle, then retry cleanup"

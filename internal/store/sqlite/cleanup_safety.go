@@ -40,6 +40,25 @@ func proveCleanupDatabaseSafety(ctx context.Context, transaction *sql.Tx, task d
                 AND r.kind = 'resolution' AND r.external_key = d.external_key
 			)`, args: []any{task.Handle}, blocker: application.ErrCleanupOpenDecision},
 	}
+	// A scout is the only shape whose worktree holds an investigation nobody
+	// else has a copy of. The gate turns on the absence of a record as much as
+	// on its content: no row means nobody looked, which is not the same fact as
+	// somebody having looked and found nothing.
+	if task.Shape == domain.ShapeScout {
+		queries = append(queries, struct {
+			name    string
+			query   string
+			args    []any
+			blocker error
+		}{
+			name: "scout decision inventory",
+			query: `SELECT CASE WHEN EXISTS (
+                SELECT 1 FROM scout_decision_attestations
+                WHERE task_handle = ? AND finding = 'no_open_decisions'
+            ) THEN 0 ELSE 1 END`,
+			args: []any{task.Handle}, blocker: application.ErrCleanupUnattestedScout,
+		})
+	}
 	for _, check := range queries {
 		var count int
 		if err := transaction.QueryRowContext(ctx, check.query, check.args...).Scan(&count); err != nil {

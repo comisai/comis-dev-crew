@@ -33,6 +33,11 @@ var ErrCleanupOpenHold error = cleanupBlockerError("cleanup hold remains open")
 // the decision prompt or response across an operator transport.
 var ErrCleanupOpenDecision error = cleanupBlockerError("cleanup decision remains unresolved")
 
+// ErrCleanupUnattestedScout identifies a scout whose reviewed surface nobody
+// has inventoried, or whose inventory still names open decisions. Removing its
+// worktree would erase the only copy of a question nobody answered.
+var ErrCleanupUnattestedScout error = cleanupBlockerError("cleanup scout decision inventory is missing or unresolved")
+
 // ErrCleanupActiveExecution identifies positively active task execution or
 // validation authority that must settle before cleanup.
 var ErrCleanupActiveExecution error = cleanupBlockerError("cleanup execution remains active")

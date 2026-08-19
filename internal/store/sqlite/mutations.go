@@ -291,6 +291,7 @@ const (
 	commandVerifyTask              = "VerifyTask"
 	commandReplaceWorker           = "ReplaceWorker"
 	commandSteerTask               = "SteerTask"
+	commandAttestScoutDecisions    = "AttestScoutDecisions"
 )
 
 func updateTaskState(ctx context.Context, transaction *sql.Tx, task domain.Task) error {
