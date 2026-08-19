@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 // The ledger is keyed by the decision, not by the wake, because the cadence is
@@ -41,9 +42,10 @@ func (store *Store) OpenDecisionsAwaitingHuman(ctx context.Context) ([]applicati
 		return nil, err
 	}
 	rows, err := store.db.QueryContext(ctx, `
-        SELECT d.task_handle, d.external_key,
+        SELECT d.task_handle, t.managed_run_id, d.external_key, d.summary, d.details,
                COALESCE(s.surface_count, 0), COALESCE(s.last_surfaced_at, '')
         FROM reports d
+        JOIN tasks t ON t.handle = d.task_handle
         LEFT JOIN task_decision_surfacings s
             ON s.task_handle = d.task_handle AND s.external_key = d.external_key
         WHERE d.kind = 'decision' AND NOT EXISTS (
@@ -61,8 +63,18 @@ func (store *Store) OpenDecisionsAwaitingHuman(ctx context.Context) ([]applicati
 	for rows.Next() {
 		var decision application.OpenDecision
 		var lastSurfaced string
-		if err := rows.Scan(&decision.TaskHandle, &decision.ExternalKey, &decision.SurfaceCount, &lastSurfaced); err != nil {
+		if err := rows.Scan(
+			&decision.TaskHandle, &decision.ManagedRunID, &decision.ExternalKey,
+			&decision.Summary, &decision.Details, &decision.SurfaceCount, &lastSurfaced,
+		); err != nil {
 			return nil, fmt.Errorf("decode open decision: %w", err)
+		}
+		// A question on a run nobody holds cannot be put in front of anybody.
+		// Refusing here rather than emitting an unraisable row keeps the two
+		// facts — the decision is open, and there is somewhere to raise it —
+		// from being separated across layers.
+		if domain.ValidateAuthorityReference("managedRunId", decision.ManagedRunID) != nil {
+			return nil, errors.New("read open decisions: managed run identity is unavailable")
 		}
 		if lastSurfaced != "" {
 			observed, parseErr := parseTime(lastSurfaced)

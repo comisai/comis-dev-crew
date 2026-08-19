@@ -68,11 +68,20 @@ func (policy DecisionSurfacingPolicy) Due(decision OpenDecision, now time.Time) 
 	return !now.Before(decision.LastSurfacedAt.Add(policy.Interval(decision.SurfaceCount)))
 }
 
-// OpenDecision is one keyed decision still awaiting a human, together with what
-// is known about how often it has already been raised.
+// OpenDecision is one keyed decision still awaiting a human, together with the
+// question itself, the run it belongs to, and what is known about how often it
+// has already been raised.
+//
+// The question travels with the ledger entry because re-surfacing means asking
+// it again, and reading the two halves separately would let them disagree: a
+// decision selected as due could be raised against a run identity read a moment
+// later, after cleanup released it.
 type OpenDecision struct {
 	TaskHandle     string
+	ManagedRunID   string
 	ExternalKey    string
+	Summary        string
+	Details        string
 	SurfaceCount   int
 	LastSurfacedAt time.Time
 }
