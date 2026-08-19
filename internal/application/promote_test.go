@@ -16,6 +16,24 @@ type promotionStore struct {
 	link      ScoutPromotionLink
 	linkErr   error
 	linkCalls int
+	// Existing promotion cases describe a scout whose review was already
+	// inventoried and cleared; the gate itself is exercised separately.
+	inventoryAbsent  bool
+	inventoryFinding ScoutAttestationFinding
+}
+
+func (store *promotionStore) ReadScoutDecisionInventory(
+	_ context.Context,
+	taskHandle string,
+) (ScoutDecisionInventory, bool, error) {
+	if store.inventoryAbsent {
+		return ScoutDecisionInventory{}, false, nil
+	}
+	finding := store.inventoryFinding
+	if finding == "" {
+		finding = ScoutAttestationNoOpenDecisions
+	}
+	return ScoutDecisionInventory{TaskHandle: taskHandle, Finding: finding}, true, nil
 }
 
 func (store *promotionStore) ReadScoutPromotionSource(
@@ -248,5 +266,28 @@ func TestQueries_TaskDetailFailsRatherThanHideAnUnreadablePromotion(t *testing.T
 
 	if _, err := queries.ShowTask(context.Background(), task.Handle); err == nil {
 		t.Fatal("ShowTask() with an unreadable promotion error = nil, want a failure")
+	}
+}
+
+// Promotion is refused for an investigation nobody inventoried and for one
+// whose inventory still names open decisions, and the refusal reaches the
+// caller rather than being absorbed into a successful preparation.
+func TestPromoteScout_RefusesAnInvestigationThatWasNeverCleared(t *testing.T) {
+	for label, arrange := range map[string]func(*promotionStore){
+		"nobody looked":    func(store *promotionStore) { store.inventoryAbsent = true },
+		"questions remain": func(store *promotionStore) { store.inventoryFinding = ScoutAttestationOpenDecisions },
+	} {
+		promotions := &promotionStore{source: ScoutPromotionSource{
+			RepositoryID: "product-api", BaseRevision: strings.Repeat("a", 40),
+			EvidenceDigest: strings.Repeat("f", 64),
+		}}
+		arrange(promotions)
+		mutations := promotionMutations(t, &mutationStore{}, promotions)
+		if _, err := mutations.PromoteScout(context.Background(), validPromotion()); err == nil {
+			t.Errorf("PromoteScout(%s) error = nil", label)
+		}
+		if promotions.linkCalls != 0 {
+			t.Errorf("%s still linked a promotion: %d", label, promotions.linkCalls)
+		}
 	}
 }

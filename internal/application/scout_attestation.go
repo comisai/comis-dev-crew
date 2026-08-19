@@ -70,6 +70,23 @@ func (inventory ScoutDecisionInventory) ClearsReview() bool {
 	return inventory.Finding == ScoutAttestationNoOpenDecisions
 }
 
+// ErrScoutReviewUnattested identifies a scout whose reviewed surface nobody has
+// inventoried, or whose inventory still names open decisions.
+var ErrScoutReviewUnattested = errors.New("scout decision inventory is missing or unresolved")
+
+// ProveScoutReviewCleared refuses to treat an investigation as reviewed unless
+// a recorded inventory says so.
+//
+// Absence and an unresolved finding fail the same way on purpose: acting on an
+// investigation nobody inventoried carries its authority without its unanswered
+// parts, and so does acting on one whose questions are still open.
+func ProveScoutReviewCleared(inventory ScoutDecisionInventory, found bool) error {
+	if !found || !inventory.ClearsReview() {
+		return ErrScoutReviewUnattested
+	}
+	return nil
+}
+
 // ScoutAttestationStore persists and reads recorded inventories.
 type ScoutAttestationStore interface {
 	CommitScoutDecisionAttestation(context.Context, ScoutDecisionAttestationMutation) (MutationResult, error)

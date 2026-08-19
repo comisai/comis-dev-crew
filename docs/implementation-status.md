@@ -120,6 +120,11 @@ discriminator rather than an inference from an empty key list, so neither
 request that states no finding is refused. Absence of a record and a record
 finding nothing are kept distinct throughout — the first says nobody looked.
 
+Promotion is gated the same way. Minting a ship task from a scout is the
+concrete act of treating that investigation as a finished review, so an
+investigation nobody inventoried — or one whose inventory still names open
+decisions — cannot carry its authority forward without its unanswered parts.
+
 One row exists per scout and a later inventory replaces an earlier one, so a
 stale look never outvotes a fresher inspection of the same surface. Recording an
 attestation moves no task: inventorying open questions observes the work rather

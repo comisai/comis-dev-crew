@@ -183,8 +183,10 @@ It removes uncommitted work permanently and takes the operator's explicit
 human decisions. Only a model can inventory decisions from prose, so the service
 never derives this and never infers it from silence: the finding is a stated
 choice of `open_decisions` (with the keys that remain) or `no_open_decisions`,
-and a request that states neither is refused. Cleanup will not remove a scout's
-worktree until a `no_open_decisions` inventory exists, because the worktree
+and a request that states neither is refused. Neither cleanup nor
+`promote_scout` proceeds until a `no_open_decisions` inventory exists —
+promotion mints a ship task justified by the investigation, so it treats that
+investigation as reviewed. Cleanup will not remove a scout's worktree, because the worktree
 holds the only copy of the investigation and a buried question would be erased
 along with it. A later inventory replaces an earlier one, so a stale look never
 outvotes a fresher one. The operator equivalent is

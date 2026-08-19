@@ -176,3 +176,28 @@ func TestAttestScoutDecisions_SurfacesAStoreFailureAndACanceledCaller(t *testing
 		t.Fatalf("AttestScoutDecisions(canceled) error = %v", err)
 	}
 }
+
+// Promotion mints a ship task justified by the scout's investigation, so it is
+// the concrete act of treating that investigation as a finished review. Doing
+// it while questions remain — or before anyone has looked — carries the
+// investigation's authority without its unresolved parts.
+func TestPromotionGate_RefusesAnInvestigationNobodyCleared(t *testing.T) {
+	for label, inventory := range map[string]struct {
+		record ScoutDecisionInventory
+		found  bool
+	}{
+		"nobody looked": {ScoutDecisionInventory{}, false},
+		"questions remain": {ScoutDecisionInventory{
+			Finding: ScoutAttestationOpenDecisions, OpenDecisionKeys: []string{"schema-choice"},
+		}, true},
+	} {
+		if err := ProveScoutReviewCleared(inventory.record, inventory.found); !errors.Is(err, ErrScoutReviewUnattested) {
+			t.Errorf("ProveScoutReviewCleared(%s) error = %v, want ErrScoutReviewUnattested", label, err)
+		}
+	}
+	if err := ProveScoutReviewCleared(ScoutDecisionInventory{
+		Finding: ScoutAttestationNoOpenDecisions,
+	}, true); err != nil {
+		t.Errorf("ProveScoutReviewCleared(cleared) error = %v", err)
+	}
+}

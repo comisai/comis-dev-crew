@@ -36,6 +36,17 @@ func (mutations *Mutations) PromoteScout(
 	if err != nil {
 		return MutationResult{}, mutationCommitFailure(err)
 	}
+	// Promotion mints a ship task justified by this investigation, which is the
+	// concrete act of treating it as a finished review. An investigation nobody
+	// inventoried, or one whose questions are still open, would carry its
+	// authority forward without its unanswered parts.
+	inventory, attested, err := mutations.promotions.ReadScoutDecisionInventory(ctx, command.ScoutTaskHandle)
+	if err != nil {
+		return MutationResult{}, mutationCommitFailure(err)
+	}
+	if err := ProveScoutReviewCleared(inventory, attested); err != nil {
+		return MutationResult{}, mutationCommitFailure(err)
+	}
 	// The prepared task is minted through the ordinary preparation path, so the
 	// promotion re-evaluates workspace and credential needs exactly as any other
 	// ship task does rather than inheriting a scout's lighter posture.

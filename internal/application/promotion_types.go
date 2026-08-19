@@ -52,5 +52,9 @@ type PromoteScoutCommand struct {
 // ordinary preparation path.
 type ScoutPromotionStore interface {
 	ReadScoutPromotionSource(context.Context, string) (ScoutPromotionSource, error)
+	// ReadScoutDecisionInventory reports the recorded inventory and whether one
+	// exists. Promotion treats the investigation as a finished review, so it
+	// refuses until somebody has stated that nothing is still open.
+	ReadScoutDecisionInventory(context.Context, string) (ScoutDecisionInventory, bool, error)
 	CommitScoutPromotionLink(context.Context, ScoutPromotionLink) error
 }
