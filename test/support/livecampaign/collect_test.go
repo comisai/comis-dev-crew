@@ -542,3 +542,28 @@ func TestCollectUsesOnlyFixedExecutableAndArgumentCatalog(t *testing.T) {
 		t.Fatalf("secret residency calls = %d, want 1", residencyCalls)
 	}
 }
+
+// The closeout names the human checkpoint arc as unclaimed for an emulator campaign
+// instead of crediting a pass no human sender could have earned.
+func TestCollectRecordsHumanCheckpointArcUnclaimedForAnEmulatorCampaign(t *testing.T) {
+	manifest := validManifest()
+	manifest.CampaignKind = CampaignKindEmulator
+	manifest.Telegram.Checkpoints = nil
+	verdict, err := Collect(
+		context.Background(), manifest, filepath.Join(t.TempDir(), "evidence"),
+		&fixtureExecutor{manifest: manifest}, manifest.EndedAtMs,
+		validResourceObservation(manifest), validRecoveryEvidence(manifest),
+	)
+	if err != nil {
+		t.Fatalf("Collect(emulator campaign) error = %v", err)
+	}
+	status := ""
+	for _, check := range verdict.Checks {
+		if check.Name == "real_human_telegram_checkpoints" {
+			status = check.Status
+		}
+	}
+	if status != "not_claimed" {
+		t.Fatalf("human checkpoint arc status = %q, want not_claimed", status)
+	}
+}

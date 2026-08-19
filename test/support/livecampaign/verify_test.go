@@ -163,3 +163,15 @@ func TestGitHubEvidenceRequiresCurrentOpenUnmergedHeadAndChecks(t *testing.T) {
 		t.Fatal("expected merged pull-request refusal")
 	}
 }
+
+// An emulator campaign declares no human checkpoints, so the human arc must be refused
+// outright rather than resolving to eleven zero-value rows or an unrelated ordering error.
+func TestTelegramHumanArcIsNotClaimableForAnEmulatorCampaign(t *testing.T) {
+	manifest := validManifest()
+	manifest.CampaignKind = CampaignKindEmulator
+	manifest.Telegram.Checkpoints = nil
+	if _, err := VerifyMessages(manifest, completeMessages(validManifest())); err == nil ||
+		!strings.Contains(err.Error(), "emulator") {
+		t.Fatalf("expected emulator human-arc refusal, got %v", err)
+	}
+}
