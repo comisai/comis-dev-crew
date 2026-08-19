@@ -46,6 +46,7 @@ type Queries struct {
 	taskDiffs                TaskDiffInspector
 	repairs                  RepairSurveyStore
 	events                   ServiceEventStore
+	taskLogs                 TaskLogStore
 	decisionSurfacing        DecisionSurfacingPolicy
 	clock                    Clock
 }
@@ -72,6 +73,9 @@ type QueryConfig struct {
 	// Absent when the deployment exposes no event log; the stream then reports
 	// unavailable rather than a quiet page a follower would trust.
 	Events ServiceEventStore
+	// Absent when the deployment exposes no durable history; a log read then
+	// reports unavailable rather than an empty page.
+	TaskLogs TaskLogStore
 	// Zero when the deployment configures no cadence; the reviewed default is
 	// used so the published return schedule matches the running supervisor.
 	DecisionSurfacing DecisionSurfacingPolicy
@@ -91,6 +95,7 @@ func NewQueries(config QueryConfig) (*Queries, error) {
 		reconciliationWorkspaces: config.ReconciliationWorkspaces,
 		workerProfiles:           config.WorkerProfiles, decisions: config.Decisions,
 		taskDiffs: config.TaskDiffs, repairs: config.Repairs, events: config.Events,
+		taskLogs:          config.TaskLogs,
 		decisionSurfacing: config.DecisionSurfacing, clock: config.Clock,
 	}, nil
 }
