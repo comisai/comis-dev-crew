@@ -44,6 +44,8 @@ Commands:
   task steer TASK --instruction TEXT [--operation OPERATION] [--format json]
   task cleanup TASK [--operation OPERATION] [--format json]
   task discard TASK --yes [--operation OPERATION] [--format json]
+  decisions list [--task TASK] [--format table|json]
+  decision show TASK DECISION [--format text|json]
 
 Global options:
   --socket PATH  Owner-only service Unix socket
@@ -66,6 +68,8 @@ type ReadClient interface {
 	SteerTask(context.Context, string, localapi.SteerTaskInput) (localapi.TaskMutationResult, error)
 	AttestScoutDecisions(context.Context, string, localapi.AttestScoutDecisionsInput) (localapi.TaskMutationResult, error)
 	DiscardTask(context.Context, string, localapi.DiscardTaskInput) (localapi.TaskMutationResult, error)
+	ListDecisions(context.Context, string, localapi.ListDecisionsInput) (application.DecisionList, error)
+	ShowDecision(context.Context, string, localapi.ShowDecisionInput) (application.TaskDecision, error)
 	ShowTask(context.Context, string, string) (application.TaskDetail, error)
 	ExplainTask(context.Context, string, string) (application.TaskExplanation, error)
 	GetLaunchPlan(context.Context, string, string) (application.LaunchPlan, error)
@@ -111,6 +115,8 @@ const (
 	commandReplaceWorker
 	commandSteerTask
 	commandAttestScout
+	commandListDecisions
+	commandShowDecision
 )
 
 type parsedCommand struct {
@@ -118,6 +124,7 @@ type parsedCommand struct {
 	socketPath      string
 	format          string
 	reference       string
+	decisionKey     string
 	inputPath       string
 	operationID     string
 	prepareInput    *localapi.PrepareTaskInput
@@ -236,6 +243,10 @@ func parseCommand(args []string, defaultSocketPath string) (parsedCommand, error
 			return parsedCommand{}, err
 		}
 		command.kind, command.format = commandWorkerProfiles, format
+	case "decisions":
+		return parseDecisionsCommand(command, args[1:])
+	case "decision":
+		return parseDecisionCommand(command, args[1:])
 	case "task":
 		return parseTaskCommand(command, args[1:])
 	default:

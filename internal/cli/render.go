@@ -27,6 +27,10 @@ func renderResult(destination io.Writer, command parsedCommand, result any) erro
 		return renderTaskList(destination, result.(application.TaskList))
 	case commandWorkerProfiles:
 		return renderWorkerProfiles(destination, result.(application.WorkerProfileList))
+	case commandListDecisions:
+		return renderDecisionList(destination, result.(application.DecisionList))
+	case commandShowDecision:
+		return renderDecisionDetail(destination, result.(application.TaskDecision))
 	case commandShowTask:
 		return renderTaskYAML(destination, result.(application.TaskDetail))
 	case commandExplainTask:

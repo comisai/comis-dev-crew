@@ -341,7 +341,31 @@ devcrew [--socket PATH] task replace TASK --worker PROFILE [--operation OPERATIO
 devcrew [--socket PATH] task steer TASK --instruction TEXT [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task cleanup TASK [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task discard TASK --yes [--operation OPERATION] [--format json]
+devcrew [--socket PATH] decisions list [--task TASK] [--format table|json]
+devcrew [--socket PATH] decision show TASK DECISION [--format text|json]
 ```
+
+`decisions list` and `decision show` answer "what is waiting on me". A decision is
+named by its task and its key, because that pair is what identifies it durably;
+there is no separate decision identity to quote. The task scope is applied by the
+service, so naming one task never puts another task's private questions on the
+socket.
+
+Each row states which side is being waited on. `awaiting_host` means the question
+exists but the host has not acknowledged the report carrying it, so nobody has
+been asked yet; `awaiting_human` means it reached the host and no resolution has
+come back. Those are different failures with different repairs, and collapsing
+them would make a jammed delivery lane look like an unresponsive liaison. The
+listing also states when the question will next be raised, derived from the same
+cadence the service runs so the console cannot publish a schedule the supervisor
+does not keep. An absent airing renders as `unknown` rather than as an epoch,
+which would read as long overdue.
+
+Both are read-only and operator-only, and the refusal lives in the canonical
+handler rather than only in the set of tools the model facade exposes: an open
+question is private task detail, and a facade that later grew a tool must not
+thereby gain the authority to read it. Answering a question stays on the generic
+Comis attention path; neither command can submit or close an answer.
 
 `task pause` asks one task's worker to reach a safe boundary and stop. It does
 not itself pause the task: the worker is still holding the worktree when the

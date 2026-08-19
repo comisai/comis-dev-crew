@@ -179,6 +179,16 @@ recorded, so an uncertain send is retried under the exact same identity — the 
 recognizes the repeat instead of asking twice — while the next airing is a new
 report. Only an acknowledgement naming the same run and report counts as raised.
 
+The open decisions are readable from the operator console as an inventory and as
+one keyed decision, each stating which side is being waited on and when the
+question will next be raised. The return schedule is derived once, next to the
+cadence the supervisor runs, so no adapter can publish a schedule the service
+does not keep. Both reads are operator-only in the canonical handler rather than
+only in the model facade's tool list, because an open question is private task
+detail and a facade that later grew a tool must not thereby gain the authority to
+read it. Neither read can submit or close an answer: that stays on the generic
+Comis attention path.
+
 ## Comis adapter
 
 The adapter contains the supervised persistent bidirectional connection used by
