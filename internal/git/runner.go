@@ -63,7 +63,9 @@ func runGitBytes(ctx context.Context, executable string, arguments ...string) ([
 		return nil, err
 	}
 	if exitCode != 0 {
-		return nil, errors.New("git machine command failed")
+		// The status is a number, not child output, so it names the failure class
+		// without carrying paths or worker text into an error string.
+		return nil, fmt.Errorf("git machine command failed with exit status %d", exitCode)
 	}
 	return output, nil
 }

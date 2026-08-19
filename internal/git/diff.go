@@ -100,7 +100,7 @@ func (registry *Registry) diffFiles(
 		if errors.Is(err, errGitOutputTooLarge) {
 			return nil, true, nil
 		}
-		return nil, false, errors.New("inspect task diff: change summary is unavailable")
+		return nil, false, fmt.Errorf("inspect task diff: change summary is unavailable: %w", err)
 	}
 	changes, err := parseNumstat(output)
 	if err != nil {
