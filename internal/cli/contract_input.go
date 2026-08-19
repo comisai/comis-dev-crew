@@ -41,6 +41,17 @@ func applyContractInput(command *parsedCommand, config Config) (string, int, boo
 		}
 		command.decisionAnswer = input.Response
 	}
+	if command.kind == commandSteerTask {
+		data, readErr := readBoundedContract(command.inputPath, config)
+		if readErr != nil {
+			return "devcrew: invalid steer contract\nHint: provide one strict bounded JSON input\n", ExitUsage, true
+		}
+		input, decodeErr := localapi.DecodeSteerTaskInput(data)
+		if decodeErr != nil {
+			return "devcrew: invalid steer contract\nHint: provide one strict bounded JSON input\n", ExitUsage, true
+		}
+		command.instruction = input.Instruction
+	}
 	return "", 0, false
 }
 

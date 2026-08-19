@@ -422,33 +422,6 @@ func DecodePrepareTaskInput(data []byte) (PrepareTaskInput, error) {
 	return input, nil
 }
 
-// RespondDecisionContract is the operator-supplied half of one answer. It
-// carries only the reply: the task and the question travel on the command line,
-// so a contract cannot redirect an answer at a different question than the one
-// the operator named.
-type RespondDecisionContract struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	Response      string `json:"response"`
-}
-
-// DecodeRespondDecisionInput reads one strict bounded answer contract.
-func DecodeRespondDecisionInput(data []byte) (RespondDecisionContract, error) {
-	var input RespondDecisionContract
-	if len(data) == 0 || len(data) > MaxRequestBytes {
-		return RespondDecisionContract{}, errors.New("decision answer input exceeds its bound")
-	}
-	if err := decodeObject(data, &input); err != nil {
-		return RespondDecisionContract{}, err
-	}
-	if input.SchemaVersion != 1 {
-		return RespondDecisionContract{}, errors.New("decision answer schemaVersion must equal 1")
-	}
-	if err := domain.ValidateDecisionResponse(input.Response); err != nil {
-		return RespondDecisionContract{}, err
-	}
-	return input, nil
-}
-
 // DecodePromoteScoutInput reads one strict bounded promotion contract. The
 // scout handle travels on the command line and the contract carries only what
 // the ship revision must achieve, so a contract naming a different scout than

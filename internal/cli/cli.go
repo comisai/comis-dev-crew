@@ -44,7 +44,7 @@ Commands:
   task verify TASK [--operation OPERATION] [--format json]
   task promote SCOUT --input FILE|- [--operation OPERATION] [--format json]
   task replace TASK --worker PROFILE [--operation OPERATION] [--format json]
-  task steer TASK --instruction TEXT [--operation OPERATION] [--format json]
+  task steer TASK --input FILE|- [--operation OPERATION] [--format json]
   task cleanup TASK [--operation OPERATION] [--format json]
   task discard TASK --yes [--operation OPERATION] [--format json]
   events tail [--after SEQUENCE] [--task TASK] [--format text|jsonl]
