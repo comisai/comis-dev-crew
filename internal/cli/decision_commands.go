@@ -40,6 +40,9 @@ func parseDecisionsCommand(command parsedCommand, args []string) (parsedCommand,
 // A decision is named by its task and its key because that is what identifies it
 // durably; there is no separate decision identity to quote.
 func parseDecisionCommand(command parsedCommand, args []string) (parsedCommand, error) {
+	if len(args) >= 3 && args[0] == "respond" {
+		return parseDecisionRespondCommand(command, args[1:])
+	}
 	if len(args) >= 3 && args[0] == "cancel" {
 		return parseDecisionCancelCommand(command, args[1:])
 	}
@@ -144,5 +147,57 @@ func parseDecisionCancelCommand(command parsedCommand, args []string) (parsedCom
 		return parsedCommand{}, err
 	}
 	command.kind, command.format = commandCancelDecision, format
+	return command, nil
+}
+
+// parseDecisionRespondCommand parses one answer to an open question.
+//
+// The task and the question are named on the command line while the reply
+// arrives as a bounded contract, so an operator can see at a glance which
+// question they are answering and the reply itself is never assembled out of
+// argv text a worker will read.
+func parseDecisionRespondCommand(command parsedCommand, args []string) (parsedCommand, error) {
+	if len(args) < 2 {
+		return parsedCommand{}, errors.New("decision respond requires a task and a decision key")
+	}
+	if err := domain.ValidateTaskHandle(args[0]); err != nil {
+		return parsedCommand{}, err
+	}
+	if err := domain.ValidateDecisionKey(args[1]); err != nil {
+		return parsedCommand{}, err
+	}
+	command.reference, command.decisionKey = args[0], args[1]
+	rest := args[2:]
+	seen := make(map[string]bool)
+	for len(rest) > 0 {
+		if len(rest) < 2 || seen[rest[0]] {
+			return parsedCommand{}, errors.New("invalid decision respond arguments")
+		}
+		name, value := rest[0], rest[1]
+		seen[name] = true
+		switch name {
+		case "--input":
+			if value == "" {
+				return parsedCommand{}, errors.New("invalid decision respond input")
+			}
+			command.inputPath = value
+		case "--operation":
+			if domain.ValidateOperationID(value) != nil {
+				return parsedCommand{}, errors.New("invalid decision respond operation")
+			}
+			command.operationID = value
+		case "--format":
+			if value != "json" {
+				return parsedCommand{}, errors.New("decision respond format must be JSON")
+			}
+		default:
+			return parsedCommand{}, errors.New("unknown decision respond option")
+		}
+		rest = rest[2:]
+	}
+	if command.inputPath == "" {
+		return parsedCommand{}, errors.New("decision respond requires an answer contract")
+	}
+	command.kind, command.format = commandRespondDecision, "json"
 	return command, nil
 }

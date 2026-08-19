@@ -35,6 +35,16 @@ type fakeClient struct {
 	operationID  string
 }
 
+func (client *fakeClient) RespondDecision(
+	_ context.Context,
+	_ string,
+	input localapi.RespondDecisionInput,
+) (localapi.TaskMutationResult, error) {
+	client.calls = append(client.calls,
+		"respond-decision:"+input.TaskHandle+":"+input.ExternalKey+":"+input.Response)
+	return localapi.TaskMutationResult{SchemaVersion: 1, TaskHandle: input.TaskHandle, StateVersion: 1}, nil
+}
+
 func (client *fakeClient) CancelDecision(
 	_ context.Context,
 	operationID string,

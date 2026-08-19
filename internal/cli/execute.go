@@ -36,6 +36,10 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 		return client.CancelDecision(ctx, operationID, localapi.CancelDecisionInput{
 			TaskHandle: command.reference, ExternalKey: command.decisionKey,
 		})
+	case commandRespondDecision:
+		return client.RespondDecision(ctx, operationID, localapi.RespondDecisionInput{
+			TaskHandle: command.reference, ExternalKey: command.decisionKey, Response: command.decisionAnswer,
+		})
 	case commandShowDecision:
 		return client.ShowDecision(ctx, operationID, localapi.ShowDecisionInput{
 			TaskHandle: command.reference, ExternalKey: command.decisionKey,
