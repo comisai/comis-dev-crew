@@ -571,6 +571,22 @@ inherited so a promotion cannot aim the ship task at code the investigation
 never covered, and a contract naming its own scout could disagree with what the
 operator typed. All four are refused by strict decoding rather than ignored.
 
+There is deliberately no `task deliver`. Delivery is a service pipeline that runs
+on a verified candidate — it proves repository, worktree, branch and head
+identity, runs the reviewed validation profile, pushes with a scoped credential,
+resolves the pull request idempotently, re-reads forge truth, waits for the
+required checks, builds the evidence bundle and records the delivery receipt
+before the task is `delivered`. An operator verb that started it would be a
+second trigger for that pipeline, able to launch it against a candidate the
+supervisor has not verified. `task verify` opens validation; delivery follows
+from its result.
+
+Handback likewise exposes one action, `validate-developer-work`. The other ways
+to resume a paused task are their own commands — `task resume` continues with the
+same worker, `task replace` swaps in a new one, `task cancel` stops the work, and
+a task simply left paused stays paused. Collapsing them into one flag would give
+two spellings for each of those transitions, and two spellings drift.
+
 `task verify` asks the service to validate one task now instead of waiting for
 the worker to declare a candidate. It opens validation and nothing more: the
 reviewed profile, the candidate inspection, the unresolved-decision check and
