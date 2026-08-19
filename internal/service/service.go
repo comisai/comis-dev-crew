@@ -59,6 +59,7 @@ type Config struct {
 	RegistrationNonces       application.RegistrationNonceSource
 	PreparationTTL           time.Duration
 	Clock                    application.Clock
+	DecisionSurfacing        application.DecisionSurfacingPolicy
 	ComisControl             ComisControl
 	RepositoryComposition    *RepositoryComposition
 	ComisComposition         *ComisComposition
@@ -410,7 +411,8 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	liveness, livenessErr := comiswire.NewLivenessReporter(comiswire.LivenessReporterConfig{
 		Tasks: store, Sender: control, Clock: clock, Interval: comisLivenessInterval,
 	})
-	if err := errors.Join(forwarderErr, evidenceErr, livenessErr); err != nil {
+	surfacing, surfacingErr := composeDecisionSurfacing(store, control, config.DecisionSurfacing, clock)
+	if err := errors.Join(forwarderErr, evidenceErr, livenessErr, surfacingErr); err != nil {
 		return fmt.Errorf("run service Comis control components: %w", err)
 	}
 	components := []func(context.Context) error{
@@ -418,6 +420,7 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		evidenceForwarder.Run,
 		forwarder.Run,
 		liveness.Run,
+		surfacing,
 	}
 	if attachmentSupervisor != nil {
 		components = append(components, attachmentSupervisor.Run)
