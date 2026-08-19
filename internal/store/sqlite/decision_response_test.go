@@ -95,3 +95,38 @@ func TestDecisionResponse_RefusesAKeyThatIsNotAnOpenQuestion(t *testing.T) {
 		t.Fatalf("CommitDecisionResponse(withdrawn key) error = %v, want a precondition refusal", err)
 	}
 }
+
+// The worker asks for its answer by managed run, because that is the identity it
+// holds; it never learns the task handle. Serving the answer from durable state
+// is what lets the console answer a question while the channel that raised it is
+// unavailable — the case the console exists for.
+func TestDecisionResponse_IsReadableByTheManagedRunThatAsked(t *testing.T) {
+	store, scout := attestationFixture(t, domain.ShapeScout)
+	at := scout.UpdatedAt.Add(time.Minute)
+	reportDecision(t, store, scout, "schema-choice", at)
+	askTheHuman(t, store, at.Add(time.Second))
+	attestScout(t, store, scout, "operation-attest-run", application.ScoutAttestationOpenDecisions, []string{"schema-choice"})
+
+	if _, found, err := store.ReadDecisionResponseForManagedRun(
+		context.Background(), scout.ManagedRunID, "schema-choice",
+	); err != nil || found {
+		t.Fatalf("an unanswered question reported an answer: found = %v, err = %v", found, err)
+	}
+
+	respondToDecision(t, store, scout, "schema-choice", "use the versioned schema", "operation-respond-run-0001")
+
+	answer, found, err := store.ReadDecisionResponseForManagedRun(
+		context.Background(), scout.ManagedRunID, "schema-choice")
+	if err != nil || !found {
+		t.Fatalf("ReadDecisionResponseForManagedRun() = %#v, %v, %v", answer, found, err)
+	}
+	if answer.Response != "use the versioned schema" {
+		t.Errorf("answer served to the managed run = %#v", answer)
+	}
+
+	if _, found, err := store.ReadDecisionResponseForManagedRun(
+		context.Background(), "managed-run-someone-else", "schema-choice",
+	); err != nil || found {
+		t.Fatalf("another run read this answer: found = %v, err = %v", found, err)
+	}
+}
