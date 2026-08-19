@@ -26,10 +26,10 @@ func (stub *stubDecisionWithdrawal) CancelDecision(
 	return stub.result, stub.err
 }
 
-func newCancelClient(t *testing.T, caller CallerClass, withdrawal DecisionWithdrawal) *Client {
+func newCancelClient(t *testing.T, caller CallerClass, authority DecisionAuthority) *Client {
 	t.Helper()
 	handler, err := NewHandler(HandlerConfig{
-		Queries: &apiQueries{}, Decisions: withdrawal, Clock: time.Now,
+		Queries: &apiQueries{}, Decisions: authority, Clock: time.Now,
 	})
 	if err != nil {
 		t.Fatalf("NewHandler() error = %v", err)

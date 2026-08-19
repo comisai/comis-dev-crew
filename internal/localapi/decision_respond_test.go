@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 func (stub *stubDecisionWithdrawal) RespondDecision(
@@ -13,6 +14,16 @@ func (stub *stubDecisionWithdrawal) RespondDecision(
 ) (application.MutationResult, error) {
 	stub.calls = append(stub.calls, command.OperationID+":"+command.TaskHandle+":"+command.ExternalKey+":"+command.Response)
 	return stub.result, stub.err
+}
+
+func respondResultFixture(operationID string) application.MutationResult {
+	return application.MutationResult{
+		Task: domain.Task{Handle: "task-0001", State: domain.TaskWorking, StateVersion: 6},
+		Operation: domain.OperationRecord{
+			ID: operationID, Command: string(MethodRespondDecision),
+			Status: domain.OperationCompleted, ResultRef: "task-0001", StateVersion: 6,
+		},
+	}
 }
 
 // Answering a question is the operator console's authority. The model facade
@@ -28,7 +39,7 @@ func TestRespondDecisionMethod_IsAnOperatorOnlyMutation(t *testing.T) {
 }
 
 func TestHandler_RoutesAnOperatorAnswerToTheDecisionAuthority(t *testing.T) {
-	authority := &stubDecisionWithdrawal{result: cancelResultFixture()}
+	authority := &stubDecisionWithdrawal{result: respondResultFixture("respond-decision-0001")}
 	client := newCancelClient(t, CallerOperatorCLI, authority)
 	if _, err := client.RespondDecision(context.Background(), "respond-decision-0001", RespondDecisionInput{
 		TaskHandle: "task-0001", ExternalKey: "schema-choice", Response: "use the versioned schema",
@@ -42,7 +53,7 @@ func TestHandler_RoutesAnOperatorAnswerToTheDecisionAuthority(t *testing.T) {
 }
 
 func TestHandler_RefusesAnAnswerFromTheModelFacade(t *testing.T) {
-	client := newCancelClient(t, CallerMCPFacade, &stubDecisionWithdrawal{result: cancelResultFixture()})
+	client := newCancelClient(t, CallerMCPFacade, &stubDecisionWithdrawal{result: respondResultFixture("respond-decision-0002")})
 	if _, err := client.RespondDecision(context.Background(), "respond-decision-0002", RespondDecisionInput{
 		TaskHandle: "task-0001", ExternalKey: "schema-choice", Response: "use the versioned schema",
 	}); err == nil {
