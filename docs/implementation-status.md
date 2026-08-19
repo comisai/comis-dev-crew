@@ -138,11 +138,21 @@ back until it is resolved or cancelled. Bounded describes the rate, not the end:
 a question asked once and then dropped stops existing as far as the system is
 concerned while the work it blocks waits indefinitely.
 
+The first airing is the delivery of the worker's own decision report, so a report
+still waiting in the durable outbox is not yet owed a repeat and the delivered
+ones start their cadence from the moment the host acknowledged them. Counting only
+the repeats would ask the liaison twice for a brand-new question, once through the
+outbox and once immediately through the cadence.
+
 The interval after each raising doubles from a configured initial wait up to a
 configured maximum, so an unanswered question stops competing with fresh work
 without ever becoming effectively silent. The default cadence is thirty minutes
-growing to four hours. Filtering happens against the decision rather than in the
-caller, so running the loop more often does not repeat anything more often.
+growing to four hours; `--decision-resurface-initial` and
+`--decision-resurface-maximum` configure it, and a cadence that could never
+re-surface sensibly is refused rather than rounded into the default so a
+deployment never runs at a rate it did not ask for. Filtering happens against the
+decision rather than in the caller, so running the loop more often does not repeat
+anything more often.
 
 Each raising is recorded durably, keyed by the decision and keeping its first
 sighting, so a restart replays at worst one repeat. An in-memory count would
@@ -156,8 +166,18 @@ through the same generic attention path it took the first time and recording the
 raising only once it succeeded — a decision recorded before it was actually
 raised would sit silent for a whole interval while the work it blocks waits. The
 tick decides only how often the ledger is consulted; the cadence belongs to each
-decision, so inspecting more often asks nobody anything more often. The loop is
-bounded by its context and joins on cancellation.
+decision, so inspecting more often asks nobody anything more often. The tick is
+the configured initial wait, capped at one minute so a long cadence still runs a
+live loop. The supervisor is composed alongside the report forwarder, the evidence
+forwarder and the liveness reporter whenever an authenticated host connection
+exists; it is bounded by its context and joins on cancellation with them.
+
+The raising itself is an ordinary attention report on the authenticated control
+lane, carrying the original question and the run it belongs to. Its operation and
+report identities are derived from the decision plus the number of airings already
+recorded, so an uncertain send is retried under the exact same identity — the host
+recognizes the repeat instead of asking twice — while the next airing is a new
+report. Only an acknowledgement naming the same run and report counts as raised.
 
 ## Comis adapter
 

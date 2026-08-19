@@ -18,9 +18,8 @@ import (
 // an attention report: the durable outbox forwarding the worker's own decision,
 // and the cadence raising it again.
 type surfacingControl struct {
-	mu          sync.Mutex
-	resurfaced  chan comiswire.ReportRequestParams
-	forwardOnce sync.Once
+	mu         sync.Mutex
+	resurfaced chan comiswire.ReportRequestParams
 }
 
 func (control *surfacingControl) Connected() bool { return true }

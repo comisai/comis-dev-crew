@@ -54,6 +54,8 @@ devcrew-service \
   --comis-credential-file /absolute/private/comis.credential \
   --comis-handshake-operation handshake-devcrew-0001 \
   --preparation-ttl 10m \
+  --decision-resurface-initial 30m \
+  --decision-resurface-maximum 4h \
   --codex-profile codex-reviewed \
   --codex-executable /absolute/path/to/codex \
   --codex-version "codex-cli 0.147.0" \
@@ -80,6 +82,14 @@ cryptographically random task and registration identities, advertises that
 verified worktree in the managed-run preparation, and binds the same mutation
 authority to the dedicated MCP endpoint. It never accepts the protected bearer on
 its command line.
+
+`--decision-resurface-initial` and `--decision-resurface-maximum` set how often an
+unanswered decision is put back in front of the liaison. The wait doubles from the
+initial value up to the maximum and stops growing there, so a question nobody
+answered keeps coming back without ever competing with fresh work indefinitely.
+Both default to the reviewed cadence of thirty minutes growing to four hours. A
+non-positive interval, or a maximum shorter than the initial wait, is refused
+before the service opens its endpoints.
 
 The Codex profile is required by the installed E0 composition. The Claude Code
 profile is optional but all of its flags are an atomic group. Its executable must

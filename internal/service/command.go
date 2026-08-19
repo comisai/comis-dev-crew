@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/workers"
 )
 
@@ -43,6 +44,10 @@ Options:
   --comis-credential-file PATH    Owner-private Comis bearer file
   --comis-handshake-operation ID  Stable handshake operation identity
   --preparation-ttl DURATION      Activation preparation lifetime (default 10m)
+  --decision-resurface-initial DURATION  First wait before an unanswered decision
+                                  is raised again (default 30m)
+  --decision-resurface-maximum DURATION  Cap the growing wait between repeats so
+                                  an unanswered decision never falls silent (default 4h)
   --codex-profile ID              Exact reviewed worker profile identity
   --codex-executable PATH         Canonical Codex executable path
   --codex-version VERSION         Exact reviewed codex-cli version output
@@ -117,6 +122,8 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	var candidateConfigPath string
 	var fixtureDecision string
 	preparationTTL := 10 * time.Minute
+	resurfaceInitial := application.DefaultDecisionSurfacingPolicy.Initial
+	resurfaceMaximum := application.DefaultDecisionSurfacingPolicy.Maximum
 	var fixtureWorker bool
 	var fixtureArtifact string
 	var help bool
@@ -136,6 +143,8 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	flags.StringVar(&comisCredentialFile, "comis-credential-file", "", "owner-private Comis bearer file")
 	flags.StringVar(&comisHandshakeOperationID, "comis-handshake-operation", "", "stable handshake operation identity")
 	flags.DurationVar(&preparationTTL, "preparation-ttl", preparationTTL, "activation preparation lifetime")
+	flags.DurationVar(&resurfaceInitial, "decision-resurface-initial", resurfaceInitial, "first wait before an unanswered decision is raised again")
+	flags.DurationVar(&resurfaceMaximum, "decision-resurface-maximum", resurfaceMaximum, "cap on the growing wait between repeats")
 	flags.StringVar(&codexProfileID, "codex-profile", "", "exact reviewed worker profile identity")
 	flags.StringVar(&codexExecutable, "codex-executable", "", "canonical Codex executable path")
 	flags.StringVar(&codexVersion, "codex-version", "", "exact reviewed codex-cli version output")
@@ -181,6 +190,13 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	}
 	if databasePath == "" || socketPath == "" {
 		return writeServiceDiagnostic(stderr, "devcrew-service: service paths are not configured\n", 2)
+	}
+	// Refused here for the operator's benefit; the service validates the same
+	// cadence again because that check is the authoritative one.
+	surfacing := application.DecisionSurfacingPolicy{Initial: resurfaceInitial, Maximum: resurfaceMaximum}
+	if err := surfacing.Validate(); err != nil {
+		return writeServiceDiagnostic(stderr, "devcrew-service: decision re-surfacing cadence is invalid\n"+
+			"Hint: set a positive initial wait and a maximum that is not shorter than it\n", 2)
 	}
 	installedValues := []string{
 		mcpSocketPath, runtimeRoot, serviceInstanceID, gitExecutable, approvedRoot, repositoryID, repositoryPrimary,
@@ -230,7 +246,7 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	if runService == nil {
 		runService = Run
 	}
-	serviceConfig := Config{DatabasePath: databasePath, SocketPath: socketPath}
+	serviceConfig := Config{DatabasePath: databasePath, SocketPath: socketPath, DecisionSurfacing: surfacing}
 	if installed {
 		serviceConfig.MCPSocketPath = mcpSocketPath
 		serviceConfig.RuntimeRoot = runtimeRoot
