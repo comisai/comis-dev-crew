@@ -109,3 +109,46 @@ var _ application.WorkspacePreparer = (*Registry)(nil)
 var _ application.PrimarySynchronizer = (*Registry)(nil)
 var _ application.WorkspaceInspector = (*Registry)(nil)
 var _ application.DeliveredWorkspaceRemover = (*Registry)(nil)
+
+// InspectTaskDiff implements the application diff observation port using the
+// same exact worktree identity checks as candidate validation.
+func (registry *Registry) InspectTaskDiff(
+	ctx context.Context,
+	request application.TaskDiffRequest,
+) (application.TaskDiffView, error) {
+	diff, err := registry.InspectCandidateDiff(ctx, CandidateDiffRequest{
+		TaskHandle: request.TaskHandle, RepositoryID: request.RepositoryID,
+		WorktreePath: request.WorktreePath, BaseRevision: request.BaseRevision,
+	})
+	if err != nil {
+		return application.TaskDiffView{}, err
+	}
+	return application.TaskDiffView{
+		BaseRevision: diff.BaseRevision, HeadRevision: diff.HeadRevision,
+		Committed: portFileChanges(diff.Committed), Uncommitted: portFileChanges(diff.Uncommitted),
+		CommittedTotals:   portDiffTotals(diff.CommittedTotals),
+		UncommittedTotals: portDiffTotals(diff.UncommittedTotals),
+		FileListTruncated: diff.FileListTruncated,
+	}, nil
+}
+
+func portFileChanges(changes []CandidateFileChange) []application.TaskFileChange {
+	if len(changes) == 0 {
+		return nil
+	}
+	ported := make([]application.TaskFileChange, 0, len(changes))
+	for _, change := range changes {
+		ported = append(ported, application.TaskFileChange{
+			Path: change.Path, PreviousPath: change.PreviousPath,
+			Added: change.Added, Deleted: change.Deleted, Binary: change.Binary,
+		})
+	}
+	return ported
+}
+
+func portDiffTotals(totals CandidateDiffTotals) application.TaskDiffTotals {
+	return application.TaskDiffTotals{
+		Files: totals.Files, Added: totals.Added,
+		Deleted: totals.Deleted, BinaryFiles: totals.BinaryFiles,
+	}
+}

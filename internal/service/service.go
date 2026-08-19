@@ -71,6 +71,7 @@ type Config struct {
 	Ready                    func()
 	candidateGit             candidateGitInspector
 	workspaceInspector       application.WorkspaceInspector
+	taskDiffs                application.TaskDiffInspector
 	primarySynchronizer      application.PrimarySynchronizer
 	reconciliationInspector  application.ReconciliationWorkspaceManager
 	validationCatalog        *validation.Catalog
@@ -293,6 +294,7 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		Repository: store, Harnesses: config.WorkerHarnesses, Host: control,
 		ReconciliationWorkspaces: config.reconciliationInspector,
 		WorkerProfiles:           config.WorkerProfileCatalog, Decisions: store,
+		TaskDiffs:         config.taskDiffs,
 		DecisionSurfacing: config.DecisionSurfacing, Clock: clock,
 	})
 	if err != nil {

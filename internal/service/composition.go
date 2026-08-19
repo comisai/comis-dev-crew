@@ -215,6 +215,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	config.WorkerHarnesses = exactWorkerHarnesses{adapters: harnessAdapters}
 	config.candidateGit = registry
 	config.workspaceInspector = registry
+	config.taskDiffs = registry
 	config.primarySynchronizer = registry
 	config.reconciliationInspector = registry
 	config.validationCatalog = catalog

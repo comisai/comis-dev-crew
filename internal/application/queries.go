@@ -43,6 +43,7 @@ type Queries struct {
 	reconciliationWorkspaces ReconciliationWorkspaceInspector
 	workerProfiles           WorkerProfileCatalog
 	decisions                DecisionInventoryStore
+	taskDiffs                TaskDiffInspector
 	decisionSurfacing        DecisionSurfacingPolicy
 	clock                    Clock
 }
@@ -60,6 +61,9 @@ type QueryConfig struct {
 	// Absent when the deployment exposes no decision inventory; the read then
 	// reports unavailable rather than an empty set of open questions.
 	Decisions DecisionInventoryStore
+	// Absent when the deployment exposes no Git observation; the read then
+	// reports unavailable rather than an empty change set.
+	TaskDiffs TaskDiffInspector
 	// Zero when the deployment configures no cadence; the reviewed default is
 	// used so the published return schedule matches the running supervisor.
 	DecisionSurfacing DecisionSurfacingPolicy
@@ -78,6 +82,7 @@ func NewQueries(config QueryConfig) (*Queries, error) {
 		repository: config.Repository, harnesses: config.Harnesses, host: config.Host,
 		reconciliationWorkspaces: config.ReconciliationWorkspaces,
 		workerProfiles:           config.WorkerProfiles, decisions: config.Decisions,
+		taskDiffs:         config.TaskDiffs,
 		decisionSurfacing: config.DecisionSurfacing, clock: config.Clock,
 	}, nil
 }
