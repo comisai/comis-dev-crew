@@ -12,6 +12,7 @@ import (
 func validManifest() Manifest {
 	return Manifest{
 		SchemaVersion: 1,
+		CampaignKind:  CampaignKindRealTelegram,
 		CampaignID:    "e0-real-telegram-20260814",
 		StartedAtMs:   1_786_656_000_000,
 		EndedAtMs:     1_786_663_200_000,

@@ -24,6 +24,18 @@ var (
 	serviceUnitPattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}\.service$`)
 )
 
+// Campaign kinds are closed. The kind decides which channel drives the campaign and
+// therefore which evidence that campaign is entitled to claim.
+const (
+	// CampaignKindRealTelegram drives the channel from the real Telegram app with a human
+	// sender, so the human checkpoint arc is required.
+	CampaignKindRealTelegram = "real_telegram"
+	// CampaignKindEmulator drives the channel from the loopback Telegram Bot API emulator.
+	// Nothing is sent by a human, so the human checkpoint arc is not declarable and its
+	// evidence is never claimed.
+	CampaignKindEmulator = "emulator"
+)
+
 var requiredCheckpointKinds = []string{
 	"task_request",
 	"unrelated_conversation",
@@ -41,6 +53,7 @@ var requiredCheckpointKinds = []string{
 // Manifest is the strict, content-free authority for one protected E0 campaign.
 type Manifest struct {
 	SchemaVersion int                    `json:"schemaVersion"`
+	CampaignKind  string                 `json:"campaignKind"`
 	CampaignID    string                 `json:"campaignId"`
 	StartedAtMs   int64                  `json:"startedAtMs"`
 	EndedAtMs     int64                  `json:"endedAtMs"`
@@ -168,6 +181,9 @@ func (manifest Manifest) validate() error {
 	if manifest.SchemaVersion != 1 {
 		return errors.New("live campaign schemaVersion must equal 1")
 	}
+	if err := manifest.validateCampaignKind(); err != nil {
+		return err
+	}
 	if !safeReferencePattern.MatchString(manifest.CampaignID) {
 		return errors.New("campaignId must be one bounded opaque identifier")
 	}
@@ -281,7 +297,22 @@ func validateUniqueStrings(name string, values []string, valid func(string) bool
 	return nil
 }
 
+func (manifest Manifest) validateCampaignKind() error {
+	switch manifest.CampaignKind {
+	case CampaignKindRealTelegram, CampaignKindEmulator:
+		return nil
+	default:
+		return fmt.Errorf("campaignKind must be %s or %s", CampaignKindRealTelegram, CampaignKindEmulator)
+	}
+}
+
 func (manifest Manifest) validateCheckpoints() error {
+	if manifest.CampaignKind == CampaignKindEmulator {
+		if len(manifest.Telegram.Checkpoints) != 0 {
+			return errors.New("an emulator campaign has no human sender and must declare no telegram checkpoints")
+		}
+		return nil
+	}
 	if len(manifest.Telegram.Checkpoints) != len(requiredCheckpointKinds) {
 		for _, kind := range requiredCheckpointKinds {
 			if !hasCheckpoint(manifest.Telegram.Checkpoints, kind) {

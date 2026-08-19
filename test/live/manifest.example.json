@@ -1,5 +1,6 @@
 {
   "schemaVersion": 1,
+  "campaignKind": "real_telegram",
   "campaignId": "e0-real-telegram-YYYYMMDD",
   "startedAtMs": 0,
   "endedAtMs": 0,

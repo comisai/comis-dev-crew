@@ -602,12 +602,21 @@ executables are bound to the two task profiles by canonical path, SHA-256, and
 their native `--version` output. The manifest must describe
 exactly two ship lanes:
 one Codex/Claude profile per lane, exactly one recovered candidate, one handback,
-and one cleanup operation per task. Its eleven opaque `e0cp-*` markers are sent by
-the human from the Telegram app at the named checkpoints. The unrelated marker
-must use a newer distinct conversation; all other markers remain in the original
-preparation conversation. Their timestamps must follow the documented manifest
-order exactly, from task request through both restart acknowledgements to cleanup;
-partial or reordered milestone evidence is refused.
+and one cleanup operation per task.
+
+The manifest declares one closed `campaignKind`, and that kind decides which
+checkpoint arc the campaign may claim. `real_telegram` means a human drives the
+channel from the Telegram app: its eleven opaque `e0cp-*` markers are sent by that
+human at the named checkpoints. The unrelated marker must use a newer distinct
+conversation; all other markers remain in the original preparation conversation.
+Their timestamps must follow the documented manifest order exactly, from task
+request through both restart acknowledgements to cleanup; partial or reordered
+milestone evidence is refused.
+
+`emulator` means the loopback Telegram Bot API emulator drives the channel. No
+human sends anything, so an emulator campaign declares no checkpoints at all. A
+manifest that declares an arc its channel cannot drive is refused before the
+campaign starts.
 
 The runner first observes both tasks simultaneously in `working`. It then replaces
 the stateless MCP facade, waits for the human acknowledgement, waits for decision,
