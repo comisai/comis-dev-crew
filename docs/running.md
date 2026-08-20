@@ -412,6 +412,10 @@ devcrew [--socket PATH] doctor [--format table|json]
 devcrew [--socket PATH] status [--watch [--passes N] [--interval DURATION]] [--format table|json]
 devcrew [--socket PATH] tasks list [--state STATE] [--format table|json]
 devcrew [--socket PATH] workers list [--format table|json]
+devcrew [--socket PATH] initiative list [--state STATE] [--format table|json]
+devcrew [--socket PATH] initiative show INITIATIVE [--format text|json]
+devcrew [--socket PATH] initiative explain INITIATIVE [--format text|json]
+devcrew [--socket PATH] initiative graph INITIATIVE [--format text|json]
 devcrew [--socket PATH] task show TASK [--format yaml|json]
 devcrew [--socket PATH] task explain TASK [--format text|json]
 devcrew [--socket PATH] task diff TASK [--stat|--name-only] [--format text|json]
@@ -437,6 +441,11 @@ devcrew [--socket PATH] decision show TASK DECISION [--format text|json]
 devcrew [--socket PATH] decision respond TASK DECISION --input FILE|- [--operation OPERATION] [--format json]
 devcrew [--socket PATH] decision cancel TASK DECISION [--operation OPERATION] [--format json]
 ```
+
+Initiative reads use the same local service projections as the model facade.
+`initiative graph --format json` returns the graph projection itself, while the
+human views show state, explanation, dependency readiness, and only closed safe
+action identifiers.
 
 The stream records transitions, not writes. A task that is still waiting is
 rewritten on every supervisor pass to refresh its liveness, and those rewrites

@@ -27,6 +27,14 @@ func renderResult(destination io.Writer, command parsedCommand, result any) erro
 		return renderTaskList(destination, result.(application.TaskList))
 	case commandWorkerProfiles:
 		return renderWorkerProfiles(destination, result.(application.WorkerProfileList))
+	case commandListInitiatives:
+		return renderInitiativeList(destination, result.(application.InitiativeList))
+	case commandShowInitiative:
+		return renderInitiativeDetail(destination, result.(application.InitiativeDetail))
+	case commandExplainInitiative:
+		return renderInitiativeExplanation(destination, result.(application.InitiativeDetail))
+	case commandGraphInitiative:
+		return renderInitiativeGraph(destination, result.(application.InitiativeGraphView))
 	case commandReadTaskLogs:
 		return renderTaskLogPage(destination, result.(application.TaskLogPage))
 	case commandReadEvents:

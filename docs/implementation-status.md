@@ -434,6 +434,11 @@ the pinned protocol schema and returned only in the MCP result extension, while
 the model-visible preparation result contains bounded initiative and task
 identities but no registration nonce or host resource path.
 
+The operator console exposes initiative list, show, explain, and graph reads
+through that same canonical local client. Human views retain dependency
+readiness and closed safe actions; graph JSON is the graph DTO itself rather
+than a second wrapper contract.
+
 Group activation validates the private group nonce and the exact complete member
 set under the SQLite write lock. It commits the host-managed group identity and
 every run, lease, and execution-attachment handle atomically at one state

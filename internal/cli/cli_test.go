@@ -293,7 +293,6 @@ func TestRun_RejectsInvalidSyntaxAndReferencesBeforeConnecting(t *testing.T) {
 		{"task", "reconcile", "task-0001"},
 		{"task", "reconcile", "task-0001", "--action", "validate-developer-work"},
 		{"task", "reconcile", "task-0001", "--action", "validate-clean-candidate", "--worktree", "/forged"},
-		{"initiative", "list"},
 	}
 	for _, args := range tests {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {

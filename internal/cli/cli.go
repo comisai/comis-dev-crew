@@ -29,6 +29,10 @@ Commands:
   status [--watch [--passes N] [--interval DURATION]] [--format table|json]
   tasks list [--state STATE] [--format table|json]
   workers list [--format table|json]
+  initiative list [--state STATE] [--format table|json]
+  initiative show INITIATIVE [--format text|json]
+  initiative explain INITIATIVE [--format text|json]
+  initiative graph INITIATIVE [--format text|json]
   task show TASK [--format yaml|json]
   task explain TASK [--format text|json]
   task diff TASK [--stat|--name-only] [--format text|json]
@@ -68,6 +72,8 @@ type ReadClient interface {
 	Fleet(context.Context, string) (application.FleetSnapshot, error)
 	ListTasks(context.Context, string, localapi.ListTasksInput) (application.TaskList, error)
 	ListWorkerProfiles(context.Context, string) (application.WorkerProfileList, error)
+	ListInitiatives(context.Context, string, localapi.ListInitiativesInput) (application.InitiativeList, error)
+	GetInitiative(context.Context, string, string) (application.InitiativeDetail, error)
 	PauseTask(context.Context, string, localapi.PauseTaskInput) (localapi.TaskMutationResult, error)
 	CancelTask(context.Context, string, localapi.CancelTaskInput) (localapi.TaskMutationResult, error)
 	ResumeTask(context.Context, string, localapi.ResumeTaskInput) (localapi.TaskMutationResult, error)
@@ -117,6 +123,10 @@ const (
 	commandFleet
 	commandListTasks
 	commandWorkerProfiles
+	commandListInitiatives
+	commandShowInitiative
+	commandExplainInitiative
+	commandGraphInitiative
 	commandShowTask
 	commandExplainTask
 	commandGetLaunchPlan
@@ -159,6 +169,7 @@ type parsedCommand struct {
 	watchInterval   time.Duration
 	inputPath       string
 	taskState       string
+	initiativeState string
 	decisionAnswer  string
 	operationID     string
 	prepareInput    *localapi.PrepareTaskInput
@@ -261,6 +272,8 @@ func parseCommand(args []string, defaultSocketPath string) (parsedCommand, error
 			return parsedCommand{}, err
 		}
 		command.kind, command.format = commandWorkerProfiles, format
+	case "initiative":
+		return parseInitiativeCommand(command, args[1:])
 	case "events":
 		return parseEventsCommand(command, args[1:])
 	case "audit":

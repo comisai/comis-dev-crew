@@ -21,6 +21,15 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 		return client.ListTasks(ctx, operationID, localapi.ListTasksInput{State: domain.TaskState(command.taskState)})
 	case commandWorkerProfiles:
 		return client.ListWorkerProfiles(ctx, operationID)
+	case commandListInitiatives:
+		return client.ListInitiatives(ctx, operationID, localapi.ListInitiativesInput{
+			State: domain.InitiativeState(command.initiativeState),
+		})
+	case commandShowInitiative, commandExplainInitiative:
+		return client.GetInitiative(ctx, operationID, command.reference)
+	case commandGraphInitiative:
+		detail, err := client.GetInitiative(ctx, operationID, command.reference)
+		return detail.Graph, err
 	case commandReadTaskLogs:
 		return client.ReadTaskLogs(ctx, operationID, localapi.ReadTaskLogsInput{
 			TaskHandle: command.reference, Source: command.logSource, AfterSequence: command.logCursor,
