@@ -193,6 +193,18 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	if forgeConfig.ReadCredentialFile == forgeConfig.PushCredentialFile || readCredential == pushCredential {
 		return Config{}, errors.New("run service: forge read and push identities must differ")
 	}
+	var mergeCredentials forge.CredentialSource
+	if forgeConfig.MergeCredentialFile != "" {
+		if !filepath.IsAbs(forgeConfig.MergeCredentialFile) || filepath.Clean(forgeConfig.MergeCredentialFile) != forgeConfig.MergeCredentialFile ||
+			forgeConfig.MergeCredentialFile == forgeConfig.ReadCredentialFile ||
+			forgeConfig.MergeCredentialFile == forgeConfig.PushCredentialFile {
+			return Config{}, errors.New("run service: forge merge credential path must be canonical and separate")
+		}
+		mergeCredentials = ownerCredentialSource{
+			path: forgeConfig.MergeCredentialFile, kind: forge.CredentialMerge,
+			scopes: []forge.CredentialScope{forge.ScopePullRequestsWrite},
+		}
+	}
 	pusher, err := forge.NewGitBranchPusher(forge.GitBranchPusherConfig{
 		GitExecutable: repositoryConfig.GitExecutable, RemoteURL: forgeConfig.RemoteURL,
 		CredentialDirectory: forgeConfig.CredentialDirectory, LocalFixtureRemoteRoot: forgeConfig.LocalFixtureRemoteRoot,
@@ -214,6 +226,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 			path: forgeConfig.PushCredentialFile, kind: forge.CredentialPush,
 			scopes: []forge.CredentialScope{forge.ScopeContentsWrite},
 		},
+		MergeCredentials: mergeCredentials, MergeMethod: forgeConfig.MergeMethod,
 	})
 	if err != nil {
 		return Config{}, fmt.Errorf("run service GitHub composition: %w", err)

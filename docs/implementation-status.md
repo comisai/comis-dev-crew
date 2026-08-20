@@ -774,7 +774,15 @@ token push is supported, and an SSH route allows a repository-scoped deploy key
 to be the push identity. The latter decodes the owner-private key only into a
 transient `0600` file, invokes the canonical OpenSSH executable through fixed
 service-owned argv, pins host keys, accepts only the configured Git receive or
-upload command, and removes the key before returning. There is no merge operation.
+upload command, and removes the key before returning.
+
+The candidate configuration may also enable a third, owner-private merge
+identity with one immutable `merge`, `squash`, or `rebase` method. Its file path
+must differ from both ordinary identities, and its contents are intentionally
+not read by installed composition. Only the merge adapter resolves it, after
+fresh exact-head, required-check, and matching branch-protection reads. The
+canonical service command and durable approval/receipt transaction remain the
+open merge-authority work; configuration alone grants no reachable merge.
 
 ## Worker harnesses
 

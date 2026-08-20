@@ -72,8 +72,12 @@ func TestReadCandidateComposition_AcceptsSeparateMergeAuthorityAndMethod(t *test
     "mergeMethod":"squash","credentialDirectory":"/private/credentials"
   }
 }`, 0o600)
-	if _, _, err := readCandidateComposition(path); err != nil {
+	_, forgeConfig, err := readCandidateComposition(path)
+	if err != nil {
 		t.Fatalf("readCandidateComposition(merge authority) error = %v", err)
+	}
+	if forgeConfig.MergeCredentialFile != "/private/merge" || forgeConfig.MergeMethod != forge.MergeSquash {
+		t.Fatalf("merge configuration = %#v", forgeConfig)
 	}
 }
 
@@ -116,6 +120,8 @@ func TestReadCandidateComposition_RejectsUntrustedFileAndUnknownPolicy(t *testin
 		{name: "unknown integration strategy", path: filepath.Join(root, "integration-strategy.json"), contents: `{"pollInterval":"1ms","integrationPolicies":[{"id":"integration-default","strategy":"reset"}]}`},
 		{name: "invalid integration policy identity", path: filepath.Join(root, "integration-identity.json"), contents: `{"pollInterval":"1ms","integrationPolicies":[{"id":"bad policy","strategy":"merge"}]}`},
 		{name: "duplicate integration policy", path: filepath.Join(root, "integration-duplicate.json"), contents: `{"pollInterval":"1ms","integrationPolicies":[{"id":"integration-default","strategy":"merge"},{"id":"integration-default","strategy":"rebase"}]}`},
+		{name: "merge credential without method", path: filepath.Join(root, "merge-method-missing.json"), contents: `{"pollInterval":"1ms","integrationPolicies":[{"id":"integration-default","strategy":"merge"}],"forge":{"mergeCredentialFile":"/private/merge"}}`},
+		{name: "unknown merge method", path: filepath.Join(root, "merge-method-unknown.json"), contents: `{"pollInterval":"1ms","integrationPolicies":[{"id":"integration-default","strategy":"merge"}],"forge":{"mergeCredentialFile":"/private/merge","mergeMethod":"fast-forward"}}`},
 		{name: "oversized file", path: filepath.Join(root, "oversized.json"), contents: strings.Repeat("x", maximumCandidateConfigurationBytes+1)},
 	} {
 		t.Run(test.name, func(t *testing.T) {

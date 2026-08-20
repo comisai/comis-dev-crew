@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/forge"
 	"github.com/comisai/comis-dev-crew/internal/validation"
 	"github.com/comisai/comis-dev-crew/internal/workers"
 )
@@ -120,6 +121,8 @@ type ForgeComposition struct {
 	RemoteURL              string
 	ReadCredentialFile     string
 	PushCredentialFile     string
+	MergeCredentialFile    string
+	MergeMethod            forge.MergeMethod
 	CredentialDirectory    string
 	LocalFixtureRemoteRoot string
 	SSHTransportExecutable string

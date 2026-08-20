@@ -131,7 +131,13 @@ closed `strategy`: `merge`, `rebase`, or `cherry_pick`. An initiative names only
 the policy ID; the installed service resolves the Git strategy from this immutable
 document and refuses missing, duplicate, or unknown policy entries. The route
 names distinct owner-private read and push credential files; the service rejects
-shared identities. `localFixtureRemoteRoot` permits a `file://` remote only for
+shared identities. Merge is disabled when both `mergeCredentialFile` and
+`mergeMethod` are absent. Enabling it requires both fields, a credential path
+distinct from read and push, and one fixed method: `merge`, `squash`, or
+`rebase`. The merge file is not read during startup or ordinary candidate
+delivery; its credential is resolved only after an approved merge has freshly
+passed head, check, and branch-protection verification.
+`localFixtureRemoteRoot` permits a `file://` remote only for
 an explicitly bounded local test fixture and must be absent for the production
 HTTPS route.
 

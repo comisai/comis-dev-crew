@@ -11,6 +11,7 @@ import (
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
+	"github.com/comisai/comis-dev-crew/internal/forge"
 	"github.com/comisai/comis-dev-crew/internal/store/sqlite"
 	"github.com/comisai/comis-dev-crew/internal/validation"
 	"github.com/comisai/comis-dev-crew/internal/workers"
@@ -268,6 +269,12 @@ func TestInstalledRuntime_RejectsPartialMixedAndUnverifiedConfiguration(t *testi
 	configuration.ForgeComposition.PushCredentialFile = configuration.ForgeComposition.ReadCredentialFile
 	if _, err := composeInstalledRuntime(context.Background(), configuration); err == nil {
 		t.Fatal("composeInstalledRuntime(shared forge credential) error = nil")
+	}
+	configuration = installedServiceConfig(t, shortTempDir(t))
+	configuration.ForgeComposition.MergeCredentialFile = configuration.ForgeComposition.PushCredentialFile
+	configuration.ForgeComposition.MergeMethod = forge.MergeSquash
+	if _, err := composeInstalledRuntime(context.Background(), configuration); err == nil {
+		t.Fatal("composeInstalledRuntime(shared merge credential path) error = nil")
 	}
 	configuration = installedServiceConfig(t, shortTempDir(t))
 	configuration.ValidationComposition.MaxOutputBytes = 0

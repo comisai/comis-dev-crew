@@ -11,6 +11,7 @@ import (
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
+	"github.com/comisai/comis-dev-crew/internal/forge"
 	"github.com/comisai/comis-dev-crew/internal/validation"
 )
 
@@ -47,17 +48,19 @@ type candidateLocalCheckDocument struct {
 }
 
 type candidateForgeDocument struct {
-	APIBaseURL             string `json:"apiBaseUrl"`
-	Owner                  string `json:"owner"`
-	Repository             string `json:"repository"`
-	RemoteURL              string `json:"remoteUrl"`
-	ReadCredentialFile     string `json:"readCredentialFile"`
-	PushCredentialFile     string `json:"pushCredentialFile"`
-	CredentialDirectory    string `json:"credentialDirectory"`
-	LocalFixtureRemoteRoot string `json:"localFixtureRemoteRoot"`
-	SSHTransportExecutable string `json:"sshTransportExecutable"`
-	SSHExecutable          string `json:"sshExecutable"`
-	SSHKnownHostsFile      string `json:"sshKnownHostsFile"`
+	APIBaseURL             string            `json:"apiBaseUrl"`
+	Owner                  string            `json:"owner"`
+	Repository             string            `json:"repository"`
+	RemoteURL              string            `json:"remoteUrl"`
+	ReadCredentialFile     string            `json:"readCredentialFile"`
+	PushCredentialFile     string            `json:"pushCredentialFile"`
+	MergeCredentialFile    string            `json:"mergeCredentialFile"`
+	MergeMethod            forge.MergeMethod `json:"mergeMethod"`
+	CredentialDirectory    string            `json:"credentialDirectory"`
+	LocalFixtureRemoteRoot string            `json:"localFixtureRemoteRoot"`
+	SSHTransportExecutable string            `json:"sshTransportExecutable"`
+	SSHExecutable          string            `json:"sshExecutable"`
+	SSHKnownHostsFile      string            `json:"sshKnownHostsFile"`
 }
 
 func readCandidateComposition(path string) (*ValidationComposition, *ForgeComposition, error) {
@@ -113,13 +116,19 @@ func readCandidateComposition(path string) (*ValidationComposition, *ForgeCompos
 		}
 		integrationPolicies[configured.ID] = configured.Strategy
 	}
+	if (document.Forge.MergeCredentialFile == "") != (document.Forge.MergeMethod == "") ||
+		(document.Forge.MergeMethod != "" && document.Forge.MergeMethod != forge.MergeCommit &&
+			document.Forge.MergeMethod != forge.MergeSquash && document.Forge.MergeMethod != forge.MergeRebase) {
+		return nil, nil, errors.New("read candidate composition: merge authority is invalid")
+	}
 	return &ValidationComposition{
 			Programs: document.Programs, Profiles: profiles, IntegrationPolicies: integrationPolicies,
 			MaxOutputBytes: document.MaxOutputBytes, PollInterval: pollInterval,
 		}, &ForgeComposition{
 			APIBaseURL: document.Forge.APIBaseURL, Owner: document.Forge.Owner, Repository: document.Forge.Repository,
 			RemoteURL: document.Forge.RemoteURL, ReadCredentialFile: document.Forge.ReadCredentialFile,
-			PushCredentialFile: document.Forge.PushCredentialFile, CredentialDirectory: document.Forge.CredentialDirectory,
+			PushCredentialFile: document.Forge.PushCredentialFile, MergeCredentialFile: document.Forge.MergeCredentialFile,
+			MergeMethod: document.Forge.MergeMethod, CredentialDirectory: document.Forge.CredentialDirectory,
 			LocalFixtureRemoteRoot: document.Forge.LocalFixtureRemoteRoot,
 			SSHTransportExecutable: document.Forge.SSHTransportExecutable,
 			SSHExecutable:          document.Forge.SSHExecutable, SSHKnownHostsFile: document.Forge.SSHKnownHostsFile,
