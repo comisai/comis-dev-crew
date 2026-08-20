@@ -402,6 +402,14 @@ the reconstructed record before returning it. Backlog rows contain request and
 readiness data only and have no managed-run, workspace, credential, terminal, or
 delivery authority.
 
+Initiative preparation validates the complete caller-local graph and every
+member contract before allocating a workspace. It then records stable member
+intents, prepares each reversible worktree and task-scoped runtime attachment,
+and commits the unbound initiative, all member tasks, all private activation
+joins, and their replay outcomes in one transaction at one state version. A
+partial allocation failure preserves the intents and already-created reversible
+artifacts for exact retry, but writes no half-initiative and launches nothing.
+
 Startup reconciliation now includes every nonterminal initiative. Preparing,
 active, blocked, integrating, validating, and candidate-complete initiatives are
 atomically moved to durable `unknown` with a new global state version before the

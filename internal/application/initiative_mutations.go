@@ -73,6 +73,28 @@ type ManagedRunGroupPreparation struct {
 	ExpiresAt         time.Time
 }
 
+// Validate rejects group metadata that cannot name one exact bounded set of
+// still-unbound member preparations.
+func (preparation ManagedRunGroupPreparation) Validate(createdAt time.Time) error {
+	if domain.ValidateTaskHandle(preparation.ExternalGroupRef) != nil ||
+		!registrationNoncePattern.MatchString(preparation.RegistrationNonce) ||
+		preparation.ExpiresAt.Location() != time.UTC || !preparation.ExpiresAt.After(createdAt) ||
+		len(preparation.Members) == 0 || len(preparation.Members) > maximumInitiativeMembers {
+		return errors.New("managed-run group preparation is invalid")
+	}
+	seen := make(map[string]struct{}, len(preparation.Members))
+	for _, member := range preparation.Members {
+		if member.Validate(createdAt) != nil || !member.ExpiresAt.Equal(preparation.ExpiresAt) {
+			return errors.New("managed-run group member preparation is invalid")
+		}
+		if _, exists := seen[member.ExternalRunRef]; exists {
+			return errors.New("managed-run group members must be unique")
+		}
+		seen[member.ExternalRunRef] = struct{}{}
+	}
+	return nil
+}
+
 // PreparedInitiativeMember joins one durable task, its private preparation, and
 // the stable child operation used by cleanup and replay queries.
 type PreparedInitiativeMember struct {

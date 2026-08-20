@@ -100,6 +100,28 @@ func TestPreparedInitiativeRollsBackEveryDurableRecordOnMemberFailure(t *testing
 	}
 }
 
+func TestPreparedInitiativeRejectsCrossServiceMemberAuthority(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	mutation := sqlitePreparedInitiativeMutation()
+	mutation.Members[1].Task.ServiceInstanceID = "foreign-service-instance"
+	recordInitiativeMemberIntents(t, store, mutation)
+	if _, err := store.CommitPreparedInitiative(ctx, mutation); err == nil {
+		t.Fatal("CommitPreparedInitiative(cross-service member) error = nil")
+	}
+	var initiatives int
+	if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM initiatives").Scan(&initiatives); err != nil {
+		t.Fatalf("count initiatives: %v", err)
+	}
+	if initiatives != 0 {
+		t.Fatalf("initiative rows = %d, want none for cross-service authority", initiatives)
+	}
+}
+
 func sqlitePreparedInitiativeMutation() application.PreparedInitiativeMutation {
 	at := time.Date(2026, time.August, 20, 16, 0, 0, 0, time.UTC)
 	initiative := persistenceInitiative("initiative-prepare-0001", domain.InitiativePreparing, 1)
