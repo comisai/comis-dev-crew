@@ -362,61 +362,6 @@ func (client *Client) call(ctx context.Context, operationID string, method Metho
 	}
 }
 
-func projectedStateVersion(result any) (int64, bool) {
-	switch projection := result.(type) {
-	case *application.DiagnosticReport:
-		return projection.StateVersion, true
-	case *application.FleetSnapshot:
-		return projection.StateVersion, true
-	case *application.TaskList:
-		return projection.StateVersion, true
-	case *application.InitiativeList:
-		return projection.StateVersion, true
-	case *application.InitiativeDetail:
-		return projection.StateVersion, true
-	case *application.BacklogList:
-		return projection.StateVersion, true
-	case *application.WorkerProfileList:
-		return projection.StateVersion, true
-	case *application.TaskDetail:
-		return projection.StateVersion, true
-	case *application.TaskDiffView:
-		return projection.StateVersion, true
-	case *application.RepairSurvey:
-		return projection.StateVersion, true
-	case *application.TaskLogPage:
-		return projection.NextCursor, true
-	case *application.EventPage:
-		// The stream's read-after-write marker is its cursor: the log is
-		// append-only and advances independently of task state versions.
-		return projection.NextCursor, true
-	case *application.AuditPage:
-		// Same reasoning as the event stream: the trail is append-only, so its
-		// cursor is the marker rather than any task's state version.
-		return projection.NextCursor, true
-	case *application.DecisionList:
-		return projection.StateVersion, true
-	case *application.TaskDecision:
-		return projection.StateVersion, true
-	case *application.TaskExplanation:
-		return projection.Summary.StateVersion, true
-	case *application.LaunchPlan:
-		return projection.StateVersion, true
-	case *application.OperationView:
-		return projection.StateVersion, true
-	case *application.PrimarySyncReport:
-		return projection.StateVersion, true
-	case *PrepareTaskResult:
-		return projection.StateVersion, true
-	case *PrepareInitiativeResult:
-		return projection.StateVersion, true
-	case *TaskMutationResult:
-		return projection.StateVersion, true
-	default:
-		return 0, false
-	}
-}
-
 func localTransportFailure(cause error) error {
 	failure, err := domain.NewFailure(
 		domain.ErrorUnavailable,
