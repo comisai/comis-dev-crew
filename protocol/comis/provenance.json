@@ -1,9 +1,9 @@
 {
   "sourceRepository": "https://github.com/comisai/comis.git",
-  "sourceCommit": "abb1e802ec5612f860e71ff73041f89332ab92eb",
+  "sourceCommit": "ea82e5598237d4360e3c1a22d618d57125a123fd",
   "sourceProtocolPath": "packages/capability-service-sdk/protocol",
   "protocolId": "comis.capability-service/1",
-  "bundleDigest": "47bdab9ef7697a296f0b37f48b0d57c4b7f4dfbc961a99b43b4426c1a4edc64a",
+  "bundleDigest": "93470b8b70f8c11fcc87940c5c5b686b0eb958f9453d09ec05b4b91049acab86",
   "generator": {
     "command": "pnpm capability-protocol:generate",
     "package": "@comis/capability-service-sdk",
