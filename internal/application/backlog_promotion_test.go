@@ -11,6 +11,7 @@ import (
 
 func TestBacklogPromotionReservesBeforeNormalPreparationAndPreservesOutcome(t *testing.T) {
 	item := queryBacklogItem("backlog-promote", "repo-primary", domain.BacklogReady)
+	item.DependsOn = []string{"backlog-dependency"}
 	store := &backlogPromotionStoreStub{item: item}
 	tasks := &backlogTaskPreparerStub{}
 	promotions, err := NewBacklogPromotions(BacklogPromotionConfig{
@@ -111,6 +112,7 @@ func (store *backlogPromotionStoreStub) ReserveBacklogPromotion(
 		return BacklogPromotionReservation{}, store.reserveErr
 	}
 	reservation.Item = store.item
+	reservation.SatisfiedDependencies = append([]string(nil), store.item.DependsOn...)
 	return reservation, nil
 }
 
@@ -125,6 +127,7 @@ func (store *backlogPromotionStoreStub) CommitBacklogPromotion(
 	result := backlogPromotionResult(item, mutation.Reservation.OperationID)
 	result.Task = mutation.Prepared.Task
 	result.Preparation = mutation.Prepared.Preparation
+	result.Operation.SubjectDigest = mutation.Reservation.SubjectDigest
 	return result, nil
 }
 
