@@ -108,7 +108,7 @@ func (store *Store) AuthorizeTaskMerge(
 	if !found {
 		return application.TaskMergeRecord{}, fmt.Errorf("authorize task merge: %w", application.ErrNotFound)
 	}
-	if request.Approval.AuthorizeMerge(domain.MergeAuthorization{
+	if request.Approval.TaskHandle != row.taskHandle || request.Approval.AuthorizeMerge(domain.MergeAuthorization{
 		ObservedHead: row.headRevision, ManagedRunID: row.managedRunID,
 		MCPOperationID: request.OperationID, Now: request.At,
 	}) != nil {

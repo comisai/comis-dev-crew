@@ -239,7 +239,8 @@ func taskMergeRecord(row taskMergeRow) application.TaskMergeRecord {
 }
 
 func taskMergeApprovalMatches(row taskMergeRow, approval domain.MergeApproval) bool {
-	return row.approvalRequestID == approval.ApprovalID && row.managedRunID == approval.ManagedRunID &&
+	return row.taskHandle == approval.TaskHandle && row.approvalRequestID == approval.ApprovalID &&
+		row.managedRunID == approval.ManagedRunID &&
 		row.mcpOperationID == approval.MCPOperationID && row.resolvingPrincipalID == approval.ResolvingPrincipal &&
 		row.operationFingerprint == approval.OperationFingerprint && row.headRevision == approval.ApprovedHead &&
 		row.approvedAt.Equal(approval.ApprovedAt) && row.expiresAt.Equal(approval.ExpiresAt) &&
