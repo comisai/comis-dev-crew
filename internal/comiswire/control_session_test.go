@@ -17,8 +17,28 @@ import (
 type controlHandlerStub struct {
 	activate      func(context.Context, ActivateRequestParams) (ActivateResponseResult, error)
 	groupActivate func(context.Context, GroupActivateRequestParams) (GroupActivateResponseResult, error)
+	groupAbandon  func(context.Context, GroupAbandonRequestParams) (GroupAbandonResponseResult, error)
 	abandon       func(context.Context, AbandonRequestParams) (AbandonResponseResult, error)
 	terminal      func(context.Context, TerminalEventRequestParams) (TerminalEventResponseResult, error)
+}
+
+func (stub controlHandlerStub) GroupAbandon(
+	ctx context.Context,
+	params GroupAbandonRequestParams,
+) (GroupAbandonResponseResult, error) {
+	if stub.groupAbandon == nil {
+		members := make([]GroupAbandonResponseResultMembersItem, 0, len(params.Members))
+		for _, member := range params.Members {
+			members = append(members, GroupAbandonResponseResultMembersItem{
+				ManagedRunID: member.ManagedRunID, Outcome: "completed",
+			})
+		}
+		return GroupAbandonResponseResult{
+			ManagedRunGroupID: params.ManagedRunGroupID, Members: members,
+			State: ManagedRunStateAbandoned, Disposition: params.Disposition,
+		}, nil
+	}
+	return stub.groupAbandon(ctx, params)
 }
 
 func (stub controlHandlerStub) GroupActivate(
