@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/comisai/comis-dev-crew/internal/comiswire"
 )
 
 func validManifest() Manifest {
@@ -20,7 +22,7 @@ func validManifest() Manifest {
 			ComisCommit: strings.Repeat("c", 40), DevCrewCommit: strings.Repeat("d", 40),
 		},
 		Protocol: ProtocolPin{
-			ID: "comis.capability-service/1", Digest: "b42ab7a7662f3b02ede4d12d55e1ae7d50855990897fc4d24164b3a35f3c711d",
+			ID: comiswire.ProtocolID, Digest: comiswire.BundleDigest,
 		},
 		Artifacts: []ArtifactPin{
 			{Kind: "comis-cli", Path: "/opt/comis/packages/cli/dist/cli.js", SHA256: strings.Repeat("1", 64), Version: "1.0.61"},
