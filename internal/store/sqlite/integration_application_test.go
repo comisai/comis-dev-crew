@@ -1,0 +1,243 @@
+package sqlite
+
+import (
+	"context"
+	"errors"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/comisai/comis-dev-crew/internal/application"
+)
+
+func TestIntegrationApplicationPersistsAppliedAndConflictedResultsAcrossRestart(t *testing.T) {
+	for _, outcome := range []application.IntegrationOutcome{
+		application.IntegrationApplied,
+		application.IntegrationConflicted,
+	} {
+		t.Run(string(outcome), func(t *testing.T) {
+			fixture := newStoredIntegrationFixture(t)
+			request := fixture.reservationRequest("integration-store-"+string(outcome), application.IntegrationCherryPick)
+			reserved, err := fixture.store.ReserveIntegrationApplication(context.Background(), request)
+			if err != nil {
+				t.Fatalf("ReserveIntegrationApplication() error = %v", err)
+			}
+			if reserved.Result != nil || reserved.Candidate.EvidenceDigest != fixture.evidenceDigest ||
+				reserved.Target.TaskHandle != "task-integration" || reserved.Candidate.TaskHandle != "task-component-a" ||
+				!reserved.EvidenceExpiresAt.Equal(fixture.evidenceExpiresAt) {
+				t.Fatalf("reservation = %#v", reserved)
+			}
+			adapterResult := application.IntegrationAdapterResult{
+				Outcome: outcome, PreviousHead: request.Command.ExpectedIntegrationHead,
+			}
+			if outcome == application.IntegrationApplied {
+				adapterResult.ResultingHead = strings.Repeat("d", 40)
+			} else {
+				adapterResult.ConflictPaths = []string{"internal/api.go", "web/client.ts"}
+			}
+			completedAt := request.At.Add(time.Second)
+			completed, err := fixture.store.CompleteIntegrationApplication(context.Background(), application.IntegrationCompletion{
+				Reservation: reserved, AdapterResult: adapterResult, At: completedAt,
+			})
+			if err != nil {
+				t.Fatalf("CompleteIntegrationApplication() error = %v", err)
+			}
+			if completed.Outcome != outcome || completed.StateVersion < 1 || !completed.CompletedAt.Equal(completedAt) {
+				t.Fatalf("completed = %#v", completed)
+			}
+			operation, err := fixture.store.GetOperation(context.Background(), request.Command.OperationID)
+			if err != nil || operation.Command != "ApplyIntegrationCandidate" ||
+				operation.SubjectDigest != request.SubjectDigest || operation.StateVersion != completed.StateVersion {
+				t.Fatalf("operation = %#v, %v", operation, err)
+			}
+			if err := fixture.store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			reopened, err := Open(context.Background(), fixture.databasePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = reopened.Close() })
+			replayed, err := reopened.ReserveIntegrationApplication(context.Background(), request)
+			if err != nil || replayed.Result == nil || !reflect.DeepEqual(*replayed.Result, completed) {
+				t.Fatalf("ReserveIntegrationApplication(restart) = %#v, %v", replayed, err)
+			}
+			recompleted, err := reopened.CompleteIntegrationApplication(context.Background(), application.IntegrationCompletion{
+				Reservation: replayed, AdapterResult: adapterResult, At: completedAt,
+			})
+			if err != nil || !reflect.DeepEqual(recompleted, completed) {
+				t.Fatalf("CompleteIntegrationApplication(replay) = %#v, %v", recompleted, err)
+			}
+		})
+	}
+}
+
+func TestIntegrationReservationSurvivesRestartBeforeGitCompletion(t *testing.T) {
+	fixture := newStoredIntegrationFixture(t)
+	request := fixture.reservationRequest("integration-reserved-restart", application.IntegrationMerge)
+	first, err := fixture.store.ReserveIntegrationApplication(context.Background(), request)
+	if err != nil || first.Result != nil {
+		t.Fatalf("ReserveIntegrationApplication() = %#v, %v", first, err)
+	}
+	if err := fixture.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(context.Background(), fixture.databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	replayed, err := reopened.ReserveIntegrationApplication(context.Background(), request)
+	if err != nil || !reflect.DeepEqual(replayed, first) || replayed.Result != nil {
+		t.Fatalf("ReserveIntegrationApplication(restart) = %#v, %v", replayed, err)
+	}
+	altered := request
+	altered.SubjectDigest = strings.Repeat("f", 64)
+	if _, err := reopened.ReserveIntegrationApplication(context.Background(), altered); !errors.Is(err, application.ErrConflict) {
+		t.Fatalf("ReserveIntegrationApplication(altered replay) error = %v", err)
+	}
+}
+
+func TestIntegrationReservationRejectsMissingAuthorityOrCurrentEvidence(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*storedIntegrationFixture, *application.IntegrationReservationRequest)
+	}{
+		{name: "policy differs", mutate: func(_ *storedIntegrationFixture, request *application.IntegrationReservationRequest) {
+			request.PolicyID = "integration-other"
+		}},
+		{name: "caller is not owner", mutate: func(_ *storedIntegrationFixture, request *application.IntegrationReservationRequest) {
+			request.Command.IntegrationTaskHandle = "task-component-a"
+		}},
+		{name: "candidate head differs", mutate: func(_ *storedIntegrationFixture, request *application.IntegrationReservationRequest) {
+			request.Command.CandidateHead = strings.Repeat("e", 40)
+		}},
+		{name: "evidence expired", mutate: func(fixture *storedIntegrationFixture, request *application.IntegrationReservationRequest) {
+			request.At = fixture.evidenceExpiresAt
+		}},
+		{name: "shared worktree", mutate: func(fixture *storedIntegrationFixture, _ *application.IntegrationReservationRequest) {
+			if _, err := fixture.store.db.Exec(`UPDATE task_preparations SET requested_workspace_root = ? WHERE task_handle = 'task-integration'`,
+				"/approved/workspaces/task-component-a"); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newStoredIntegrationFixture(t)
+			request := fixture.reservationRequest("integration-refusal-0001", application.IntegrationRebase)
+			test.mutate(&fixture, &request)
+			if _, err := fixture.store.ReserveIntegrationApplication(context.Background(), request); err == nil {
+				t.Fatal("ReserveIntegrationApplication() error = nil")
+			}
+			var count int
+			if err := fixture.store.db.QueryRow(`SELECT COUNT(*) FROM integration_applications`).Scan(&count); err != nil || count != 0 {
+				t.Fatalf("integration rows = %d, %v", count, err)
+			}
+		})
+	}
+}
+
+func TestIntegrationCompletionRollsBackWhenOperationLedgerFails(t *testing.T) {
+	fixture := newStoredIntegrationFixture(t)
+	request := fixture.reservationRequest("integration-completion-fault", application.IntegrationMerge)
+	reserved, err := fixture.store.ReserveIntegrationApplication(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.store.db.Exec(`CREATE TRIGGER refuse_integration_operation
+		BEFORE INSERT ON operations WHEN NEW.command = 'ApplyIntegrationCandidate'
+		BEGIN SELECT RAISE(ABORT, 'injected integration operation failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	completion := application.IntegrationCompletion{
+		Reservation: reserved,
+		AdapterResult: application.IntegrationAdapterResult{
+			Outcome: application.IntegrationApplied, PreviousHead: request.Command.ExpectedIntegrationHead,
+			ResultingHead: strings.Repeat("d", 40),
+		},
+		At: request.At.Add(time.Second),
+	}
+	if _, err := fixture.store.CompleteIntegrationApplication(context.Background(), completion); err == nil {
+		t.Fatal("CompleteIntegrationApplication(injected fault) error = nil")
+	}
+	var status string
+	if err := fixture.store.db.QueryRow(`SELECT status FROM integration_applications WHERE operation_id = ?`,
+		request.Command.OperationID).Scan(&status); err != nil || status != "reserved" {
+		t.Fatalf("status after rollback = %q, %v", status, err)
+	}
+	if _, err := fixture.store.GetOperation(context.Background(), request.Command.OperationID); !errors.Is(err, application.ErrNotFound) {
+		t.Fatalf("GetOperation(after rollback) error = %v", err)
+	}
+}
+
+type storedIntegrationFixture struct {
+	store             *Store
+	databasePath      string
+	at                time.Time
+	candidateHead     string
+	evidenceDigest    string
+	evidenceExpiresAt time.Time
+}
+
+func newStoredIntegrationFixture(t *testing.T) storedIntegrationFixture {
+	t.Helper()
+	databasePath := filepath.Join(canonicalTempDir(t), "devcrew.db")
+	store, err := Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	mutation := sqlitePreparedInitiativeMutation()
+	recordInitiativeMemberIntents(t, store, mutation)
+	if _, err := store.CommitPreparedInitiative(context.Background(), mutation); err != nil {
+		t.Fatal(err)
+	}
+	boundAt := mutation.At.Add(time.Minute)
+	for handle, state := range map[string]string{
+		"task-component-a": "validating",
+		"task-integration": "working",
+	} {
+		if _, err := store.db.Exec(`UPDATE tasks SET managed_run_id = ?, workspace_lease_id = ?, state = ?, updated_at = ? WHERE handle = ?`,
+			"managed-run_"+handle, "workspace-lease_"+handle, state, formatTime(boundAt), handle); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.db.Exec(`UPDATE initiatives SET managed_run_group_id = 'managed-run-group_integration', state = 'active', updated_at = ? WHERE handle = ?`,
+		formatTime(boundAt), mutation.Initiative.Handle); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := store.GetTask(context.Background(), "task-component-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidateHead := strings.Repeat("b", 40)
+	evidence := candidateEvidence(t, candidate, candidateHead)
+	judgedAt := candidate.UpdatedAt.Add(5 * time.Minute)
+	if _, _, err := store.CommitCandidateEvidence(context.Background(), candidate.Handle, evidence,
+		[]string{"unit"}, []string{"ci/unit"}, judgedAt, candidateEvidencePublications(t, candidate, evidence)); err != nil {
+		t.Fatal(err)
+	}
+	bundle := evidence.Bundle()
+	return storedIntegrationFixture{
+		store: store, databasePath: databasePath, at: judgedAt.Add(time.Minute), candidateHead: candidateHead,
+		evidenceDigest: evidence.Digest(), evidenceExpiresAt: bundle.ExpiresAt,
+	}
+}
+
+func (fixture storedIntegrationFixture) reservationRequest(
+	operationID string,
+	strategy application.IntegrationStrategy,
+) application.IntegrationReservationRequest {
+	return application.IntegrationReservationRequest{
+		Command: application.ApplyIntegrationCandidateCommand{
+			OperationID: operationID, InitiativeHandle: "initiative-prepare-0001",
+			IntegrationTaskHandle: "task-integration", CandidateTaskHandle: "task-component-a",
+			CandidateHead: fixture.candidateHead, ExpectedIntegrationHead: strings.Repeat("c", 40),
+		},
+		PolicyID: "integration-default", Strategy: strategy,
+		SubjectDigest: strings.Repeat("9", 64), At: fixture.at,
+	}
+}
