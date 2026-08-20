@@ -260,6 +260,45 @@ func (connection *ControlConnection) ReceiveAttentionResponse(
 	return response.Result, nil
 }
 
+// ConsumeApproval obtains one exact approval receipt over the persistent
+// authenticated session. An uncertain transport outcome is reconciled by
+// retrying the same consume operation identity.
+func (connection *ControlConnection) ConsumeApproval(
+	ctx context.Context,
+	params ConsumeApprovalRequestParams,
+) (ConsumeApprovalResponseResult, error) {
+	if ctx == nil {
+		return ConsumeApprovalResponseResult{}, errors.New("consume approval from Comis: context is required")
+	}
+	request := ConsumeApprovalRequest{
+		JSONRPC: JSONRPCVersion, ID: params.OperationID,
+		Method: MethodManagedRunsConsumeApproval, Params: params,
+	}
+	if err := validateGeneratedDocument(schemaConsumeApprovalRequest, request); err != nil {
+		return ConsumeApprovalResponseResult{}, fmt.Errorf("consume approval from Comis: invalid request: %w", err)
+	}
+	session, err := connection.awaitSession(ctx)
+	if err != nil {
+		return ConsumeApprovalResponseResult{}, err
+	}
+	var response ConsumeApprovalResponse
+	authenticated := authenticatedConsumeApprovalRequest{
+		ConsumeApprovalRequest: request, Bearer: connection.config.Credential,
+	}
+	if err := connection.invoke(ctx, session, request.Method, authenticated, params.OperationID, &response); err != nil {
+		return ConsumeApprovalResponseResult{}, fmt.Errorf("consume approval from Comis: outcome uncertain: %w", err)
+	}
+	if err := validateGeneratedDocument(schemaConsumeApprovalResponse, response); err != nil {
+		return ConsumeApprovalResponseResult{}, fmt.Errorf("consume approval from Comis: invalid response: %w", err)
+	}
+	if response.Result.ApprovalRequestID != params.ApprovalRequestID ||
+		response.Result.ManagedRunID != params.ManagedRunID ||
+		response.Result.MCPOperationID != params.MCPOperationID {
+		return ConsumeApprovalResponseResult{}, errors.New("consume approval from Comis: response identity differs")
+	}
+	return response.Result, nil
+}
+
 // Release asks Comis to revoke exact run capabilities and release its lease.
 // An error leaves cleanup held until the stable request is reconciled.
 func (connection *ControlConnection) Release(

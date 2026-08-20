@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 var _ interface {
@@ -481,6 +482,74 @@ func TestControlConnectionReceivesPrivateAttentionResponseOnAuthenticatedSession
 	cancel()
 	if err := <-runDone; err != nil && !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v", err)
+	}
+}
+
+func TestControlConnectionConsumesExactApprovalReceiptOnAuthenticatedSession(t *testing.T) {
+	socketPath, listener := controlTestListener(t)
+	connection, err := NewControlConnection(ControlConnectionConfig{
+		SocketPath: socketPath, Credential: controlTestBearer,
+		ServiceInstanceID: "service-instance_a", HandshakeOperationID: "operation_handshake_approval",
+		Handler: controlHandlerStub{}, RequestTimeout: time.Second,
+		MinimumBackoff: time.Millisecond, MaximumBackoff: 2 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- connection.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		if runErr := <-runDone; runErr != nil && !errors.Is(runErr, context.Canceled) {
+			t.Errorf("Run() error = %v", runErr)
+		}
+	})
+	serverDone := make(chan error, 1)
+	go func() {
+		peer, acceptErr := listener.AcceptUnix()
+		if acceptErr != nil {
+			serverDone <- acceptErr
+			return
+		}
+		defer peer.Close()
+		if handshakeErr := serveHandshake(peer); handshakeErr != nil {
+			serverDone <- handshakeErr
+			return
+		}
+		var request authenticatedConsumeApprovalRequest
+		if readErr := readControlFrame(peer, &request); readErr != nil {
+			serverDone <- readErr
+			return
+		}
+		if request.Bearer != controlTestBearer || request.Method != MethodManagedRunsConsumeApproval ||
+			request.Params.ManagedRunID != "managed-run-approval" || request.Params.MCPOperationID != "merge-operation-0001" {
+			serverDone <- fmt.Errorf("approval consume request differs: %#v", request)
+			return
+		}
+		serverDone <- writeControlFrame(peer, ConsumeApprovalResponse{
+			JSONRPC: JSONRPCVersion, ID: request.ID,
+			Result: ConsumeApprovalResponseResult{
+				State: ApprovalReceiptStateConsumed, ApprovalRequestID: request.Params.ApprovalRequestID,
+				ManagedRunID: request.Params.ManagedRunID, MCPOperationID: request.Params.MCPOperationID,
+				ResolvingPrincipalID: "principal-approval", OperationFingerprint: strings.Repeat("a", 64),
+				ApprovedAtMs: 1_800_000_000_000, ExpiresAtMs: 1_800_000_900_000,
+				ConsumedAtMs: 1_800_000_000_500,
+			},
+		})
+	}()
+	var port application.MergeApprovalConsumer = connection
+	receipt, err := port.ConsumeMergeApproval(context.Background(), application.MergeApprovalConsumeRequest{
+		OperationID: "merge-operation-0001", ManagedRunID: "managed-run-approval",
+		ApprovalRequestID: "00000000-0000-4000-8000-000000000001", MCPOperationID: "merge-operation-0001",
+	})
+	if err != nil || receipt.State != application.MergeApprovalConsumed ||
+		receipt.ResolvingPrincipalID != "principal-approval" ||
+		receipt.ExpiresAt.Sub(receipt.ApprovedAt) != domain.MaximumMergeApprovalTTL {
+		t.Fatalf("ConsumeMergeApproval() = %#v, %v", receipt, err)
+	}
+	if serverErr := <-serverDone; serverErr != nil {
+		t.Fatal(serverErr)
 	}
 }
 
