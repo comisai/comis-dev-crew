@@ -151,6 +151,9 @@ type mergeStore struct {
 	record         TaskMergeRecord
 	events         *[]string
 	authorizeCalls int
+	beginErr       error
+	authorizeErr   error
+	completeErr    error
 }
 
 func mergeStoreFixture() *mergeStore {
@@ -170,13 +173,16 @@ func (store *mergeStore) BeginTaskMerge(_ context.Context, request TaskMergeRese
 	}
 	store.record.OperationID = request.OperationID
 	store.record.SubjectDigest = request.SubjectDigest
-	return store.record, nil
+	return store.record, store.beginErr
 }
 
 func (store *mergeStore) AuthorizeTaskMerge(_ context.Context, request TaskMergeAuthorization) (TaskMergeRecord, error) {
 	store.authorizeCalls++
 	if store.events != nil {
 		*store.events = append(*store.events, "persist-approval")
+	}
+	if store.authorizeErr != nil {
+		return TaskMergeRecord{}, store.authorizeErr
 	}
 	store.record.Approval = request.Approval
 	store.record.State = TaskMergeExecutionAuthorized
@@ -187,6 +193,9 @@ func (store *mergeStore) AuthorizeTaskMerge(_ context.Context, request TaskMerge
 func (store *mergeStore) CompleteTaskMerge(_ context.Context, request TaskMergeCompletion) (TaskMergeRecord, error) {
 	if store.events != nil {
 		*store.events = append(*store.events, "complete")
+	}
+	if store.completeErr != nil {
+		return TaskMergeRecord{}, store.completeErr
 	}
 	store.record.State = TaskMergeCompleted
 	store.record.MergeCommitRevision = request.Receipt.MergeCommitRevision
@@ -220,6 +229,7 @@ type mergeForge struct {
 	receipt PullRequestMergeReceipt
 	events  *[]string
 	calls   int
+	err     error
 }
 
 func (adapter *mergeForge) MergeApprovedPullRequest(
@@ -230,7 +240,7 @@ func (adapter *mergeForge) MergeApprovedPullRequest(
 	if adapter.events != nil {
 		*adapter.events = append(*adapter.events, "merge-forge")
 	}
-	return adapter.receipt, nil
+	return adapter.receipt, adapter.err
 }
 
 func mergeApprovalReceipt(now time.Time) MergeApprovalReceipt {
