@@ -22,6 +22,7 @@ const (
 	ToolReconcileTask     = "reconcile_task"
 	ToolHandbackTask      = "handback_task"
 	ToolCleanupTask       = "cleanup_task"
+	ToolMergeTask         = "merge_task"
 	ToolDiscardTask       = "discard_task"
 	ToolPauseTask         = "pause_task"
 	ToolCancelTask        = "cancel_task"
@@ -55,6 +56,7 @@ type Client interface {
 	ReconcileTask(context.Context, string, localapi.ReconcileTaskInput) (localapi.TaskMutationResult, error)
 	HandbackTask(context.Context, string, localapi.HandbackTaskInput) (localapi.TaskMutationResult, error)
 	CleanupTask(context.Context, string, localapi.CleanupTaskInput) (localapi.TaskMutationResult, error)
+	MergeTask(context.Context, string, localapi.MergeTaskInput) (application.MergeTaskResult, error)
 	DiscardTask(context.Context, string, localapi.DiscardTaskInput) (localapi.TaskMutationResult, error)
 	Diagnose(context.Context, string) (application.DiagnosticReport, error)
 	ListTasks(context.Context, string, localapi.ListTasksInput) (application.TaskList, error)
@@ -89,6 +91,26 @@ type EmptyInput struct{}
 // TaskInput selects one service-owned opaque task reference.
 type TaskInput struct {
 	TaskHandle string `json:"taskHandle" jsonschema:"opaque task handle"`
+}
+
+// MergeTaskOutput exposes post-merge truth without the managed-run identity
+// that carried the approval. The approval identifier and resolving principal
+// are retained as bounded attribution for the destructive outcome.
+type MergeTaskOutput struct {
+	SchemaVersion        int                                `json:"schemaVersion"`
+	OperationID          string                             `json:"operationId"`
+	TaskHandle           string                             `json:"taskHandle"`
+	State                application.TaskMergeState         `json:"state"`
+	RepositoryID         string                             `json:"repositoryId"`
+	PullRequestID        string                             `json:"pullRequestId"`
+	HeadRevision         string                             `json:"headRevision"`
+	ApprovalRequestID    string                             `json:"approvalRequestId"`
+	ResolvingPrincipalID string                             `json:"resolvingPrincipalId"`
+	MergeCommitRevision  string                             `json:"mergeCommitRevision"`
+	Method               application.PullRequestMergeMethod `json:"method"`
+	CompletedAtMs        int64                              `json:"completedAtMs"`
+	StateVersion         int64                              `json:"stateVersion"`
+	SideEffect           localapi.SideEffectClass           `json:"sideEffect"`
 }
 
 // DiscardTaskInput removes the worktree of one task that never delivered.

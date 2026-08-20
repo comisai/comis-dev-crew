@@ -18,8 +18,8 @@ a closed Go adapter that can consume an exact one-shot approval receipt.
 
 Installed composition supervises the Comis control lane, Codex and Claude Code
 launch descriptors, candidate validation, forge truth, delivery, unknown-task
-reconciliation, handback, and safe cleanup. Merge authority and unattended worker
-settling are not claimed.
+reconciliation, handback, safe cleanup, and approval-bound pull-request merge
+authority. Unattended worker settling is not claimed.
 Tagged release builds inject the exact tag into all four executables, while
 untagged source builds identify themselves as `dev`.
 
@@ -796,8 +796,21 @@ Installed composition now joins that mutation to the sole SQLite writer, the
 persistent authenticated Comis connection, and the separately credentialed
 forge adapter only when all three authorities exist. The operator CLI now
 reserves exact evidence through `task merge TASK` without accepting approval or
-forge fields. The destructive MCP adapter remains open, so the CLI can reach
-only `awaiting_approval` and no executable yet submits the approved follow-up.
+forge fields. The destructive `merge_task` MCP tool accepts only the task handle
+and obtains the approval request, managed run, and matching operation from the
+private schema-validated Comis call context. It exposes success only after
+validating an exact durable completion and replays the same merge transaction
+after an uncertain transport outcome. Neither surface can submit forge
+coordinates or select a merge method.
+
+Threat posture: the model can name only an opaque task. Public approval, forge,
+head, credential, and method arguments are rejected before the local service is
+called. The private Comis context must contain a schema-valid approval request,
+managed run, service instance, and stable operation; the coordinator then
+consumes the host receipt against store-resolved current evidence before the
+separate merge credential is resolved. A lost reply replays only that same
+durable transaction, and malformed, pending, or mismatched completion data is
+reported as an internal failure rather than success.
 
 ## Worker harnesses
 

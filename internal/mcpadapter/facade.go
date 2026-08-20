@@ -65,6 +65,7 @@ func (facade *Facade) registerTools() {
 	mcp.AddTool(facade.server, tool(ToolReconcileTask, "Validate one exact clean candidate after its worker terminal ended without a candidate report.", false), facade.reconcileTask)
 	mcp.AddTool(facade.server, tool(ToolHandbackTask, "Validate developer work after one safe paused worker exits.", false), facade.handbackTask)
 	mcp.AddTool(facade.server, cleanupTool(), facade.cleanupTask)
+	mcp.AddTool(facade.server, mergeTool(), facade.mergeTask)
 	mcp.AddTool(facade.server, cancelTool(), facade.cancelTask)
 	mcp.AddTool(facade.server, discardTool(), facade.discardTask)
 	mcp.AddTool(facade.server, tool(

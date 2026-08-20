@@ -216,10 +216,10 @@ devcrew-mcp \
   --service-instance service-instance-devcrew
 ```
 
-The facade defines twenty-six tools: `prepare_task`, `prepare_initiative`,
+The facade defines twenty-seven tools: `prepare_task`, `prepare_initiative`,
 `apply_integration_candidate`, `get_initiative`, `backlog_list`, `backlog_add`, `backlog_promote`,
 `promote_scout`, `reconcile_task`,
-`handback_task`, `cleanup_task`, `discard_task`, `pause_task`, `cancel_task`,
+`handback_task`, `cleanup_task`, `merge_task`, `discard_task`, `pause_task`, `cancel_task`,
 `resume_task`, `replace_worker`, `steer_task`, `verify_task`,
 `attest_scout_decisions`, `sync_primary`, `list_tasks`, `get_task`,
 `explain_task`, `get_launch_plan`, `worker_profiles`, and `doctor`.
@@ -241,6 +241,15 @@ tool arguments and model-visible result. `backlog_promote` completes the normal
 task contract for one ready item but cannot select repository or shape. It
 returns private single-run registration metadata through `comis.managedRun`
 while keeping nonces and host resource paths out of structured content.
+`merge_task` is a destructive, open-world mutation whose only public argument
+is an opaque task handle. It refuses calls without a private approval request
+and managed-run identity in the schema-validated `comis.callContext`, and binds
+the approval request to that context's identical operation ID. Repository,
+pull request, head, required checks, credential, and merge method are all
+resolved from durable service state and operator policy. Its visible success is
+accepted only from an exact durable completion carrying post-merge forge truth
+and approval attribution. An uncertain transport outcome replays the identical
+durable merge transaction; it cannot reserve another task or head.
 `cancel_task` is destructive — it ends work an operator asked for and repeating
 it does not undo that — but it is not removal.
 `discard_task` is the removal a cancelled task has no other route to: cleanup
@@ -660,9 +669,10 @@ delivered `merge_after_approval` task and returns JSON with
 `state: "awaiting_approval"`. The CLI can supply only the task and stable
 operation ID; it cannot attach an approval, select a repository, choose a pull
 request or head, or override the configured merge method. The destructive
-follow-up must arrive through the private managed MCP call with a Comis approval
-receipt bound to that identical operation. A repeat with changed evidence or an
-expired candidate refuses and requires fresh validation and approval.
+follow-up arrives through `merge_task` on the private managed MCP call with a
+Comis approval receipt bound to that identical operation. A repeat with changed
+evidence or an expired candidate refuses and requires fresh validation and
+approval.
 
 `task discard` removes the worktree of a task that stopped without delivering
 anything. It exists because cancellation preserves work on purpose and cleanup
