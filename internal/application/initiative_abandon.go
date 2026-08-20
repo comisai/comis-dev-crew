@@ -9,8 +9,6 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
-const commandAbandonManagedRunGroup = "AbandonManagedRunGroup"
-
 // AbandonManagedRunGroupMember identifies one exact prepared group member.
 type AbandonManagedRunGroupMember struct {
 	ManagedRunID      string

@@ -12,7 +12,6 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
-const commandPrepareInitiative = "PrepareInitiative"
 const maximumInitiativeMembers = 16
 
 // PrepareInitiativeTaskContract is one immutable member task contract. Its base

@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	expectedProtocolID = "comis.capability-service/1"
+	expectedProtocolID   = "comis.capability-service/1"
 	pinnedSchemaCount    = 34
 	expectedBundleDigest = "b42ab7a7662f3b02ede4d12d55e1ae7d50855990897fc4d24164b3a35f3c711d"
 )

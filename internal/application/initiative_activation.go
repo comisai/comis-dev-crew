@@ -9,8 +9,6 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
-const commandActivateManagedRunGroup = "ActivateManagedRunGroup"
-
 // ActivateManagedRunGroupMember is one exact host-owned member binding.
 type ActivateManagedRunGroupMember struct {
 	ManagedRunID          string
