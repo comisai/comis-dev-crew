@@ -157,11 +157,11 @@ func TestInstalledComposition_JoinsMCPActivationAndReviewedCodexLaunchPlan(t *te
 		},
 	}
 	if err := writeInstalledFrame(peer.connection, installedAuthenticatedActivate{ActivateRequest: activation, Bearer: installedCredential}); err != nil {
-		t.Fatal(err)
+		t.Fatalf("write installed activation: %v; service stderr=%q", err, serviceStderr.String())
 	}
 	line, err := peer.reader.ReadBytes('\n')
 	if err != nil {
-		t.Fatalf("read installed activation response: %v", err)
+		t.Fatalf("read installed activation response: %v; service stderr=%q", err, serviceStderr.String())
 	}
 	var response comiswire.ActivateResponse
 	decodeJSON(t, line, &response)
