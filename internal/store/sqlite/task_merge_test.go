@@ -158,6 +158,24 @@ func TestTaskMergeStoreRollsBackEverySplitLedgerFailure(t *testing.T) {
 		}
 	})
 
+	t.Run("authorization record", func(t *testing.T) {
+		store, reservation, approval, _ := openTaskMergeFixture(
+			t, filepath.Join(canonicalTempDir(t), "authorization-record.db"), "task-merge-fault-authorize-record",
+		)
+		defer func() { _ = store.Close() }()
+		if _, err := store.BeginTaskMerge(context.Background(), reservation); err != nil {
+			t.Fatalf("BeginTaskMerge() error = %v", err)
+		}
+		if _, err := store.db.Exec(`CREATE TRIGGER refuse_task_merge_authority_record BEFORE UPDATE ON task_merges
+			WHEN NEW.state = 'execution_authorized'
+			BEGIN SELECT RAISE(ABORT, 'injected authority record failure'); END`); err != nil {
+			t.Fatalf("create authorization record fault: %v", err)
+		}
+		if _, err := store.AuthorizeTaskMerge(context.Background(), approval); err == nil {
+			t.Fatal("AuthorizeTaskMerge(record fault) error = nil")
+		}
+	})
+
 	t.Run("completion", func(t *testing.T) {
 		store, reservation, approval, completion := openTaskMergeFixture(
 			t, filepath.Join(canonicalTempDir(t), "completion.db"), "task-merge-fault-complete",
@@ -182,6 +200,27 @@ func TestTaskMergeStoreRollsBackEverySplitLedgerFailure(t *testing.T) {
 		if err != nil || !found || row.state != application.TaskMergeExecutionAuthorized ||
 			row.mergeCommitRevision != "" || row.stateVersion != authorized.StateVersion {
 			t.Fatalf("task merge after completion fault = %#v, %v, found %v", row, err, found)
+		}
+	})
+
+	t.Run("completion record", func(t *testing.T) {
+		store, reservation, approval, completion := openTaskMergeFixture(
+			t, filepath.Join(canonicalTempDir(t), "completion-record.db"), "task-merge-fault-complete-record",
+		)
+		defer func() { _ = store.Close() }()
+		if _, err := store.BeginTaskMerge(context.Background(), reservation); err != nil {
+			t.Fatalf("BeginTaskMerge() error = %v", err)
+		}
+		if _, err := store.AuthorizeTaskMerge(context.Background(), approval); err != nil {
+			t.Fatalf("AuthorizeTaskMerge() error = %v", err)
+		}
+		if _, err := store.db.Exec(`CREATE TRIGGER refuse_task_merge_completion_record BEFORE UPDATE ON task_merges
+			WHEN NEW.state = 'completed'
+			BEGIN SELECT RAISE(ABORT, 'injected completion record failure'); END`); err != nil {
+			t.Fatalf("create completion record fault: %v", err)
+		}
+		if _, err := store.CompleteTaskMerge(context.Background(), completion); err == nil {
+			t.Fatal("CompleteTaskMerge(record fault) error = nil")
 		}
 	})
 }

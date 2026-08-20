@@ -217,6 +217,28 @@ func TestGitHubAdapter_MapsExactMergedTruthOntoApplicationPort(t *testing.T) {
 	}
 }
 
+func TestGitHubAdapter_MapsOnlySupportedMergeMethodsOntoApplicationPort(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		method MergeMethod
+		want   application.PullRequestMergeMethod
+	}{
+		{name: "merge commit", method: MergeCommit, want: application.PullRequestMergeCommit},
+		{name: "squash", method: MergeSquash, want: application.PullRequestMergeSquash},
+		{name: "rebase", method: MergeRebase, want: application.PullRequestMergeRebase},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := applicationMergeMethod(test.method)
+			if err != nil || got != test.want {
+				t.Fatalf("applicationMergeMethod(%q) = %q, %v", test.method, got, err)
+			}
+		})
+	}
+	if _, err := applicationMergeMethod(MergeMethod("unsupported")); err == nil {
+		t.Fatal("applicationMergeMethod(unsupported) error = nil")
+	}
+}
+
 type recordingCredentialSource struct {
 	events     *[]string
 	credential Credential

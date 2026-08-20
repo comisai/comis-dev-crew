@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -174,6 +175,58 @@ func TestTaskMergeStoreRejectsOperationCollisionAndCorruptDurableRows(t *testing
 	}
 }
 
+func TestTaskMergeStoreReportsUnavailablePersistenceBoundaries(t *testing.T) {
+	t.Run("closed database", func(t *testing.T) {
+		store, reservation, authorization, completion := openTaskMergeFixture(
+			t, filepath.Join(canonicalTempDir(t), "closed.db"), "task-merge-closed-database",
+		)
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.BeginTaskMerge(context.Background(), reservation); err == nil {
+			t.Fatal("BeginTaskMerge(closed database) error = nil")
+		}
+		if _, err := store.AuthorizeTaskMerge(context.Background(), authorization); err == nil {
+			t.Fatal("AuthorizeTaskMerge(closed database) error = nil")
+		}
+		if _, err := store.CompleteTaskMerge(context.Background(), completion); err == nil {
+			t.Fatal("CompleteTaskMerge(closed database) error = nil")
+		}
+	})
+
+	t.Run("missing merge ledger", func(t *testing.T) {
+		store, reservation, authorization, completion := openTaskMergeFixture(
+			t, filepath.Join(canonicalTempDir(t), "missing-merge-ledger.db"), "task-merge-missing-ledger",
+		)
+		defer func() { _ = store.Close() }()
+		if _, err := store.db.Exec(`DROP TABLE task_merges`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.BeginTaskMerge(context.Background(), reservation); err == nil {
+			t.Fatal("BeginTaskMerge(missing merge ledger) error = nil")
+		}
+		if _, err := store.AuthorizeTaskMerge(context.Background(), authorization); err == nil {
+			t.Fatal("AuthorizeTaskMerge(missing merge ledger) error = nil")
+		}
+		if _, err := store.CompleteTaskMerge(context.Background(), completion); err == nil {
+			t.Fatal("CompleteTaskMerge(missing merge ledger) error = nil")
+		}
+	})
+
+	t.Run("missing operation ledger", func(t *testing.T) {
+		store, reservation, _, _ := openTaskMergeFixture(
+			t, filepath.Join(canonicalTempDir(t), "missing-operation-ledger.db"), "task-merge-missing-operation-ledger",
+		)
+		defer func() { _ = store.Close() }()
+		if _, err := store.db.Exec(`DROP TABLE operations`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.BeginTaskMerge(context.Background(), reservation); err == nil {
+			t.Fatal("BeginTaskMerge(missing operation ledger) error = nil")
+		}
+	})
+}
+
 func TestTaskMergeStorageHelpersCompareClosedAuthorityExactly(t *testing.T) {
 	now := time.Date(2026, time.August, 20, 12, 0, 0, 0, time.UTC)
 	approval := domain.MergeApproval{
@@ -221,11 +274,53 @@ func TestTaskMergeStorageHelpersCompareClosedAuthorityExactly(t *testing.T) {
 	if _, err := scanTaskMerge(errorRowScanner{err: errors.New("scan unavailable")}); err == nil {
 		t.Fatal("scanTaskMerge(scanner failure) error = nil")
 	}
+	if err := updateTaskMerge(context.Background(), fixedResultExecer{}, row); err == nil {
+		t.Fatal("updateTaskMerge(no changed row) error = nil")
+	}
+	if err := updateTaskMergeOperation(
+		context.Background(), fixedResultExecer{}, row, domain.OperationAccepted, now,
+	); err == nil {
+		t.Fatal("updateTaskMergeOperation(no changed row) error = nil")
+	}
 	if !validStoredMergeMethod(application.PullRequestMergeCommit) ||
 		!validStoredMergeMethod(application.PullRequestMergeSquash) ||
 		!validStoredMergeMethod(application.PullRequestMergeRebase) ||
 		validStoredMergeMethod(application.PullRequestMergeMethod("unknown")) {
 		t.Fatal("validStoredMergeMethod() accepted the wrong closed vocabulary")
+	}
+}
+
+func TestTaskMergeStoreDetectsChangedReservedAuthorityAndDuplicateRows(t *testing.T) {
+	store, reservation, _, _ := openTaskMergeFixture(
+		t, filepath.Join(canonicalTempDir(t), "reserved-authority.db"), "task-merge-reserved-authority",
+	)
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.BeginTaskMerge(context.Background(), reservation); err != nil {
+		t.Fatal(err)
+	}
+	row, found, err := findTaskMerge(context.Background(), store.db, reservation.OperationID)
+	if err != nil || !found {
+		t.Fatalf("findTaskMerge() = %#v, %v, found %v", row, err, found)
+	}
+	transaction, err := store.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := insertTaskMerge(context.Background(), transaction, row); !errors.Is(err, application.ErrConflict) {
+		_ = transaction.Rollback()
+		t.Fatalf("insertTaskMerge(duplicate) error = %v, want ErrConflict", err)
+	}
+	if err := transaction.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(
+		`UPDATE task_merges SET head_revision = ? WHERE operation_id = ?`,
+		strings.Repeat("f", 40), reservation.OperationID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BeginTaskMerge(context.Background(), reservation); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("BeginTaskMerge(changed reserved authority) error = %v, want ErrPrecondition", err)
 	}
 }
 
@@ -236,3 +331,14 @@ type errorRowScanner struct {
 func (scanner errorRowScanner) Scan(...any) error {
 	return scanner.err
 }
+
+type fixedResultExecer struct{}
+
+func (fixedResultExecer) ExecContext(context.Context, string, ...any) (sql.Result, error) {
+	return fixedSQLResult{}, nil
+}
+
+type fixedSQLResult struct{}
+
+func (fixedSQLResult) LastInsertId() (int64, error) { return 0, nil }
+func (fixedSQLResult) RowsAffected() (int64, error) { return 0, nil }

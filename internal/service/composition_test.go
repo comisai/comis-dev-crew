@@ -146,6 +146,12 @@ func TestInstalledRuntimeComposesMergeAuthorityWithoutReadingItsSecretAtStartup(
 	}
 }
 
+func TestComposeTaskMergesRejectsEnabledAuthorityWithoutForgeAdapter(t *testing.T) {
+	if _, err := composeTaskMerges(Config{mergeOperatorEnabled: true}, nil, nil, nil); err == nil {
+		t.Fatal("composeTaskMerges(enabled without forge adapter) error = nil")
+	}
+}
+
 func TestInstalledControlReconnectBackoffPreservesMultipleHandshakeAttempts(t *testing.T) {
 	if comisMaximumBackoff >= comisRequestTimeout/2 {
 		t.Fatalf(
