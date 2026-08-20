@@ -11,10 +11,10 @@ operator CLI provides service, fleet, task, operation, and worker-profile views
 alongside the task lifecycle commands: prepare, reconcile, handback, cleanup, and
 the intervention set — pause, resume, cancel, verify, promote, replace, steer,
 and the acknowledged operator-only discard. The
-protocol foundation pins the 41-artifact Comis capability-service contract at
-source commit `ba05af9a7717d572aea18cb7603edc442ba253f3` and bundle digest
-`b42ab7a7662f3b02ede4d12d55e1ae7d50855990897fc4d24164b3a35f3c711d`, and generates
-a closed Go adapter.
+protocol foundation pins the 43-artifact Comis capability-service contract at
+source commit `72c5ea3d75a8ed9ccddaaac8e999324f87477ca8` and bundle digest
+`9dcf3e3120a42f671c615a60e1ff149401da7b5380543d37b71efca4eec5548f`, and generates
+a closed Go adapter that can consume an exact one-shot approval receipt.
 
 Installed composition supervises the Comis control lane, Codex and Claude Code
 launch descriptors, candidate validation, forge truth, delivery, unknown-task

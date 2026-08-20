@@ -105,15 +105,18 @@ func schemaNames(path string) (string, string, error) {
 func exportedName(value string) string {
 	if name, exists := map[string]string{
 		"agentId":               "AgentID",
+		"approvalRequestId":     "ApprovalRequestID",
 		"conversationRef":       "ConversationRef",
 		"executionAttachmentId": "ExecutionAttachmentID",
 		"externalRunRef":        "ExternalRunRef",
 		"jsonrpc":               "JSONRPC",
 		"managedRunGroupId":     "ManagedRunGroupID",
 		"managedRunId":          "ManagedRunID",
+		"mcpOperationId":        "MCPOperationID",
 		"operationId":           "OperationID",
 		"protocolId":            "ProtocolID",
 		"registrationNonce":     "RegistrationNonce",
+		"resolvingPrincipalId":  "ResolvingPrincipalID",
 		"rootRunId":             "RootRunID",
 		"serviceInstanceId":     "ServiceInstanceID",
 		"serviceReportId":       "ServiceReportID",

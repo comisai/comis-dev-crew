@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -62,6 +63,23 @@ func TestGeneratedClientBuildsClosedOperationEnvelopes(t *testing.T) {
 				envelope, ok := request.(HealthRequest)
 				if !ok || envelope.ID != envelope.Params.OperationID || envelope.Method != MethodCapabilityServicesHealth {
 					t.Fatalf("unexpected health envelope: %#v", request)
+				}
+			},
+		},
+		{
+			name: "approval receipt",
+			invoke: func(client *Client) error {
+				_, err := client.ConsumeApproval(context.Background(), ConsumeApprovalRequestParams{
+					OperationID: "operation_consume_approval", ManagedRunID: "managed-run_a",
+					ApprovalRequestID: "10000000-0000-4000-8000-000000000001", MCPOperationID: "operation_merge_a",
+				})
+				return err
+			},
+			assert: func(t *testing.T, request any) {
+				t.Helper()
+				envelope, ok := request.(ConsumeApprovalRequest)
+				if !ok || envelope.ID != envelope.Params.OperationID || envelope.Method != MethodManagedRunsConsumeApproval {
+					t.Fatalf("unexpected approval receipt envelope: %#v", request)
 				}
 			},
 		},
@@ -124,6 +142,41 @@ func TestGeneratedClientBuildsClosedOperationEnvelopes(t *testing.T) {
 			}
 			test.assert(t, transport.request)
 		})
+	}
+}
+
+func TestGeneratedClientValidatesApprovalReceiptIdentityAndAuthority(t *testing.T) {
+	params := ConsumeApprovalRequestParams{
+		OperationID: "operation_consume_approval", ManagedRunID: "managed-run_a",
+		ApprovalRequestID: "10000000-0000-4000-8000-000000000001", MCPOperationID: "operation_merge_a",
+	}
+	if _, err := newClient(&recordingTransport{}).ConsumeApproval(missingContext(), params); err == nil {
+		t.Fatal("ConsumeApproval(nil context) error = nil")
+	}
+	receipt := ConsumeApprovalResponseResult{
+		State: ApprovalReceiptStateConsumed, ApprovalRequestID: params.ApprovalRequestID,
+		ManagedRunID: params.ManagedRunID, MCPOperationID: params.MCPOperationID,
+		ResolvingPrincipalID: "principal_a", OperationFingerprint: strings.Repeat("a", 64),
+		ApprovedAtMs: 1_800_000_000_000, ExpiresAtMs: 1_800_000_900_000, ConsumedAtMs: 1_800_000_000_001,
+	}
+	transport := &recordingTransport{response: func(target any) {
+		*(target.(*ConsumeApprovalResponse)) = ConsumeApprovalResponse{
+			JSONRPC: JSONRPCVersion, ID: params.OperationID, Result: receipt,
+		}
+	}}
+	result, err := newClient(transport).ConsumeApproval(context.Background(), params)
+	if err != nil || result != receipt {
+		t.Fatalf("ConsumeApproval() = %#v, %v", result, err)
+	}
+	drifted := receipt
+	drifted.MCPOperationID = "operation_other"
+	transport.response = func(target any) {
+		*(target.(*ConsumeApprovalResponse)) = ConsumeApprovalResponse{
+			JSONRPC: JSONRPCVersion, ID: params.OperationID, Result: drifted,
+		}
+	}
+	if _, err := newClient(transport).ConsumeApproval(context.Background(), params); err == nil {
+		t.Fatal("ConsumeApproval(authority drift) error = nil")
 	}
 }
 

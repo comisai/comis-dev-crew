@@ -9,23 +9,24 @@ import (
 type PayloadTarget string
 
 const (
-	PayloadRequest               PayloadTarget = "request"
-	PayloadAbandonResponse       PayloadTarget = "abandon-response"
-	PayloadActivateResponse      PayloadTarget = "activate-response"
-	PayloadGroupAbandonResponse  PayloadTarget = "group-abandon-response"
-	PayloadGroupActivateResponse PayloadTarget = "group-activate-response"
-	PayloadCancelResponse        PayloadTarget = "cancel-response"
-	PayloadErrorResponse         PayloadTarget = "error-response"
-	PayloadHandshakeResponse     PayloadTarget = "handshake-response"
-	PayloadHealthResponse        PayloadTarget = "health-response"
-	PayloadPutEvidenceResponse   PayloadTarget = "put-evidence-response"
-	PayloadAttentionResponse     PayloadTarget = "receive-attention-response"
-	PayloadReleaseResponse       PayloadTarget = "release-response"
-	PayloadReportResponse        PayloadTarget = "report-response"
-	PayloadTerminalEventResponse PayloadTarget = "terminal-event-response"
-	PayloadMCPCallContext        PayloadTarget = "mcp-call-context"
-	PayloadMCPManagedRunGroup    PayloadTarget = "mcp-managed-run-group-result"
-	PayloadMCPManagedRunResult   PayloadTarget = "mcp-managed-run-result"
+	PayloadRequest                 PayloadTarget = "request"
+	PayloadAbandonResponse         PayloadTarget = "abandon-response"
+	PayloadActivateResponse        PayloadTarget = "activate-response"
+	PayloadGroupAbandonResponse    PayloadTarget = "group-abandon-response"
+	PayloadGroupActivateResponse   PayloadTarget = "group-activate-response"
+	PayloadCancelResponse          PayloadTarget = "cancel-response"
+	PayloadConsumeApprovalResponse PayloadTarget = "consume-approval-response"
+	PayloadErrorResponse           PayloadTarget = "error-response"
+	PayloadHandshakeResponse       PayloadTarget = "handshake-response"
+	PayloadHealthResponse          PayloadTarget = "health-response"
+	PayloadPutEvidenceResponse     PayloadTarget = "put-evidence-response"
+	PayloadAttentionResponse       PayloadTarget = "receive-attention-response"
+	PayloadReleaseResponse         PayloadTarget = "release-response"
+	PayloadReportResponse          PayloadTarget = "report-response"
+	PayloadTerminalEventResponse   PayloadTarget = "terminal-event-response"
+	PayloadMCPCallContext          PayloadTarget = "mcp-call-context"
+	PayloadMCPManagedRunGroup      PayloadTarget = "mcp-managed-run-group-result"
+	PayloadMCPManagedRunResult     PayloadTarget = "mcp-managed-run-result"
 )
 
 type requestHeader struct {
@@ -38,7 +39,7 @@ type requestHeader struct {
 // Valid reports whether the target belongs to the pinned closed catalog.
 func (target PayloadTarget) Valid() bool {
 	switch target {
-	case PayloadRequest, PayloadAbandonResponse, PayloadActivateResponse, PayloadGroupAbandonResponse, PayloadGroupActivateResponse, PayloadCancelResponse, PayloadErrorResponse,
+	case PayloadRequest, PayloadAbandonResponse, PayloadActivateResponse, PayloadGroupAbandonResponse, PayloadGroupActivateResponse, PayloadCancelResponse, PayloadConsumeApprovalResponse, PayloadErrorResponse,
 		PayloadHandshakeResponse, PayloadHealthResponse, PayloadPutEvidenceResponse, PayloadAttentionResponse, PayloadReleaseResponse, PayloadReportResponse,
 		PayloadTerminalEventResponse, PayloadMCPCallContext, PayloadMCPManagedRunGroup, PayloadMCPManagedRunResult:
 		return true
@@ -104,6 +105,8 @@ func payloadContract(target PayloadTarget, contents []byte) (string, any, error)
 		return schemaGroupActivateResponse, &GroupActivateResponse{}, nil
 	case PayloadCancelResponse:
 		return schemaCancelResponse, &CancelResponse{}, nil
+	case PayloadConsumeApprovalResponse:
+		return schemaConsumeApprovalResponse, &ConsumeApprovalResponse{}, nil
 	case PayloadErrorResponse:
 		return schemaErrorResponse, &ErrorResponse{}, nil
 	case PayloadHandshakeResponse:
@@ -153,6 +156,8 @@ func requestContract(contents []byte) (string, any, error) {
 		return schemaGroupGetHostRollupRequest, &GroupGetHostRollupRequest{}, nil
 	case MethodManagedRunsCancel:
 		return schemaCancelRequest, &CancelRequest{}, nil
+	case MethodManagedRunsConsumeApproval:
+		return schemaConsumeApprovalRequest, &ConsumeApprovalRequest{}, nil
 	case MethodManagedRunsHeartbeat:
 		return schemaHeartbeatRequest, &HeartbeatRequest{}, nil
 	case MethodManagedRunsPutEvidence:

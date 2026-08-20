@@ -129,6 +129,7 @@ func TestControlHandshakeRequestsCompleteRequiredScopeSet(t *testing.T) {
 		ServiceScopeTerminalEvents,
 		ServiceScopeExecutionAttachment,
 		ServiceScopeManagedRunGroup,
+		ServiceScopeApprovalReceipt,
 	}
 	if !slices.Equal(request.Params.RequestedScopes, want) {
 		t.Fatalf("requested scopes = %v, want %v", request.Params.RequestedScopes, want)

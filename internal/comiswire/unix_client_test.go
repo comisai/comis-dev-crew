@@ -241,6 +241,7 @@ func TestUnixRoundTripperRejectsUnsupportedRequestsAndSocketKinds(t *testing.T) 
 	}{
 		{name: "health", envelope: HealthRequest{ID: "operation_health"}, wantID: "operation_health"},
 		{name: "put evidence", envelope: PutEvidenceRequest{ID: "operation_evidence"}, wantID: "operation_evidence"},
+		{name: "consume approval", envelope: ConsumeApprovalRequest{ID: "operation_approval"}, wantID: "operation_approval"},
 		{name: "release", envelope: ReleaseRequest{ID: "operation_release"}, wantID: "operation_release"},
 	} {
 		t.Run(request.name+" operation identity", func(t *testing.T) {
@@ -258,6 +259,7 @@ func TestUnixRoundTripperRejectsUnsupportedRequestsAndSocketKinds(t *testing.T) 
 		{name: "health", envelope: HealthRequest{}},
 		{name: "report", envelope: ReportRequest{}},
 		{name: "put evidence", envelope: PutEvidenceRequest{}},
+		{name: "consume approval", envelope: ConsumeApprovalRequest{}},
 		{name: "release", envelope: ReleaseRequest{}},
 	} {
 		t.Run(request.name+" credential", func(t *testing.T) {

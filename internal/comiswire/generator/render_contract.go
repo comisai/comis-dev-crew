@@ -43,6 +43,7 @@ func renderContract(manifest bundle.Manifest, schemas []schemaSpec) (string, err
 	}{
 		{name: "AbandonDisposition", schema: "schemas/abandon.request.schema.json", path: []string{"params", "disposition"}},
 		{name: "AbandonReason", schema: "schemas/abandon.request.schema.json", path: []string{"params", "reason"}},
+		{name: "ApprovalReceiptState", schema: "schemas/consumeApproval.response.schema.json", path: []string{"result", "state"}},
 		{name: "HealthStatus", schema: "schemas/health.response.schema.json", path: []string{"result", "status"}},
 		{name: "ReportKind", schema: "schemas/report.request.schema.json", path: []string{"params", "kind"}},
 		{name: "CapabilityTerminalTransition", schema: "schemas/terminalEvent.request.schema.json", path: []string{"params", "transition"}},

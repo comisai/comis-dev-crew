@@ -19,6 +19,7 @@ func renderTypes(schemas []schemaSpec) (string, error) {
 	renderer := typeRenderer{defined: make(map[string]struct{})}
 	for _, declaration := range []string{
 		"type OperationID string\n",
+		"type ApprovalRequestID string\n",
 		"type ManagedRunID string\n",
 		"type ManagedRunGroupID string\n",
 		"type WorkspaceLeaseID string\n",
@@ -196,6 +197,10 @@ func specialFieldType(parent, property string) string {
 	switch property {
 	case "id", "operationId":
 		return "OperationID"
+	case "approvalRequestId":
+		return "ApprovalRequestID"
+	case "mcpOperationId":
+		return "OperationID"
 	case "method":
 		return "Method"
 	case "serviceInstanceId":
@@ -256,6 +261,9 @@ func specialFieldType(parent, property string) string {
 			return "HealthStatus"
 		}
 	case "state":
+		if parent == "ConsumeApprovalResponseResult" {
+			return "ApprovalReceiptState"
+		}
 		return "ManagedRunState"
 	case "requestedScopes", "activeScopes":
 		return "[]ServiceScope"

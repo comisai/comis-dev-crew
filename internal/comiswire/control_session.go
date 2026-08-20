@@ -423,6 +423,7 @@ func requiredControlScopes() []ServiceScope {
 		ServiceScopeTerminalEvents,
 		ServiceScopeExecutionAttachment,
 		ServiceScopeManagedRunGroup,
+		ServiceScopeApprovalReceipt,
 	}
 }
 

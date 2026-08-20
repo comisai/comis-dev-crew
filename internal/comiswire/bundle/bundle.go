@@ -177,7 +177,7 @@ func validateMethods(manifest Manifest) error {
 		// and execution_attachment, so the first method to require either would
 		// have failed the sync as an unknown scope rather than as a real defect.
 		if method.RequiredServiceScope != nil && !oneOf(*method.RequiredServiceScope,
-			"attention_response", "evidence", "execution_attachment", "health",
+			"approval_receipt", "attention_response", "evidence", "execution_attachment", "health",
 			"managed_run_group", "report", "terminal_events", "workspace_lease") {
 			return fmt.Errorf("method %q has unknown service scope %q", name, *method.RequiredServiceScope)
 		}
