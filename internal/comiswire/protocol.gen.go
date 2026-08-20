@@ -10,7 +10,7 @@ import (
 )
 
 const ProtocolID = "comis.capability-service/1"
-const BundleDigest = "93470b8b70f8c11fcc87940c5c5b686b0eb958f9453d09ec05b4b91049acab86"
+const BundleDigest = "a718ad6b4dc34ab1efd34fbc29b15ed0f6a30a392e0c9571a443bb5574aaf020"
 const JSONRPCVersion = "2.0"
 
 const MaxEvidenceBytes = 1048576
