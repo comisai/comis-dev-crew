@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	pinnedSourceCommit = "6e7cc96d1b234113235ae83e89da8eeb63841037"
-	pinnedBundleDigest = "a718ad6b4dc34ab1efd34fbc29b15ed0f6a30a392e0c9571a443bb5574aaf020"
+	pinnedSourceCommit = "ba05af9a7717d572aea18cb7603edc442ba253f3"
+	pinnedBundleDigest = "b42ab7a7662f3b02ede4d12d55e1ae7d50855990897fc4d24164b3a35f3c711d"
 )
 
 func TestContractPinsPreparedAttachmentAuthority(t *testing.T) {
@@ -46,6 +46,18 @@ func TestContractPinsPreparedAttachmentAuthority(t *testing.T) {
 	missingTarget := []byte(`{"jsonrpc":"2.0","id":"operation_activate_missing_target","method":"managedRuns.activate","params":{"operationId":"operation_activate_missing_target","managedRunId":"managed-run_attachment","externalRunRef":"external-run_attachment","registrationNonce":"registration-nonce_attachment","workspaceLeaseId":"workspace-lease_attachment","executionAttachmentId":"execution-attachment_attachment"}}`)
 	if err := comiswire.ValidatePayload(comiswire.PayloadRequest, missingTarget); err == nil {
 		t.Fatal("activation with one attachment field was accepted")
+	}
+}
+
+func TestContractRequiresPreparedMemberIdentitiesForGroupAbandon(t *testing.T) {
+	abandon := []byte(`{"jsonrpc":"2.0","id":"operation_group_abandon","method":"managedRunGroups.abandon","params":{"operationId":"operation_group_abandon","managedRunGroupId":"managed-run-group_abandon","registrationNonce":"group-registration-nonce_abandon","members":[{"managedRunId":"managed-run_abandon","externalRunRef":"external-run_abandon","registrationNonce":"member-registration-nonce_abandon"}],"reason":"activation_rejected","disposition":"reap_safe"}}`)
+	if err := comiswire.ValidatePayload(comiswire.PayloadRequest, abandon); err != nil {
+		t.Fatalf("group abandon with exact member identities rejected: %v", err)
+	}
+
+	withoutMembers := []byte(`{"jsonrpc":"2.0","id":"operation_group_abandon","method":"managedRunGroups.abandon","params":{"operationId":"operation_group_abandon","managedRunGroupId":"managed-run-group_abandon","registrationNonce":"group-registration-nonce_abandon","reason":"activation_rejected","disposition":"reap_safe"}}`)
+	if err := comiswire.ValidatePayload(comiswire.PayloadRequest, withoutMembers); err == nil {
+		t.Fatal("group abandon without prepared member identities was accepted")
 	}
 }
 
