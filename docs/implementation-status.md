@@ -575,6 +575,32 @@ resume initiative authority: ambiguous nonterminal coordination is downgraded to
 `unknown`, and corrupted durable state prevents readiness rather than broadening
 run or scheduling authority.
 
+## Integration candidate application
+
+Candidate application is a reserved single-writer operation. A caller names the
+initiative, its recorded integration owner, a component task, the component's
+exact candidate head, and the expected integration head. It cannot supply a
+repository path, Git command, shell fragment, or strategy. The initiative's
+operator-owned policy resolves to the closed `merge`, `rebase`, or `cherry_pick`
+vocabulary, and SQLite rechecks that policy and owner before reserving the
+operation.
+
+The reservation resolves distinct task worktrees from durable preparations and
+requires current accepted candidate evidence whose repository, base, task, head,
+and expiry still agree. The Git registry then revalidates both worktree identities,
+cleanliness, and heads while holding its mutation lock. Fixed argv performs the
+selected operation with hooks and signing disabled. Applied heads and sorted,
+bounded conflict paths are durable records; conflicts remain in the dedicated
+integration worktree for an actionable resolution.
+
+Content-free Git refs bridge the interval between a Git result and its SQLite
+commit. Exact applied and conflicted calls replay without repeating Git. A crash
+before a receipt is written leaves the reserved operation and changed worktree
+ambiguous, so the retry refuses instead of inferring success. A crash after the
+receipt or after SQLite completion replays the one exact result. Completion and
+the canonical operation ledger commit in one transaction, and accepted evidence
+expiry blocks a new mutation without invalidating a result already completed.
+
 ## Mutation boundary
 
 The first mutation boundary prepares a service-minted task and later activates it

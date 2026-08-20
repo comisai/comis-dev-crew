@@ -170,7 +170,7 @@ func (fixture integrationFixture) request(
 		Candidate: application.IntegrationCandidateReference{
 			TaskHandle: fixture.candidate.TaskHandle, RepositoryID: fixture.repository.repositoryID,
 			WorktreePath: fixture.candidate.CanonicalPath, BaseRevision: fixture.base,
-			HeadRevision: candidateHead,
+			HeadRevision: candidateHead, EvidenceDigest: strings.Repeat("e", 64),
 		},
 	}
 }

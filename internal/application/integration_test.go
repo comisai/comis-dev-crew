@@ -84,6 +84,44 @@ func TestIntegrationReplaysWithoutReapplyingCandidate(t *testing.T) {
 	}
 }
 
+func TestIntegrationEvidenceExpiryBlocksNewMutationButNotCompletedReplay(t *testing.T) {
+	command := integrationCommand()
+	reserved := integrationReservation(command, IntegrationMerge)
+	expiredAt := reserved.EvidenceExpiresAt
+	store := &integrationStore{policyID: "integration-reviewed", reservation: reserved}
+	adapter := &integrationAdapter{}
+	integrations, err := NewIntegrations(IntegrationConfig{
+		Store: store, Adapter: adapter,
+		Policies: func(string) (IntegrationStrategy, error) { return IntegrationMerge, nil },
+		Clock:    func() time.Time { return expiredAt },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := integrations.ApplyCandidate(context.Background(), command); err == nil {
+		t.Fatal("ApplyCandidate(expired evidence) error = nil")
+	}
+	if len(adapter.requests) != 0 || store.sequence != "policy,reserve" {
+		t.Fatalf("expired evidence crossed mutation boundary: requests=%d sequence=%q", len(adapter.requests), store.sequence)
+	}
+
+	replayed := integrationResult(reserved, IntegrationApplied, strings.Repeat("d", 40), nil, reserved.ReservedAt.Add(time.Minute))
+	reserved.Result = &replayed
+	store = &integrationStore{policyID: "integration-reviewed", reservation: reserved}
+	integrations, err = NewIntegrations(IntegrationConfig{
+		Store: store, Adapter: adapter,
+		Policies: func(string) (IntegrationStrategy, error) { return IntegrationMerge, nil },
+		Clock:    func() time.Time { return expiredAt.Add(time.Hour) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := integrations.ApplyCandidate(context.Background(), command)
+	if err != nil || !reflect.DeepEqual(result, replayed) {
+		t.Fatalf("ApplyCandidate(expired replay) = %#v, %v", result, err)
+	}
+}
+
 func TestIntegrationPersistsTypedConflictsWithoutClaimingAHead(t *testing.T) {
 	at := time.Unix(1_800_000_000, 0).UTC()
 	command := integrationCommand()
@@ -185,8 +223,10 @@ func integrationReservation(command ApplyIntegrationCandidateCommand, strategy I
 		Candidate: IntegrationCandidateReference{
 			TaskHandle: command.CandidateTaskHandle, RepositoryID: "product-api",
 			WorktreePath: "/approved/worktrees/task-component", BaseRevision: strings.Repeat("0", 40),
-			HeadRevision: command.CandidateHead,
+			HeadRevision: command.CandidateHead, EvidenceDigest: strings.Repeat("2", 64),
 		},
+		EvidenceExpiresAt: time.Unix(1_800_000_000, 0).UTC().Add(5 * time.Minute),
+		ReservedAt:        time.Unix(1_800_000_000, 0).UTC(),
 	}
 }
 

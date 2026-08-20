@@ -54,11 +54,12 @@ type IntegrationTargetReference struct {
 
 // IntegrationCandidateReference is one immutable, evidence-backed task head.
 type IntegrationCandidateReference struct {
-	TaskHandle   string
-	RepositoryID string
-	WorktreePath string
-	BaseRevision string
-	HeadRevision string
+	TaskHandle     string
+	RepositoryID   string
+	WorktreePath   string
+	BaseRevision   string
+	HeadRevision   string
+	EvidenceDigest string
 }
 
 // IntegrationAdapterRequest is the complete typed Git mutation contract.
@@ -104,6 +105,8 @@ type ReservedIntegrationApplication struct {
 	Strategy              IntegrationStrategy
 	Target                IntegrationTargetReference
 	Candidate             IntegrationCandidateReference
+	EvidenceExpiresAt     time.Time
+	ReservedAt            time.Time
 	Result                *IntegrationApplicationResult
 }
 
@@ -216,6 +219,9 @@ func (integrations *Integrations) ApplyCandidate(
 		}
 		return cloneIntegrationResult(*reserved.Result), nil
 	}
+	if !at.Before(reserved.EvidenceExpiresAt) {
+		return IntegrationApplicationResult{}, mutationValidationFailure("integration candidate evidence expired")
+	}
 	adapterResult, err := integrations.adapter.ApplyIntegrationCandidate(ctx, reserved.AdapterRequest())
 	if err != nil {
 		return IntegrationApplicationResult{}, &dependencyFailure{message: "integration adapter failed", cause: err}
@@ -265,6 +271,11 @@ func validateIntegrationReservation(
 		reserved.Target.WorktreePath == reserved.Candidate.WorktreePath || !canonicalAbsolutePath(reserved.Target.WorktreePath) ||
 		!canonicalAbsolutePath(reserved.Candidate.WorktreePath) || domain.ValidateGitRevision(reserved.Candidate.BaseRevision) != nil {
 		return errors.New("reserved integration identity is invalid")
+	}
+	if domain.ValidateBriefRevisionHash(reserved.Candidate.EvidenceDigest) != nil || reserved.EvidenceExpiresAt.IsZero() ||
+		reserved.EvidenceExpiresAt.Location() != time.UTC || reserved.ReservedAt.IsZero() || reserved.ReservedAt.Location() != time.UTC ||
+		!reserved.ReservedAt.Before(reserved.EvidenceExpiresAt) {
+		return errors.New("reserved integration evidence is invalid")
 	}
 	return nil
 }
