@@ -410,11 +410,12 @@ joins, and their replay outcomes in one transaction at one state version. A
 partial allocation failure preserves the intents and already-created reversible
 artifacts for exact retry, but writes no half-initiative and launches nothing.
 
-The strict local boundary exposes `PrepareInitiative` to operator and MCP caller
-classes as a mutation. The boundary supplies its own operation and service
-identities, refuses caller-supplied host authority fields, and returns the exact
-private group preparation only when every prepared member and durable operation
-agree on the initiative identity and state version.
+The running service exposes `PrepareInitiative` to operator and MCP caller
+classes through the strict local boundary and the same reviewed preparation
+dependencies used by standalone tasks. The boundary supplies its own operation
+and service identities, refuses caller-supplied host authority fields, and
+returns the exact private group preparation only when every prepared member and
+durable operation agree on the initiative identity and state version.
 
 Group activation validates the private group nonce and the exact complete member
 set under the SQLite write lock. It commits the host-managed group identity and

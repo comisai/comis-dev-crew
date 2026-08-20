@@ -211,6 +211,10 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if err != nil {
 		return err
 	}
+	initiativeMutations, err := composeInitiativeMutations(config, store, clock, mutations != nil)
+	if err != nil {
+		return err
+	}
 	if attachmentSupervisor != nil {
 		if err := attachmentSupervisor.SetRecoveryAcknowledger(mutations); err != nil {
 			return fmt.Errorf("run service runtime attachment recovery: %w", err)
@@ -329,6 +333,7 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	handlerConfig := localapi.HandlerConfig{Queries: queries, Clock: clock, Logger: config.Logger}
 	if mutations != nil {
 		handlerConfig.Mutations = mutations
+		handlerConfig.InitiativeMutations = initiativeMutations
 		handlerConfig.ServiceInstanceID = config.ServiceInstanceID
 	}
 	if interventions != nil {
