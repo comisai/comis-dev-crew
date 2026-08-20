@@ -14,6 +14,7 @@ import (
 const (
 	ToolPrepareTask       = "prepare_task"
 	ToolPrepareInitiative = "prepare_initiative"
+	ToolApplyIntegration  = "apply_integration_candidate"
 	ToolGetInitiative     = "get_initiative"
 	ToolBacklogList       = "backlog_list"
 	ToolAddBacklog        = "backlog_add"
@@ -46,6 +47,7 @@ const (
 type Client interface {
 	PrepareTask(context.Context, string, localapi.PrepareTaskInput) (localapi.PrepareTaskResult, error)
 	PrepareInitiative(context.Context, string, localapi.PrepareInitiativeInput) (localapi.PrepareInitiativeResult, error)
+	ApplyIntegrationCandidate(context.Context, string, localapi.ApplyIntegrationCandidateInput) (localapi.ApplyIntegrationCandidateResult, error)
 	GetInitiative(context.Context, string, string) (application.InitiativeDetail, error)
 	ListBacklog(context.Context, string, localapi.ListBacklogInput) (application.BacklogList, error)
 	AddBacklog(context.Context, string, localapi.AddBacklogInput) (localapi.AddBacklogResult, error)

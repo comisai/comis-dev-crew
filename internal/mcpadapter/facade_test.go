@@ -382,7 +382,7 @@ func TestFacade_UncertainTerminalMutationsReconcileBeforeExactRetry(t *testing.T
 
 func assertToolCatalog(t *testing.T, tools []*mcp.Tool) {
 	t.Helper()
-	want := map[string]bool{ToolPrepareTask: false, ToolPrepareInitiative: false, ToolGetInitiative: true, ToolBacklogList: true, ToolAddBacklog: false, ToolPromoteBacklog: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolDiscardTask: false, ToolSyncPrimary: false, ToolAttestScout: false, ToolPauseTask: false, ToolCancelTask: false, ToolResumeTask: false, ToolVerifyTask: false, ToolPromoteScout: false, ToolReplaceWorker: false, ToolSteerTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
+	want := map[string]bool{ToolPrepareTask: false, ToolPrepareInitiative: false, ToolApplyIntegration: false, ToolGetInitiative: true, ToolBacklogList: true, ToolAddBacklog: false, ToolPromoteBacklog: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolDiscardTask: false, ToolSyncPrimary: false, ToolAttestScout: false, ToolPauseTask: false, ToolCancelTask: false, ToolResumeTask: false, ToolVerifyTask: false, ToolPromoteScout: false, ToolReplaceWorker: false, ToolSteerTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
 	if len(tools) != len(want) {
 		t.Fatalf("tool count = %d, want %d", len(tools), len(want))
 	}
@@ -689,6 +689,15 @@ func (client *fakeClient) PrepareInitiative(
 ) (localapi.PrepareInitiativeResult, error) {
 	client.calls = append(client.calls, "prepare-initiative:"+operationID)
 	return localapi.PrepareInitiativeResult{}, nil
+}
+
+func (client *fakeClient) ApplyIntegrationCandidate(
+	_ context.Context,
+	operationID string,
+	_ localapi.ApplyIntegrationCandidateInput,
+) (localapi.ApplyIntegrationCandidateResult, error) {
+	client.calls = append(client.calls, "apply-integration:"+operationID)
+	return localapi.ApplyIntegrationCandidateResult{}, nil
 }
 
 func (client *fakeClient) GetInitiative(

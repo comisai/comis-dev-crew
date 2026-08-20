@@ -210,8 +210,8 @@ devcrew-mcp \
   --service-instance service-instance-devcrew
 ```
 
-The facade defines twenty-five tools: `prepare_task`, `prepare_initiative`,
-`get_initiative`, `backlog_list`, `backlog_add`, `backlog_promote`,
+The facade defines twenty-six tools: `prepare_task`, `prepare_initiative`,
+`apply_integration_candidate`, `get_initiative`, `backlog_list`, `backlog_add`, `backlog_promote`,
 `promote_scout`, `reconcile_task`,
 `handback_task`, `cleanup_task`, `discard_task`, `pause_task`, `cancel_task`,
 `resume_task`, `replace_worker`, `steer_task`, `verify_task`,
@@ -222,6 +222,13 @@ the MCP result extension while keeping nonces and host resource paths out of
 model-visible structured content. `promote_scout` returns the same private
 single-run registration metadata ordinary task preparation does, because it
 mints a task the same way.
+`apply_integration_candidate` names only the initiative, dedicated integration
+owner, accepted candidate, and exact candidate and target heads. The service
+resolves policy, strategy, repository, and worktrees; the visible result contains
+only the reviewed strategy, evidence digest, applied head or bounded conflicts,
+and durable state version. An uncertain call retries the exact reserved operation,
+whose receipt-backed Git adapter either replays one known result or refuses
+ambiguity.
 `backlog_add` records bounded intent and derives its source conversation from
 the authenticated call context; conversation provenance is absent from both the
 tool arguments and model-visible result. `backlog_promote` completes the normal
