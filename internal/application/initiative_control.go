@@ -250,6 +250,15 @@ func refreshInitiativeControlMembers(
 func classifyInitiativeControlFailure(err error) (InitiativeControlOutcome, domain.ErrorCode) {
 	var failure *domain.Failure
 	if !errors.As(err, &failure) {
+		switch {
+		case errors.Is(err, ErrConflict):
+			return InitiativeControlRejected, domain.ErrorConflict
+		case errors.Is(err, ErrInvalidInput):
+			return InitiativeControlRejected, domain.ErrorInvalidArgument
+		case errors.Is(err, ErrNotFound), errors.Is(err, ErrPrecondition),
+			errors.Is(err, domain.ErrInvalidTransition):
+			return InitiativeControlRejected, domain.ErrorPrecondition
+		}
 		return InitiativeControlUnknown, domain.ErrorUnknown
 	}
 	if failure.Retryable || failure.Code == domain.ErrorUnavailable ||

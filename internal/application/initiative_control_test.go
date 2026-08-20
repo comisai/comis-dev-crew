@@ -20,12 +20,6 @@ func TestInitiativePauseReportsEveryMemberAndReplaysTheExactGroupResult(t *testi
 		},
 		stateVersion: 4,
 	}
-	precondition, err := domain.NewFailure(
-		domain.ErrorPrecondition, false, "task cannot pause", "inspect the task", ErrPrecondition,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
 	unavailable, err := domain.NewFailure(
 		domain.ErrorUnavailable, true, "worker is unavailable", "retry after recovery", errors.New("offline"),
 	)
@@ -33,7 +27,7 @@ func TestInitiativePauseReportsEveryMemberAndReplaysTheExactGroupResult(t *testi
 		t.Fatal(err)
 	}
 	tasks := &initiativeTaskControlsStub{pauseErrors: map[string]error{
-		"task-control-b": precondition,
+		"task-control-b": ErrPrecondition,
 		"task-control-c": unavailable,
 	}}
 	controls, err := NewInitiativeControls(InitiativeControlConfig{

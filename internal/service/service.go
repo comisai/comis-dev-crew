@@ -126,6 +126,15 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 			return fmt.Errorf("run service task reconciliation coordinator: %w", err)
 		}
 	}
+	var initiativeControls *application.InitiativeControls
+	if mutations != nil {
+		initiativeControls, err = application.NewInitiativeControls(application.InitiativeControlConfig{
+			Store: store, Tasks: mutations, Resumer: interventions, Clock: clock,
+		})
+		if err != nil {
+			return fmt.Errorf("run service initiative controls: %w", err)
+		}
+	}
 	var controlMutations comiswire.DurableControlMutations
 	if mutations != nil {
 		controlMutations = mutations
@@ -216,6 +225,7 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if mutations != nil {
 		handlerConfig.Mutations = mutations
 		handlerConfig.InitiativeMutations = initiativeMutations
+		handlerConfig.InitiativeControls = initiativeControls
 		handlerConfig.ServiceInstanceID = config.ServiceInstanceID
 	}
 	if interventions != nil {
