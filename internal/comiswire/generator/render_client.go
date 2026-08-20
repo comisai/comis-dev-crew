@@ -11,6 +11,9 @@ func renderClient(manifest bundle.Manifest) (string, error) {
 	expected := map[string]bool{
 		"capabilityServices.handshake":         false,
 		"capabilityServices.health":            false,
+		"managedRunGroups.abandon":             false,
+		"managedRunGroups.activate":            false,
+		"managedRunGroups.getHostRollup":       false,
 		"managedRuns.abandon":                  false,
 		"managedRuns.activate":                 false,
 		"managedRuns.cancel":                   false,

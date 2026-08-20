@@ -16,6 +16,7 @@ func renderContract(manifest bundle.Manifest, schemas []schemaSpec) (string, err
 	fmt.Fprintf(&output, "const BundleDigest = %s\n", quoted(manifest.BundleDigest))
 	output.WriteString("const JSONRPCVersion = \"2.0\"\n\n")
 	fmt.Fprintf(&output, "const MaxEvidenceBytes = %d\n", manifest.Limits.MaxEvidenceBytes)
+	fmt.Fprintf(&output, "const MaxGroupMembers = %d\n", manifest.Limits.MaxGroupMembers)
 	fmt.Fprintf(&output, "const MaxInFlightRequests = %d\n", manifest.Limits.MaxInFlightRequests)
 	fmt.Fprintf(&output, "const MaxLineBytes = %d\n", manifest.Limits.MaxLineBytes)
 	fmt.Fprintf(&output, "const MaxReportBytes = %d\n", manifest.Limits.MaxReportBytes)

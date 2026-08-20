@@ -120,6 +120,19 @@ func (renderer *typeRenderer) renderStruct(name string, node schemaNode) error {
 			if err := renderer.renderNamed(childName, child); err != nil {
 				return err
 			}
+			continue
+		}
+		// An array of objects names an item type in fieldType but had nothing
+		// emitting it, so the generated package referenced a struct that did not
+		// exist. No schema carried an object-typed array item until managed-run
+		// groups needed one: a group operation reports one outcome per member.
+		if child.Type == "array" && child.Items != nil {
+			item := *child.Items
+			if item.Type == "object" || objectVariantUnion(item) {
+				if err := renderer.renderNamed(childName+"Item", item); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil

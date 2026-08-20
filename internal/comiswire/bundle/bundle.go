@@ -172,7 +172,13 @@ func validateMethods(manifest Manifest) error {
 		if !oneOf(method.Direction, "bidirectional", "comis-to-service", "service-to-comis") {
 			return fmt.Errorf("method %q has unknown direction %q", name, method.Direction)
 		}
-		if method.RequiredServiceScope != nil && !oneOf(*method.RequiredServiceScope, "attention_response", "evidence", "health", "report", "workspace_lease") {
+		// The full protocol scope set, not merely the scopes some method happens
+		// to require today. The narrower list silently omitted terminal_events
+		// and execution_attachment, so the first method to require either would
+		// have failed the sync as an unknown scope rather than as a real defect.
+		if method.RequiredServiceScope != nil && !oneOf(*method.RequiredServiceScope,
+			"attention_response", "evidence", "execution_attachment", "health",
+			"managed_run_group", "report", "terminal_events", "workspace_lease") {
 			return fmt.Errorf("method %q has unknown service scope %q", name, *method.RequiredServiceScope)
 		}
 		if !method.OperationIDRequired || method.MaxRequestBytes != manifest.Limits.MaxRequestBytes || method.MaxResponseBytes != manifest.Limits.MaxResponseBytes || len(method.SemanticInvariants) == 0 {

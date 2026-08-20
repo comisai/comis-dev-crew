@@ -380,7 +380,8 @@ func validHandshakeResponse(mutate func(*HandshakeResponse)) HandshakeResponse {
 			ProtocolID: ProtocolID, BundleDigest: BundleDigest, ServiceInstanceID: "service-instance_a",
 			ActiveScopes: []ServiceScope{ServiceScopeHealth, ServiceScopeReport},
 			Limits: ProtocolLimits{
-				MaxEvidenceBytes: MaxEvidenceBytes, MaxInFlightRequests: MaxInFlightRequests, MaxLineBytes: MaxLineBytes,
+				MaxEvidenceBytes: MaxEvidenceBytes, MaxGroupMembers: MaxGroupMembers,
+				MaxInFlightRequests: MaxInFlightRequests, MaxLineBytes: MaxLineBytes,
 				MaxReportBytes: MaxReportBytes, MaxRequestBytes: MaxRequestBytes, MaxResponseBytes: MaxResponseBytes,
 				ReportRetentionDays: ReportRetentionDays,
 			},

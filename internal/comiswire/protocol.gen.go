@@ -10,10 +10,11 @@ import (
 )
 
 const ProtocolID = "comis.capability-service/1"
-const BundleDigest = "86f5f5eb3d8147ccf85200adb475ccfecdbe28f6acdeb5446b8b8a71edfa9b33"
+const BundleDigest = "47bdab9ef7697a296f0b37f48b0d57c4b7f4dfbc961a99b43b4426c1a4edc64a"
 const JSONRPCVersion = "2.0"
 
 const MaxEvidenceBytes = 1048576
+const MaxGroupMembers = 16
 const MaxInFlightRequests = 32
 const MaxLineBytes = 1441792
 const MaxReportBytes = 16384
@@ -26,6 +27,9 @@ type Method string
 const (
 	MethodCapabilityServicesHandshake         Method = "capabilityServices.handshake"
 	MethodCapabilityServicesHealth            Method = "capabilityServices.health"
+	MethodManagedRunGroupsAbandon             Method = "managedRunGroups.abandon"
+	MethodManagedRunGroupsActivate            Method = "managedRunGroups.activate"
+	MethodManagedRunGroupsGetHostRollup       Method = "managedRunGroups.getHostRollup"
 	MethodManagedRunsAbandon                  Method = "managedRuns.abandon"
 	MethodManagedRunsActivate                 Method = "managedRuns.activate"
 	MethodManagedRunsCancel                   Method = "managedRuns.cancel"
@@ -219,11 +223,12 @@ const (
 	ServiceScopeWorkspaceLease      ServiceScope = "workspace_lease"
 	ServiceScopeTerminalEvents      ServiceScope = "terminal_events"
 	ServiceScopeExecutionAttachment ServiceScope = "execution_attachment"
+	ServiceScopeManagedRunGroup     ServiceScope = "managed_run_group"
 )
 
 func (value ServiceScope) Valid() bool {
 	switch value {
-	case ServiceScopeHealth, ServiceScopeAttentionResponse, ServiceScopeEvidence, ServiceScopeReport, ServiceScopeWorkspaceLease, ServiceScopeTerminalEvents, ServiceScopeExecutionAttachment:
+	case ServiceScopeHealth, ServiceScopeAttentionResponse, ServiceScopeEvidence, ServiceScopeReport, ServiceScopeWorkspaceLease, ServiceScopeTerminalEvents, ServiceScopeExecutionAttachment, ServiceScopeManagedRunGroup:
 		return true
 	default:
 		return false
@@ -279,9 +284,21 @@ const schemaErrorResponse = "{\n  \"$id\": \"https://schemas.comis.ai/capability
 
 const schemaExternalRunRef = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/external-run-ref.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"maxLength\": 256,\n  \"minLength\": 1,\n  \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n  \"type\": \"string\"\n}\n"
 
-const schemaHandshakeRequest = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/handshake.request.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"method\": {\n      \"const\": \"capabilityServices.handshake\",\n      \"type\": \"string\"\n    },\n    \"params\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"bundleDigest\": {\n          \"pattern\": \"^[a-f0-9]{64}$\",\n          \"type\": \"string\"\n        },\n        \"operationId\": {\n          \"maxLength\": 128,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"protocolId\": {\n          \"const\": \"comis.capability-service/1\",\n          \"type\": \"string\"\n        },\n        \"requestedScopes\": {\n          \"items\": {\n            \"enum\": [\n              \"health\",\n              \"attention_response\",\n              \"evidence\",\n              \"report\",\n              \"workspace_lease\",\n              \"terminal_events\",\n              \"execution_attachment\"\n            ],\n            \"type\": \"string\"\n          },\n          \"maxItems\": 7,\n          \"minItems\": 1,\n          \"type\": \"array\"\n        },\n        \"serviceInstanceId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"protocolId\",\n        \"bundleDigest\",\n        \"operationId\",\n        \"serviceInstanceId\",\n        \"requestedScopes\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"method\",\n    \"params\"\n  ],\n  \"type\": \"object\"\n}\n"
+const schemaGroupAbandonRequest = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/groupAbandon.request.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"method\": {\n      \"const\": \"managedRunGroups.abandon\",\n      \"type\": \"string\"\n    },\n    \"params\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"disposition\": {\n          \"enum\": [\n            \"reap_safe\",\n            \"preserve\"\n          ],\n          \"type\": \"string\"\n        },\n        \"managedRunGroupId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"operationId\": {\n          \"maxLength\": 128,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"reason\": {\n          \"enum\": [\n            \"activation_rejected\",\n            \"owner_cancelled\",\n            \"registration_expired\",\n            \"service_unavailable\"\n          ],\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"operationId\",\n        \"managedRunGroupId\",\n        \"reason\",\n        \"disposition\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"method\",\n    \"params\"\n  ],\n  \"type\": \"object\"\n}\n"
 
-const schemaHandshakeResponse = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/handshake.response.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"result\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"activeScopes\": {\n          \"items\": {\n            \"enum\": [\n              \"health\",\n              \"attention_response\",\n              \"evidence\",\n              \"report\",\n              \"workspace_lease\",\n              \"terminal_events\",\n              \"execution_attachment\"\n            ],\n            \"type\": \"string\"\n          },\n          \"maxItems\": 7,\n          \"minItems\": 1,\n          \"type\": \"array\"\n        },\n        \"bundleDigest\": {\n          \"pattern\": \"^[a-f0-9]{64}$\",\n          \"type\": \"string\"\n        },\n        \"limits\": {\n          \"additionalProperties\": false,\n          \"properties\": {\n            \"maxEvidenceBytes\": {\n              \"const\": 1048576,\n              \"type\": \"number\"\n            },\n            \"maxInFlightRequests\": {\n              \"const\": 32,\n              \"type\": \"number\"\n            },\n            \"maxLineBytes\": {\n              \"const\": 1441792,\n              \"type\": \"number\"\n            },\n            \"maxReportBytes\": {\n              \"const\": 16384,\n              \"type\": \"number\"\n            },\n            \"maxRequestBytes\": {\n              \"const\": 1441792,\n              \"type\": \"number\"\n            },\n            \"maxResponseBytes\": {\n              \"const\": 65536,\n              \"type\": \"number\"\n            },\n            \"reportRetentionDays\": {\n              \"const\": 30,\n              \"type\": \"number\"\n            }\n          },\n          \"required\": [\n            \"maxEvidenceBytes\",\n            \"maxInFlightRequests\",\n            \"maxLineBytes\",\n            \"maxReportBytes\",\n            \"maxRequestBytes\",\n            \"maxResponseBytes\",\n            \"reportRetentionDays\"\n          ],\n          \"type\": \"object\"\n        },\n        \"protocolId\": {\n          \"const\": \"comis.capability-service/1\",\n          \"type\": \"string\"\n        },\n        \"serviceInstanceId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"protocolId\",\n        \"bundleDigest\",\n        \"serviceInstanceId\",\n        \"activeScopes\",\n        \"limits\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"result\"\n  ],\n  \"type\": \"object\"\n}\n"
+const schemaGroupAbandonResponse = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/groupAbandon.response.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"result\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"disposition\": {\n          \"enum\": [\n            \"reap_safe\",\n            \"preserve\"\n          ],\n          \"type\": \"string\"\n        },\n        \"managedRunGroupId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"members\": {\n          \"items\": {\n            \"additionalProperties\": false,\n            \"properties\": {\n              \"managedRunId\": {\n                \"maxLength\": 256,\n                \"minLength\": 1,\n                \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n                \"type\": \"string\"\n              },\n              \"outcome\": {\n                \"enum\": [\n                  \"completed\",\n                  \"rejected\",\n                  \"unknown\",\n                  \"not_attempted\"\n                ],\n                \"type\": \"string\"\n              }\n            },\n            \"required\": [\n              \"managedRunId\",\n              \"outcome\"\n            ],\n            \"type\": \"object\"\n          },\n          \"maxItems\": 16,\n          \"minItems\": 1,\n          \"type\": \"array\"\n        },\n        \"state\": {\n          \"const\": \"abandoned\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"managedRunGroupId\",\n        \"members\",\n        \"state\",\n        \"disposition\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"result\"\n  ],\n  \"type\": \"object\"\n}\n"
+
+const schemaGroupActivateRequest = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/groupActivate.request.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"method\": {\n      \"const\": \"managedRunGroups.activate\",\n      \"type\": \"string\"\n    },\n    \"params\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"managedRunGroupId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"members\": {\n          \"items\": {\n            \"additionalProperties\": false,\n            \"properties\": {\n              \"externalRunRef\": {\n                \"maxLength\": 256,\n                \"minLength\": 1,\n                \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n                \"type\": \"string\"\n              },\n              \"managedRunId\": {\n                \"maxLength\": 256,\n                \"minLength\": 1,\n                \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n                \"type\": \"string\"\n              },\n              \"registrationNonce\": {\n                \"maxLength\": 256,\n                \"minLength\": 16,\n                \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n                \"type\": \"string\"\n              },\n              \"workspaceLeaseId\": {\n                \"maxLength\": 256,\n                \"minLength\": 1,\n                \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n                \"type\": \"string\"\n              }\n            },\n            \"required\": [\n              \"managedRunId\",\n              \"externalRunRef\",\n              \"registrationNonce\"\n            ],\n            \"type\": \"object\"\n          },\n          \"maxItems\": 16,\n          \"minItems\": 1,\n          \"type\": \"array\"\n        },\n        \"operationId\": {\n          \"maxLength\": 128,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"operationId\",\n        \"managedRunGroupId\",\n        \"members\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"method\",\n    \"params\"\n  ],\n  \"type\": \"object\"\n}\n"
+
+const schemaGroupActivateResponse = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/groupActivate.response.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"result\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"activatedAtMs\": {\n          \"maximum\": 9007199254740991,\n          \"minimum\": 0,\n          \"type\": \"integer\"\n        },\n        \"managedRunGroupId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"members\": {\n          \"items\": {\n            \"additionalProperties\": false,\n            \"properties\": {\n              \"managedRunId\": {\n                \"maxLength\": 256,\n                \"minLength\": 1,\n                \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n                \"type\": \"string\"\n              },\n              \"outcome\": {\n                \"enum\": [\n                  \"completed\",\n                  \"rejected\",\n                  \"unknown\",\n                  \"not_attempted\"\n                ],\n                \"type\": \"string\"\n              }\n            },\n            \"required\": [\n              \"managedRunId\",\n              \"outcome\"\n            ],\n            \"type\": \"object\"\n          },\n          \"maxItems\": 16,\n          \"minItems\": 1,\n          \"type\": \"array\"\n        }\n      },\n      \"required\": [\n        \"managedRunGroupId\",\n        \"members\",\n        \"activatedAtMs\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"result\"\n  ],\n  \"type\": \"object\"\n}\n"
+
+const schemaGroupGetHostRollupRequest = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/groupGetHostRollup.request.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"method\": {\n      \"const\": \"managedRunGroups.getHostRollup\",\n      \"type\": \"string\"\n    },\n    \"params\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"managedRunGroupId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"operationId\": {\n          \"maxLength\": 128,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"operationId\",\n        \"managedRunGroupId\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"method\",\n    \"params\"\n  ],\n  \"type\": \"object\"\n}\n"
+
+const schemaGroupGetHostRollupResponse = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/groupGetHostRollup.response.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"result\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"activeCustodyCount\": {\n          \"maximum\": 9007199254740991,\n          \"minimum\": 0,\n          \"type\": \"integer\"\n        },\n        \"attentionCount\": {\n          \"maximum\": 9007199254740991,\n          \"minimum\": 0,\n          \"type\": \"integer\"\n        },\n        \"managedRunGroupId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"memberManagedRunIds\": {\n          \"items\": {\n            \"maxLength\": 256,\n            \"minLength\": 1,\n            \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n            \"type\": \"string\"\n          },\n          \"maxItems\": 16,\n          \"minItems\": 1,\n          \"type\": \"array\"\n        },\n        \"stateCounts\": {\n          \"additionalProperties\": false,\n          \"properties\": {\n            \"active\": {\n              \"maximum\": 9007199254740991,\n              \"minimum\": 0,\n              \"type\": \"integer\"\n            },\n            \"cancelled\": {\n              \"maximum\": 9007199254740991,\n              \"minimum\": 0,\n              \"type\": \"integer\"\n            },\n            \"candidate_complete\": {\n              \"maximum\": 9007199254740991,\n              \"minimum\": 0,\n              \"type\": \"integer\"\n            },\n            \"failed\": {\n              \"maximum\": 9007199254740991,\n              \"minimum\": 0,\n              \"type\": \"integer\"\n            },\n            \"paused\": {\n              \"maximum\": 9007199254740991,\n              \"minimum\": 0,\n              \"type\": \"integer\"\n            },\n            \"preparing\": {\n              \"maximum\": 9007199254740991,\n              \"minimum\": 0,\n              \"type\": \"integer\"\n            },\n            \"succeeded\": {\n              \"maximum\": 9007199254740991,\n              \"minimum\": 0,\n              \"type\": \"integer\"\n            },\n            \"unknown\": {\n              \"maximum\": 9007199254740991,\n              \"minimum\": 0,\n              \"type\": \"integer\"\n            },\n            \"waiting\": {\n              \"maximum\": 9007199254740991,\n              \"minimum\": 0,\n              \"type\": \"integer\"\n            }\n          },\n          \"type\": \"object\"\n        },\n        \"updatedAtMs\": {\n          \"maximum\": 9007199254740991,\n          \"minimum\": 0,\n          \"type\": \"integer\"\n        }\n      },\n      \"required\": [\n        \"managedRunGroupId\",\n        \"memberManagedRunIds\",\n        \"stateCounts\",\n        \"attentionCount\",\n        \"activeCustodyCount\",\n        \"updatedAtMs\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"result\"\n  ],\n  \"type\": \"object\"\n}\n"
+
+const schemaHandshakeRequest = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/handshake.request.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"method\": {\n      \"const\": \"capabilityServices.handshake\",\n      \"type\": \"string\"\n    },\n    \"params\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"bundleDigest\": {\n          \"pattern\": \"^[a-f0-9]{64}$\",\n          \"type\": \"string\"\n        },\n        \"operationId\": {\n          \"maxLength\": 128,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"protocolId\": {\n          \"const\": \"comis.capability-service/1\",\n          \"type\": \"string\"\n        },\n        \"requestedScopes\": {\n          \"items\": {\n            \"enum\": [\n              \"health\",\n              \"attention_response\",\n              \"evidence\",\n              \"report\",\n              \"workspace_lease\",\n              \"terminal_events\",\n              \"execution_attachment\",\n              \"managed_run_group\"\n            ],\n            \"type\": \"string\"\n          },\n          \"maxItems\": 8,\n          \"minItems\": 1,\n          \"type\": \"array\"\n        },\n        \"serviceInstanceId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"protocolId\",\n        \"bundleDigest\",\n        \"operationId\",\n        \"serviceInstanceId\",\n        \"requestedScopes\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"method\",\n    \"params\"\n  ],\n  \"type\": \"object\"\n}\n"
+
+const schemaHandshakeResponse = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/handshake.response.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"result\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"activeScopes\": {\n          \"items\": {\n            \"enum\": [\n              \"health\",\n              \"attention_response\",\n              \"evidence\",\n              \"report\",\n              \"workspace_lease\",\n              \"terminal_events\",\n              \"execution_attachment\",\n              \"managed_run_group\"\n            ],\n            \"type\": \"string\"\n          },\n          \"maxItems\": 8,\n          \"minItems\": 1,\n          \"type\": \"array\"\n        },\n        \"bundleDigest\": {\n          \"pattern\": \"^[a-f0-9]{64}$\",\n          \"type\": \"string\"\n        },\n        \"limits\": {\n          \"additionalProperties\": false,\n          \"properties\": {\n            \"maxEvidenceBytes\": {\n              \"const\": 1048576,\n              \"type\": \"number\"\n            },\n            \"maxGroupMembers\": {\n              \"const\": 16,\n              \"type\": \"number\"\n            },\n            \"maxInFlightRequests\": {\n              \"const\": 32,\n              \"type\": \"number\"\n            },\n            \"maxLineBytes\": {\n              \"const\": 1441792,\n              \"type\": \"number\"\n            },\n            \"maxReportBytes\": {\n              \"const\": 16384,\n              \"type\": \"number\"\n            },\n            \"maxRequestBytes\": {\n              \"const\": 1441792,\n              \"type\": \"number\"\n            },\n            \"maxResponseBytes\": {\n              \"const\": 65536,\n              \"type\": \"number\"\n            },\n            \"reportRetentionDays\": {\n              \"const\": 30,\n              \"type\": \"number\"\n            }\n          },\n          \"required\": [\n            \"maxEvidenceBytes\",\n            \"maxGroupMembers\",\n            \"maxInFlightRequests\",\n            \"maxLineBytes\",\n            \"maxReportBytes\",\n            \"maxRequestBytes\",\n            \"maxResponseBytes\",\n            \"reportRetentionDays\"\n          ],\n          \"type\": \"object\"\n        },\n        \"protocolId\": {\n          \"const\": \"comis.capability-service/1\",\n          \"type\": \"string\"\n        },\n        \"serviceInstanceId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"protocolId\",\n        \"bundleDigest\",\n        \"serviceInstanceId\",\n        \"activeScopes\",\n        \"limits\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"result\"\n  ],\n  \"type\": \"object\"\n}\n"
 
 const schemaHealthRequest = "{\n  \"$id\": \"https://schemas.comis.ai/capability-service/health.request.schema.json\",\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"id\": {\n      \"maxLength\": 128,\n      \"minLength\": 1,\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n      \"type\": \"string\"\n    },\n    \"jsonrpc\": {\n      \"const\": \"2.0\",\n      \"type\": \"string\"\n    },\n    \"method\": {\n      \"const\": \"capabilityServices.health\",\n      \"type\": \"string\"\n    },\n    \"params\": {\n      \"additionalProperties\": false,\n      \"properties\": {\n        \"bundleDigest\": {\n          \"pattern\": \"^[a-f0-9]{64}$\",\n          \"type\": \"string\"\n        },\n        \"operationId\": {\n          \"maxLength\": 128,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        },\n        \"protocolId\": {\n          \"const\": \"comis.capability-service/1\",\n          \"type\": \"string\"\n        },\n        \"serviceInstanceId\": {\n          \"maxLength\": 256,\n          \"minLength\": 1,\n          \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._~-]*$\",\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"protocolId\",\n        \"bundleDigest\",\n        \"operationId\",\n        \"serviceInstanceId\"\n      ],\n      \"type\": \"object\"\n    }\n  },\n  \"required\": [\n    \"jsonrpc\",\n    \"id\",\n    \"method\",\n    \"params\"\n  ],\n  \"type\": \"object\"\n}\n"
 
@@ -429,6 +446,114 @@ type RPCError struct {
 
 type ExternalRunRef string
 
+type GroupAbandonRequest struct {
+	ID      OperationID               `json:"id"`
+	JSONRPC string                    `json:"jsonrpc"`
+	Method  Method                    `json:"method"`
+	Params  GroupAbandonRequestParams `json:"params"`
+}
+
+type GroupAbandonRequestParams struct {
+	Disposition       string            `json:"disposition"`
+	ManagedRunGroupID ManagedRunGroupID `json:"managedRunGroupId"`
+	OperationID       OperationID       `json:"operationId"`
+	Reason            string            `json:"reason"`
+}
+
+type GroupAbandonResponse struct {
+	ID      OperationID                `json:"id"`
+	JSONRPC string                     `json:"jsonrpc"`
+	Result  GroupAbandonResponseResult `json:"result"`
+}
+
+type GroupAbandonResponseResult struct {
+	Disposition       string                                  `json:"disposition"`
+	ManagedRunGroupID ManagedRunGroupID                       `json:"managedRunGroupId"`
+	Members           []GroupAbandonResponseResultMembersItem `json:"members"`
+	State             ManagedRunState                         `json:"state"`
+}
+
+type GroupAbandonResponseResultMembersItem struct {
+	ManagedRunID ManagedRunID `json:"managedRunId"`
+	Outcome      string       `json:"outcome"`
+}
+
+type GroupActivateRequest struct {
+	ID      OperationID                `json:"id"`
+	JSONRPC string                     `json:"jsonrpc"`
+	Method  Method                     `json:"method"`
+	Params  GroupActivateRequestParams `json:"params"`
+}
+
+type GroupActivateRequestParams struct {
+	ManagedRunGroupID ManagedRunGroupID                       `json:"managedRunGroupId"`
+	Members           []GroupActivateRequestParamsMembersItem `json:"members"`
+	OperationID       OperationID                             `json:"operationId"`
+}
+
+type GroupActivateRequestParamsMembersItem struct {
+	ExternalRunRef    ExternalRunRef    `json:"externalRunRef"`
+	ManagedRunID      ManagedRunID      `json:"managedRunId"`
+	RegistrationNonce RegistrationNonce `json:"registrationNonce"`
+	WorkspaceLeaseID  *WorkspaceLeaseID `json:"workspaceLeaseId,omitempty"`
+}
+
+type GroupActivateResponse struct {
+	ID      OperationID                 `json:"id"`
+	JSONRPC string                      `json:"jsonrpc"`
+	Result  GroupActivateResponseResult `json:"result"`
+}
+
+type GroupActivateResponseResult struct {
+	ActivatedAtMs     int64                                    `json:"activatedAtMs"`
+	ManagedRunGroupID ManagedRunGroupID                        `json:"managedRunGroupId"`
+	Members           []GroupActivateResponseResultMembersItem `json:"members"`
+}
+
+type GroupActivateResponseResultMembersItem struct {
+	ManagedRunID ManagedRunID `json:"managedRunId"`
+	Outcome      string       `json:"outcome"`
+}
+
+type GroupGetHostRollupRequest struct {
+	ID      OperationID                     `json:"id"`
+	JSONRPC string                          `json:"jsonrpc"`
+	Method  Method                          `json:"method"`
+	Params  GroupGetHostRollupRequestParams `json:"params"`
+}
+
+type GroupGetHostRollupRequestParams struct {
+	ManagedRunGroupID ManagedRunGroupID `json:"managedRunGroupId"`
+	OperationID       OperationID       `json:"operationId"`
+}
+
+type GroupGetHostRollupResponse struct {
+	ID      OperationID                      `json:"id"`
+	JSONRPC string                           `json:"jsonrpc"`
+	Result  GroupGetHostRollupResponseResult `json:"result"`
+}
+
+type GroupGetHostRollupResponseResult struct {
+	ActiveCustodyCount  int64                                       `json:"activeCustodyCount"`
+	AttentionCount      int64                                       `json:"attentionCount"`
+	ManagedRunGroupID   ManagedRunGroupID                           `json:"managedRunGroupId"`
+	MemberManagedRunIds []string                                    `json:"memberManagedRunIds"`
+	StateCounts         GroupGetHostRollupResponseResultStateCounts `json:"stateCounts"`
+	UpdatedAtMs         int64                                       `json:"updatedAtMs"`
+}
+
+type GroupGetHostRollupResponseResultStateCounts struct {
+	Active            *int64 `json:"active,omitempty"`
+	Cancelled         *int64 `json:"cancelled,omitempty"`
+	CandidateComplete *int64 `json:"candidate_complete,omitempty"`
+	Failed            *int64 `json:"failed,omitempty"`
+	Paused            *int64 `json:"paused,omitempty"`
+	Preparing         *int64 `json:"preparing,omitempty"`
+	Succeeded         *int64 `json:"succeeded,omitempty"`
+	Unknown           *int64 `json:"unknown,omitempty"`
+	Waiting           *int64 `json:"waiting,omitempty"`
+}
+
 type HandshakeRequest struct {
 	ID      OperationID            `json:"id"`
 	JSONRPC string                 `json:"jsonrpc"`
@@ -460,6 +585,7 @@ type HandshakeResponseResult struct {
 
 type ProtocolLimits struct {
 	MaxEvidenceBytes    int `json:"maxEvidenceBytes"`
+	MaxGroupMembers     int `json:"maxGroupMembers"`
 	MaxInFlightRequests int `json:"maxInFlightRequests"`
 	MaxLineBytes        int `json:"maxLineBytes"`
 	MaxReportBytes      int `json:"maxReportBytes"`

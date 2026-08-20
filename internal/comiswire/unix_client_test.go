@@ -439,7 +439,7 @@ func validHealthParams(operationID OperationID) HealthRequestParams {
 }
 
 func handshakeResponse(operationID string) string {
-	return fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"result":{"protocolId":%q,"bundleDigest":%q,"serviceInstanceId":"service-instance_a","activeScopes":["health","report"],"limits":{"maxEvidenceBytes":1048576,"maxInFlightRequests":32,"maxLineBytes":1441792,"maxReportBytes":16384,"maxRequestBytes":1441792,"maxResponseBytes":65536,"reportRetentionDays":30}}}`, operationID, ProtocolID, BundleDigest)
+	return fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"result":{"protocolId":%q,"bundleDigest":%q,"serviceInstanceId":"service-instance_a","activeScopes":["health","report"],"limits":{"maxEvidenceBytes":1048576,"maxGroupMembers":16,"maxInFlightRequests":32,"maxLineBytes":1441792,"maxReportBytes":16384,"maxRequestBytes":1441792,"maxResponseBytes":65536,"reportRetentionDays":30}}}`, operationID, ProtocolID, BundleDigest)
 }
 
 func healthResponse(operationID string) string {
