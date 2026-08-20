@@ -1,0 +1,365 @@
+package domain
+
+import (
+	"sort"
+	"time"
+)
+
+// InitiativeState is the closed initiative lifecycle. Unknown is durable: it
+// records that the service cannot currently describe the initiative, which is
+// not the same as idle and not the same as failed.
+type InitiativeState string
+
+const (
+	InitiativePreparing         InitiativeState = "preparing"
+	InitiativeActive            InitiativeState = "active"
+	InitiativeBlocked           InitiativeState = "blocked"
+	InitiativeIntegrating       InitiativeState = "integrating"
+	InitiativeValidating        InitiativeState = "validating"
+	InitiativeCandidateComplete InitiativeState = "candidate_complete"
+	InitiativeDelivered         InitiativeState = "delivered"
+	InitiativeFailed            InitiativeState = "failed"
+	InitiativeCancelled         InitiativeState = "cancelled"
+	InitiativeUnknown           InitiativeState = "unknown"
+)
+
+func (state InitiativeState) valid() bool {
+	switch state {
+	case InitiativePreparing, InitiativeActive, InitiativeBlocked, InitiativeIntegrating,
+		InitiativeValidating, InitiativeCandidateComplete, InitiativeDelivered,
+		InitiativeFailed, InitiativeCancelled, InitiativeUnknown:
+		return true
+	}
+	return false
+}
+
+// InitiativeEdgeKind is the closed dependency vocabulary. Each kind states WHY
+// one task waits for another, because a scheduler that only knows "waits" cannot
+// tell an operator which lanes a failure actually blocks.
+type InitiativeEdgeKind string
+
+const (
+	EdgeBlocksStart      InitiativeEdgeKind = "blocks_start"
+	EdgeBlocksValidation InitiativeEdgeKind = "blocks_validation"
+	EdgeConsumesArtifact InitiativeEdgeKind = "consumes_artifact"
+	EdgeIntegratesAfter  InitiativeEdgeKind = "integrates_after"
+)
+
+func (kind InitiativeEdgeKind) valid() bool {
+	switch kind {
+	case EdgeBlocksStart, EdgeBlocksValidation, EdgeConsumesArtifact, EdgeIntegratesAfter:
+		return true
+	}
+	return false
+}
+
+// blocksStart reports whether an edge gates the downstream task's launch rather
+// than only its validation. A validation edge lets the consumer work while its
+// producer runs; only its evidence has to wait.
+func (kind InitiativeEdgeKind) blocksStart() bool {
+	return kind == EdgeBlocksStart || kind == EdgeConsumesArtifact || kind == EdgeIntegratesAfter
+}
+
+// ContractArtifactKind is the closed contract vocabulary. It grows only with a
+// concrete producer and a concrete consumer.
+type ContractArtifactKind string
+
+const (
+	ArtifactAPISchema         ContractArtifactKind = "api_schema"
+	ArtifactGeneratedClient   ContractArtifactKind = "generated_client"
+	ArtifactFixture           ContractArtifactKind = "fixture"
+	ArtifactMigrationContract ContractArtifactKind = "migration_contract"
+	ArtifactIntegrationNote   ContractArtifactKind = "integration_note"
+)
+
+func (kind ContractArtifactKind) valid() bool {
+	switch kind {
+	case ArtifactAPISchema, ArtifactGeneratedClient, ArtifactFixture,
+		ArtifactMigrationContract, ArtifactIntegrationNote:
+		return true
+	}
+	return false
+}
+
+// InitiativeBaseRevision freezes one revision per repository. Freezing is what
+// lets a worker's evidence stay meaningful: without it a worker could rebase
+// onto a moving default branch and still call its old result current.
+type InitiativeBaseRevision struct {
+	RepositoryID string
+	Revision     string
+}
+
+// InitiativeComponent groups the tasks that carry one responsibility. The
+// responsibility text itself is domain content and stays private to the
+// companion; only the reference travels.
+type InitiativeComponent struct {
+	ComponentHandle   string
+	RepositoryID      string
+	ResponsibilityRef string
+	TaskHandles       []string
+}
+
+// InitiativeEdge is one dependency at the current initiative revision.
+type InitiativeEdge struct {
+	FromTaskHandle       string
+	ToTaskHandle         string
+	Kind                 InitiativeEdgeKind
+	RequiredArtifactKind ContractArtifactKind
+}
+
+// DevelopmentInitiative coordinates several components as one durable unit.
+//
+// The graph is closed and acyclic at every revision, and every edge names two
+// tasks this initiative already contains. Those two rules together are what keep
+// an initiative from becoming a general workflow engine reaching across
+// authorities: a dependency can only ever be expressed between members.
+type DevelopmentInitiative struct {
+	SchemaVersion        int
+	Handle               string
+	ManagedRunGroupID    string
+	TitleRef             string
+	State                InitiativeState
+	BaseRevisionSet      []InitiativeBaseRevision
+	Components           []InitiativeComponent
+	Edges                []InitiativeEdge
+	ContractArtifacts    []string
+	IntegrationPolicyID  string
+	IntegrationOwnerTask string
+	StateVersion         int64
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}
+
+// Validate enforces the initiative record and its graph invariants.
+func (initiative DevelopmentInitiative) Validate() error {
+	if initiative.SchemaVersion != 1 {
+		return &ValidationError{Field: "schemaVersion", Reason: "must equal 1"}
+	}
+	if err := validateOpaqueID("initiativeHandle", initiative.Handle); err != nil {
+		return err
+	}
+	if err := validateOpaqueID("integrationPolicyId", initiative.IntegrationPolicyID); err != nil {
+		return err
+	}
+	if err := validateAuthorityReference("managedRunGroupId", initiative.ManagedRunGroupID); err != nil {
+		return err
+	}
+	if !initiative.State.valid() {
+		return &ValidationError{Field: "state", Reason: "must be a closed initiative state"}
+	}
+	if initiative.StateVersion < 1 {
+		return &ValidationError{Field: "stateVersion", Reason: "must be positive"}
+	}
+	if initiative.UpdatedAt.Before(initiative.CreatedAt) {
+		return &ValidationError{Field: "updatedAt", Reason: "cannot precede creation"}
+	}
+
+	bases, err := initiative.validateBaseRevisions()
+	if err != nil {
+		return err
+	}
+	members, err := initiative.validateComponents(bases)
+	if err != nil {
+		return err
+	}
+	if err := initiative.validateEdges(members); err != nil {
+		return err
+	}
+	if initiative.IntegrationOwnerTask != "" && !members[initiative.IntegrationOwnerTask] {
+		return &ValidationError{
+			Field:  "integrationOwnerTask",
+			Reason: "must name a task this initiative contains",
+		}
+	}
+	return nil
+}
+
+func (initiative DevelopmentInitiative) validateBaseRevisions() (map[string]struct{}, error) {
+	if len(initiative.BaseRevisionSet) == 0 || len(initiative.BaseRevisionSet) > 32 {
+		return nil, &ValidationError{Field: "baseRevisionSet", Reason: "must freeze between one and 32 repositories"}
+	}
+	bases := make(map[string]struct{}, len(initiative.BaseRevisionSet))
+	for _, base := range initiative.BaseRevisionSet {
+		if err := ValidateRepositoryID(base.RepositoryID); err != nil {
+			return nil, err
+		}
+		if err := validateRevision(base.Revision); err != nil {
+			return nil, err
+		}
+		if _, exists := bases[base.RepositoryID]; exists {
+			// Two bases for one repository would let two components each call a
+			// different revision "the" base and both claim their evidence current.
+			return nil, &ValidationError{
+				Field:  "baseRevisionSet",
+				Reason: "must freeze exactly one revision per repository",
+			}
+		}
+		bases[base.RepositoryID] = struct{}{}
+	}
+	return bases, nil
+}
+
+func (initiative DevelopmentInitiative) validateComponents(
+	bases map[string]struct{},
+) (map[string]bool, error) {
+	if len(initiative.Components) == 0 || len(initiative.Components) > 64 {
+		return nil, &ValidationError{Field: "components", Reason: "must hold between one and 64 components"}
+	}
+	handles := make(map[string]struct{}, len(initiative.Components))
+	members := make(map[string]bool)
+	for _, component := range initiative.Components {
+		if err := validateOpaqueID("componentHandle", component.ComponentHandle); err != nil {
+			return nil, err
+		}
+		if err := ValidateRepositoryID(component.RepositoryID); err != nil {
+			return nil, err
+		}
+		if _, frozen := bases[component.RepositoryID]; !frozen {
+			return nil, &ValidationError{
+				Field:  "components.repositoryId",
+				Reason: "every component repository must have a frozen base revision",
+			}
+		}
+		if _, exists := handles[component.ComponentHandle]; exists {
+			return nil, &ValidationError{Field: "components", Reason: "component handles must be unique"}
+		}
+		handles[component.ComponentHandle] = struct{}{}
+		if len(component.TaskHandles) == 0 || len(component.TaskHandles) > 64 {
+			return nil, &ValidationError{Field: "components.taskHandles", Reason: "must hold between one and 64 tasks"}
+		}
+		for _, handle := range component.TaskHandles {
+			if err := ValidateTaskHandle(handle); err != nil {
+				return nil, err
+			}
+			if members[handle] {
+				// One task belongs to exactly one component. Sharing would make
+				// "which component owns this failure" unanswerable.
+				return nil, &ValidationError{
+					Field:  "components.taskHandles",
+					Reason: "a task belongs to exactly one component",
+				}
+			}
+			members[handle] = true
+		}
+	}
+	return members, nil
+}
+
+func (initiative DevelopmentInitiative) validateEdges(members map[string]bool) error {
+	if len(initiative.Edges) > 512 {
+		return &ValidationError{Field: "edges", Reason: "must hold at most 512 edges"}
+	}
+	type edgeKey struct {
+		from string
+		to   string
+		kind InitiativeEdgeKind
+	}
+	seen := make(map[edgeKey]struct{}, len(initiative.Edges))
+	for _, edge := range initiative.Edges {
+		if !edge.Kind.valid() {
+			return &ValidationError{Field: "edges.kind", Reason: "must be a closed edge kind"}
+		}
+		if !members[edge.FromTaskHandle] || !members[edge.ToTaskHandle] {
+			// An edge naming a task outside this initiative is how a
+			// cross-initiative dependency would enter the graph.
+			return &ValidationError{
+				Field:  "edges",
+				Reason: "both endpoints must be tasks this initiative contains",
+			}
+		}
+		if edge.FromTaskHandle == edge.ToTaskHandle {
+			return &ValidationError{Field: "edges", Reason: "a task cannot depend on itself"}
+		}
+		if edge.Kind == EdgeConsumesArtifact {
+			if !edge.RequiredArtifactKind.valid() {
+				// A consumer that does not name what it consumes cannot be told
+				// its contract went stale.
+				return &ValidationError{
+					Field:  "edges.requiredArtifactKind",
+					Reason: "an artifact edge must name the artifact kind it consumes",
+				}
+			}
+		} else if edge.RequiredArtifactKind != "" {
+			return &ValidationError{
+				Field:  "edges.requiredArtifactKind",
+				Reason: "only an artifact edge may name a required artifact kind",
+			}
+		}
+		key := edgeKey{from: edge.FromTaskHandle, to: edge.ToTaskHandle, kind: edge.Kind}
+		if _, exists := seen[key]; exists {
+			return &ValidationError{Field: "edges", Reason: "edges must be unique"}
+		}
+		seen[key] = struct{}{}
+	}
+	if initiative.hasCycle(members) {
+		return &ValidationError{Field: "edges", Reason: "must form an acyclic graph"}
+	}
+	return nil
+}
+
+// hasCycle walks the launch-blocking edges only. Validation-only edges cannot
+// deadlock a launch, so including them would refuse graphs that schedule fine.
+func (initiative DevelopmentInitiative) hasCycle(members map[string]bool) bool {
+	adjacency := make(map[string][]string, len(members))
+	for _, edge := range initiative.Edges {
+		if edge.Kind.blocksStart() {
+			adjacency[edge.FromTaskHandle] = append(adjacency[edge.FromTaskHandle], edge.ToTaskHandle)
+		}
+	}
+	const (
+		unvisited = 0
+		onStack   = 1
+		done      = 2
+	)
+	mark := make(map[string]int, len(members))
+	var visit func(string) bool
+	visit = func(node string) bool {
+		mark[node] = onStack
+		for _, next := range adjacency[node] {
+			switch mark[next] {
+			case onStack:
+				return true
+			case unvisited:
+				if visit(next) {
+					return true
+				}
+			}
+		}
+		mark[node] = done
+		return false
+	}
+	for member := range members {
+		if mark[member] == unvisited && visit(member) {
+			return true
+		}
+	}
+	return false
+}
+
+// DependencyReadyTasks lists the members whose launch-blocking dependencies are
+// all satisfied, sorted for a stable projection.
+//
+// Parallelism is the default: sharing a repository is not a reason to wait,
+// because every task receives its own worktree. Only a recorded edge serializes.
+func (initiative DevelopmentInitiative) DependencyReadyTasks(satisfied map[string]bool) []string {
+	blocked := make(map[string]bool)
+	members := make(map[string]bool)
+	for _, component := range initiative.Components {
+		for _, handle := range component.TaskHandles {
+			members[handle] = true
+		}
+	}
+	for _, edge := range initiative.Edges {
+		if edge.Kind.blocksStart() && !satisfied[edge.FromTaskHandle] {
+			blocked[edge.ToTaskHandle] = true
+		}
+	}
+	ready := make([]string, 0, len(members))
+	for member := range members {
+		if !blocked[member] && !satisfied[member] {
+			ready = append(ready, member)
+		}
+	}
+	sort.Strings(ready)
+	return ready
+}
