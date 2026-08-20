@@ -145,6 +145,24 @@ func TestInitiativeSchedulerDerivesTerminalAndUnknownAggregateStates(t *testing.
 	}
 }
 
+func TestInitiativeSchedulerNeverReactivatesAnUnknownInitiative(t *testing.T) {
+	initiative := schedulingInitiative("initiative-recovery", time.Unix(1_800_000_000, 0).UTC(),
+		[]string{"task-recovery"}, nil, "")
+	initiative.State = domain.InitiativeUnknown
+	schedules, err := ScheduleInitiatives([]domain.DevelopmentInitiative{initiative}, []domain.Task{
+		schedulingTask(t, "task-recovery", domain.TaskReady, "repo-primary", "codex-reviewed"),
+	}, InitiativeSchedulingLimits{
+		MaxConcurrentTasks: 1, MaxConcurrentTasksPerRepository: 1,
+		WorkerProfileLimits: map[string]int{"codex-reviewed": 1},
+	})
+	if err != nil {
+		t.Fatalf("ScheduleInitiatives() error = %v", err)
+	}
+	if schedules[0].State != domain.InitiativeUnknown || schedules[0].Tasks[0].Launchable {
+		t.Fatalf("unknown recovery schedule = %#v, want non-launchable unknown", schedules[0])
+	}
+}
+
 func TestInitiativeSchedulerRefusesIncompleteOrOverlappingAuthority(t *testing.T) {
 	initiative := schedulingInitiative("initiative-invalid", time.Unix(1_800_000_000, 0).UTC(),
 		[]string{"task-member"}, nil, "")
