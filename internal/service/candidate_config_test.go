@@ -60,6 +60,23 @@ func TestReadCandidateComposition_ParsesStrictReviewedPolicyAndForgeRoute(t *tes
 	}
 }
 
+func TestReadCandidateComposition_AcceptsSeparateMergeAuthorityAndMethod(t *testing.T) {
+	path := filepath.Join(shortTempDir(t), "candidate.json")
+	writeCandidateConfig(t, path, `{
+  "programs":[],"profiles":[],"integrationPolicies":[{"id":"integration-default","strategy":"merge"}],
+  "maxOutputBytes":1,"pollInterval":"1ms",
+  "forge":{
+    "apiBaseUrl":"https://api.github.com","owner":"owner","repository":"repository",
+    "remoteUrl":"https://example.com/repository.git","readCredentialFile":"/private/read",
+    "pushCredentialFile":"/private/push","mergeCredentialFile":"/private/merge",
+    "mergeMethod":"squash","credentialDirectory":"/private/credentials"
+  }
+}`, 0o600)
+	if _, _, err := readCandidateComposition(path); err != nil {
+		t.Fatalf("readCandidateComposition(merge authority) error = %v", err)
+	}
+}
+
 func TestReadCandidateComposition_RejectsUntrustedFileAndUnknownPolicy(t *testing.T) {
 	root := shortTempDir(t)
 	valid := `{"programs":[],"profiles":[],"maxOutputBytes":1,"pollInterval":"1ms","forge":{"apiBaseUrl":"https://api.github.com","owner":"owner","repository":"repository","remoteUrl":"https://example.com/repository.git","readCredentialFile":"/private/read","pushCredentialFile":"/private/push","credentialDirectory":"/private/credentials"}}`
