@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/comisai/comis-dev-crew/internal/application"
 )
 
 func TestGitHubAdapter_MergesOnlyAfterFreshProtectedTruth(t *testing.T) {
@@ -177,6 +179,41 @@ func TestGitHubAdapter_ReconcilesAnAlreadyMergedExactHeadWithoutAnotherMutation(
 	})
 	if err != nil || receipt.MergeCommitRevision != mergeCommit || receipt.Method != MergeRebase || mergeCalls != 0 {
 		t.Fatalf("MergePullRequest(replay) = %#v, calls=%d, error=%v", receipt, mergeCalls, err)
+	}
+}
+
+func TestGitHubAdapter_MapsExactMergedTruthOntoApplicationPort(t *testing.T) {
+	head := strings.Repeat("1", 40)
+	mergeCommit := strings.Repeat("2", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path != "/repos/comisai/fixture/pulls/31" {
+			http.NotFound(response, request)
+			return
+		}
+		_, _ = response.Write([]byte(`{"number":31,"state":"closed","merged":true,"merge_commit_sha":"` + mergeCommit + `","html_url":"https://example.com/pull/31","head":{"sha":"` + head + `","ref":"devcrew/task-merge"},"base":{"ref":"main"}}`))
+	}))
+	t.Cleanup(server.Close)
+	configuration := validGitHubConfig(server)
+	configuration.MergeCredentials = failingCredentialSource{}
+	configuration.MergeMethod = MergeCommit
+	adapter, err := NewGitHubAdapter(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var port application.ApprovedPullRequestMerger = adapter
+	receipt, err := port.MergeApprovedPullRequest(context.Background(), application.PullRequestMergeRequest{
+		OperationID: "merge-task-0001", RepositoryID: "fixture-repository", PullRequestID: "github-pr-31",
+		Branch: "devcrew/task-merge", HeadRevision: head, RequiredChecks: []string{"ci/unit"},
+	})
+	if err != nil || receipt.Method != application.PullRequestMergeCommit ||
+		receipt.MergeCommitRevision != mergeCommit {
+		t.Fatalf("MergeApprovedPullRequest() = %#v, %v", receipt, err)
+	}
+	if _, err := port.MergeApprovedPullRequest(context.Background(), application.PullRequestMergeRequest{
+		RepositoryID: "other-repository",
+	}); err == nil {
+		t.Fatal("MergeApprovedPullRequest(other repository) error = nil")
 	}
 }
 

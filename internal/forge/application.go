@@ -37,3 +37,46 @@ func (adapter *GitHubAdapter) VerifyPullRequestDelivery(
 }
 
 var _ application.PullRequestDeliveryVerifier = (*GitHubAdapter)(nil)
+
+// MergeApprovedPullRequest implements the application mutation port while
+// keeping forge DTOs and the configured strategy inside the adapter package.
+func (adapter *GitHubAdapter) MergeApprovedPullRequest(
+	ctx context.Context,
+	request application.PullRequestMergeRequest,
+) (application.PullRequestMergeReceipt, error) {
+	if adapter == nil || request.RepositoryID != adapter.config.RepositoryIdentity {
+		return application.PullRequestMergeReceipt{}, errors.New("merge approved pull request: repository identity differs")
+	}
+	receipt, err := adapter.MergePullRequest(ctx, PullRequestMergeRequest{
+		OperationID: request.OperationID, PullRequestID: request.PullRequestID,
+		Branch: request.Branch, HeadRevision: request.HeadRevision,
+		RequiredChecks: append([]string(nil), request.RequiredChecks...),
+	})
+	if err != nil {
+		return application.PullRequestMergeReceipt{}, err
+	}
+	method, err := applicationMergeMethod(receipt.Method)
+	if err != nil {
+		return application.PullRequestMergeReceipt{}, err
+	}
+	return application.PullRequestMergeReceipt{
+		RepositoryID: receipt.RepositoryID, PullRequestID: receipt.PullRequestID,
+		HeadRevision: receipt.HeadRevision, MergeCommitRevision: receipt.MergeCommitRevision,
+		Method: method,
+	}, nil
+}
+
+func applicationMergeMethod(method MergeMethod) (application.PullRequestMergeMethod, error) {
+	switch method {
+	case MergeCommit:
+		return application.PullRequestMergeCommit, nil
+	case MergeSquash:
+		return application.PullRequestMergeSquash, nil
+	case MergeRebase:
+		return application.PullRequestMergeRebase, nil
+	default:
+		return "", errors.New("merge approved pull request: method is invalid")
+	}
+}
+
+var _ application.ApprovedPullRequestMerger = (*GitHubAdapter)(nil)
