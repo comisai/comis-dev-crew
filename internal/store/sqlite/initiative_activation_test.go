@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -15,7 +16,7 @@ import (
 
 func TestInitiativeActivationCommitsEveryBindingAtOneStateVersion(t *testing.T) {
 	ctx := context.Background()
-	store, mutation := preparedInitiativeActivationStore(t)
+	store, _, mutation := preparedInitiativeActivationStore(t)
 	result, err := store.CommitInitiativeActivation(ctx, mutation)
 	if err != nil {
 		t.Fatalf("CommitInitiativeActivation() error = %v", err)
@@ -43,7 +44,7 @@ func TestInitiativeActivationCommitsEveryBindingAtOneStateVersion(t *testing.T) 
 
 func TestInitiativeActivationRollsBackTheWholeGroupOnMemberFailure(t *testing.T) {
 	ctx := context.Background()
-	store, mutation := preparedInitiativeActivationStore(t)
+	store, initiativeHandle, mutation := preparedInitiativeActivationStore(t)
 	if _, err := store.db.ExecContext(ctx, `CREATE TRIGGER refuse_group_member_binding
 		BEFORE UPDATE ON tasks WHEN NEW.handle = 'task-integration'
 		BEGIN SELECT RAISE(ABORT, 'injected group member failure'); END`); err != nil {
@@ -52,7 +53,7 @@ func TestInitiativeActivationRollsBackTheWholeGroupOnMemberFailure(t *testing.T)
 	if _, err := store.CommitInitiativeActivation(ctx, mutation); err == nil {
 		t.Fatal("CommitInitiativeActivation(injected failure) error = nil")
 	}
-	initiative, err := store.GetInitiative(ctx, mutation.ExternalGroupRef)
+	initiative, err := store.GetInitiative(ctx, initiativeHandle)
 	if err != nil || initiative.State != domain.InitiativePreparing || initiative.ManagedRunGroupID != "" {
 		t.Fatalf("initiative after rollback = %#v, %v", initiative, err)
 	}
@@ -67,7 +68,7 @@ func TestInitiativeActivationRollsBackTheWholeGroupOnMemberFailure(t *testing.T)
 	}
 }
 
-func preparedInitiativeActivationStore(t *testing.T) (*Store, application.ManagedRunGroupActivationMutation) {
+func preparedInitiativeActivationStore(t *testing.T) (*Store, string, application.ManagedRunGroupActivationMutation) {
 	t.Helper()
 	ctx := context.Background()
 	store, err := Open(ctx, filepath.Join(canonicalTempDir(t), "devcrew.db"))
@@ -85,16 +86,15 @@ func preparedInitiativeActivationStore(t *testing.T) (*Store, application.Manage
 		members = append(members, application.ManagedRunGroupActivationMember{
 			ExternalRunRef: member.Task.Handle, RegistrationNonce: member.Preparation.RegistrationNonce,
 			Binding: domain.TaskBinding{
-				ManagedRunID: "managed-run-" + member.Task.Handle,
+				ManagedRunID:     "managed-run-" + member.Task.Handle,
 				WorkspaceLeaseID: "workspace-lease-" + member.Task.Handle,
 			},
 			ExecutionAttachmentID: "execution-attachment-" + member.Task.Handle,
-			AttachmentTargetName:  "attachment-0000000000000000000000000000000" + string(rune('a'+index)) + ".sock",
+			AttachmentTargetName:  fmt.Sprintf("attachment-%032x.sock", index+1),
 		})
 	}
-	return store, application.ManagedRunGroupActivationMutation{
+	return store, preparation.Initiative.Handle, application.ManagedRunGroupActivationMutation{
 		ServiceInstanceID: preparation.Members[0].Task.ServiceInstanceID,
-		ExternalGroupRef: preparation.Initiative.Handle,
 		ManagedRunGroupID: "managed-run-group-0001", RegistrationNonce: preparation.GroupRegistrationNonce,
 		Members: members, OperationID: "activate-initiative-0001", SubjectDigest: strings.Repeat("d", 64),
 		At: preparation.At.Add(time.Minute),

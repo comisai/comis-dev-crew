@@ -410,6 +410,14 @@ joins, and their replay outcomes in one transaction at one state version. A
 partial allocation failure preserves the intents and already-created reversible
 artifacts for exact retry, but writes no half-initiative and launches nothing.
 
+Group activation validates the private group nonce and the exact complete member
+set under the SQLite write lock. It commits the host-managed group identity and
+every run, lease, and execution-attachment handle atomically at one state
+version. Runtime attachment binding begins only after that commit. If any local
+binding remains uncertain, the response reports the outcome per member and the
+initiative becomes durable `unknown`; only an all-completed result remains
+`active` and eligible for later scheduling.
+
 Startup reconciliation now includes every nonterminal initiative. Preparing,
 active, blocked, integrating, validating, and candidate-complete initiatives are
 atomically moved to durable `unknown` with a new global state version before the

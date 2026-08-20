@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -77,10 +78,10 @@ func validInitiativeActivationCommand() ActivateManagedRunGroupCommand {
 	for index, handle := range []string{"task-backend", "task-frontend", "task-integration"} {
 		members = append(members, ActivateManagedRunGroupMember{
 			ManagedRunID: "managed-run-" + handle, ExternalRunRef: handle,
-			RegistrationNonce: "registration-nonce_" + handle,
-			WorkspaceLeaseID:  "workspace-lease-" + handle,
+			RegistrationNonce:     "registration-nonce_" + handle,
+			WorkspaceLeaseID:      "workspace-lease-" + handle,
 			ExecutionAttachmentID: "execution-attachment-" + handle,
-			AttachmentTargetName:  "attachment-0000000000000000000000000000000" + string(rune('a'+index)) + ".sock",
+			AttachmentTargetName:  fmt.Sprintf("attachment-%032x.sock", index+1),
 		})
 	}
 	return ActivateManagedRunGroupCommand{
@@ -111,16 +112,16 @@ func (store *initiativeActivationStore) CommitInitiativeActivation(
 	store.commitCalls++
 	store.committed = mutation
 	initiative := domain.DevelopmentInitiative{
-		Handle: mutation.ExternalGroupRef, ManagedRunGroupID: mutation.ManagedRunGroupID,
+		Handle: "initiative-prepared-0001", ManagedRunGroupID: mutation.ManagedRunGroupID,
 		State: domain.InitiativeActive,
 	}
 	tasks := make([]domain.Task, 0, len(mutation.Members))
 	for _, member := range mutation.Members {
 		tasks = append(tasks, domain.Task{
 			Handle: member.ExternalRunRef, ManagedRunID: member.Binding.ManagedRunID,
-			WorkspaceLeaseID: member.Binding.WorkspaceLeaseID,
+			WorkspaceLeaseID:      member.Binding.WorkspaceLeaseID,
 			ExecutionAttachmentID: member.ExecutionAttachmentID,
-			AttachmentTargetName: member.AttachmentTargetName, State: domain.TaskReady,
+			AttachmentTargetName:  member.AttachmentTargetName, State: domain.TaskReady,
 		})
 	}
 	return InitiativeActivationResult{
@@ -131,13 +132,12 @@ func (store *initiativeActivationStore) CommitInitiativeActivation(
 
 func (store *initiativeActivationStore) SetInitiativeActivationState(
 	_ context.Context,
-	handle string,
 	managedRunGroupID string,
 	state domain.InitiativeState,
 	_ time.Time,
 ) (domain.DevelopmentInitiative, error) {
 	store.stateChanges = append(store.stateChanges, state)
-	return domain.DevelopmentInitiative{Handle: handle, ManagedRunGroupID: managedRunGroupID, State: state}, nil
+	return domain.DevelopmentInitiative{Handle: "initiative-prepared-0001", ManagedRunGroupID: managedRunGroupID, State: state}, nil
 }
 
 type initiativeActivationAttachments struct {
@@ -167,7 +167,9 @@ func (attachments *initiativeActivationAttachments) BindRuntimeAttachment(
 	return nil
 }
 
-func (*initiativeActivationAttachments) ReleaseRuntimeAttachment(context.Context, string) error { return nil }
+func (*initiativeActivationAttachments) ReleaseRuntimeAttachment(context.Context, string) error {
+	return nil
+}
 
 type initiativeActivationAcknowledger struct{}
 
