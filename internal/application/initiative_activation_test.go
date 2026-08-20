@@ -73,6 +73,44 @@ func TestInitiativeActivationBecomesActiveOnlyAfterEveryAttachmentBinds(t *testi
 	}
 }
 
+func TestInitiativeActivationFailsClosedAcrossStoreBoundaries(t *testing.T) {
+	newCoordinator := func(store *initiativeActivationStore, attachments *initiativeActivationAttachments) *InitiativeActivations {
+		t.Helper()
+		coordinator, err := NewInitiativeActivations(InitiativeActivationConfig{
+			Store: store, RuntimeAttachments: attachments, Acknowledger: initiativeActivationAcknowledger{},
+			Clock: func() time.Time { return time.Date(2026, time.August, 20, 17, 0, 0, 0, time.UTC) },
+		})
+		if err != nil {
+			t.Fatalf("NewInitiativeActivations() error = %v", err)
+		}
+		return coordinator
+	}
+	for _, test := range []struct {
+		name  string
+		store *initiativeActivationStore
+		fail  int
+	}{
+		{name: "replay read fails", store: &initiativeActivationStore{replayErr: errors.New("read failed")}},
+		{name: "atomic commit fails", store: &initiativeActivationStore{commitErr: errors.New("commit failed")}},
+		{name: "committed result is incomplete", store: &initiativeActivationStore{
+			replayFound: true, replay: InitiativeActivationResult{Initiative: domain.DevelopmentInitiative{State: domain.InitiativeActive}},
+		}},
+		{name: "unknown posture write fails", store: &initiativeActivationStore{stateErr: errors.New("posture failed")}, fail: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			attachments := &initiativeActivationAttachments{store: test.store, failAt: test.fail}
+			if _, err := newCoordinator(test.store, attachments).ActivateManagedRunGroup(
+				context.Background(), validInitiativeActivationCommand(),
+			); err == nil {
+				t.Fatal("ActivateManagedRunGroup() error = nil")
+			}
+		})
+	}
+	if _, err := NewInitiativeActivations(InitiativeActivationConfig{}); err == nil {
+		t.Fatal("NewInitiativeActivations(empty) error = nil")
+	}
+}
+
 func validInitiativeActivationCommand() ActivateManagedRunGroupCommand {
 	members := make([]ActivateManagedRunGroupMember, 0, 3)
 	for index, handle := range []string{"task-backend", "task-frontend", "task-integration"} {
@@ -94,15 +132,18 @@ func validInitiativeActivationCommand() ActivateManagedRunGroupCommand {
 type initiativeActivationStore struct {
 	replay       InitiativeActivationResult
 	replayFound  bool
+	replayErr    error
 	committed    ManagedRunGroupActivationMutation
 	commitCalls  int
+	commitErr    error
 	stateChanges []domain.InitiativeState
+	stateErr     error
 }
 
 func (store *initiativeActivationStore) ReplayInitiativeActivation(
 	context.Context, string, string,
 ) (InitiativeActivationResult, bool, error) {
-	return store.replay, store.replayFound, nil
+	return store.replay, store.replayFound, store.replayErr
 }
 
 func (store *initiativeActivationStore) CommitInitiativeActivation(
@@ -111,6 +152,9 @@ func (store *initiativeActivationStore) CommitInitiativeActivation(
 ) (InitiativeActivationResult, error) {
 	store.commitCalls++
 	store.committed = mutation
+	if store.commitErr != nil {
+		return InitiativeActivationResult{}, store.commitErr
+	}
 	initiative := domain.DevelopmentInitiative{
 		Handle: "initiative-prepared-0001", ManagedRunGroupID: mutation.ManagedRunGroupID,
 		State: domain.InitiativeActive,
@@ -137,6 +181,9 @@ func (store *initiativeActivationStore) SetInitiativeActivationState(
 	_ time.Time,
 ) (domain.DevelopmentInitiative, error) {
 	store.stateChanges = append(store.stateChanges, state)
+	if store.stateErr != nil {
+		return domain.DevelopmentInitiative{}, store.stateErr
+	}
 	return domain.DevelopmentInitiative{Handle: "initiative-prepared-0001", ManagedRunGroupID: managedRunGroupID, State: state}, nil
 }
 

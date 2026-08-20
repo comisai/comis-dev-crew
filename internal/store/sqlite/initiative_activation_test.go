@@ -68,6 +68,82 @@ func TestInitiativeActivationRollsBackTheWholeGroupOnMemberFailure(t *testing.T)
 	}
 }
 
+func TestInitiativeActivationStateMovesByExactBoundGroup(t *testing.T) {
+	ctx := context.Background()
+	store, initiativeHandle, mutation := preparedInitiativeActivationStore(t)
+	activated, err := store.CommitInitiativeActivation(ctx, mutation)
+	if err != nil {
+		t.Fatalf("CommitInitiativeActivation() error = %v", err)
+	}
+	unknownAt := mutation.At.Add(time.Minute)
+	unknown, err := store.SetInitiativeActivationState(ctx, mutation.ManagedRunGroupID, domain.InitiativeUnknown, unknownAt)
+	if err != nil || unknown.State != domain.InitiativeUnknown || unknown.StateVersion <= activated.Initiative.StateVersion {
+		t.Fatalf("SetInitiativeActivationState(unknown) = %#v, %v", unknown, err)
+	}
+	replayed, err := store.SetInitiativeActivationState(ctx, mutation.ManagedRunGroupID, domain.InitiativeUnknown, unknownAt)
+	if err != nil || !reflect.DeepEqual(replayed, unknown) {
+		t.Fatalf("SetInitiativeActivationState(replay) = %#v, %v", replayed, err)
+	}
+	activeAt := unknownAt.Add(time.Minute)
+	active, err := store.SetInitiativeActivationState(ctx, mutation.ManagedRunGroupID, domain.InitiativeActive, activeAt)
+	if err != nil || active.State != domain.InitiativeActive || !active.UpdatedAt.Equal(activeAt) {
+		t.Fatalf("SetInitiativeActivationState(active) = %#v, %v", active, err)
+	}
+	if _, err := store.SetInitiativeActivationState(ctx, mutation.ManagedRunGroupID, domain.InitiativeUnknown, unknownAt); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("SetInitiativeActivationState(backward time) error = %v", err)
+	}
+	if _, err := store.SetInitiativeActivationState(ctx, "managed-run-group-missing", domain.InitiativeUnknown, activeAt); !errors.Is(err, application.ErrNotFound) {
+		t.Fatalf("SetInitiativeActivationState(missing group) error = %v", err)
+	}
+	for _, invalid := range []struct {
+		group string
+		state domain.InitiativeState
+		at    time.Time
+	}{
+		{group: "bad group", state: domain.InitiativeUnknown, at: activeAt},
+		{group: mutation.ManagedRunGroupID, state: domain.InitiativeBlocked, at: activeAt},
+		{group: mutation.ManagedRunGroupID, state: domain.InitiativeUnknown, at: time.Date(2026, time.August, 20, 20, 0, 0, 0, time.FixedZone("test", 3_600))},
+	} {
+		if _, err := store.SetInitiativeActivationState(ctx, invalid.group, invalid.state, invalid.at); !errors.Is(err, application.ErrInvalidInput) {
+			t.Fatalf("SetInitiativeActivationState(invalid) error = %v", err)
+		}
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE initiatives SET state = 'delivered' WHERE handle = ?`, initiativeHandle); err != nil {
+		t.Fatalf("seed terminal initiative: %v", err)
+	}
+	if _, err := store.SetInitiativeActivationState(ctx, mutation.ManagedRunGroupID, domain.InitiativeUnknown, activeAt.Add(time.Minute)); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("SetInitiativeActivationState(terminal) error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if _, err := store.SetInitiativeActivationState(ctx, mutation.ManagedRunGroupID, domain.InitiativeUnknown, activeAt.Add(2*time.Minute)); err == nil {
+		t.Fatal("SetInitiativeActivationState(closed store) error = nil")
+	}
+}
+
+func TestInitiativeActivationMutationValidationRejectsForgedMembers(t *testing.T) {
+	_, _, valid := preparedInitiativeActivationStore(t)
+	tests := []func(*application.ManagedRunGroupActivationMutation){
+		func(m *application.ManagedRunGroupActivationMutation) { m.OperationID = "bad id" },
+		func(m *application.ManagedRunGroupActivationMutation) { m.Members[0].ExternalRunRef = "../task" },
+		func(m *application.ManagedRunGroupActivationMutation) {
+			m.Members[1].ExternalRunRef = m.Members[0].ExternalRunRef
+		},
+		func(m *application.ManagedRunGroupActivationMutation) {
+			m.Members[1].Binding.ManagedRunID = m.Members[0].Binding.ManagedRunID
+		},
+	}
+	for _, mutate := range tests {
+		mutation := valid
+		mutation.Members = append([]application.ManagedRunGroupActivationMember(nil), valid.Members...)
+		mutate(&mutation)
+		if err := validateManagedRunGroupActivationMutation(mutation); !errors.Is(err, application.ErrInvalidInput) {
+			t.Fatalf("validateManagedRunGroupActivationMutation() error = %v", err)
+		}
+	}
+}
+
 func preparedInitiativeActivationStore(t *testing.T) (*Store, string, application.ManagedRunGroupActivationMutation) {
 	t.Helper()
 	ctx := context.Background()

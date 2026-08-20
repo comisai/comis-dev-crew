@@ -182,6 +182,108 @@ func TestInitiativeSchedulerRefusesIncompleteOrOverlappingAuthority(t *testing.T
 	}
 }
 
+func TestInitiativeSchedulerRejectsInvalidLimitsTasksAndMembership(t *testing.T) {
+	initiative := schedulingInitiative("initiative-validation", time.Unix(1_800_000_000, 0).UTC(),
+		[]string{"task-member"}, nil, "")
+	task := schedulingTask(t, "task-member", domain.TaskReady, "repo-primary", "codex-reviewed")
+	valid := InitiativeSchedulingLimits{
+		MaxConcurrentTasks: 2, MaxConcurrentTasksPerRepository: 1,
+		WorkerProfileLimits: map[string]int{"codex-reviewed": 2},
+	}
+	invalidLimits := []InitiativeSchedulingLimits{
+		{},
+		{MaxConcurrentTasks: 1, MaxConcurrentTasksPerRepository: 2, WorkerProfileLimits: map[string]int{"codex-reviewed": 1}},
+		{MaxConcurrentTasks: 2, MaxConcurrentTasksPerRepository: 1, WorkerProfileLimits: map[string]int{"../profile": 1}},
+		{MaxConcurrentTasks: 2, MaxConcurrentTasksPerRepository: 1, WorkerProfileLimits: map[string]int{"codex-reviewed": 3}},
+	}
+	for _, limits := range invalidLimits {
+		if _, err := ScheduleInitiatives([]domain.DevelopmentInitiative{initiative}, []domain.Task{task}, limits); err == nil {
+			t.Fatalf("ScheduleInitiatives(invalid limits %#v) error = nil", limits)
+		}
+	}
+	invalidTask := task
+	invalidTask.State = domain.TaskState("invented")
+	if _, err := ScheduleInitiatives([]domain.DevelopmentInitiative{initiative}, []domain.Task{invalidTask}, valid); err == nil {
+		t.Fatal("ScheduleInitiatives(invalid task) error = nil")
+	}
+	if _, err := ScheduleInitiatives([]domain.DevelopmentInitiative{initiative}, []domain.Task{task, task}, valid); err == nil {
+		t.Fatal("ScheduleInitiatives(duplicate task) error = nil")
+	}
+	missingProfile := valid
+	missingProfile.WorkerProfileLimits = map[string]int{"claude-reviewed": 1}
+	if _, err := ScheduleInitiatives([]domain.DevelopmentInitiative{initiative}, []domain.Task{task}, missingProfile); err == nil {
+		t.Fatal("ScheduleInitiatives(unconfigured task profile) error = nil")
+	}
+	wrongRepository := task
+	wrongRepository.RepositoryID = "repo-other"
+	wrongRepository, _ = wrongRepository.PinBriefRevision()
+	if _, err := ScheduleInitiatives([]domain.DevelopmentInitiative{initiative}, []domain.Task{wrongRepository}, valid); err == nil {
+		t.Fatal("ScheduleInitiatives(member repository mismatch) error = nil")
+	}
+}
+
+func TestInitiativeAggregateReducerRejectsInexactInputsAndPreservesTerminalTruth(t *testing.T) {
+	initiative := schedulingInitiative("initiative-derive", time.Unix(1_800_000_000, 0).UTC(),
+		[]string{"task-member"}, nil, "")
+	task := schedulingTask(t, "task-member", domain.TaskCleaned, "repo-primary", "codex-reviewed")
+	for _, state := range []domain.InitiativeState{domain.InitiativeDelivered, domain.InitiativeFailed, domain.InitiativeCancelled} {
+		terminal := initiative
+		terminal.State = state
+		got, err := DeriveInitiativeState(terminal, []domain.Task{task})
+		if err != nil || got != state {
+			t.Fatalf("DeriveInitiativeState(%q) = %q, %v", state, got, err)
+		}
+	}
+	invalidInitiative := initiative
+	invalidInitiative.State = domain.InitiativeState("invented")
+	if _, err := DeriveInitiativeState(invalidInitiative, []domain.Task{task}); err == nil {
+		t.Fatal("DeriveInitiativeState(invalid initiative) error = nil")
+	}
+	invalidTask := task
+	invalidTask.State = domain.TaskState("invented")
+	if _, err := DeriveInitiativeState(initiative, []domain.Task{invalidTask}); err == nil {
+		t.Fatal("DeriveInitiativeState(invalid task) error = nil")
+	}
+	if _, err := DeriveInitiativeState(initiative, []domain.Task{task, task}); err == nil {
+		t.Fatal("DeriveInitiativeState(duplicate member) error = nil")
+	}
+	extra := schedulingTask(t, "task-extra", domain.TaskReady, "repo-primary", "codex-reviewed")
+	if _, err := DeriveInitiativeState(initiative, []domain.Task{task, extra}); err == nil {
+		t.Fatal("DeriveInitiativeState(extra member) error = nil")
+	}
+}
+
+func TestInitiativeAggregateReducerCoversClosedIntermediateStates(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		initiativeState domain.InitiativeState
+		taskState       domain.TaskState
+		owner           bool
+		want            domain.InitiativeState
+	}{
+		{name: "preparing remains preparing", initiativeState: domain.InitiativePreparing, taskState: domain.TaskPrepared, want: domain.InitiativePreparing},
+		{name: "owner launching integrates", initiativeState: domain.InitiativeActive, taskState: domain.TaskLaunching, owner: true, want: domain.InitiativeIntegrating},
+		{name: "owner validating validates", initiativeState: domain.InitiativeActive, taskState: domain.TaskValidating, owner: true, want: domain.InitiativeValidating},
+		{name: "owner delivering is candidate complete", initiativeState: domain.InitiativeActive, taskState: domain.TaskDelivering, owner: true, want: domain.InitiativeCandidateComplete},
+		{name: "blocked member blocks", initiativeState: domain.InitiativeActive, taskState: domain.TaskBlocked, want: domain.InitiativeBlocked},
+		{name: "reconciling member is unknown", initiativeState: domain.InitiativeActive, taskState: domain.TaskReconciling, want: domain.InitiativeUnknown},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			initiative := schedulingInitiative("initiative-intermediate", time.Unix(1_800_000_000, 0).UTC(), []string{"task-member"}, nil, "")
+			initiative.State = test.initiativeState
+			if test.owner {
+				initiative.IntegrationOwnerTask = "task-member"
+			}
+			got, err := DeriveInitiativeState(initiative, []domain.Task{
+				schedulingTask(t, "task-member", test.taskState, "repo-primary", "codex-reviewed"),
+			})
+			if err != nil || got != test.want {
+				t.Fatalf("DeriveInitiativeState() = %q, %v, want %q", got, err, test.want)
+			}
+		})
+	}
+}
+
 func schedulingInitiative(
 	handle string,
 	createdAt time.Time,

@@ -91,6 +91,68 @@ func TestInitiativeAbandonRollsBackEveryMemberOnWriteFailure(t *testing.T) {
 	}
 }
 
+func TestInitiativeAbandonMemberPosturesRemainClosed(t *testing.T) {
+	at := time.Date(2026, time.August, 20, 19, 0, 0, 0, time.UTC)
+	prepared := storeTask("task-abandon-posture", 1)
+	prepared.CreatedAt = at.Add(-time.Minute)
+	prepared.UpdatedAt = prepared.CreatedAt
+	for _, test := range []struct {
+		name        string
+		state       domain.TaskState
+		disposition application.AbandonDisposition
+		wantState   domain.TaskState
+		wantOutcome application.InitiativeActivationOutcome
+		wantErr     bool
+	}{
+		{name: "prepared preserve", state: domain.TaskPrepared, disposition: application.AbandonDispositionPreserve, wantState: domain.TaskPrepared, wantOutcome: application.InitiativeActivationCompleted},
+		{name: "ready cancel", state: domain.TaskReady, disposition: application.AbandonDispositionReapSafe, wantState: domain.TaskCancelled, wantOutcome: application.InitiativeActivationCompleted},
+		{name: "unknown stays unknown", state: domain.TaskUnknown, disposition: application.AbandonDispositionReapSafe, wantState: domain.TaskUnknown, wantOutcome: application.InitiativeActivationUnknown},
+		{name: "working refuses", state: domain.TaskWorking, disposition: application.AbandonDispositionReapSafe, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			task := prepared
+			task.State = test.state
+			if test.state == domain.TaskReady || test.state == domain.TaskWorking {
+				task.ManagedRunID = "managed-run-abandon-posture"
+				task.WorkspaceLeaseID = "workspace-lease-abandon-posture"
+			}
+			updated, outcome, err := abandonInitiativeMember(task, test.disposition, at)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("abandonInitiativeMember() error = nil")
+				}
+				return
+			}
+			if err != nil || updated.State != test.wantState || outcome != test.wantOutcome {
+				t.Fatalf("abandonInitiativeMember() = %#v, %q, %v", updated, outcome, err)
+			}
+		})
+	}
+}
+
+func TestInitiativeAbandonMutationValidationRejectsForgedMembers(t *testing.T) {
+	_, valid := preparedInitiativeAbandonStore(t, application.AbandonDispositionReapSafe)
+	tests := []func(*application.ManagedRunGroupAbandonmentMutation){
+		func(m *application.ManagedRunGroupAbandonmentMutation) { m.OperationID = "bad id" },
+		func(m *application.ManagedRunGroupAbandonmentMutation) { m.Disposition = "invented" },
+		func(m *application.ManagedRunGroupAbandonmentMutation) { m.Members[0].ExternalRunRef = "../task" },
+		func(m *application.ManagedRunGroupAbandonmentMutation) {
+			m.Members[1].ExternalRunRef = m.Members[0].ExternalRunRef
+		},
+		func(m *application.ManagedRunGroupAbandonmentMutation) {
+			m.Members[1].ManagedRunID = m.Members[0].ManagedRunID
+		},
+	}
+	for _, mutate := range tests {
+		mutation := valid
+		mutation.Members = append([]application.ManagedRunGroupAbandonmentMember(nil), valid.Members...)
+		mutate(&mutation)
+		if err := validateManagedRunGroupAbandonmentMutation(mutation); !errors.Is(err, application.ErrInvalidInput) {
+			t.Fatalf("validateManagedRunGroupAbandonmentMutation() error = %v", err)
+		}
+	}
+}
+
 func preparedInitiativeAbandonStore(
 	t *testing.T,
 	disposition application.AbandonDisposition,

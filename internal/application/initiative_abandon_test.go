@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -51,6 +52,32 @@ func TestInitiativeAbandonReplayDoesNotRepeatTheMutation(t *testing.T) {
 	}
 }
 
+func TestInitiativeAbandonFailsClosedAcrossStoreBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		store *initiativeAbandonStore
+	}{
+		{name: "replay read fails", store: &initiativeAbandonStore{replayErr: errors.New("read failed")}},
+		{name: "atomic commit fails", store: &initiativeAbandonStore{commitErr: errors.New("commit failed")}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			coordinator, err := NewInitiativeAbandonments(InitiativeAbandonmentConfig{
+				Store: test.store,
+				Clock: func() time.Time { return time.Date(2026, time.August, 20, 18, 0, 0, 0, time.UTC) },
+			})
+			if err != nil {
+				t.Fatalf("NewInitiativeAbandonments() error = %v", err)
+			}
+			if _, err := coordinator.AbandonManagedRunGroup(context.Background(), validInitiativeAbandonCommand()); err == nil {
+				t.Fatal("AbandonManagedRunGroup() error = nil")
+			}
+		})
+	}
+	if _, err := NewInitiativeAbandonments(InitiativeAbandonmentConfig{}); err == nil {
+		t.Fatal("NewInitiativeAbandonments(empty) error = nil")
+	}
+}
+
 func validInitiativeAbandonCommand() AbandonManagedRunGroupCommand {
 	return AbandonManagedRunGroupCommand{
 		OperationID: "abandon-initiative-0001", ServiceInstanceID: "service-instance-0001",
@@ -66,14 +93,16 @@ func validInitiativeAbandonCommand() AbandonManagedRunGroupCommand {
 type initiativeAbandonStore struct {
 	replay      InitiativeAbandonmentResult
 	replayFound bool
+	replayErr   error
 	committed   ManagedRunGroupAbandonmentMutation
 	commitCalls int
+	commitErr   error
 }
 
 func (store *initiativeAbandonStore) ReplayInitiativeAbandonment(
 	context.Context, string, string,
 ) (InitiativeAbandonmentResult, bool, error) {
-	return store.replay, store.replayFound, nil
+	return store.replay, store.replayFound, store.replayErr
 }
 
 func (store *initiativeAbandonStore) CommitInitiativeAbandonment(
@@ -82,6 +111,9 @@ func (store *initiativeAbandonStore) CommitInitiativeAbandonment(
 ) (InitiativeAbandonmentResult, error) {
 	store.commitCalls++
 	store.committed = mutation
+	if store.commitErr != nil {
+		return InitiativeAbandonmentResult{}, store.commitErr
+	}
 	members := make([]InitiativeActivationMemberResult, 0, len(mutation.Members))
 	for _, member := range mutation.Members {
 		members = append(members, InitiativeActivationMemberResult{
