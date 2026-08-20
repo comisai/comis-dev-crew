@@ -52,6 +52,8 @@ const (
 	MethodListInitiatives   Method = "ListInitiatives"
 	MethodGetInitiative     Method = "GetInitiative"
 	MethodListBacklog       Method = "ListBacklog"
+	MethodAddBacklog        Method = "AddBacklog"
+	MethodPromoteBacklog    Method = "PromoteBacklog"
 	MethodPrepareTask       Method = "PrepareTask"
 	MethodPrepareInitiative Method = "PrepareInitiative"
 	MethodPauseInitiative   Method = "PauseInitiative"
@@ -84,7 +86,7 @@ const (
 func (method Method) valid() bool {
 	switch method {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
-		MethodOperation, MethodListInitiatives, MethodGetInitiative, MethodListBacklog,
+		MethodOperation, MethodListInitiatives, MethodGetInitiative, MethodListBacklog, MethodAddBacklog, MethodPromoteBacklog,
 		MethodPrepareTask, MethodPrepareInitiative, MethodPauseInitiative, MethodResumeInitiative, MethodCancelInitiative,
 		MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
@@ -110,7 +112,8 @@ func (method Method) SideEffect() SideEffectClass {
 	switch method {
 	case MethodCancelDecision, MethodRespondDecision:
 		return SideEffectMutate
-	case MethodPrepareTask, MethodPrepareInitiative, MethodPauseInitiative, MethodResumeInitiative, MethodCancelInitiative,
+	case MethodPrepareTask, MethodPrepareInitiative, MethodAddBacklog, MethodPromoteBacklog,
+		MethodPauseInitiative, MethodResumeInitiative, MethodCancelInitiative,
 		MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
 		MethodSyncPrimary, MethodAttestScout:

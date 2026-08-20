@@ -2,6 +2,7 @@ package localapi
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -12,7 +13,7 @@ import (
 )
 
 func TestServerClientBacklogMutationsPreserveBoundedAuthority(t *testing.T) {
-	now := time.Date(2026, time.August, 20, 23, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 	addition := backlogAdditionAPIFixture(now)
 	promotion := backlogPromotionAPIFixture(now)
 	mutations := &apiBacklogMutations{addition: addition, promotion: promotion}
@@ -82,7 +83,7 @@ func TestServerClientBacklogMutationsPreserveBoundedAuthority(t *testing.T) {
 }
 
 func TestBacklogMutationBoundaryRejectsForgedAuthorityAndIncompleteResults(t *testing.T) {
-	now := time.Date(2026, time.August, 20, 23, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 	mutations := &apiBacklogMutations{
 		addition: backlogAdditionAPIFixture(now), promotion: backlogPromotionAPIFixture(now),
 	}
@@ -118,6 +119,26 @@ func TestBacklogMutationBoundaryRejectsForgedAuthorityAndIncompleteResults(t *te
 		outcome.Error.Code != domain.ErrorInternal {
 		t.Fatalf("incomplete promotion outcome = %#v", outcome)
 	}
+	mutations.addErr = errors.New("addition dependency failed")
+	if outcome := handler.handle(context.Background(), CallerMCPFacade, []byte(addRequest)); outcome.Error == nil ||
+		outcome.Error.Code != domain.ErrorInternal {
+		t.Fatalf("failed addition outcome = %#v", outcome)
+	}
+	mutations.promoteErr = errors.New("promotion dependency failed")
+	if outcome := handler.handle(context.Background(), CallerMCPFacade, []byte(promoteRequest)); outcome.Error == nil ||
+		outcome.Error.Code != domain.ErrorInternal {
+		t.Fatalf("failed promotion outcome = %#v", outcome)
+	}
+	readOnly, err := NewHandler(HandlerConfig{Queries: &apiQueries{}, Clock: time.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, request := range []string{addRequest, promoteRequest} {
+		outcome := readOnly.handle(context.Background(), CallerMCPFacade, []byte(request))
+		if outcome.Error == nil || outcome.Error.Code != domain.ErrorUnavailable {
+			t.Fatalf("unconfigured backlog outcome = %#v", outcome)
+		}
+	}
 }
 
 type apiBacklogMutations struct {
@@ -127,6 +148,8 @@ type apiBacklogMutations struct {
 	promoteCommand application.BacklogPromotionCommand
 	addCalls       int
 	promoteCalls   int
+	addErr         error
+	promoteErr     error
 }
 
 func (mutations *apiBacklogMutations) AddBacklog(
@@ -135,7 +158,7 @@ func (mutations *apiBacklogMutations) AddBacklog(
 ) (application.BacklogAdditionResult, error) {
 	mutations.addCalls++
 	mutations.addCommand = command
-	return mutations.addition, nil
+	return mutations.addition, mutations.addErr
 }
 
 func (mutations *apiBacklogMutations) PromoteBacklog(
@@ -144,7 +167,7 @@ func (mutations *apiBacklogMutations) PromoteBacklog(
 ) (application.BacklogPromotionResult, error) {
 	mutations.promoteCalls++
 	mutations.promoteCommand = command
-	return mutations.promotion, nil
+	return mutations.promotion, mutations.promoteErr
 }
 
 func backlogAdditionAPIFixture(now time.Time) application.BacklogAdditionResult {

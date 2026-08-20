@@ -55,6 +55,16 @@ type InitiativeReadQueries interface {
 	ListBacklog(context.Context, application.BacklogFilter) (application.BacklogList, error)
 }
 
+// BacklogAdditions records bounded requests without granting run authority.
+type BacklogAdditions interface {
+	AddBacklog(context.Context, application.BacklogAdditionCommand) (application.BacklogAdditionResult, error)
+}
+
+// BacklogPromotions converts a ready request through normal task preparation.
+type BacklogPromotions interface {
+	PromoteBacklog(context.Context, application.BacklogPromotionCommand) (application.BacklogPromotionResult, error)
+}
+
 // TaskInterventions is the canonical paused-worktree handback surface.
 type TaskInterventions interface {
 	ResumeTask(context.Context, application.ResumeTaskCommand) (application.MutationResult, error)
@@ -96,6 +106,8 @@ type HandlerConfig struct {
 	Mutations           TaskMutations
 	InitiativeMutations InitiativeMutations
 	InitiativeControls  InitiativeControls
+	BacklogAdditions    BacklogAdditions
+	BacklogPromotions   BacklogPromotions
 	Reconciliation      TaskReconciliation
 	Interventions       TaskInterventions
 	Cleanup             TaskCleanup

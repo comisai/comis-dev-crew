@@ -429,6 +429,15 @@ retarget the request or supply a worktree, credential, terminal, attachment, or
 managed-run identity. Competing promotion operations are refused before task
 preparation begins.
 
+The strict local boundary exposes `AddBacklog` and `PromoteBacklog` as
+idempotent `mutate` operations to both operator and MCP caller classes. Addition
+accepts only bounded request fields. Promotion accepts the backlog handle and
+the remaining normal task contract, while repository and shape stay owned by
+the durable item. Unknown workspace, task, attachment, and managed-run fields
+are refused during strict decoding. The trusted local promotion result retains
+the private managed-run preparation for the MCP adapter and distinguishes the
+child task version from the later parent promotion version.
+
 Initiative preparation validates the complete caller-local graph and every
 member contract before allocating a workspace. It then records stable member
 intents, prepares each reversible worktree and task-scoped runtime attachment,
