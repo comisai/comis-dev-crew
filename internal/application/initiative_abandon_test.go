@@ -35,7 +35,7 @@ func TestInitiativeAbandonReplayDoesNotRepeatTheMutation(t *testing.T) {
 	command := validInitiativeAbandonCommand()
 	replay := InitiativeAbandonmentResult{
 		Initiative: domain.DevelopmentInitiative{Handle: "initiative-abandon", ManagedRunGroupID: command.ManagedRunGroupID},
-		Operation: domain.OperationRecord{ID: command.OperationID}, Disposition: command.Disposition,
+		Operation:  domain.OperationRecord{ID: command.OperationID}, Disposition: command.Disposition,
 		Members: []InitiativeActivationMemberResult{{ManagedRunID: command.Members[0].ManagedRunID, Outcome: InitiativeActivationCompleted}},
 	}
 	store := &initiativeAbandonStore{replay: replay, replayFound: true}
@@ -94,6 +94,6 @@ func (store *initiativeAbandonStore) CommitInitiativeAbandonment(
 			State: domain.InitiativeCancelled,
 		},
 		Operation: domain.OperationRecord{ID: mutation.OperationID, UpdatedAt: mutation.At},
-		Members: members, Disposition: mutation.Disposition,
+		Members:   members, Disposition: mutation.Disposition,
 	}, nil
 }

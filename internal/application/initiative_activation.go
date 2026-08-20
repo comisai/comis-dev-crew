@@ -54,8 +54,10 @@ type ManagedRunGroupActivationMutation struct {
 type InitiativeActivationOutcome string
 
 const (
-	InitiativeActivationCompleted InitiativeActivationOutcome = "completed"
-	InitiativeActivationUnknown   InitiativeActivationOutcome = "unknown"
+	InitiativeActivationCompleted    InitiativeActivationOutcome = "completed"
+	InitiativeActivationRejected     InitiativeActivationOutcome = "rejected"
+	InitiativeActivationUnknown      InitiativeActivationOutcome = "unknown"
+	InitiativeActivationNotAttempted InitiativeActivationOutcome = "not_attempted"
 )
 
 // InitiativeActivationMemberResult reports one host member outcome.

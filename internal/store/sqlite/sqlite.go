@@ -407,7 +407,10 @@ func (store *Store) migrate(ctx context.Context) error {
 	if err := store.applyVersionedMigration(ctx, 34, initiativeBacklogMigration); err != nil {
 		return err
 	}
-	return store.applyVersionedMigration(ctx, 35, initiativePreparationMigration)
+	if err := store.applyVersionedMigration(ctx, 35, initiativePreparationMigration); err != nil {
+		return err
+	}
+	return store.applyVersionedMigration(ctx, 36, initiativeAbandonmentMigration)
 }
 func (store *Store) applyVersionedMigration(ctx context.Context, version int, migration string) error {
 	var applied int

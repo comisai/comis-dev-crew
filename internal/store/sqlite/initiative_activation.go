@@ -135,7 +135,7 @@ func (store *Store) CommitInitiativeActivation(
 		if err := boundTasks[index].Validate(); err != nil {
 			return application.InitiativeActivationResult{}, fmt.Errorf("validate initiative member binding: %w", err)
 		}
-		if err := updateInitiativeActivationTask(ctx, transaction, boundTasks[index]); err != nil {
+		if err := updateInitiativeMemberTask(ctx, transaction, boundTasks[index]); err != nil {
 			return application.InitiativeActivationResult{}, err
 		}
 	}
@@ -146,7 +146,7 @@ func (store *Store) CommitInitiativeActivation(
 	if err := initiative.Validate(); err != nil {
 		return application.InitiativeActivationResult{}, fmt.Errorf("validate active initiative: %w", err)
 	}
-	if err := updateInitiativeActivationRecord(ctx, transaction, initiative); err != nil {
+	if err := updateInitiativeRecord(ctx, transaction, initiative); err != nil {
 		return application.InitiativeActivationResult{}, err
 	}
 	operation := completedMutationOperation(
@@ -207,7 +207,7 @@ func (store *Store) SetInitiativeActivationState(
 	if err := initiative.Validate(); err != nil {
 		return domain.DevelopmentInitiative{}, err
 	}
-	if err := updateInitiativeActivationRecord(ctx, transaction, initiative); err != nil {
+	if err := updateInitiativeRecord(ctx, transaction, initiative); err != nil {
 		return domain.DevelopmentInitiative{}, err
 	}
 	if err := transaction.Commit(); err != nil {
@@ -310,7 +310,7 @@ func getInitiativeByManagedRunGroup(
 	return getInitiative(ctx, source, handle)
 }
 
-func updateInitiativeActivationTask(ctx context.Context, target execer, task domain.Task) error {
+func updateInitiativeMemberTask(ctx context.Context, target execer, task domain.Task) error {
 	const update = `UPDATE tasks SET
 		managed_run_id = ?, workspace_lease_id = ?, execution_attachment_id = ?, attachment_target_name = ?,
 		state = ?, state_version = ?, updated_at = ?
@@ -320,16 +320,16 @@ func updateInitiativeActivationTask(ctx context.Context, target execer, task dom
 		task.State, task.StateVersion, formatTime(task.UpdatedAt), task.Handle,
 	)
 	if err != nil {
-		return fmt.Errorf("update initiative member binding: %w", err)
+		return fmt.Errorf("update initiative member task: %w", err)
 	}
 	rows, err := result.RowsAffected()
 	if err != nil || rows != 1 {
-		return errors.New("update initiative member binding: exact task was not updated")
+		return errors.New("update initiative member task: exact task was not updated")
 	}
 	return nil
 }
 
-func updateInitiativeActivationRecord(
+func updateInitiativeRecord(
 	ctx context.Context,
 	target execer,
 	initiative domain.DevelopmentInitiative,
@@ -342,11 +342,11 @@ func updateInitiativeActivationRecord(
 		formatTime(initiative.UpdatedAt), initiative.Handle,
 	)
 	if err != nil {
-		return fmt.Errorf("update initiative activation: %w", err)
+		return fmt.Errorf("update initiative record: %w", err)
 	}
 	rows, err := result.RowsAffected()
 	if err != nil || rows != 1 {
-		return errors.New("update initiative activation: exact initiative was not updated")
+		return errors.New("update initiative record: exact initiative was not updated")
 	}
 	return nil
 }
