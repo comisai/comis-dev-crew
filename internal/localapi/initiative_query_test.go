@@ -34,7 +34,7 @@ func TestServerClient_InitiativeAndBacklogReadsUseCanonicalProjections(t *testin
 		},
 	}
 	handler, err := NewHandler(HandlerConfig{
-		Queries: &apiQueries{}, InitiativeQueries: reads, Clock: func() time.Time { return now },
+		Queries: &apiQueries{}, InitiativeQueries: reads, Clock: time.Now,
 	})
 	if err != nil {
 		t.Fatalf("NewHandler() error = %v", err)

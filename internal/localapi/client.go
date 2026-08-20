@@ -370,6 +370,12 @@ func projectedStateVersion(result any) (int64, bool) {
 		return projection.StateVersion, true
 	case *application.TaskList:
 		return projection.StateVersion, true
+	case *application.InitiativeList:
+		return projection.StateVersion, true
+	case *application.InitiativeDetail:
+		return projection.StateVersion, true
+	case *application.BacklogList:
+		return projection.StateVersion, true
 	case *application.WorkerProfileList:
 		return projection.StateVersion, true
 	case *application.TaskDetail:

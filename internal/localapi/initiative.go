@@ -19,6 +19,21 @@ type PrepareInitiativeInput struct {
 	IntegrationOwnerTask string                                   `json:"integrationOwnerTask,omitempty"`
 }
 
+// ListInitiativesInput optionally scopes initiatives by their closed state.
+type ListInitiativesInput struct {
+	State domain.InitiativeState `json:"state,omitempty"`
+}
+
+// ListBacklogInput scopes bounded requests without carrying run authority.
+type ListBacklogInput struct {
+	RepositoryID string                  `json:"repositoryId,omitempty"`
+	Readiness    domain.BacklogReadiness `json:"readiness,omitempty"`
+}
+
+type getInitiativeInput struct {
+	InitiativeHandle string `json:"initiativeHandle"`
+}
+
 // PrepareInitiativeResult returns the complete private two-phase group join.
 // The MCP facade forwards it to Comis without interpreting member authority.
 type PrepareInitiativeResult struct {
@@ -43,19 +58,90 @@ func (client *Client) PrepareInitiative(
 	return result, err
 }
 
+// ListInitiatives reads the versioned initiative list.
+func (client *Client) ListInitiatives(
+	ctx context.Context,
+	operationID string,
+	input ListInitiativesInput,
+) (application.InitiativeList, error) {
+	var result application.InitiativeList
+	err := client.call(ctx, operationID, MethodListInitiatives, input, &result)
+	return result, err
+}
+
+// GetInitiative reads one detailed initiative graph and its safe actions.
+func (client *Client) GetInitiative(
+	ctx context.Context,
+	operationID string,
+	initiativeHandle string,
+) (application.InitiativeDetail, error) {
+	var result application.InitiativeDetail
+	err := client.call(ctx, operationID, MethodGetInitiative, getInitiativeInput{
+		InitiativeHandle: initiativeHandle,
+	}, &result)
+	return result, err
+}
+
+// ListBacklog reads bounded requests under an optional repository/readiness scope.
+func (client *Client) ListBacklog(
+	ctx context.Context,
+	operationID string,
+	input ListBacklogInput,
+) (application.BacklogList, error) {
+	var result application.BacklogList
+	err := client.call(ctx, operationID, MethodListBacklog, input, &result)
+	return result, err
+}
+
 func (handler *Handler) dispatchInitiative(ctx context.Context, request Request) (Outcome, bool) {
-	if request.Method != MethodPrepareInitiative {
+	switch request.Method {
+	case MethodListInitiatives:
+		var input ListInitiativesInput
+		if err := decodeObject(request.Payload, &input); err != nil {
+			return invalidPayload(request.OperationID, err), true
+		}
+		if handler.initiativeQueries == nil {
+			return initiativeReadUnavailable(request.OperationID), true
+		}
+		result, err := handler.initiativeQueries.ListInitiatives(ctx, input.State)
+		return queryOutcome(request.OperationID, result.StateVersion, result, err), true
+	case MethodGetInitiative:
+		var input getInitiativeInput
+		if err := decodeObject(request.Payload, &input); err != nil {
+			return invalidPayload(request.OperationID, err), true
+		}
+		if handler.initiativeQueries == nil {
+			return initiativeReadUnavailable(request.OperationID), true
+		}
+		result, err := handler.initiativeQueries.GetInitiative(ctx, input.InitiativeHandle)
+		return queryOutcome(request.OperationID, result.StateVersion, result, err), true
+	case MethodListBacklog:
+		var input ListBacklogInput
+		if err := decodeObject(request.Payload, &input); err != nil {
+			return invalidPayload(request.OperationID, err), true
+		}
+		if handler.initiativeQueries == nil {
+			return initiativeReadUnavailable(request.OperationID), true
+		}
+		result, err := handler.initiativeQueries.ListBacklog(ctx, application.BacklogFilter(input))
+		return queryOutcome(request.OperationID, result.StateVersion, result, err), true
+	case MethodPrepareInitiative:
+		return handler.dispatchPrepareInitiative(ctx, request), true
+	default:
 		return Outcome{}, false
 	}
+}
+
+func (handler *Handler) dispatchPrepareInitiative(ctx context.Context, request Request) Outcome {
 	var input PrepareInitiativeInput
 	if err := decodeObject(request.Payload, &input); err != nil {
-		return invalidPayload(request.OperationID, err), true
+		return invalidPayload(request.OperationID, err)
 	}
 	if handler.initiativeMutations == nil {
 		return rejectedOutcome(
 			request.OperationID, domain.ErrorUnavailable, true,
 			"initiative mutation service is unavailable", "inspect service configuration", nil,
-		), true
+		)
 	}
 	result, err := handler.initiativeMutations.PrepareInitiative(ctx, application.PrepareInitiativeCommand{
 		OperationID: request.OperationID, ServiceInstanceID: handler.serviceInstanceID,
@@ -64,7 +150,14 @@ func (handler *Handler) dispatchInitiative(ctx context.Context, request Request)
 		ContractArtifacts: input.ContractArtifacts, IntegrationPolicyID: input.IntegrationPolicyID,
 		IntegrationOwnerTask: input.IntegrationOwnerTask,
 	})
-	return handler.prepareInitiativeOutcome(request.OperationID, result, err), true
+	return handler.prepareInitiativeOutcome(request.OperationID, result, err)
+}
+
+func initiativeReadUnavailable(operationID string) Outcome {
+	return rejectedOutcome(
+		operationID, domain.ErrorUnavailable, true,
+		"initiative query service is unavailable", "inspect service configuration", nil,
+	)
 }
 
 func (handler *Handler) prepareInitiativeOutcome(

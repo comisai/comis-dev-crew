@@ -20,6 +20,7 @@ const unknownRequestMethod = "unknown"
 // Handler authenticates, validates, and dispatches canonical local requests.
 type Handler struct {
 	queries             ReadQueries
+	initiativeQueries   InitiativeReadQueries
 	mutations           TaskMutations
 	initiativeMutations InitiativeMutations
 	reconciliation      TaskReconciliation
@@ -48,7 +49,8 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 		return nil, errors.New("create local API handler: service instance identity is required for mutations")
 	}
 	return &Handler{
-		queries: config.Queries, mutations: config.Mutations,
+		queries: config.Queries, initiativeQueries: config.InitiativeQueries,
+		mutations:           config.Mutations,
 		initiativeMutations: config.InitiativeMutations, reconciliation: config.Reconciliation,
 		interventions: config.Interventions, cleanup: config.Cleanup,
 		primaryCheckouts:  config.PrimaryCheckouts,

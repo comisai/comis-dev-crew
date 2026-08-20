@@ -50,6 +50,9 @@ const (
 	MethodExplainTask       Method = "ExplainTask"
 	MethodGetLaunchPlan     Method = "GetLaunchPlan"
 	MethodOperation         Method = "GetOperation"
+	MethodListInitiatives   Method = "ListInitiatives"
+	MethodGetInitiative     Method = "GetInitiative"
+	MethodListBacklog       Method = "ListBacklog"
 	MethodPrepareTask       Method = "PrepareTask"
 	MethodPrepareInitiative Method = "PrepareInitiative"
 	MethodReconcileTask     Method = "ReconcileTask"
@@ -79,7 +82,8 @@ const (
 func (method Method) valid() bool {
 	switch method {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
-		MethodOperation, MethodPrepareTask, MethodPrepareInitiative, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
+		MethodOperation, MethodListInitiatives, MethodGetInitiative, MethodListBacklog,
+		MethodPrepareTask, MethodPrepareInitiative, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
 		MethodSyncPrimary, MethodAttestScout, MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs, MethodReadEvents, MethodReadTaskLogs, MethodCancelDecision,
 		MethodRespondDecision, MethodReadAudit:
@@ -250,6 +254,13 @@ type InitiativeMutations interface {
 	PrepareInitiative(context.Context, application.PrepareInitiativeCommand) (application.InitiativePreparationResult, error)
 }
 
+// InitiativeReadQueries is the narrow initiative and backlog read surface.
+type InitiativeReadQueries interface {
+	ListInitiatives(context.Context, domain.InitiativeState) (application.InitiativeList, error)
+	GetInitiative(context.Context, string) (application.InitiativeDetail, error)
+	ListBacklog(context.Context, application.BacklogFilter) (application.BacklogList, error)
+}
+
 // TaskInterventions is the canonical paused-worktree handback surface.
 type TaskInterventions interface {
 	ResumeTask(context.Context, application.ResumeTaskCommand) (application.MutationResult, error)
@@ -291,6 +302,7 @@ type PrimaryCheckoutSync interface {
 // HandlerConfig binds local endpoint authority to canonical application seams.
 type HandlerConfig struct {
 	Queries             ReadQueries
+	InitiativeQueries   InitiativeReadQueries
 	Mutations           TaskMutations
 	InitiativeMutations InitiativeMutations
 	Reconciliation      TaskReconciliation
