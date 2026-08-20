@@ -420,6 +420,14 @@ initiative becomes durable `unknown`; only an all-completed result remains
 negotiates `managed_run_group`, strictly validates the generated group request,
 and returns those same per-member outcomes over the authenticated socket.
 
+Group abandonment carries the exact host-minted member IDs and private member
+nonces, so an unbound preparation can be closed without inventing authority.
+The service joins the complete member set under the SQLite write lock, records
+the initiative, task, preparation, operation, and replay-stable member outcomes
+in one transaction, and reports uncertainty per member. Reap-safe cancellation
+enters the reversible cleanup path; preserve retains prepared artifacts while
+the initiative remains non-launchable and `unknown`.
+
 Startup reconciliation now includes every nonterminal initiative. Preparing,
 active, blocked, integrating, validating, and candidate-complete initiatives are
 atomically moved to durable `unknown` with a new global state version before the

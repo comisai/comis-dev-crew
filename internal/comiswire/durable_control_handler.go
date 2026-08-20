@@ -22,6 +22,11 @@ type DurableGroupActivations interface {
 	ActivateManagedRunGroup(context.Context, application.ActivateManagedRunGroupCommand) (application.InitiativeActivationResult, error)
 }
 
+// DurableGroupAbandonments is the application-owned group closure surface.
+type DurableGroupAbandonments interface {
+	AbandonManagedRunGroup(context.Context, application.AbandonManagedRunGroupCommand) (application.InitiativeAbandonmentResult, error)
+}
+
 // TerminalEvent commits the exact run, lease, session, and transition join
 // before returning the content-free protocol acknowledgement.
 func (handler *DurableControlHandler) TerminalEvent(ctx context.Context, params TerminalEventRequestParams) (TerminalEventResponseResult, error) {
@@ -47,6 +52,7 @@ func (handler *DurableControlHandler) TerminalEvent(ctx context.Context, params 
 type DurableControlHandlerConfig struct {
 	Mutations         DurableControlMutations
 	GroupActivations  DurableGroupActivations
+	GroupAbandonments DurableGroupAbandonments
 	ServiceInstanceID ServiceInstanceID
 }
 
@@ -55,6 +61,7 @@ type DurableControlHandlerConfig struct {
 type DurableControlHandler struct {
 	mutations         DurableControlMutations
 	groupActivations  DurableGroupActivations
+	groupAbandonments DurableGroupAbandonments
 	serviceInstanceID string
 }
 
@@ -68,6 +75,7 @@ func NewDurableControlHandler(config DurableControlHandlerConfig) (*DurableContr
 	}
 	return &DurableControlHandler{
 		mutations: config.Mutations, groupActivations: config.GroupActivations,
+		groupAbandonments: config.GroupAbandonments,
 		serviceInstanceID: string(config.ServiceInstanceID),
 	}, nil
 }
@@ -129,6 +137,62 @@ func (handler *DurableControlHandler) GroupActivate(
 		ManagedRunGroupID: params.ManagedRunGroupID, Members: responseMembers,
 		ActivatedAtMs: result.Operation.UpdatedAt.UnixMilli(),
 	}, nil
+}
+
+// GroupAbandon commits the exact prepared member set before acknowledging it.
+func (handler *DurableControlHandler) GroupAbandon(
+	ctx context.Context,
+	params GroupAbandonRequestParams,
+) (GroupAbandonResponseResult, error) {
+	if handler.groupAbandonments == nil {
+		return GroupAbandonResponseResult{}, wireFailure(ErrorKindPreconditionFailed, "group abandonment is unavailable")
+	}
+	members := make([]application.AbandonManagedRunGroupMember, 0, len(params.Members))
+	for _, member := range params.Members {
+		members = append(members, application.AbandonManagedRunGroupMember{
+			ManagedRunID: string(member.ManagedRunID), ExternalRunRef: string(member.ExternalRunRef),
+			RegistrationNonce: string(member.RegistrationNonce),
+		})
+	}
+	result, err := handler.groupAbandonments.AbandonManagedRunGroup(ctx, application.AbandonManagedRunGroupCommand{
+		OperationID: string(params.OperationID), ServiceInstanceID: handler.serviceInstanceID,
+		ManagedRunGroupID: string(params.ManagedRunGroupID), RegistrationNonce: string(params.RegistrationNonce),
+		Members: members, Reason: application.AbandonReason(params.Reason),
+		Disposition: application.AbandonDisposition(params.Disposition),
+	})
+	if err != nil {
+		return GroupAbandonResponseResult{}, controlMutationFailure(err)
+	}
+	if result.Operation.ID != string(params.OperationID) || result.Operation.Status != domain.OperationCompleted ||
+		result.Operation.UpdatedAt.Location() != time.UTC ||
+		result.Initiative.ManagedRunGroupID != string(params.ManagedRunGroupID) ||
+		result.Disposition != application.AbandonDisposition(params.Disposition) ||
+		len(result.Members) != len(params.Members) {
+		return GroupAbandonResponseResult{}, wireFailure(ErrorKindInternalError, "durable group abandonment result is incomplete")
+	}
+	responseMembers := make([]GroupAbandonResponseResultMembersItem, 0, len(result.Members))
+	for index, member := range result.Members {
+		if member.ManagedRunID != string(params.Members[index].ManagedRunID) || !validInitiativeMemberOutcome(member.Outcome) {
+			return GroupAbandonResponseResult{}, wireFailure(ErrorKindInternalError, "durable group abandonment member outcome is incomplete")
+		}
+		responseMembers = append(responseMembers, GroupAbandonResponseResultMembersItem{
+			ManagedRunID: ManagedRunID(member.ManagedRunID), Outcome: string(member.Outcome),
+		})
+	}
+	return GroupAbandonResponseResult{
+		ManagedRunGroupID: params.ManagedRunGroupID, Members: responseMembers,
+		State: ManagedRunStateAbandoned, Disposition: params.Disposition,
+	}, nil
+}
+
+func validInitiativeMemberOutcome(outcome application.InitiativeActivationOutcome) bool {
+	switch outcome {
+	case application.InitiativeActivationCompleted, application.InitiativeActivationRejected,
+		application.InitiativeActivationUnknown, application.InitiativeActivationNotAttempted:
+		return true
+	default:
+		return false
+	}
 }
 
 // Activate commits the exact host run and workspace lease before acknowledging.

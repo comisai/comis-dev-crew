@@ -243,6 +243,12 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if err != nil {
 		return err
 	}
+	groupAbandonments, err := application.NewInitiativeAbandonments(application.InitiativeAbandonmentConfig{
+		Store: store, Clock: clock,
+	})
+	if err != nil {
+		return fmt.Errorf("run service initiative abandonment coordinator: %w", err)
+	}
 	var interventions *application.Interventions
 	if config.workspaceInspector != nil {
 		interventions, err = application.NewInterventions(application.InterventionConfig{
@@ -278,7 +284,7 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		}
 		controlMutations = launchSupervisor
 	}
-	control, err := composeComisControl(config, controlMutations, groupActivations)
+	control, err := composeComisControl(config, controlMutations, groupActivations, groupAbandonments)
 	if err != nil {
 		return err
 	}

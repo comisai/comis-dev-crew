@@ -60,6 +60,22 @@ func (handler *durableControlHandler) GroupActivate(
 	}, nil
 }
 
+func (handler *durableControlHandler) GroupAbandon(
+	_ context.Context,
+	params GroupAbandonRequestParams,
+) (GroupAbandonResponseResult, error) {
+	members := make([]GroupAbandonResponseResultMembersItem, 0, len(params.Members))
+	for _, member := range params.Members {
+		members = append(members, GroupAbandonResponseResultMembersItem{
+			ManagedRunID: member.ManagedRunID, Outcome: "completed",
+		})
+	}
+	return GroupAbandonResponseResult{
+		ManagedRunGroupID: params.ManagedRunGroupID, Members: members,
+		State: ManagedRunStateAbandoned, Disposition: params.Disposition,
+	}, nil
+}
+
 func (handler *durableControlHandler) Abandon(_ context.Context, params AbandonRequestParams) (AbandonResponseResult, error) {
 	return abandonResult(params), nil
 }

@@ -274,6 +274,7 @@ func composeComisControl(
 	config Config,
 	mutations comiswire.DurableControlMutations,
 	groupActivations comiswire.DurableGroupActivations,
+	groupAbandonments comiswire.DurableGroupAbandonments,
 ) (ComisControl, error) {
 	if config.ComisComposition == nil {
 		return config.ComisControl, nil
@@ -284,12 +285,15 @@ func composeComisControl(
 	if groupActivations == nil {
 		return nil, errors.New("run service: Comis control requires durable group activations")
 	}
+	if groupAbandonments == nil {
+		return nil, errors.New("run service: Comis control requires durable group abandonments")
+	}
 	credential, err := readOwnerCredential(config.ComisComposition.CredentialFile)
 	if err != nil {
 		return nil, err
 	}
 	handler, err := comiswire.NewDurableControlHandler(comiswire.DurableControlHandlerConfig{
-		Mutations: mutations, GroupActivations: groupActivations,
+		Mutations: mutations, GroupActivations: groupActivations, GroupAbandonments: groupAbandonments,
 		ServiceInstanceID: comiswire.ServiceInstanceID(config.ServiceInstanceID),
 	})
 	if err != nil {

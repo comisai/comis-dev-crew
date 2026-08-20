@@ -20,6 +20,7 @@ import (
 type ControlHandler interface {
 	Activate(context.Context, ActivateRequestParams) (ActivateResponseResult, error)
 	GroupActivate(context.Context, GroupActivateRequestParams) (GroupActivateResponseResult, error)
+	GroupAbandon(context.Context, GroupAbandonRequestParams) (GroupAbandonResponseResult, error)
 	Abandon(context.Context, AbandonRequestParams) (AbandonResponseResult, error)
 	Cancel(context.Context, CancelRequestParams) (CancelResponseResult, error)
 	TerminalEvent(context.Context, TerminalEventRequestParams) (TerminalEventResponseResult, error)

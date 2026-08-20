@@ -108,9 +108,69 @@ func TestDurableControlHandler_MapsCompleteGroupActivationWithoutLosingMemberOut
 	}
 }
 
+func TestDurableControlHandler_MapsGroupAbandonmentMemberOutcomes(t *testing.T) {
+	at := time.Date(2026, time.August, 20, 18, 30, 0, 0, time.UTC)
+	abandonments := &durableGroupAbandonmentStub{result: application.InitiativeAbandonmentResult{
+		Initiative: domain.DevelopmentInitiative{
+			Handle: "initiative-group-abandon-handler", ManagedRunGroupID: "managed-run-group-abandon-handler",
+			State: domain.InitiativeUnknown,
+		},
+		Operation: domain.OperationRecord{
+			ID: "operation-group-abandon-handler", Status: domain.OperationCompleted, UpdatedAt: at,
+		},
+		Disposition: application.AbandonDispositionReapSafe,
+		Members: []application.InitiativeActivationMemberResult{
+			{ManagedRunID: "managed-run-member-a", Outcome: application.InitiativeActivationCompleted},
+			{ManagedRunID: "managed-run-member-b", Outcome: application.InitiativeActivationUnknown},
+		},
+	}}
+	handler, err := comiswire.NewDurableControlHandler(comiswire.DurableControlHandlerConfig{
+		Mutations: &durableMutationStub{}, GroupAbandonments: abandonments,
+		ServiceInstanceID: "service-instance-handler",
+	})
+	if err != nil {
+		t.Fatalf("NewDurableControlHandler() error = %v", err)
+	}
+	params := comiswire.GroupAbandonRequestParams{
+		OperationID: "operation-group-abandon-handler", ManagedRunGroupID: "managed-run-group-abandon-handler",
+		RegistrationNonce: "group-registration-nonce-handler", Reason: "activation_rejected",
+		Disposition: "reap_safe",
+		Members: []comiswire.GroupAbandonRequestParamsMembersItem{
+			{ManagedRunID: "managed-run-member-a", ExternalRunRef: "task-member-a", RegistrationNonce: "registration-nonce-member-a"},
+			{ManagedRunID: "managed-run-member-b", ExternalRunRef: "task-member-b", RegistrationNonce: "registration-nonce-member-b"},
+		},
+	}
+	result, err := handler.GroupAbandon(context.Background(), params)
+	if err != nil {
+		t.Fatalf("GroupAbandon() error = %v", err)
+	}
+	if result.ManagedRunGroupID != params.ManagedRunGroupID || result.State != comiswire.ManagedRunStateAbandoned ||
+		result.Disposition != params.Disposition || len(result.Members) != 2 ||
+		result.Members[0].Outcome != "completed" || result.Members[1].Outcome != "unknown" {
+		t.Fatalf("GroupAbandon() = %#v", result)
+	}
+	if abandonments.command.Members[1].RegistrationNonce != string(params.Members[1].RegistrationNonce) ||
+		abandonments.command.Disposition != application.AbandonDispositionReapSafe {
+		t.Fatalf("application group abandonment command = %#v", abandonments.command)
+	}
+}
+
 type durableGroupActivationStub struct {
 	command application.ActivateManagedRunGroupCommand
 	result  application.InitiativeActivationResult
+}
+
+type durableGroupAbandonmentStub struct {
+	command application.AbandonManagedRunGroupCommand
+	result  application.InitiativeAbandonmentResult
+}
+
+func (stub *durableGroupAbandonmentStub) AbandonManagedRunGroup(
+	_ context.Context,
+	command application.AbandonManagedRunGroupCommand,
+) (application.InitiativeAbandonmentResult, error) {
+	stub.command = command
+	return stub.result, nil
 }
 
 func (stub *durableGroupActivationStub) ActivateManagedRunGroup(
@@ -420,8 +480,15 @@ func (harness *durableControlHarness) open(t *testing.T) {
 		_ = store.Close()
 		t.Fatal(err)
 	}
+	abandonments, err := application.NewInitiativeAbandonments(application.InitiativeAbandonmentConfig{
+		Store: store, Clock: func() time.Time { return harness.now },
+	})
+	if err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
 	handler, err := comiswire.NewDurableControlHandler(comiswire.DurableControlHandlerConfig{
-		Mutations: mutations, GroupActivations: groups,
+		Mutations: mutations, GroupActivations: groups, GroupAbandonments: abandonments,
 		ServiceInstanceID: comiswire.ServiceInstanceID(harness.serviceInstanceID),
 	})
 	if err != nil {
