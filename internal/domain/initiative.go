@@ -363,3 +363,62 @@ func (initiative DevelopmentInitiative) DependencyReadyTasks(satisfied map[strin
 	sort.Strings(ready)
 	return ready
 }
+
+// AuthorizeIntegrationWrite reports whether one task may apply candidates to the
+// integration target.
+//
+// Exactly one member may, and only the member the initiative recorded. Component
+// tasks publish candidate commits; they never receive the integration lease,
+// because two writers applying to one target turn a merge race into a conflict
+// nobody can attribute.
+//
+// An initiative with no recorded owner refuses everyone. Allowing any member
+// through when the field is empty would silently make every member a writer,
+// which is the opposite of what the record says.
+func (initiative DevelopmentInitiative) AuthorizeIntegrationWrite(taskHandle string) error {
+	if initiative.IntegrationOwnerTask == "" {
+		return &ValidationError{
+			Field:  "integrationOwnerTask",
+			Reason: "this initiative records no integration owner, so no task may integrate",
+		}
+	}
+	if taskHandle != initiative.IntegrationOwnerTask {
+		return &ValidationError{
+			Field:  "integrationOwnerTask",
+			Reason: "only the recorded integration owner may apply candidates",
+		}
+	}
+	return nil
+}
+
+// AuthorizeIntegrationWorktree proves the integration owner holds a worktree of
+// its own.
+//
+// Sharing one with a component would let that component's uncommitted work
+// appear inside an integration result without ever having been published as a
+// candidate — which is exactly the provenance the integration lane exists to
+// keep straight.
+func (initiative DevelopmentInitiative) AuthorizeIntegrationWorktree(
+	taskHandle string,
+	worktreeByTask map[string]string,
+) error {
+	if err := initiative.AuthorizeIntegrationWrite(taskHandle); err != nil {
+		return err
+	}
+	own, held := worktreeByTask[taskHandle]
+	if !held || own == "" {
+		return &ValidationError{
+			Field:  "integrationWorktree",
+			Reason: "the integration owner holds no worktree of its own",
+		}
+	}
+	for otherTask, otherPath := range worktreeByTask {
+		if otherTask != taskHandle && otherPath == own {
+			return &ValidationError{
+				Field:  "integrationWorktree",
+				Reason: "the integration worktree must not be shared with a component task",
+			}
+		}
+	}
+	return nil
+}

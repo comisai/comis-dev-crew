@@ -110,6 +110,7 @@ type Task struct {
 	BriefRevisionHash     string
 	AcceptanceCriteria    []string
 	Constraints           []string
+	ConsumedContracts     []PinnedContract
 	ValidationProfile     string
 	DeliveryMode          DeliveryMode
 	WorkerProfileID       string

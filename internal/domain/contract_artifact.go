@@ -143,3 +143,29 @@ func (initiative DevelopmentInitiative) contains(taskHandle string) bool {
 	}
 	return false
 }
+
+// PinnedContract is one contract a task consumes, named by handle AND digest.
+//
+// The digest is what makes the handoff immutable in practice. A brief carrying
+// only a handle could be answered with different bytes under the same name, and
+// the consumer would have no way to notice; carrying the digest means a
+// superseded contract cannot ride into a running worker unannounced.
+type PinnedContract struct {
+	ArtifactHandle string
+	Kind           ContractArtifactKind
+	ContentHash    string
+}
+
+// Validate enforces one pinned contract reference.
+func (pin PinnedContract) Validate() error {
+	if err := validateOpaqueID("consumedContracts.artifactHandle", pin.ArtifactHandle); err != nil {
+		return err
+	}
+	if !pin.Kind.valid() {
+		return &ValidationError{
+			Field:  "consumedContracts.kind",
+			Reason: "must be a closed contract artifact kind",
+		}
+	}
+	return validateSHA256("consumedContracts.contentHash", pin.ContentHash)
+}
