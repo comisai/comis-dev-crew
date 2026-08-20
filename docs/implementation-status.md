@@ -459,6 +459,11 @@ workspace-inspection, and SQLite authorities used by task-scoped pause, resume,
 and cancel. If workspace inspection is absent, pause and cancel remain available
 while resume returns an explicit retryable unavailable result.
 
+The operator console exposes bounded initiative watch, pause, resume, and cancel
+commands. Watch advances through the content-free service event cursor and
+refreshes canonical detail on every pass; mutations emit the full durable
+per-member JSON result and accept no caller-selected member set.
+
 Threat posture: a group command carries only an initiative handle. It cannot
 select an unowned task, forge member operation identities, or collapse a partial
 distributed outcome into success; the authoritative member set is reread from

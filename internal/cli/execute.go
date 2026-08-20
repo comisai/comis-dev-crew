@@ -2,8 +2,11 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 	"github.com/comisai/comis-dev-crew/internal/localapi"
 )
@@ -30,6 +33,21 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 	case commandGraphInitiative:
 		detail, err := client.GetInitiative(ctx, operationID, command.reference)
 		return detail.Graph, err
+	case commandWatchInitiative:
+		page, err := client.ReadEvents(ctx, initiativeWatchOperationID(operationID), localapi.ReadEventsInput{
+			AfterSequence: command.eventCursor,
+		})
+		if err != nil {
+			return nil, err
+		}
+		detail, err := client.GetInitiative(ctx, operationID, command.reference)
+		return initiativeWatchResult{Detail: detail, NextCursor: page.NextCursor}, err
+	case commandPauseInitiative:
+		return client.PauseInitiative(ctx, operationID, localapi.InitiativeControlInput{InitiativeHandle: command.reference})
+	case commandResumeInitiative:
+		return client.ResumeInitiative(ctx, operationID, localapi.InitiativeControlInput{InitiativeHandle: command.reference})
+	case commandCancelInitiative:
+		return client.CancelInitiative(ctx, operationID, localapi.InitiativeControlInput{InitiativeHandle: command.reference})
 	case commandReadTaskLogs:
 		return client.ReadTaskLogs(ctx, operationID, localapi.ReadTaskLogsInput{
 			TaskHandle: command.reference, Source: command.logSource, AfterSequence: command.logCursor,
@@ -112,4 +130,14 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 	default:
 		return nil, errors.New("unknown parsed command")
 	}
+}
+
+type initiativeWatchResult struct {
+	Detail     application.InitiativeDetail
+	NextCursor int64
+}
+
+func initiativeWatchOperationID(operationID string) string {
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(operationID+"\x00initiative-events")))
+	return "watch-events-" + digest[:32]
 }

@@ -416,6 +416,10 @@ devcrew [--socket PATH] initiative list [--state STATE] [--format table|json]
 devcrew [--socket PATH] initiative show INITIATIVE [--format text|json]
 devcrew [--socket PATH] initiative explain INITIATIVE [--format text|json]
 devcrew [--socket PATH] initiative graph INITIATIVE [--format text|json]
+devcrew [--socket PATH] initiative watch INITIATIVE [--passes N] [--interval DURATION]
+devcrew [--socket PATH] initiative pause INITIATIVE [--operation OPERATION] [--format json]
+devcrew [--socket PATH] initiative resume INITIATIVE [--operation OPERATION] [--format json]
+devcrew [--socket PATH] initiative cancel INITIATIVE [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task show TASK [--format yaml|json]
 devcrew [--socket PATH] task explain TASK [--format text|json]
 devcrew [--socket PATH] task diff TASK [--stat|--name-only] [--format text|json]
@@ -446,6 +450,11 @@ Initiative reads use the same local service projections as the model facade.
 `initiative graph --format json` returns the graph projection itself, while the
 human views show state, explanation, dependency readiness, and only closed safe
 action identifiers.
+
+`initiative watch` consumes the content-free event cursor and then refreshes the
+authoritative initiative detail on every pass. Initiative pause, resume, and
+cancel print the durable per-member JSON result; they never summarize a partial
+distributed outcome as one atomic success.
 
 The stream records transitions, not writes. A task that is still waiting is
 rewritten on every supervisor pass to refresh its liveness, and those rewrites

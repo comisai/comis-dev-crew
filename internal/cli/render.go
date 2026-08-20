@@ -35,6 +35,8 @@ func renderResult(destination io.Writer, command parsedCommand, result any) erro
 		return renderInitiativeExplanation(destination, result.(application.InitiativeDetail))
 	case commandGraphInitiative:
 		return renderInitiativeGraph(destination, result.(application.InitiativeGraphView))
+	case commandWatchInitiative:
+		return renderInitiativeDetail(destination, result.(initiativeWatchResult).Detail)
 	case commandReadTaskLogs:
 		return renderTaskLogPage(destination, result.(application.TaskLogPage))
 	case commandReadEvents:

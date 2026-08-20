@@ -33,6 +33,10 @@ Commands:
   initiative show INITIATIVE [--format text|json]
   initiative explain INITIATIVE [--format text|json]
   initiative graph INITIATIVE [--format text|json]
+  initiative watch INITIATIVE [--passes N] [--interval DURATION]
+  initiative pause INITIATIVE [--operation OPERATION] [--format json]
+  initiative resume INITIATIVE [--operation OPERATION] [--format json]
+  initiative cancel INITIATIVE [--operation OPERATION] [--format json]
   task show TASK [--format yaml|json]
   task explain TASK [--format text|json]
   task diff TASK [--stat|--name-only] [--format text|json]
@@ -74,6 +78,9 @@ type ReadClient interface {
 	ListWorkerProfiles(context.Context, string) (application.WorkerProfileList, error)
 	ListInitiatives(context.Context, string, localapi.ListInitiativesInput) (application.InitiativeList, error)
 	GetInitiative(context.Context, string, string) (application.InitiativeDetail, error)
+	PauseInitiative(context.Context, string, localapi.InitiativeControlInput) (localapi.InitiativeControlResult, error)
+	ResumeInitiative(context.Context, string, localapi.InitiativeControlInput) (localapi.InitiativeControlResult, error)
+	CancelInitiative(context.Context, string, localapi.InitiativeControlInput) (localapi.InitiativeControlResult, error)
 	PauseTask(context.Context, string, localapi.PauseTaskInput) (localapi.TaskMutationResult, error)
 	CancelTask(context.Context, string, localapi.CancelTaskInput) (localapi.TaskMutationResult, error)
 	ResumeTask(context.Context, string, localapi.ResumeTaskInput) (localapi.TaskMutationResult, error)
@@ -127,6 +134,10 @@ const (
 	commandShowInitiative
 	commandExplainInitiative
 	commandGraphInitiative
+	commandWatchInitiative
+	commandPauseInitiative
+	commandResumeInitiative
+	commandCancelInitiative
 	commandShowTask
 	commandExplainTask
 	commandGetLaunchPlan

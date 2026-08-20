@@ -65,6 +65,8 @@ func advanceCursor(command parsedCommand, result any) parsedCommand {
 		command.logCursor = page.NextCursor
 	case application.EventPage:
 		command.eventCursor = page.NextCursor
+	case initiativeWatchResult:
+		command.eventCursor = page.NextCursor
 	}
 	return command
 }

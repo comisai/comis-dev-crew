@@ -14,28 +14,56 @@ import (
 // records every call so a test can prove what reached the service, and what
 // never did.
 type fakeClient struct {
-	diagnostic       application.DiagnosticReport
-	fleet            application.FleetSnapshot
-	list             application.TaskList
-	profiles         application.WorkerProfileList
-	detail           application.TaskDetail
-	explanation      application.TaskExplanation
-	operation        application.OperationView
-	launchPlan       application.LaunchPlan
-	initiativeList   application.InitiativeList
-	initiativeDetail application.InitiativeDetail
-	decisions        application.DecisionList
-	decision         application.TaskDecision
-	diff             application.TaskDiffView
-	repairs          application.RepairSurvey
-	events           application.EventPage
-	audit            application.AuditPage
-	logs             application.TaskLogPage
-	prepared         localapi.PrepareTaskResult
-	taskMutation     localapi.TaskMutationResult
-	err              error
-	calls            []string
-	operationID      string
+	diagnostic        application.DiagnosticReport
+	fleet             application.FleetSnapshot
+	list              application.TaskList
+	profiles          application.WorkerProfileList
+	detail            application.TaskDetail
+	explanation       application.TaskExplanation
+	operation         application.OperationView
+	launchPlan        application.LaunchPlan
+	initiativeList    application.InitiativeList
+	initiativeDetail  application.InitiativeDetail
+	initiativeControl localapi.InitiativeControlResult
+	decisions         application.DecisionList
+	decision          application.TaskDecision
+	diff              application.TaskDiffView
+	repairs           application.RepairSurvey
+	events            application.EventPage
+	audit             application.AuditPage
+	logs              application.TaskLogPage
+	prepared          localapi.PrepareTaskResult
+	taskMutation      localapi.TaskMutationResult
+	err               error
+	calls             []string
+	operationID       string
+}
+
+func (client *fakeClient) PauseInitiative(
+	_ context.Context,
+	operationID string,
+	input localapi.InitiativeControlInput,
+) (localapi.InitiativeControlResult, error) {
+	client.record(operationID, "pause-initiative:"+input.InitiativeHandle)
+	return client.initiativeControl, client.err
+}
+
+func (client *fakeClient) ResumeInitiative(
+	_ context.Context,
+	operationID string,
+	input localapi.InitiativeControlInput,
+) (localapi.InitiativeControlResult, error) {
+	client.record(operationID, "resume-initiative:"+input.InitiativeHandle)
+	return client.initiativeControl, client.err
+}
+
+func (client *fakeClient) CancelInitiative(
+	_ context.Context,
+	operationID string,
+	input localapi.InitiativeControlInput,
+) (localapi.InitiativeControlResult, error) {
+	client.record(operationID, "cancel-initiative:"+input.InitiativeHandle)
+	return client.initiativeControl, client.err
 }
 
 func (client *fakeClient) ListInitiatives(
@@ -397,6 +425,16 @@ func fixtureClient() *fakeClient {
 			Initiative: initiative, Graph: graph, ReasonCode: "initiative_active",
 			Explanation:     "Initiative members are active.",
 			NextSafeActions: []application.InitiativeNextAction{application.InitiativeActionInspect},
+		},
+		initiativeControl: localapi.InitiativeControlResult{
+			SchemaVersion: 1, OperationID: "operation-initiative-control",
+			InitiativeHandle: "initiative-alpha", State: domain.InitiativeBlocked,
+			StateVersion: 8, SideEffect: localapi.SideEffectMutate,
+			Members: []application.InitiativeControlMemberResult{{
+				TaskHandle: "task-0001", OperationID: "control-member-task-0001",
+				Outcome: application.InitiativeControlRejected, ErrorCode: domain.ErrorPrecondition,
+				State: domain.TaskBlocked, StateVersion: 8,
+			}},
 		},
 	}
 }
