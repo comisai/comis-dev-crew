@@ -14,29 +14,53 @@ import (
 // records every call so a test can prove what reached the service, and what
 // never did.
 type fakeClient struct {
-	diagnostic        application.DiagnosticReport
-	fleet             application.FleetSnapshot
-	list              application.TaskList
-	profiles          application.WorkerProfileList
-	detail            application.TaskDetail
-	explanation       application.TaskExplanation
-	operation         application.OperationView
-	launchPlan        application.LaunchPlan
-	initiativeList    application.InitiativeList
-	initiativeDetail  application.InitiativeDetail
-	initiativeControl localapi.InitiativeControlResult
-	decisions         application.DecisionList
-	decision          application.TaskDecision
-	diff              application.TaskDiffView
-	repairs           application.RepairSurvey
-	events            application.EventPage
-	audit             application.AuditPage
-	logs              application.TaskLogPage
-	prepared          localapi.PrepareTaskResult
-	taskMutation      localapi.TaskMutationResult
-	err               error
-	calls             []string
-	operationID       string
+	diagnostic          application.DiagnosticReport
+	fleet               application.FleetSnapshot
+	list                application.TaskList
+	profiles            application.WorkerProfileList
+	detail              application.TaskDetail
+	explanation         application.TaskExplanation
+	operation           application.OperationView
+	launchPlan          application.LaunchPlan
+	initiativeList      application.InitiativeList
+	initiativeDetail    application.InitiativeDetail
+	initiativeControl   localapi.InitiativeControlResult
+	backlogAdded        localapi.AddBacklogResult
+	backlogPromoted     localapi.PromoteBacklogResult
+	backlogAddInput     localapi.AddBacklogInput
+	backlogPromoteInput localapi.PromoteBacklogInput
+	decisions           application.DecisionList
+	decision            application.TaskDecision
+	diff                application.TaskDiffView
+	repairs             application.RepairSurvey
+	events              application.EventPage
+	audit               application.AuditPage
+	logs                application.TaskLogPage
+	prepared            localapi.PrepareTaskResult
+	taskMutation        localapi.TaskMutationResult
+	err                 error
+	calls               []string
+	operationID         string
+}
+
+func (client *fakeClient) AddBacklog(
+	_ context.Context,
+	operationID string,
+	input localapi.AddBacklogInput,
+) (localapi.AddBacklogResult, error) {
+	client.record(operationID, "add-backlog:"+input.RepositoryID)
+	client.backlogAddInput = input
+	return client.backlogAdded, client.err
+}
+
+func (client *fakeClient) PromoteBacklog(
+	_ context.Context,
+	operationID string,
+	input localapi.PromoteBacklogInput,
+) (localapi.PromoteBacklogResult, error) {
+	client.record(operationID, "promote-backlog:"+input.BacklogHandle)
+	client.backlogPromoteInput = input
+	return client.backlogPromoted, client.err
 }
 
 func (client *fakeClient) PauseInitiative(

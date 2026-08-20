@@ -484,6 +484,10 @@ through that same canonical local client. Human views retain dependency
 readiness and closed safe actions; graph JSON is the graph DTO itself rather
 than a second wrapper contract.
 
+The operator console also exposes `backlog add` and `backlog promote` through
+strict bounded file-or-stdin JSON contracts. The promotion target appears only
+on the command line, and both mutations return the canonical local JSON result.
+
 Initiative pause, resume, and cancel coordination reuses the existing task
 mutation path with a deterministic operation identity per member. The result is
 explicitly non-atomic: every member is reported as completed, rejected, unknown,

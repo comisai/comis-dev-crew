@@ -427,6 +427,8 @@ devcrew [--socket PATH] initiative watch INITIATIVE [--passes N] [--interval DUR
 devcrew [--socket PATH] initiative pause INITIATIVE [--operation OPERATION] [--format json]
 devcrew [--socket PATH] initiative resume INITIATIVE [--operation OPERATION] [--format json]
 devcrew [--socket PATH] initiative cancel INITIATIVE [--operation OPERATION] [--format json]
+devcrew [--socket PATH] backlog add --input FILE|- [--operation OPERATION] [--format json]
+devcrew [--socket PATH] backlog promote BACKLOG --input FILE|- [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task show TASK [--format yaml|json]
 devcrew [--socket PATH] task explain TASK [--format text|json]
 devcrew [--socket PATH] task diff TASK [--stat|--name-only] [--format text|json]
@@ -452,6 +454,12 @@ devcrew [--socket PATH] decision show TASK DECISION [--format text|json]
 devcrew [--socket PATH] decision respond TASK DECISION --input FILE|- [--operation OPERATION] [--format json]
 devcrew [--socket PATH] decision cancel TASK DECISION [--operation OPERATION] [--format json]
 ```
+
+Backlog mutation contracts use the same strict request-size bound as task
+contracts. Addition includes the operator's source conversation reference.
+Promotion names its item on the command line and refuses a contract that also
+names one, preventing an input file from silently targeting a different item.
+Both commands emit JSON only.
 
 Initiative reads use the same local service projections as the model facade.
 `initiative graph --format json` returns the graph projection itself, while the

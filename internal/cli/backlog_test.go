@@ -134,4 +134,11 @@ func TestCLIBacklogMutationsAppearInOperatorUsage(t *testing.T) {
 			t.Fatalf("CLI usage is missing %q", command)
 		}
 	}
+	for _, kind := range []commandKind{commandAddBacklog, commandPromoteBacklog} {
+		if _, err := execute(context.Background(), fixtureClient(), "operation-backlog-missing-input", parsedCommand{
+			kind: kind,
+		}); err == nil {
+			t.Fatalf("execute(backlog kind %d without input) error = nil", kind)
+		}
+	}
 }

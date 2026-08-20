@@ -37,6 +37,8 @@ const (
 	commandPauseInitiative
 	commandResumeInitiative
 	commandCancelInitiative
+	commandAddBacklog
+	commandPromoteBacklog
 	commandShowTask
 	commandExplainTask
 	commandGetLaunchPlan
@@ -66,31 +68,33 @@ const (
 )
 
 type parsedCommand struct {
-	kind            commandKind
-	socketPath      string
-	format          string
-	reference       string
-	decisionKey     string
-	diffSelector    diffSelector
-	eventCursor     int64
-	logSource       application.TaskLogSource
-	logCursor       int64
-	watchPasses     int
-	watchInterval   time.Duration
-	inputPath       string
-	taskState       string
-	initiativeState string
-	decisionAnswer  string
-	operationID     string
-	prepareInput    *localapi.PrepareTaskInput
-	promoteInput    *localapi.PromoteScoutInput
-	workerProfileID string
-	instruction     string
-	acknowledged    bool
-	attestFinding   application.ScoutAttestationFinding
-	attestKeys      []string
-	reconcileAction application.ReconcileTaskAction
-	handbackAction  application.HandbackAction
+	kind                commandKind
+	socketPath          string
+	format              string
+	reference           string
+	decisionKey         string
+	diffSelector        diffSelector
+	eventCursor         int64
+	logSource           application.TaskLogSource
+	logCursor           int64
+	watchPasses         int
+	watchInterval       time.Duration
+	inputPath           string
+	taskState           string
+	initiativeState     string
+	decisionAnswer      string
+	operationID         string
+	prepareInput        *localapi.PrepareTaskInput
+	promoteInput        *localapi.PromoteScoutInput
+	backlogAddInput     *localapi.AddBacklogInput
+	backlogPromoteInput *localapi.PromoteBacklogInput
+	workerProfileID     string
+	instruction         string
+	acknowledged        bool
+	attestFinding       application.ScoutAttestationFinding
+	attestKeys          []string
+	reconcileAction     application.ReconcileTaskAction
+	handbackAction      application.HandbackAction
 }
 
 // Run parses one canonical command, calls the local client, and
@@ -184,6 +188,8 @@ func parseCommand(args []string, defaultSocketPath string) (parsedCommand, error
 		command.kind, command.format = commandWorkerProfiles, format
 	case "initiative":
 		return parseInitiativeCommand(command, args[1:])
+	case "backlog":
+		return parseBacklogCommand(command, args[1:])
 	case "events":
 		return parseEventsCommand(command, args[1:])
 	case "audit":

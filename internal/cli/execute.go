@@ -48,6 +48,16 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 		return client.ResumeInitiative(ctx, operationID, localapi.InitiativeControlInput{InitiativeHandle: command.reference})
 	case commandCancelInitiative:
 		return client.CancelInitiative(ctx, operationID, localapi.InitiativeControlInput{InitiativeHandle: command.reference})
+	case commandAddBacklog:
+		if command.backlogAddInput == nil {
+			return nil, errors.New("backlog addition input is unavailable")
+		}
+		return client.AddBacklog(ctx, operationID, *command.backlogAddInput)
+	case commandPromoteBacklog:
+		if command.backlogPromoteInput == nil {
+			return nil, errors.New("backlog promotion input is unavailable")
+		}
+		return client.PromoteBacklog(ctx, operationID, *command.backlogPromoteInput)
 	case commandReadTaskLogs:
 		return client.ReadTaskLogs(ctx, operationID, localapi.ReadTaskLogsInput{
 			TaskHandle: command.reference, Source: command.logSource, AfterSequence: command.logCursor,

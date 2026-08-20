@@ -2,6 +2,7 @@ package localapi
 
 import (
 	"context"
+	"errors"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -52,6 +53,34 @@ type PromoteBacklogResult struct {
 	StateVersion     int64                             `json:"stateVersion"`
 	SideEffect       SideEffectClass                   `json:"sideEffect"`
 	ManagedRun       application.ManagedRunPreparation `json:"managedRun"`
+}
+
+// DecodeAddBacklogInput reads one strict bounded operator intake contract.
+func DecodeAddBacklogInput(data []byte) (AddBacklogInput, error) {
+	var input AddBacklogInput
+	if len(data) == 0 || len(data) > MaxRequestBytes {
+		return AddBacklogInput{}, errors.New("backlog addition input exceeds its bound")
+	}
+	if err := decodeObject(data, &input); err != nil {
+		return AddBacklogInput{}, err
+	}
+	return input, nil
+}
+
+// DecodePromoteBacklogInput reads a strict contract whose target is supplied
+// separately by the visible command line.
+func DecodePromoteBacklogInput(data []byte) (PromoteBacklogInput, error) {
+	var input PromoteBacklogInput
+	if len(data) == 0 || len(data) > MaxRequestBytes {
+		return PromoteBacklogInput{}, errors.New("backlog promotion input exceeds its bound")
+	}
+	if err := decodeObject(data, &input); err != nil {
+		return PromoteBacklogInput{}, err
+	}
+	if input.BacklogHandle != "" {
+		return PromoteBacklogInput{}, errors.New("backlog promotion contract must not name its own item")
+	}
+	return input, nil
 }
 
 // AddBacklog records one bounded request through the canonical local service.
