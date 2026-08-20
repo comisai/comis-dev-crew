@@ -428,6 +428,17 @@ in one transaction, and reports uncertainty per member. Reap-safe cancellation
 enters the reversible cleanup path; preserve retains prepared artifacts while
 the initiative remains non-launchable and `unknown`.
 
+Initiative scheduling is a deterministic fleet-wide decision. Existing workers
+consume host, repository, and reviewed worker-profile capacity first; remaining
+slots are offered one member per initiative per round in stable creation order.
+Only `ready` members of an `active` initiative can be selected. Every held ready
+member carries one closed reason: `dependency_blocked`, `resource_queued`,
+`contract_stale`, or `integration_held`. Contract consumers must still pin a
+handle listed by the initiative as current, integration waits for exact candidate
+states, and a failed predecessor blocks only its dependent descendants. The same
+decision derives the initiative aggregate state without treating a missing or
+reconciling member as healthy.
+
 Startup reconciliation now includes every nonterminal initiative. Preparing,
 active, blocked, integrating, validating, and candidate-complete initiatives are
 atomically moved to durable `unknown` with a new global state version before the
