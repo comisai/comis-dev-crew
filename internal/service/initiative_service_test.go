@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 func TestRun_ComposesInitiativePreparationOnDedicatedMCPEndpoint(t *testing.T) {
 	root := shortTempDir(t)
 	mcpSocket := filepath.Join(root, "run", "mcp.sock")
+	operatorSocket := filepath.Join(root, "run", "operator.sock")
 	ready := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -24,7 +26,7 @@ func TestRun_ComposesInitiativePreparationOnDedicatedMCPEndpoint(t *testing.T) {
 	go func() {
 		done <- Run(ctx, Config{
 			DatabasePath: filepath.Join(root, "state", "devcrew.db"),
-			SocketPath:   filepath.Join(root, "run", "operator.sock"), MCPSocketPath: mcpSocket,
+			SocketPath:   operatorSocket, MCPSocketPath: mcpSocket,
 			ServiceInstanceID: "service-instance_a", Repositories: serviceRepositoryCatalog{},
 			WorkerProfiles:     func(string, domain.TaskShape) error { return nil },
 			ValidationProfiles: func(string, domain.TaskShape) error { return nil },
@@ -92,6 +94,31 @@ func TestRun_ComposesInitiativePreparationOnDedicatedMCPEndpoint(t *testing.T) {
 	backlog, err := client.ListBacklog(context.Background(), "list-service-backlog", localapi.ListBacklogInput{})
 	if err != nil || len(backlog.Items) != 0 {
 		t.Fatalf("ListBacklog() = %#v, %v", backlog, err)
+	}
+	if _, err := client.PauseInitiative(
+		context.Background(), "pause-service-initiative-mcp",
+		localapi.InitiativeControlInput{InitiativeHandle: result.InitiativeHandle},
+	); err == nil {
+		t.Fatal("MCP PauseInitiative() error = nil")
+	} else {
+		var failure *domain.Failure
+		if !errors.As(err, &failure) || failure.Code != domain.ErrorUnauthorized {
+			t.Fatalf("MCP PauseInitiative() error = %#v", err)
+		}
+	}
+	operator, err := localapi.NewClient(operatorSocket, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := operator.PauseInitiative(
+		context.Background(), "pause-service-initiative",
+		localapi.InitiativeControlInput{InitiativeHandle: result.InitiativeHandle},
+	)
+	if err != nil || control.InitiativeHandle != result.InitiativeHandle || len(control.Members) != 1 ||
+		control.Members[0].TaskHandle != "task-service-initiative" ||
+		control.Members[0].Outcome != application.InitiativeControlRejected ||
+		control.Members[0].ErrorCode != domain.ErrorPrecondition {
+		t.Fatalf("operator PauseInitiative() = %#v, %v", control, err)
 	}
 	cancel()
 	if err := <-done; err != nil {
