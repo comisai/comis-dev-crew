@@ -123,7 +123,8 @@ func (adapter *GitHubAdapter) DeliverPullRequest(ctx context.Context, request Pu
 		URL: pull.HTMLURL,
 		Evidence: domain.ForgeEvidence{
 			Repository:    adapter.config.RepositoryIdentity,
-			PullRequestID: "github-pr-" + strconv.Itoa(number), HeadRevision: request.HeadRevision,
+			PullRequestID: "github-pr-" + strconv.Itoa(number), Branch: request.Branch,
+			HeadRevision:     request.HeadRevision,
 			CheckConclusions: checks,
 		},
 	}, nil
@@ -173,7 +174,7 @@ func (adapter *GitHubAdapter) VerifyPullRequest(
 		URL: pull.HTMLURL,
 		Evidence: domain.ForgeEvidence{
 			Repository: adapter.config.RepositoryIdentity, PullRequestID: request.PullRequestID,
-			HeadRevision: request.HeadRevision, CheckConclusions: checks,
+			Branch: request.Branch, HeadRevision: request.HeadRevision, CheckConclusions: checks,
 		},
 	}, nil
 }

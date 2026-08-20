@@ -761,7 +761,9 @@ Candidate supervision re-reads the exact clean head around fixed no-shell local
 checks, seals bounded validation and forge evidence, and holds delivery until the
 configured required checks are green in fresh forge truth. Ship delivery performs
 one non-force exact-branch push, resolves or creates one pull request, and re-reads
-its head, base, state, URL, and check conclusions. Scout delivery reads only the
+its branch, head, base, state, URL, and check conclusions. The sealed forge
+evidence retains that exact branch so a later merge never derives authority
+from a naming convention. Scout delivery reads only the
 reviewed bounded artifact. Both use durable outbox identities for exactly-once
 host delivery across restart.
 

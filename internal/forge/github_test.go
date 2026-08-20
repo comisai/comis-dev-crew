@@ -73,7 +73,8 @@ func TestGitHubAdapter_UsesSeparateAuthoritiesAndRereadsExactPullRequestTruth(t 
 		t.Fatalf("DeliverPullRequest() error = %v", err)
 	}
 	wantEvidence := domain.ForgeEvidence{
-		Repository: "fixture-repository", PullRequestID: "github-pr-17", HeadRevision: head,
+		Repository: "fixture-repository", PullRequestID: "github-pr-17", Branch: "devcrew/task-fixture",
+		HeadRevision:     head,
 		CheckConclusions: []domain.ForgeCheckEvidence{{Name: "ci/unit", Conclusion: domain.CheckPassed}},
 	}
 	if truth.URL != "https://example.com/comisai/fixture/pull/17" || !reflect.DeepEqual(truth.Evidence, wantEvidence) {

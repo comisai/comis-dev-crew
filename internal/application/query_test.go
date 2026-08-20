@@ -771,7 +771,8 @@ func queryCandidateEvidence(t *testing.T, task domain.Task, producedAt time.Time
 			StartedAt: producedAt.Add(-time.Second), CompletedAt: producedAt,
 		}},
 		ForgeEvidence: &domain.ForgeEvidence{
-			Repository: task.RepositoryID, PullRequestID: "github-pr-17", HeadRevision: head,
+			Repository: task.RepositoryID, PullRequestID: "github-pr-17", Branch: "devcrew/task-query",
+			HeadRevision:     head,
 			CheckConclusions: []domain.ForgeCheckEvidence{{Name: "ci/unit", Conclusion: domain.CheckPassed}},
 		},
 		ProducedAt: producedAt, ExpiresAt: producedAt.Add(time.Hour),

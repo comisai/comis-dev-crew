@@ -461,7 +461,8 @@ func candidateEvidence(t *testing.T, task domain.Task, head string) *domain.Seal
 			StartedAt: producedAt.Add(-time.Minute), CompletedAt: producedAt,
 		}},
 		ForgeEvidence: &domain.ForgeEvidence{
-			Repository: task.RepositoryID, PullRequestID: "pull-request-evidence", HeadRevision: head,
+			Repository: task.RepositoryID, PullRequestID: "pull-request-evidence", Branch: "devcrew/task-evidence",
+			HeadRevision:     head,
 			CheckConclusions: []domain.ForgeCheckEvidence{{Name: "ci/unit", Conclusion: domain.CheckPassed}},
 		},
 		ProducedAt: producedAt, ExpiresAt: producedAt.Add(10 * time.Minute),

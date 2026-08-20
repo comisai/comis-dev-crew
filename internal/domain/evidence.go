@@ -63,6 +63,7 @@ type ForgeCheckEvidence struct {
 type ForgeEvidence struct {
 	Repository       string               `json:"repository"`
 	PullRequestID    string               `json:"pullRequestId"`
+	Branch           string               `json:"branch"`
 	HeadRevision     string               `json:"headRevision"`
 	CheckConclusions []ForgeCheckEvidence `json:"checkConclusions"`
 }
@@ -236,6 +237,8 @@ func validateValidationReceipt(receipt ValidationEvidenceReceipt, producedAt tim
 func validateForgeEvidence(evidence ForgeEvidence) error {
 	if validateOpaqueID("forgeRepository", evidence.Repository) != nil ||
 		validateAuthorityReference("pullRequestId", evidence.PullRequestID) != nil ||
+		evidence.Branch == "" || len([]byte(evidence.Branch)) > 256 || strings.TrimSpace(evidence.Branch) != evidence.Branch ||
+		strings.ContainsAny(evidence.Branch, "\x00\r\n\t ") ||
 		!revisionPattern.MatchString(evidence.HeadRevision) || len(evidence.CheckConclusions) == 0 || len(evidence.CheckConclusions) > 64 {
 		return errors.New("seal delivery evidence: forge evidence is invalid")
 	}

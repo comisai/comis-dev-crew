@@ -546,7 +546,8 @@ func newCandidateSupervisorFixture(t *testing.T, shape domain.TaskShape) *candid
 	fixture.pullRequests = &candidateSupervisorPullRequests{truth: forge.PullRequestTruth{
 		URL: "https://example.com/pull/17",
 		Evidence: domain.ForgeEvidence{
-			Repository: task.RepositoryID, PullRequestID: "github-pr-17", HeadRevision: head,
+			Repository: task.RepositoryID, PullRequestID: "github-pr-17", Branch: snapshot.Branch,
+			HeadRevision:     head,
 			CheckConclusions: []domain.ForgeCheckEvidence{{Name: "ci/unit", Conclusion: domain.CheckPassed}},
 		},
 	}}
