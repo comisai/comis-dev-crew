@@ -49,7 +49,7 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 		return nil, errors.New("create local API handler: clock is required")
 	}
 	if (config.Mutations != nil || config.InitiativeMutations != nil || config.InitiativeControls != nil ||
-		config.BacklogAdditions != nil || config.BacklogPromotions != nil || config.Integrations != nil || config.Merges != nil) &&
+		config.BacklogAdditions != nil || config.BacklogPromotions != nil || config.Integrations != nil) &&
 		!localServiceInstancePattern.MatchString(config.ServiceInstanceID) {
 		return nil, errors.New("create local API handler: service instance identity is required for mutations")
 	}

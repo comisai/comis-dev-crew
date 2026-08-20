@@ -41,7 +41,8 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 		config.RuntimeAttachments != nil || config.WorkerHarnesses != nil || config.RegistrationNonces != nil || config.ComisControl != nil ||
 		config.candidateGit != nil || config.workspaceInspector != nil || config.primarySynchronizer != nil || config.validationCatalog != nil || config.pullRequests != nil ||
 		config.IntegrationPolicies != nil || config.integrationAdapter != nil ||
-		config.cleanupRemover != nil || config.cleanupForge != nil ||
+		config.cleanupRemover != nil || config.cleanupForge != nil || config.mergePullRequests != nil ||
+		config.mergeOperatorEnabled ||
 		config.fixtureCandidatePreparer != nil ||
 		config.validationMaxOutputBytes != 0 || config.validationPollInterval != 0 {
 		return Config{}, errors.New("run service: installed and injected composition cannot be combined")
@@ -254,6 +255,10 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	config.pullRequests = pullRequests
 	config.cleanupRemover = registry
 	config.cleanupForge = pullRequests
+	if mergeCredentials != nil {
+		config.mergePullRequests = pullRequests
+		config.mergeOperatorEnabled = true
+	}
 	// The same read-only adapter answers both. A deployment that can verify
 	// delivery truth can also prove whether work landed.
 	config.cleanupLanded = pullRequests

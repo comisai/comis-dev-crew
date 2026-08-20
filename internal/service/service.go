@@ -160,6 +160,10 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if err != nil {
 		return err
 	}
+	merges, err := composeTaskMerges(config, store, control, clock)
+	if err != nil {
+		return err
+	}
 	if attachmentSupervisor != nil && control != nil {
 		if err := attachmentSupervisor.SetAttentionResponseReceiver(control); err != nil {
 			return fmt.Errorf("run service runtime attention responses: %w", err)
@@ -228,7 +232,7 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		scoutReviews = reviews
 	}
 	handlerConfig := localapi.HandlerConfig{
-		Queries: queries, InitiativeQueries: initiativeQueries, Clock: clock, Logger: config.Logger,
+		Queries: queries, InitiativeQueries: initiativeQueries, Merges: merges, Clock: clock, Logger: config.Logger,
 	}
 	if mutations != nil {
 		handlerConfig.Mutations = mutations

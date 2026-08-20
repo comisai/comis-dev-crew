@@ -792,8 +792,10 @@ unprotected branches fail closed. The canonical local API exposes one
 `MergeTask` mutation to both protected endpoint classes: operator calls can
 carry only the task handle, while MCP calls must bind the approval request and
 the identical operation ID; neither can choose forge coordinates or method.
-Installed service composition plus the CLI and MCP adapters remain open, so
-configuration alone still grants no reachable merge.
+Installed composition now joins that mutation to the sole SQLite writer, the
+persistent authenticated Comis connection, and the separately credentialed
+forge adapter only when all three authorities exist. The CLI and MCP adapters
+remain open, so no executable currently invokes the reachable local mutation.
 
 ## Worker harnesses
 

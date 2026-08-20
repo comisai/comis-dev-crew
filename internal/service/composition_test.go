@@ -42,6 +42,7 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 	if configured.candidateGit == nil || configured.workspaceInspector == nil || configured.reconciliationInspector == nil ||
 		configured.validationCatalog == nil ||
 		configured.pullRequests == nil || configured.cleanupRemover == nil || configured.cleanupForge == nil ||
+		configured.mergePullRequests != nil || configured.mergeOperatorEnabled ||
 		configured.validationMaxOutputBytes != 64<<10 ||
 		configured.validationPollInterval != 25*time.Millisecond {
 		t.Fatalf("installed candidate validation configuration = %#v", configured)
@@ -128,6 +129,20 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 	}
 	if passthrough, err := composeComisControl(Config{}, nil, nil, nil); err != nil || passthrough != nil {
 		t.Fatalf("composeComisControl(empty) = %#v, %v", passthrough, err)
+	}
+}
+
+func TestInstalledRuntimeComposesMergeAuthorityWithoutReadingItsSecretAtStartup(t *testing.T) {
+	root := shortTempDir(t)
+	configuration := installedServiceConfig(t, root)
+	configuration.ForgeComposition.MergeCredentialFile = filepath.Join(root, "private", "merge.credential")
+	configuration.ForgeComposition.MergeMethod = forge.MergeSquash
+	configured, err := composeInstalledRuntime(context.Background(), configuration)
+	if err != nil {
+		t.Fatalf("composeInstalledRuntime() error = %v", err)
+	}
+	if configured.mergePullRequests == nil || !configured.mergeOperatorEnabled {
+		t.Fatalf("installed merge composition = %#v/%t", configured.mergePullRequests, configured.mergeOperatorEnabled)
 	}
 }
 
