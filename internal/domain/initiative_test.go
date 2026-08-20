@@ -40,6 +40,22 @@ func TestInitiativeAcceptsAcyclicSameInitiativeGraph(t *testing.T) {
 	}
 }
 
+func TestPreparingInitiativeCanWaitForItsHostGroupBinding(t *testing.T) {
+	initiative := initiativeFixture()
+	initiative.ManagedRunGroupID = ""
+	if err := initiative.Validate(); err != nil {
+		t.Fatalf("unbound preparing initiative rejected: %v", err)
+	}
+	initiative.State = domain.InitiativeUnknown
+	if err := initiative.Validate(); err != nil {
+		t.Fatalf("unbound unknown initiative rejected: %v", err)
+	}
+	initiative.State = domain.InitiativeActive
+	if err := initiative.Validate(); err == nil {
+		t.Fatal("active initiative without a host group binding accepted")
+	}
+}
+
 func TestInitiativeRejectsCycle(t *testing.T) {
 	initiative := initiativeFixture()
 	// A cycle has no schedulable start, so every member would wait on another
