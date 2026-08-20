@@ -160,7 +160,7 @@ func updateReportedTask(ctx context.Context, transaction *sql.Tx, task domain.Ta
 	if err != nil || rows != 1 {
 		return errors.New("update reported task: exact task was not updated")
 	}
-	return nil
+	return refreshInitiativeAggregate(ctx, transaction, task.Handle, task.StateVersion, task.UpdatedAt)
 }
 
 func insertAcceptedReport(ctx context.Context, transaction *sql.Tx, accepted domain.AcceptedReport) error {

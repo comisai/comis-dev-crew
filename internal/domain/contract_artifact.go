@@ -114,7 +114,7 @@ func (initiative DevelopmentInitiative) TasksStaleAfterSupersession(
 // A task outside the initiative stales nothing: a head move in another
 // initiative is not this initiative's business.
 func (initiative DevelopmentInitiative) TasksStaleAfterHeadChange(taskHandle string) []string {
-	if !initiative.contains(taskHandle) {
+	if !initiative.ContainsTask(taskHandle) {
 		return nil
 	}
 	stale := []string{taskHandle}
@@ -133,7 +133,8 @@ func (initiative DevelopmentInitiative) TasksStaleAfterHeadChange(taskHandle str
 	return stale
 }
 
-func (initiative DevelopmentInitiative) contains(taskHandle string) bool {
+// ContainsTask reports whether an exact handle belongs to one component.
+func (initiative DevelopmentInitiative) ContainsTask(taskHandle string) bool {
 	for _, component := range initiative.Components {
 		for _, handle := range component.TaskHandles {
 			if handle == taskHandle {

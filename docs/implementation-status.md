@@ -437,7 +437,11 @@ member carries one closed reason: `dependency_blocked`, `resource_queued`,
 handle listed by the initiative as current, integration waits for exact candidate
 states, and a failed predecessor blocks only its dependent descendants. The same
 decision derives the initiative aggregate state without treating a missing or
-reconciling member as healthy.
+reconciling member as healthy. Member state mutations update that aggregate in
+the same SQLite transaction and at the same global state version; an aggregate
+write failure rolls back the task, operation, and event with it. A durable
+`unknown` initiative is never reactivated by derivation after restart — only the
+explicit host reconciliation path may restore its authority.
 
 Startup reconciliation now includes every nonterminal initiative. Preparing,
 active, blocked, integrating, validating, and candidate-complete initiatives are

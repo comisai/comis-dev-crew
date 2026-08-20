@@ -325,7 +325,10 @@ func updateTaskState(ctx context.Context, transaction *sql.Tx, task domain.Task)
 	// Recorded here, inside the caller's transaction, because this is the sole
 	// writer of task state: an event appended anywhere else could describe a
 	// transition that rolled back, or be lost by a crash that kept the state.
-	return appendTaskStateEvent(ctx, transaction, task)
+	if err := appendTaskStateEvent(ctx, transaction, task); err != nil {
+		return err
+	}
+	return refreshInitiativeAggregate(ctx, transaction, task.Handle, task.StateVersion, task.UpdatedAt)
 }
 
 func mutationReplay(

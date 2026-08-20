@@ -103,6 +103,36 @@ func ScheduleInitiatives(
 	return schedules, nil
 }
 
+// DeriveInitiativeState reduces an exact durable member set without applying
+// resource capacity. Capacity affects when ready work starts, not whether the
+// initiative's persisted lifecycle is active, blocked, or terminal.
+func DeriveInitiativeState(
+	initiative domain.DevelopmentInitiative,
+	members []domain.Task,
+) (domain.InitiativeState, error) {
+	if err := initiative.Validate(); err != nil {
+		return "", fmt.Errorf("derive initiative state: %w", err)
+	}
+	indexed := make(map[string]domain.Task, len(members))
+	for _, task := range members {
+		if err := task.Validate(); err != nil {
+			return "", fmt.Errorf("derive initiative member %q: %w", task.Handle, err)
+		}
+		if _, exists := indexed[task.Handle]; exists {
+			return "", errors.New("derive initiative state: member handles must be unique")
+		}
+		indexed[task.Handle] = task
+	}
+	schedule, _, err := scheduleOneInitiative(0, initiative, indexed, make(map[string]string))
+	if err != nil {
+		return "", err
+	}
+	if len(schedule.Tasks) != len(indexed) {
+		return "", errors.New("derive initiative state: member set contains a task outside the initiative")
+	}
+	return deriveInitiativeState(initiative, schedule.Tasks), nil
+}
+
 func validateSchedulingLimits(limits InitiativeSchedulingLimits) error {
 	if limits.MaxConcurrentTasks < 1 || limits.MaxConcurrentTasks > 1024 ||
 		limits.MaxConcurrentTasksPerRepository < 1 ||
@@ -313,8 +343,10 @@ func deriveInitiativeState(
 	initiative domain.DevelopmentInitiative,
 	decisions []InitiativeTaskSchedule,
 ) domain.InitiativeState {
-	if initiative.State == domain.InitiativePreparing {
-		return domain.InitiativePreparing
+	switch initiative.State {
+	case domain.InitiativePreparing, domain.InitiativeUnknown,
+		domain.InitiativeDelivered, domain.InitiativeFailed, domain.InitiativeCancelled:
+		return initiative.State
 	}
 	counts := make(map[domain.TaskState]int)
 	for _, decision := range decisions {
