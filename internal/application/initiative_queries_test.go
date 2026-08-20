@@ -128,6 +128,31 @@ func TestInitiativeQueriesRejectInvalidScopesAndTranslateStoreFailures(t *testin
 	}
 }
 
+func TestInitiativeStateExplanationCoversEveryClosedPosture(t *testing.T) {
+	tests := []struct {
+		state      domain.InitiativeState
+		wantReason string
+		wantAction InitiativeNextAction
+	}{
+		{state: domain.InitiativePreparing, wantReason: "initiative_preparing", wantAction: InitiativeActionInspect},
+		{state: domain.InitiativeIntegrating, wantReason: "initiative_integrating", wantAction: InitiativeActionPause},
+		{state: domain.InitiativeValidating, wantReason: "initiative_validating", wantAction: InitiativeActionPause},
+		{state: domain.InitiativeBlocked, wantReason: "initiative_blocked", wantAction: InitiativeActionInspect},
+		{state: domain.InitiativeUnknown, wantReason: "initiative_unknown", wantAction: InitiativeActionInspect},
+		{state: domain.InitiativeCandidateComplete, wantReason: "initiative_candidate_complete", wantAction: InitiativeActionInspect},
+		{state: domain.InitiativeDelivered, wantReason: "initiative_delivered", wantAction: InitiativeActionNone},
+		{state: domain.InitiativeFailed, wantReason: "initiative_failed", wantAction: InitiativeActionNone},
+		{state: domain.InitiativeCancelled, wantReason: "initiative_cancelled", wantAction: InitiativeActionNone},
+		{state: domain.InitiativeState("invented"), wantReason: "initiative_unknown", wantAction: InitiativeActionInspect},
+	}
+	for _, test := range tests {
+		reason, explanation, actions := explainInitiativeState(test.state)
+		if reason != test.wantReason || explanation == "" || len(actions) == 0 || actions[0] != test.wantAction {
+			t.Fatalf("explainInitiativeState(%q) = %q/%q/%#v", test.state, reason, explanation, actions)
+		}
+	}
+}
+
 type initiativeQueryStoreFixture struct {
 	initiatives   []domain.DevelopmentInitiative
 	initiative    domain.DevelopmentInitiative

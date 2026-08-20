@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 func TestInitiativeControlResultSurvivesRestartAndRejectsAlteredReplay(t *testing.T) {
@@ -138,6 +139,12 @@ func TestInitiativeControlValidationRejectsForgedResultShapes(t *testing.T) {
 		}},
 	}
 	for name, mutate := range map[string]func(*application.InitiativeControlResult){
+		"invalid initiative": func(result *application.InitiativeControlResult) {
+			result.InitiativeHandle = "bad handle"
+		},
+		"invalid task": func(result *application.InitiativeControlResult) {
+			result.Members[0].TaskHandle = "bad handle"
+		},
 		"unknown outcome": func(result *application.InitiativeControlResult) {
 			result.Members[0].Outcome = "invented"
 		},
@@ -146,6 +153,11 @@ func TestInitiativeControlValidationRejectsForgedResultShapes(t *testing.T) {
 		},
 		"duplicate member": func(result *application.InitiativeControlResult) {
 			result.Members = append(result.Members, result.Members[0])
+		},
+		"duplicate operation": func(result *application.InitiativeControlResult) {
+			second := result.Members[0]
+			second.TaskHandle = "task-validation-second"
+			result.Members = append(result.Members, second)
 		},
 		"unordered member": func(result *application.InitiativeControlResult) {
 			second := result.Members[0]
@@ -178,5 +190,117 @@ func TestInitiativeControlValidationRejectsForgedResultShapes(t *testing.T) {
 	}
 	if !validInitiativeControlOutcome(application.InitiativeControlNotAttempted, "unknown") {
 		t.Fatal("not-attempted control outcome was rejected")
+	}
+}
+
+func TestInitiativeControlStoreReportsClosedDatabaseFaults(t *testing.T) {
+	ctx := context.Background()
+	store, _, _ := preparedInitiativeActivationStore(t)
+	if _, err := readInitiativeControlResult(ctx, store.db, domain.OperationRecord{ID: "operation-control-missing"}); err == nil || !strings.Contains(err.Error(), "read initiative control result") {
+		t.Fatalf("readInitiativeControlResult(missing) error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	result := application.InitiativeControlResult{
+		InitiativeHandle: "initiative-closed-store", State: "active", StateVersion: 3,
+		Members: []application.InitiativeControlMemberResult{{
+			TaskHandle: "task-closed-store", OperationID: "operation-closed-member",
+			Outcome: application.InitiativeControlCompleted, State: "working", StateVersion: 3,
+		}},
+	}
+	mutation := application.InitiativeControlMutation{
+		OperationID: "operation-closed-store", Command: "PauseInitiative",
+		SubjectDigest: strings.Repeat("a", 64), Result: result, At: time.Now().UTC(),
+	}
+	if _, _, err := store.ReplayInitiativeControl(
+		ctx, mutation.OperationID, mutation.Command, mutation.SubjectDigest,
+	); err == nil || !strings.Contains(err.Error(), "begin initiative control replay") {
+		t.Fatalf("ReplayInitiativeControl(closed) error = %v", err)
+	}
+	if _, err := store.CommitInitiativeControl(ctx, mutation); err == nil || !strings.Contains(err.Error(), "begin initiative control") {
+		t.Fatalf("CommitInitiativeControl(closed) error = %v", err)
+	}
+}
+
+func TestInitiativeControlCommitRollsBackInjectedPersistenceFaults(t *testing.T) {
+	ctx := context.Background()
+	store, mutation := preparedInitiativeControlMutation(t)
+
+	stale := mutation
+	stale.OperationID = "operation-control-stale-snapshot"
+	stale.SubjectDigest = strings.Repeat("b", 64)
+	stale.Result.StateVersion--
+	if _, err := store.CommitInitiativeControl(ctx, stale); err == nil || !strings.Contains(err.Error(), "snapshot changed") {
+		t.Fatalf("CommitInitiativeControl(stale snapshot) error = %v", err)
+	}
+
+	if _, err := store.db.ExecContext(ctx, `CREATE TRIGGER refuse_initiative_control_result
+		BEFORE INSERT ON initiative_group_controls
+		BEGIN SELECT RAISE(ABORT, 'injected control result failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CommitInitiativeControl(ctx, mutation); err == nil || !strings.Contains(err.Error(), "insert initiative control result") {
+		t.Fatalf("CommitInitiativeControl(result fault) error = %v", err)
+	}
+	if _, err := store.GetOperation(ctx, mutation.OperationID); err == nil {
+		t.Fatal("result fault retained the rolled-back operation")
+	}
+	if _, err := store.db.ExecContext(ctx, "DROP TRIGGER refuse_initiative_control_result"); err != nil {
+		t.Fatal(err)
+	}
+
+	memberFault := mutation
+	memberFault.OperationID = "operation-control-member-fault"
+	memberFault.SubjectDigest = strings.Repeat("c", 64)
+	if _, err := store.db.ExecContext(ctx, `CREATE TRIGGER refuse_initiative_control_member
+		BEFORE INSERT ON initiative_group_control_members
+		BEGIN SELECT RAISE(ABORT, 'injected control member failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CommitInitiativeControl(ctx, memberFault); err == nil || !strings.Contains(err.Error(), "insert initiative control member") {
+		t.Fatalf("CommitInitiativeControl(member fault) error = %v", err)
+	}
+	if _, err := store.GetOperation(ctx, memberFault.OperationID); err == nil {
+		t.Fatal("member fault retained the rolled-back operation")
+	}
+}
+
+func preparedInitiativeControlMutation(t *testing.T) (*Store, application.InitiativeControlMutation) {
+	t.Helper()
+	ctx := context.Background()
+	store, initiativeHandle, activation := preparedInitiativeActivationStore(t)
+	activated, err := store.CommitInitiativeActivation(ctx, activation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, task := range activated.Tasks {
+		if _, err := store.CommitTaskCancel(ctx, application.TaskCancelMutation{
+			TaskHandle: task.Handle, OperationID: "control-fixture-" + task.Handle,
+			SubjectDigest: strings.Repeat(string(rune('d'+index)), 64),
+			At:            activation.At.Add(time.Duration(index+1) * time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	initiative, tasks, stateVersion, err := store.InitiativeObservation(ctx, initiativeHandle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	members := make([]application.InitiativeControlMemberResult, 0, len(tasks))
+	for _, task := range tasks {
+		members = append(members, application.InitiativeControlMemberResult{
+			TaskHandle: task.Handle, OperationID: "control-fixture-" + task.Handle,
+			Outcome: application.InitiativeControlCompleted,
+			State:   task.State, StateVersion: task.StateVersion,
+		})
+	}
+	return store, application.InitiativeControlMutation{
+		OperationID: "operation-control-result-fault", Command: "CancelInitiative",
+		SubjectDigest: strings.Repeat("a", 64), At: activation.At.Add(3 * time.Minute),
+		Result: application.InitiativeControlResult{
+			InitiativeHandle: initiativeHandle, State: initiative.State,
+			StateVersion: stateVersion, Members: members,
+		},
 	}
 }

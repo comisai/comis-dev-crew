@@ -218,6 +218,46 @@ func TestInitiativeControlsFailClosedAcrossReplaySnapshotAndCancellationFaults(t
 	}
 }
 
+func TestInitiativeControlHelpersClassifyClosedFailureVocabulary(t *testing.T) {
+	nonretryable, err := domain.NewFailure(
+		domain.ErrorUnauthorized, false, "unauthorized", "request operator authority", nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name        string
+		err         error
+		wantOutcome InitiativeControlOutcome
+		wantCode    domain.ErrorCode
+	}{
+		{name: "conflict", err: ErrConflict, wantOutcome: InitiativeControlRejected, wantCode: domain.ErrorConflict},
+		{name: "invalid", err: ErrInvalidInput, wantOutcome: InitiativeControlRejected, wantCode: domain.ErrorInvalidArgument},
+		{name: "missing", err: ErrNotFound, wantOutcome: InitiativeControlRejected, wantCode: domain.ErrorPrecondition},
+		{name: "transition", err: domain.ErrInvalidTransition, wantOutcome: InitiativeControlRejected, wantCode: domain.ErrorPrecondition},
+		{name: "raw", err: errors.New("private failure"), wantOutcome: InitiativeControlUnknown, wantCode: domain.ErrorUnknown},
+		{name: "closed nonretryable", err: nonretryable, wantOutcome: InitiativeControlRejected, wantCode: domain.ErrorUnauthorized},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			outcome, code := classifyInitiativeControlFailure(test.err)
+			if outcome != test.wantOutcome || code != test.wantCode {
+				t.Fatalf("classifyInitiativeControlFailure() = %q/%q, want %q/%q", outcome, code, test.wantOutcome, test.wantCode)
+			}
+		})
+	}
+	if err := refreshInitiativeControlMembers(
+		[]InitiativeControlMemberResult{{TaskHandle: "task-control-missing"}},
+		[]domain.Task{{Handle: "task-control-other"}},
+	); !errors.Is(err, ErrPrecondition) {
+		t.Fatalf("refreshInitiativeControlMembers(missing) error = %v", err)
+	}
+	controls := &InitiativeControls{}
+	if _, err := controls.controlMember(context.Background(), "invented", "operation-control-member", "task-control-member"); err == nil {
+		t.Fatal("controlMember(invented) error = nil")
+	}
+}
+
 type initiativeControlStoreStub struct {
 	initiative          domain.DevelopmentInitiative
 	tasks               []domain.Task

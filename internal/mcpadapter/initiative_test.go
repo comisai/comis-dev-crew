@@ -3,6 +3,7 @@ package mcpadapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -128,11 +129,151 @@ func TestFacade_PrepareInitiativeSchemaCannotSelectServiceOrHostAuthority(t *tes
 	t.Fatal("prepare_initiative tool is absent")
 }
 
+func TestFacade_PrepareInitiativeReplaysOnlyAfterDurableCompletion(t *testing.T) {
+	retryable, err := domain.NewFailure(domain.ErrorUnavailable, true, "unavailable", "reconcile", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &initiativeMCPClient{
+		fakeClient: &fakeClient{operation: application.OperationView{
+			SchemaVersion: 1, OperationID: "prepare-initiative-mcp", Command: "PrepareInitiative",
+			Status: domain.OperationCompleted, StateVersion: 31,
+		}},
+		prepare: initiativeMCPPreparation(), prepareErrors: []error{retryable, nil},
+	}
+	facade, err := New(Config{
+		Client: client, ServiceInstanceID: "service-instance-0001", Version: "test",
+		NewOperationID: func() (string, error) { return "reconcile-0001", nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := connectFacade(t, facade).CallTool(context.Background(), &mcp.CallToolParams{
+		Meta: callMeta("prepare-initiative-mcp", "service-instance-0001"),
+		Name: ToolPrepareInitiative, Arguments: prepareInitiativeMCPInput(),
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("CallTool(prepare_initiative) = %#v, %v", result, err)
+	}
+	if got := strings.Join(client.calls, ","); got != "prepare-initiative:prepare-initiative-mcp,operation:reconcile-0001:prepare-initiative-mcp,prepare-initiative:prepare-initiative-mcp" {
+		t.Fatalf("reconciliation calls = %q", got)
+	}
+}
+
+func TestFacade_ReconcileInitiativePreparationRejectsUncertainOutcomes(t *testing.T) {
+	original := errors.New("original uncertain result")
+	valid := application.OperationView{
+		SchemaVersion: 1, OperationID: "prepare-initiative-mcp", Command: "PrepareInitiative",
+		Status: domain.OperationAccepted, StateVersion: 31,
+	}
+	tests := []struct {
+		name      string
+		operation application.OperationView
+		opErr     error
+		newID     func() (string, error)
+		wantCode  domain.ErrorCode
+	}{
+		{name: "operation source failure", operation: valid, newID: func() (string, error) { return "", errors.New("entropy") }},
+		{name: "invalid operation source", operation: valid, newID: func() (string, error) { return "BAD ID", nil }},
+		{name: "query failure", operation: valid, opErr: errors.New("disconnect")},
+		{name: "identity mismatch", operation: func() application.OperationView { value := valid; value.OperationID = "other-0001"; return value }()},
+		{name: "command mismatch", operation: func() application.OperationView { value := valid; value.Command = "Other"; return value }()},
+		{name: "accepted", operation: valid},
+		{name: "unknown", operation: func() application.OperationView { value := valid; value.Status = domain.OperationUnknown; return value }()},
+		{name: "rejected invalid code", operation: func() application.OperationView {
+			value := valid
+			value.Status = domain.OperationRejected
+			return value
+		}()},
+		{name: "rejected", operation: func() application.OperationView {
+			value := valid
+			value.Status = domain.OperationRejected
+			value.ErrorCode = domain.ErrorConflict
+			return value
+		}(), wantCode: domain.ErrorConflict},
+		{name: "invalid status", operation: func() application.OperationView { value := valid; value.Status = "invented"; return value }(), wantCode: domain.ErrorUnknown},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			newID := test.newID
+			if newID == nil {
+				newID = func() (string, error) { return "reconcile-0001", nil }
+			}
+			client := &initiativeMCPClient{fakeClient: &fakeClient{operation: test.operation, operationError: test.opErr}}
+			facade, err := New(Config{
+				Client: client, ServiceInstanceID: "service-instance-0001",
+				NewOperationID: newID, ReconcileTimeout: time.Second,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, gotErr := facade.reconcileInitiativePreparation(
+				context.Background(), "prepare-initiative-mcp", prepareInitiativeMCPInput().local(), original,
+			)
+			if test.wantCode == domain.ErrorConflict {
+				var failure *domain.Failure
+				if !errors.As(gotErr, &failure) || failure.Code != test.wantCode {
+					t.Fatalf("error = %v, want %s", gotErr, test.wantCode)
+				}
+			} else if test.wantCode == domain.ErrorUnknown {
+				if gotErr == nil || !strings.Contains(gotErr.Error(), "unknown initiative") {
+					t.Fatalf("error = %v, want unknown status", gotErr)
+				}
+			} else if !errors.Is(gotErr, original) {
+				t.Fatalf("error = %v, want original", gotErr)
+			}
+		})
+	}
+	facade := &Facade{}
+	//lint:ignore SA1012 Boundary test proves reconciliation rejects nil contexts.
+	if _, err := facade.reconcileInitiativePreparation(nil, "prepare-initiative-mcp", localapi.PrepareInitiativeInput{}, original); !errors.Is(err, original) {
+		t.Fatalf("nil context error = %v, want original", err)
+	}
+}
+
+func TestInitiativePreparationMetadataRejectsInconsistentPrivateAuthority(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*localapi.PrepareInitiativeResult)
+	}{
+		{name: "operation mismatch", mutate: func(result *localapi.PrepareInitiativeResult) { result.OperationID = "other-operation" }},
+		{name: "group mismatch", mutate: func(result *localapi.PrepareInitiativeResult) {
+			result.ManagedRunGroup.ExternalGroupRef = "other-initiative"
+		}},
+		{name: "empty members", mutate: func(result *localapi.PrepareInitiativeResult) {
+			result.TaskHandles = nil
+			result.ManagedRunGroup.Members = nil
+		}},
+		{name: "member mismatch", mutate: func(result *localapi.PrepareInitiativeResult) {
+			result.ManagedRunGroup.Members[0].ExternalRunRef = "other-task"
+		}},
+		{name: "member closed", mutate: func(result *localapi.PrepareInitiativeResult) {
+			result.ManagedRunGroup.Members[0].State = application.PreparationAbandoned
+		}},
+		{name: "expiry mismatch", mutate: func(result *localapi.PrepareInitiativeResult) {
+			result.ManagedRunGroup.Members[0].ExpiresAt = result.ManagedRunGroup.ExpiresAt.Add(time.Second)
+		}},
+		{name: "invalid attachment", mutate: func(result *localapi.PrepareInitiativeResult) {
+			result.ManagedRunGroup.Members[0].RequestedAttachment.SourcePath = "relative.sock"
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := initiativeMCPPreparation()
+			test.mutate(&result)
+			if metadata, err := initiativePreparationMetadata("prepare-initiative-mcp", result); err == nil || metadata != nil {
+				t.Fatalf("initiativePreparationMetadata() = %#v, %v", metadata, err)
+			}
+		})
+	}
+}
+
 type initiativeMCPClient struct {
 	*fakeClient
-	prepare applicationInitiativePreparationResult
-	detail  application.InitiativeDetail
-	backlog application.BacklogList
+	prepare       applicationInitiativePreparationResult
+	prepareErrors []error
+	detail        application.InitiativeDetail
+	backlog       application.BacklogList
 }
 
 type applicationInitiativePreparationResult = localapi.PrepareInitiativeResult
@@ -143,7 +284,12 @@ func (client *initiativeMCPClient) PrepareInitiative(
 	_ localapi.PrepareInitiativeInput,
 ) (localapi.PrepareInitiativeResult, error) {
 	client.calls = append(client.calls, "prepare-initiative:"+operationID)
-	return client.prepare, nil
+	if len(client.prepareErrors) == 0 {
+		return client.prepare, nil
+	}
+	err := client.prepareErrors[0]
+	client.prepareErrors = client.prepareErrors[1:]
+	return client.prepare, err
 }
 
 func (client *initiativeMCPClient) GetInitiative(

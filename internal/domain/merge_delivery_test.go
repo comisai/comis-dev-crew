@@ -75,6 +75,9 @@ func TestMergeIsRefusedWhenTheHeadMovedAfterApproval(t *testing.T) {
 	if !domain.IsMergeRefusal(err, domain.MergeRefusedHeadChanged) {
 		t.Fatalf("refusal = %v", err)
 	}
+	if got := err.Error(); got != "merge refused (head_changed): the head moved after approval; approval and evidence are both invalid" {
+		t.Fatalf("refusal text = %q", got)
+	}
 }
 
 func TestMergeIsRefusedWhenTheOperatorDisabledIt(t *testing.T) {
@@ -89,6 +92,15 @@ func TestMergeIsRefusedWhenTheOperatorDisabledIt(t *testing.T) {
 func TestMergeIsRefusedWithoutAnApproval(t *testing.T) {
 	approval := approvalFixture()
 	approval.ApprovalID = ""
+	err := approval.AuthorizeMerge(approval.ApprovedHead)
+	if !domain.IsMergeRefusal(err, domain.MergeRefusedNoApproval) {
+		t.Fatalf("refusal = %v", err)
+	}
+}
+
+func TestMergeIsRefusedWhenRecordedApprovalDoesNotPinARevision(t *testing.T) {
+	approval := approvalFixture()
+	approval.ApprovedHead = "not-a-revision"
 	err := approval.AuthorizeMerge(approval.ApprovedHead)
 	if !domain.IsMergeRefusal(err, domain.MergeRefusedNoApproval) {
 		t.Fatalf("refusal = %v", err)

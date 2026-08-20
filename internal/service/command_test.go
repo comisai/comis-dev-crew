@@ -188,6 +188,9 @@ func TestServiceFailureClassUsesSafeStableCategories(t *testing.T) {
 			t.Fatalf("serviceFailureClass() = %q, want %q", got, test.want)
 		}
 	}
+	if got := serviceFailureCause(errors.New("unclassified private detail")); got != "" {
+		t.Fatalf("serviceFailureCause(unclassified) = %q, want empty", got)
+	}
 }
 
 func TestRunCommand_ComposesInstalledLaneWithExplicitDeterministicFixture(t *testing.T) {

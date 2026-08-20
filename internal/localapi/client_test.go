@@ -110,6 +110,26 @@ func TestClient_RejectsOversizedResponse(t *testing.T) {
 	wait()
 }
 
+func TestClient_DiscardTaskReturnsTheCanonicalMutationProjection(t *testing.T) {
+	response := `{"protocolVersion":"devcrew.local.v1","operationId":"discard-0001","status":"completed","stateVersion":7,"result":{"schemaVersion":1,"operationId":"discard-0001","taskHandle":"task-0001","state":"cancelled","stateVersion":7,"sideEffect":"mutate"},"error":null}` + "\n"
+	socketPath, wait := startResponseServer(t, response)
+	client, err := NewClient(socketPath, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.DiscardTask(context.Background(), "discard-0001", DiscardTaskInput{
+		TaskHandle: "task-0001", Acknowledged: true,
+	})
+	wait()
+	if err != nil {
+		t.Fatalf("DiscardTask() error = %v", err)
+	}
+	if result.OperationID != "discard-0001" || result.TaskHandle != "task-0001" ||
+		result.State != domain.TaskCancelled || result.StateVersion != 7 || result.SideEffect != SideEffectMutate {
+		t.Fatalf("DiscardTask() = %#v", result)
+	}
+}
+
 func TestClientAndSocketHelpers_FailClosedForUnknownOrMissingIdentity(t *testing.T) {
 	if _, ok := projectedStateVersion(&struct{}{}); ok {
 		t.Fatal("projectedStateVersion(unknown projection) ok = true")
