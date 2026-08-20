@@ -22,6 +22,7 @@ type Handler struct {
 	initiativeQueries   InitiativeReadQueries
 	mutations           TaskMutations
 	initiativeMutations InitiativeMutations
+	integrations        IntegrationApplications
 	initiativeControls  InitiativeControls
 	backlogAdditions    BacklogAdditions
 	backlogPromotions   BacklogPromotions
@@ -47,7 +48,7 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 		return nil, errors.New("create local API handler: clock is required")
 	}
 	if (config.Mutations != nil || config.InitiativeMutations != nil || config.InitiativeControls != nil ||
-		config.BacklogAdditions != nil || config.BacklogPromotions != nil) &&
+		config.BacklogAdditions != nil || config.BacklogPromotions != nil || config.Integrations != nil) &&
 		!localServiceInstancePattern.MatchString(config.ServiceInstanceID) {
 		return nil, errors.New("create local API handler: service instance identity is required for mutations")
 	}
@@ -55,6 +56,7 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 		queries: config.Queries, initiativeQueries: config.InitiativeQueries,
 		mutations:           config.Mutations,
 		initiativeMutations: config.InitiativeMutations, reconciliation: config.Reconciliation,
+		integrations:       config.Integrations,
 		initiativeControls: config.InitiativeControls,
 		backlogAdditions:   config.BacklogAdditions,
 		backlogPromotions:  config.BacklogPromotions,
@@ -97,6 +99,9 @@ func (handler *Handler) serve(ctx context.Context, caller CallerClass, data []by
 }
 
 func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
+	if outcome, handled := handler.dispatchIntegrationApplication(ctx, request); handled {
+		return outcome
+	}
 	if outcome, handled := handler.dispatchBacklogMutation(ctx, request); handled {
 		return outcome
 	}

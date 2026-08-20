@@ -601,6 +601,13 @@ receipt or after SQLite completion replays the one exact result. Completion and
 the canonical operation ledger commit in one transaction, and accepted evidence
 expiry blocks a new mutation without invalidating a result already completed.
 
+The closed local service protocol exposes `ApplyIntegrationCandidate` to the
+operator and MCP caller classes as a mutation. Its request contains only the
+initiative, integration-owner task, candidate task, and exact heads. Its result
+projects the reviewed strategy, evidence digest, applied head or bounded conflict
+paths, and durable state version without exposing either worktree path or the
+candidate base path.
+
 ## Mutation boundary
 
 The first mutation boundary prepares a service-minted task and later activates it

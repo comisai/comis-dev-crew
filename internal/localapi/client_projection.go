@@ -46,6 +46,8 @@ func projectedStateVersion(result any) (int64, bool) {
 		return projection.StateVersion, true
 	case *PrepareInitiativeResult:
 		return projection.StateVersion, true
+	case *ApplyIntegrationCandidateResult:
+		return projection.StateVersion, true
 	case *AddBacklogResult:
 		return projection.StateVersion, true
 	case *PromoteBacklogResult:

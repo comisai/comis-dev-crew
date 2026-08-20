@@ -41,6 +41,12 @@ type InitiativeMutations interface {
 	PrepareInitiative(context.Context, application.PrepareInitiativeCommand) (application.InitiativePreparationResult, error)
 }
 
+// IntegrationApplications applies one evidence-backed candidate through the
+// initiative's dedicated integration owner and reviewed operator policy.
+type IntegrationApplications interface {
+	ApplyCandidate(context.Context, application.ApplyIntegrationCandidateCommand) (application.IntegrationApplicationResult, error)
+}
+
 // InitiativeControls is the operator-only non-atomic group control surface.
 type InitiativeControls interface {
 	PauseInitiative(context.Context, application.InitiativeControlCommand) (application.InitiativeControlResult, error)
@@ -105,6 +111,7 @@ type HandlerConfig struct {
 	InitiativeQueries   InitiativeReadQueries
 	Mutations           TaskMutations
 	InitiativeMutations InitiativeMutations
+	Integrations        IntegrationApplications
 	InitiativeControls  InitiativeControls
 	BacklogAdditions    BacklogAdditions
 	BacklogPromotions   BacklogPromotions
