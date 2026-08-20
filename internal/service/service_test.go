@@ -140,6 +140,21 @@ func TestRun_ComposesInitiativePreparationOnDedicatedMCPEndpoint(t *testing.T) {
 		result.ManagedRunGroup.Members[0].RegistrationNonce != "registration-nonce_initiative_member" {
 		t.Fatalf("PrepareInitiative() = %#v", result)
 	}
+	detail, err := client.GetInitiative(context.Background(), "read-service-initiative", result.InitiativeHandle)
+	if err != nil || detail.Initiative.Handle != result.InitiativeHandle ||
+		len(detail.Graph.Nodes) != 1 || detail.Graph.Nodes[0].TaskHandle != "task-service-initiative" {
+		t.Fatalf("GetInitiative() = %#v, %v", detail, err)
+	}
+	list, err := client.ListInitiatives(context.Background(), "list-service-initiatives", localapi.ListInitiativesInput{
+		State: domain.InitiativePreparing,
+	})
+	if err != nil || len(list.Initiatives) != 1 || list.Initiatives[0].InitiativeHandle != result.InitiativeHandle {
+		t.Fatalf("ListInitiatives() = %#v, %v", list, err)
+	}
+	backlog, err := client.ListBacklog(context.Background(), "list-service-backlog", localapi.ListBacklogInput{})
+	if err != nil || len(backlog.Items) != 0 {
+		t.Fatalf("ListBacklog() = %#v, %v", backlog, err)
+	}
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatalf("Run() error = %v", err)
