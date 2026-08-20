@@ -86,3 +86,25 @@ func TestInitiativeAggregateFailureRollsBackTheMemberMutation(t *testing.T) {
 		t.Fatalf("start operation after rollback error = %v, want ErrNotFound", err)
 	}
 }
+
+func TestInitiativeMemberStartRequiresAtomicSchedulerAuthority(t *testing.T) {
+	ctx := context.Background()
+	store, _, activation := preparedInitiativeActivationStore(t)
+	if _, err := store.CommitInitiativeActivation(ctx, activation); err != nil {
+		t.Fatalf("CommitInitiativeActivation() error = %v", err)
+	}
+	mutation := application.TaskStartMutation{
+		TaskHandle: "task-integration", OperationID: "start-held-integration-0001",
+		SubjectDigest: strings.Repeat("d", 64), At: activation.At.Add(time.Minute),
+	}
+	if _, err := store.CommitTaskStart(ctx, mutation); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("CommitTaskStart(dependency-held initiative member) error = %v, want ErrPrecondition", err)
+	}
+	task, err := store.GetTask(ctx, mutation.TaskHandle)
+	if err != nil || task.State != domain.TaskReady {
+		t.Fatalf("held integration task = %#v, %v", task, err)
+	}
+	if _, err := store.GetOperation(ctx, mutation.OperationID); !errors.Is(err, application.ErrNotFound) {
+		t.Fatalf("held start operation error = %v, want ErrNotFound", err)
+	}
+}
