@@ -23,11 +23,12 @@ func TestRecordBoundary_StripsFailureFieldsFromEverythingElse(t *testing.T) {
 		RecordBoundary(logger, BoundaryRecord{
 			Boundary: BoundaryLocalAPI, Operation: "ListTasks", Outcome: outcome,
 			ErrorKind: domain.ErrorInternal, Hint: "left over from a previous call",
+			FailureCause: BoundaryFailureDurableTaskContractInvalid,
 		})
 		if len(logger.records) != 1 {
 			t.Fatalf("recorded %d, want 1", len(logger.records))
 		}
-		if logger.records[0].ErrorKind != "" || logger.records[0].Hint != "" {
+		if logger.records[0].ErrorKind != "" || logger.records[0].Hint != "" || logger.records[0].FailureCause != "" {
 			t.Errorf("outcome %q kept failure fields: %#v", outcome, logger.records[0])
 		}
 	}
@@ -38,12 +39,26 @@ func TestRecordBoundary_KeepsFailureFields(t *testing.T) {
 	RecordBoundary(logger, BoundaryRecord{
 		Boundary: BoundaryControl, Operation: "handshake", Outcome: BoundaryFailed,
 		ErrorKind: domain.ErrorUnavailable, Hint: "inspect the control connection",
+		FailureCause: BoundaryFailureDurableTaskContractInvalid,
 	})
 	if len(logger.records) != 1 {
 		t.Fatalf("recorded %d, want 1", len(logger.records))
 	}
-	if logger.records[0].ErrorKind != domain.ErrorUnavailable || logger.records[0].Hint == "" {
+	if logger.records[0].ErrorKind != domain.ErrorUnavailable || logger.records[0].Hint == "" ||
+		logger.records[0].FailureCause != BoundaryFailureDurableTaskContractInvalid {
 		t.Errorf("failure lost its classification: %#v", logger.records[0])
+	}
+}
+
+func TestRecordBoundary_DropsUnknownFailureCauses(t *testing.T) {
+	logger := &capturingBoundaryLogger{}
+	RecordBoundary(logger, BoundaryRecord{
+		Boundary: BoundaryLocalAPI, Operation: "PrepareInitiative", Outcome: BoundaryFailed,
+		ErrorKind: domain.ErrorInternal, Hint: "inspect service health",
+		FailureCause: BoundaryFailureCause("caller-supplied-detail"),
+	})
+	if len(logger.records) != 1 || logger.records[0].FailureCause != "" {
+		t.Fatalf("records = %#v, want an unknown failure cause removed", logger.records)
 	}
 }
 

@@ -103,6 +103,9 @@ func (logger *Logger) Record(record application.BoundaryRecord) {
 			slog.String("errorKind", string(record.ErrorKind)),
 			slog.String("hint", record.Hint),
 		)
+		if record.FailureCause != "" {
+			attributes = append(attributes, slog.String("failureCause", string(record.FailureCause)))
+		}
 		logger.log.Error("boundary failed", attributes...)
 	default:
 		logger.log.Info("boundary completed", attributes...)

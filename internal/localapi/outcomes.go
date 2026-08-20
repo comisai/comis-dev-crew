@@ -118,10 +118,27 @@ func outcomeFromError(operationID string, err error) Outcome {
 	return rejectedOutcome(operationID, domain.ErrorInternal, false, "query failed", "inspect service health", err)
 }
 
-func rejectedOutcome(operationID string, code domain.ErrorCode, retryable bool, message, hint string, _ error) Outcome {
+func rejectedOutcome(operationID string, code domain.ErrorCode, retryable bool, message, hint string, cause error) Outcome {
 	return Outcome{
 		ProtocolVersion: ProtocolVersion, OperationID: operationID, Status: domain.OperationRejected,
-		Error: &WireError{Code: code, Message: message, Retryable: retryable, Hint: hint},
+		Error:        &WireError{Code: code, Message: message, Retryable: retryable, Hint: hint},
+		failureCause: boundaryFailureCause(code, cause),
+	}
+}
+
+func boundaryFailureCause(code domain.ErrorCode, cause error) application.BoundaryFailureCause {
+	if code != domain.ErrorInternal || cause == nil {
+		return ""
+	}
+	var validation *domain.ValidationError
+	if !errors.As(cause, &validation) {
+		return ""
+	}
+	switch validation.Field {
+	case "briefRevisionHash", "acceptanceCriteria", "constraints", "consumedContracts":
+		return application.BoundaryFailureDurableTaskContractInvalid
+	default:
+		return ""
 	}
 }
 

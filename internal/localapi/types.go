@@ -211,6 +211,7 @@ type Outcome struct {
 	StateVersion    *int64                 `json:"stateVersion,omitempty"`
 	Result          json.RawMessage        `json:"result,omitempty"`
 	Error           *WireError             `json:"error,omitempty"`
+	failureCause    application.BoundaryFailureCause
 }
 
 // operatorOnly reports whether a method carries private task detail that §20.3

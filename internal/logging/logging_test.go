@@ -68,7 +68,8 @@ func TestLogger_SeparatesStepsFailuresAndCompletions(t *testing.T) {
 	logger.Record(application.BoundaryRecord{
 		Boundary: application.BoundaryControl, Operation: "handshake",
 		Outcome: application.BoundaryFailed, ErrorKind: domain.ErrorUnavailable,
-		Hint: "inspect the control connection",
+		Hint:         "inspect the control connection",
+		FailureCause: application.BoundaryFailureDurableTaskContractInvalid,
 	})
 	lines := decodeLines(t, destination.String())
 	if len(lines) != 2 {
@@ -82,6 +83,9 @@ func TestLogger_SeparatesStepsFailuresAndCompletions(t *testing.T) {
 	}
 	if lines[1]["errorKind"] != "unavailable" || lines[1]["hint"] != "inspect the control connection" {
 		t.Errorf("failure line lost its kind or hint: %v", lines[1])
+	}
+	if lines[1]["failureCause"] != "durable_task_contract_invalid" {
+		t.Errorf("failure line lost its content-free cause: %v", lines[1])
 	}
 	if _, present := lines[0]["errorKind"]; present {
 		t.Error("a step carried an error kind")

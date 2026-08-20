@@ -42,6 +42,20 @@ const (
 	BoundaryStep BoundaryOutcome = "step"
 )
 
+// BoundaryFailureCause is a content-free diagnosis for a known failure class.
+// It stays closed so boundary logs cannot acquire task text, paths, arguments,
+// or dependency messages while still naming the subsystem an operator must
+// inspect.
+type BoundaryFailureCause string
+
+const (
+	BoundaryFailureDurableTaskContractInvalid BoundaryFailureCause = "durable_task_contract_invalid"
+)
+
+func (cause BoundaryFailureCause) valid() bool {
+	return cause == "" || cause == BoundaryFailureDurableTaskContractInvalid
+}
+
 // BoundaryRecord is everything this service will say about one crossing.
 //
 // It is a closed struct rather than a set of caller-supplied key-value pairs,
@@ -60,8 +74,9 @@ type BoundaryRecord struct {
 	Outcome     BoundaryOutcome `json:"outcome"`
 	// ErrorKind and Hint are present only on a failure. Both come from the
 	// closed domain failure vocabulary, so neither can carry untrusted text.
-	ErrorKind domain.ErrorCode `json:"errorKind,omitempty"`
-	Hint      string           `json:"hint,omitempty"`
+	ErrorKind    domain.ErrorCode     `json:"errorKind,omitempty"`
+	Hint         string               `json:"hint,omitempty"`
+	FailureCause BoundaryFailureCause `json:"failureCause,omitempty"`
 }
 
 // BoundaryLogger receives one record per crossing.
@@ -83,7 +98,9 @@ func RecordBoundary(logger BoundaryLogger, record BoundaryRecord) {
 		return
 	}
 	if record.Outcome != BoundaryFailed {
-		record.ErrorKind, record.Hint = "", ""
+		record.ErrorKind, record.Hint, record.FailureCause = "", "", ""
+	} else if !record.FailureCause.valid() {
+		record.FailureCause = ""
 	}
 	if record.DurationMs < 0 {
 		record.DurationMs = 0

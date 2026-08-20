@@ -37,6 +37,7 @@ func boundaryRecord(outcome Outcome, data []byte, elapsed time.Duration) applica
 		record.Outcome = application.BoundaryFailed
 		record.ErrorKind = outcome.Error.Code
 		record.Hint = outcome.Error.Hint
+		record.FailureCause = outcome.failureCause
 	}
 	return record
 }
