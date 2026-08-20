@@ -87,6 +87,33 @@ func TestBacklogAdditionRejectsMissingDependencyWithoutPartialCommit(t *testing.
 	}
 }
 
+func TestBacklogAdditionRollsBackItemWhenOperationPersistenceFails(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.db.ExecContext(ctx, `CREATE TRIGGER refuse_backlog_addition_operation
+		BEFORE INSERT ON operations WHEN NEW.command = 'AddBacklog'
+		BEGIN SELECT RAISE(ABORT, 'injected backlog operation failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	mutation := application.BacklogAdditionMutation{
+		OperationID: "operation-add-persistence-fault", SubjectDigest: strings.Repeat("d", 64),
+		Item: backlogAdditionItem("backlog-persistence-fault", nil), At: backlogAdditionTime(),
+	}
+	if _, err := store.CommitBacklogAddition(ctx, mutation); err == nil {
+		t.Fatal("CommitBacklogAddition(injected fault) error = nil")
+	}
+	if _, err := store.GetBacklogItem(ctx, mutation.Item.Handle); !errors.Is(err, application.ErrNotFound) {
+		t.Fatalf("GetBacklogItem(rolled back) error = %v, want ErrNotFound", err)
+	}
+	if _, err := store.GetOperation(ctx, mutation.OperationID); !errors.Is(err, application.ErrNotFound) {
+		t.Fatalf("GetOperation(rolled back) error = %v, want ErrNotFound", err)
+	}
+}
+
 func backlogAdditionItem(handle string, dependencies []string) domain.BacklogItem {
 	return domain.BacklogItem{
 		SchemaVersion: 1, Handle: handle, RepositoryID: "repo-primary", Shape: domain.ShapeShip,

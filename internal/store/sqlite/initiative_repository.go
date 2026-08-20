@@ -241,10 +241,14 @@ func insertBacklogItem(ctx context.Context, target execer, item domain.BacklogIt
 
 // GetBacklogItem returns one validated backlog request by its opaque handle.
 func (store *Store) GetBacklogItem(ctx context.Context, handle string) (domain.BacklogItem, error) {
+	return getBacklogItem(ctx, store.db, handle)
+}
+
+func getBacklogItem(ctx context.Context, source queryer, handle string) (domain.BacklogItem, error) {
 	const query = `SELECT handle, schema_version, repository_id, shape, requested_outcome,
         depends_on_json, priority, readiness, source_conversation_ref, created_at, updated_at
         FROM backlog_items WHERE handle = ?`
-	item, err := scanBacklogItem(store.db.QueryRowContext(ctx, query, handle))
+	item, err := scanBacklogItem(source.QueryRowContext(ctx, query, handle))
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.BacklogItem{}, fmt.Errorf("get backlog item: %w", application.ErrNotFound)
 	}

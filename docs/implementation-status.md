@@ -402,6 +402,17 @@ the reconstructed record before returning it. Backlog rows contain request and
 readiness data only and have no managed-run, workspace, credential, terminal, or
 delivery authority.
 
+Backlog intake is an idempotent mutation rather than a direct table insert. The
+service replays the exact item before minting another handle, requires every
+named dependency to exist, and commits the item with its completed operation at
+one global state version. A missing dependency or operation-write failure rolls
+back the whole addition, including across restart.
+
+Threat posture: an addition may describe a bounded desired outcome and refer to
+existing backlog handles, but it cannot select a worktree, credential, terminal,
+delivery route, or managed run. Initial readiness is limited to `ready` or
+`needs_refinement`; terminal backlog postures cannot be forged at intake.
+
 Initiative preparation validates the complete caller-local graph and every
 member contract before allocating a workspace. It then records stable member
 intents, prepares each reversible worktree and task-scoped runtime attachment,
