@@ -25,6 +25,7 @@ func TestReadCandidateComposition_ParsesStrictReviewedPolicyAndForgeRoute(t *tes
     "artifactRules":[{"kind":"regular_file","relativePath":"report.md","mediaType":"text/markdown","maxBytes":16384}],
     "evidenceTtl":"24h"
   }],
+  "integrationPolicies":[{"id":"integration-default","strategy":"merge"}],
   "maxOutputBytes":65536,
   "pollInterval":"250ms",
   "forge":{
