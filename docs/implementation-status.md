@@ -607,6 +607,11 @@ initiative, integration-owner task, candidate task, and exact heads. Its result
 projects the reviewed strategy, evidence digest, applied head or bounded conflict
 paths, and durable state version without exposing either worktree path or the
 candidate base path.
+Candidate head or cleanliness drift completes as the third closed outcome,
+`invalidated`. The Git adapter performs no mutation, and SQLite atomically
+records that outcome with the affected candidate's transition back to
+`validating`; sibling candidates and the integration owner are untouched.
+Exact replay returns the durable invalidation without re-entering Git.
 The official MCP facade exposes the same operation as
 `apply_integration_candidate`, marks it idempotent and mutating, and keeps policy,
 strategy selection, repository paths, and argv out of its input schema.

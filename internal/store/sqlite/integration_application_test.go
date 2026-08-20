@@ -13,11 +13,11 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
-func TestIntegrationApplicationPersistsAppliedAndConflictedResultsAcrossRestart(t *testing.T) {
+func TestIntegrationApplicationPersistsEveryClosedOutcomeAcrossRestart(t *testing.T) {
 	for _, outcome := range []application.IntegrationOutcome{
 		application.IntegrationApplied,
 		application.IntegrationConflicted,
-		application.IntegrationOutcome("invalidated"),
+		application.IntegrationInvalidated,
 	} {
 		t.Run(string(outcome), func(t *testing.T) {
 			fixture := newStoredIntegrationFixture(t)
@@ -49,7 +49,7 @@ func TestIntegrationApplicationPersistsAppliedAndConflictedResultsAcrossRestart(
 			if completed.Outcome != outcome || completed.StateVersion < 1 || !completed.CompletedAt.Equal(completedAt) {
 				t.Fatalf("completed = %#v", completed)
 			}
-			if outcome == application.IntegrationOutcome("invalidated") {
+			if outcome == application.IntegrationInvalidated {
 				candidate, readErr := fixture.store.GetTask(context.Background(), reserved.Candidate.TaskHandle)
 				if readErr != nil || candidate.State != domain.TaskValidating {
 					t.Fatalf("invalidated candidate = %#v, %v", candidate, readErr)

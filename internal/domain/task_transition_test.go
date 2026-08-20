@@ -127,6 +127,26 @@ func TestTaskApplyTransition_ReconciliationFailsClosed(t *testing.T) {
 	}
 }
 
+func TestTaskApplyTransition_InvalidatedEvidenceRequiresFreshValidation(t *testing.T) {
+	task := transitionTaskToWorking(t)
+	var err error
+	task, err = task.ApplyTransition(TransitionValidationStarted, task.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err = task.ApplyTransition(TransitionValidationAccepted, task.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidated, err := task.ApplyTransition(TransitionEvidenceInvalidated, task.UpdatedAt.Add(time.Second))
+	if err != nil || invalidated.State != TaskValidating {
+		t.Fatalf("evidence invalidation = %#v, %v", invalidated, err)
+	}
+	if _, err := invalidated.ApplyTransition(TransitionEvidenceInvalidated, invalidated.UpdatedAt.Add(time.Second)); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("repeated evidence invalidation error = %v, want ErrInvalidTransition", err)
+	}
+}
+
 func TestTaskAcknowledgeBinding_RequiresExactHostAndWorkspaceIdentity(t *testing.T) {
 	task := validTask(ShapeShip, DeliveryPullRequest)
 	binding := TaskBinding{ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001"}

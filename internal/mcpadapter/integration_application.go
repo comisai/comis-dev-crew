@@ -88,6 +88,8 @@ func validIntegrationMCPOutcome(result localapi.ApplyIntegrationCandidateResult)
 			result.ResultingHead != result.PreviousHead && len(result.ConflictPaths) == 0
 	case application.IntegrationConflicted:
 		return result.ResultingHead == "" && validIntegrationMCPConflictPaths(result.ConflictPaths)
+	case application.IntegrationInvalidated:
+		return result.ResultingHead == "" && len(result.ConflictPaths) == 0
 	default:
 		return false
 	}

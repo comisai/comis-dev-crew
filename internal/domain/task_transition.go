@@ -29,6 +29,7 @@ const (
 	TransitionPaused                   TaskTransition = "paused"
 	TransitionValidationStarted        TaskTransition = "validation_started"
 	TransitionValidationAccepted       TaskTransition = "validation_accepted"
+	TransitionEvidenceInvalidated      TaskTransition = "evidence_invalidated"
 	TransitionDeliveryStarted          TaskTransition = "delivery_started"
 	TransitionDeliveryAccepted         TaskTransition = "delivery_accepted"
 	TransitionFailureObserved          TaskTransition = "failure_observed"
@@ -137,6 +138,8 @@ func nextTaskState(current TaskState, transition TaskTransition) (TaskState, boo
 		return oneOfTaskStates(current, TaskValidating, TaskWorking, TaskPaused)
 	case TransitionValidationAccepted:
 		return requiredTaskState(current, TaskValidating, TaskCandidateComplete)
+	case TransitionEvidenceInvalidated:
+		return requiredTaskState(current, TaskCandidateComplete, TaskValidating)
 	case TransitionDeliveryStarted:
 		return requiredTaskState(current, TaskCandidateComplete, TaskDelivering)
 	case TransitionDeliveryAccepted:

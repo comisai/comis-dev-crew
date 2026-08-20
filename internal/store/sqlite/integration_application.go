@@ -183,6 +183,20 @@ func (store *Store) CompleteIntegrationApplication(
 	if err := updateIntegrationApplication(ctx, transaction, row); err != nil {
 		return application.IntegrationApplicationResult{}, err
 	}
+	if completion.AdapterResult.Outcome == application.IntegrationInvalidated {
+		candidate, readErr := getTask(ctx, transaction, row.candidateTaskHandle)
+		if readErr != nil {
+			return application.IntegrationApplicationResult{}, readErr
+		}
+		invalidated, transitionErr := candidate.ApplyTransition(domain.TransitionEvidenceInvalidated, completion.At)
+		if transitionErr != nil {
+			return application.IntegrationApplicationResult{}, fmt.Errorf("invalidate integration candidate evidence: %w", transitionErr)
+		}
+		invalidated.StateVersion = stateVersion
+		if err := updateTaskState(ctx, transaction, invalidated); err != nil {
+			return application.IntegrationApplicationResult{}, err
+		}
+	}
 	operation := completedMutationOperation(
 		row.operationID, commandApplyIntegrationCandidate, row.subjectDigest,
 		row.integrationTaskHandle, stateVersion, completion.At,
@@ -323,6 +337,10 @@ func validateIntegrationCompletion(completion application.IntegrationCompletion)
 	case application.IntegrationConflicted:
 		if result.ResultingHead != "" || !validStoredConflictPaths(result.ConflictPaths) {
 			return errors.New("conflicted integration completion is invalid")
+		}
+	case application.IntegrationInvalidated:
+		if result.ResultingHead != "" || len(result.ConflictPaths) != 0 {
+			return errors.New("invalidated integration completion is invalid")
 		}
 	default:
 		return errors.New("integration completion outcome is invalid")

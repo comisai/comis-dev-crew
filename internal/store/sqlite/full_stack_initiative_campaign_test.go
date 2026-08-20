@@ -117,7 +117,7 @@ func TestFullStackInitiativeCampaignPreservesParallelLanesAndExactHeadAuthority(
 		IntegrationTaskHandle: integration.Handle, CandidateTaskHandle: backend.Handle,
 		CandidateHead: backendHead, ExpectedIntegrationHead: targetHead,
 	})
-	if err != nil || invalidated.Outcome != application.IntegrationOutcome("invalidated") {
+	if err != nil || invalidated.Outcome != application.IntegrationInvalidated {
 		t.Fatalf("ApplyCandidate(changed backend head) = %#v, %v", invalidated, err)
 	}
 	if adapter.targetHead != targetHead {
@@ -150,8 +150,9 @@ func TestFullStackInitiativeCampaignPreservesParallelLanesAndExactHeadAuthority(
 	}
 	backendHead = strings.Repeat("e", 40)
 	backend = acceptCampaignCandidate(
-		t, fixture, invalidatedBackend, backendHead, fixture.at.Add(20*time.Minute+30*time.Second),
+		t, fixture, invalidatedBackend, backendHead, fixture.at.Add(25*time.Minute),
 	)
+	integrationAt = fixture.at.Add(26 * time.Minute)
 	backendResult, err := integrations.ApplyCandidate(ctx, application.ApplyIntegrationCandidateCommand{
 		OperationID: "campaign-integrate-backend-current", InitiativeHandle: fixture.initiativeHandle,
 		IntegrationTaskHandle: integration.Handle, CandidateTaskHandle: backend.Handle,
@@ -162,17 +163,17 @@ func TestFullStackInitiativeCampaignPreservesParallelLanesAndExactHeadAuthority(
 	}
 
 	integration = reportCampaignCandidate(
-		t, fixture, integration, "campaign-integration-candidate", fixture.at.Add(21*time.Minute),
+		t, fixture, integration, "campaign-integration-candidate", fixture.at.Add(27*time.Minute),
 	)
 	integration = acceptCampaignCandidate(
-		t, fixture, integration, backendResult.ResultingHead, fixture.at.Add(26*time.Minute),
+		t, fixture, integration, backendResult.ResultingHead, fixture.at.Add(32*time.Minute),
 	)
 	if integration.State != domain.TaskCandidateComplete {
 		t.Fatalf("integration state = %q", integration.State)
 	}
 	validation, err := fixture.store.CommitTaskStart(ctx, application.TaskStartMutation{
 		TaskHandle: fixture.handles.validation, OperationID: "campaign-validation-release",
-		SubjectDigest: strings.Repeat("5", 64), At: fixture.at.Add(27 * time.Minute), SchedulingLimits: limits,
+		SubjectDigest: strings.Repeat("5", 64), At: fixture.at.Add(33 * time.Minute), SchedulingLimits: limits,
 	})
 	if err != nil || validation.Task.State != domain.TaskLaunching {
 		t.Fatalf("validation after integration = %#v, %v", validation, err)
@@ -432,9 +433,10 @@ func acceptCampaignCandidate(
 	t.Helper()
 	evidence := candidateEvidence(t, task, head)
 	publications := candidateEvidencePublications(t, task, evidence)
+	publicationSuffix := "-" + task.Handle + "-" + evidence.Digest()[:16]
 	for index := range publications {
-		publications[index].OperationID += "-" + task.Handle
-		publications[index].EvidenceRef += "-" + task.Handle
+		publications[index].OperationID += publicationSuffix
+		publications[index].EvidenceRef += publicationSuffix
 	}
 	accepted, judgment, err := fixture.store.CommitCandidateEvidence(
 		context.Background(), task.Handle, evidence,
@@ -471,7 +473,9 @@ func (adapter *campaignIntegrationAdapter) ApplyIntegrationCandidate(
 ) (application.IntegrationAdapterResult, error) {
 	adapter.calls++
 	if adapter.candidateHeads[request.Candidate.TaskHandle] != request.Candidate.HeadRevision {
-		return application.IntegrationAdapterResult{}, errors.New("candidate head changed")
+		return application.IntegrationAdapterResult{
+			Outcome: application.IntegrationInvalidated, PreviousHead: request.Target.ExpectedHead,
+		}, nil
 	}
 	if adapter.targetHead != request.Target.ExpectedHead {
 		return application.IntegrationAdapterResult{}, errors.New("integration head changed")

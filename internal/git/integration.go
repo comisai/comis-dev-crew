@@ -55,7 +55,9 @@ func (registry *Registry) ApplyIntegrationCandidate(
 		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: target head or cleanliness changed")
 	}
 	if candidate.Cleanliness != CandidateClean || candidate.HeadRevision != request.Candidate.HeadRevision {
-		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: candidate head or cleanliness changed")
+		return application.IntegrationAdapterResult{
+			Outcome: application.IntegrationInvalidated, PreviousHead: request.Target.ExpectedHead,
+		}, nil
 	}
 
 	if err := registry.runIntegrationStrategy(ctx, request); err != nil {

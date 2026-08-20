@@ -96,7 +96,7 @@ func TestRegistry_RevalidatesCandidateAndTargetHeadsImmediatelyBeforeMutation(t 
 				if err == nil {
 					t.Fatal("ApplyIntegrationCandidate(changed target head) error = nil")
 				}
-			} else if err != nil || result.Outcome != application.IntegrationOutcome("invalidated") {
+			} else if err != nil || result.Outcome != application.IntegrationInvalidated {
 				t.Fatalf("ApplyIntegrationCandidate(changed candidate head) = %#v, %v", result, err)
 			}
 			if _, err := os.Stat(filepath.Join(fixture.target.CanonicalPath, "component.txt")); !errors.Is(err, os.ErrNotExist) {
@@ -115,7 +115,7 @@ func TestRegistry_RefusesDirtyCandidateAndAlteredReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	invalidated, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
-	if err != nil || invalidated.Outcome != application.IntegrationOutcome("invalidated") {
+	if err != nil || invalidated.Outcome != application.IntegrationInvalidated {
 		t.Fatalf("ApplyIntegrationCandidate(dirty candidate) = %#v, %v", invalidated, err)
 	}
 	if err := os.Remove(filepath.Join(fixture.candidate.CanonicalPath, "dirty.txt")); err != nil {

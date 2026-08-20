@@ -27,6 +27,10 @@ type IntegrationOutcome string
 const (
 	IntegrationApplied    IntegrationOutcome = "applied"
 	IntegrationConflicted IntegrationOutcome = "conflicted"
+	// IntegrationInvalidated means the candidate changed after its evidence
+	// was accepted. No Git mutation occurred; the durable completion returns
+	// that exact candidate to validation before exposing this outcome.
+	IntegrationInvalidated IntegrationOutcome = "invalidated"
 )
 
 // IntegrationPolicyResolver maps immutable operator policy identity onto one
@@ -292,6 +296,10 @@ func validateIntegrationAdapterResult(result IntegrationAdapterResult, reserved 
 	case IntegrationConflicted:
 		if result.ResultingHead != "" || !validConflictPaths(result.ConflictPaths) {
 			return errors.New("conflicted integration result is invalid")
+		}
+	case IntegrationInvalidated:
+		if result.ResultingHead != "" || len(result.ConflictPaths) != 0 {
+			return errors.New("invalidated integration result is invalid")
 		}
 	default:
 		return errors.New("integration outcome is invalid")
