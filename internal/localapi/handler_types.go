@@ -89,6 +89,11 @@ type TaskCleanup interface {
 	DiscardTask(context.Context, application.DiscardTaskCommand) (application.MutationResult, error)
 }
 
+// TaskMerges is the canonical approval-bound forge mutation surface.
+type TaskMerges interface {
+	MergeTask(context.Context, application.MergeTaskCommand) (application.MergeTaskResult, error)
+}
+
 // DecisionAuthority owns operator decisions over worker questions.
 type DecisionAuthority interface {
 	CancelDecision(context.Context, application.CancelDecisionCommand) (application.MutationResult, error)
@@ -118,6 +123,7 @@ type HandlerConfig struct {
 	Reconciliation      TaskReconciliation
 	Interventions       TaskInterventions
 	Cleanup             TaskCleanup
+	Merges              TaskMerges
 	PrimaryCheckouts    PrimaryCheckoutSync
 	ScoutReviews        ScoutReviewAttestation
 	Decisions           DecisionAuthority

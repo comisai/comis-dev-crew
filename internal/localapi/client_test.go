@@ -240,7 +240,7 @@ func TestHandler_DefensiveConstructionAuthorizationAndErrorPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHandler() error = %v", err)
 	}
-	outcome := handler.dispatch(context.Background(), Request{OperationID: "read-0001", Method: Method("invented"), Payload: json.RawMessage(`{}`)})
+	outcome := handler.dispatch(context.Background(), CallerOperatorCLI, Request{OperationID: "read-0001", Method: Method("invented"), Payload: json.RawMessage(`{}`)})
 	if outcome.Error == nil || outcome.Error.Code != domain.ErrorInvalidArgument {
 		t.Fatalf("dispatch(unknown) = %#v, want invalid argument", outcome)
 	}

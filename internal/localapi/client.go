@@ -235,6 +235,18 @@ func (client *Client) CleanupTask(ctx context.Context, operationID string, input
 	return result, err
 }
 
+// MergeTask reserves current accepted evidence from the operator socket or
+// consumes exact private approval metadata from the MCP socket.
+func (client *Client) MergeTask(
+	ctx context.Context,
+	operationID string,
+	input MergeTaskInput,
+) (application.MergeTaskResult, error) {
+	var result application.MergeTaskResult
+	err := client.call(ctx, operationID, MethodMergeTask, input, &result)
+	return result, err
+}
+
 // PauseTask asks one task's worker to reach a safe boundary.
 func (client *Client) PauseTask(ctx context.Context, operationID string, input PauseTaskInput) (TaskMutationResult, error) {
 	var result TaskMutationResult

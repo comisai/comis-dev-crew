@@ -63,6 +63,7 @@ const (
 	MethodReconcileTask     Method = "ReconcileTask"
 	MethodHandbackTask      Method = "HandbackTask"
 	MethodCleanupTask       Method = "CleanupTask"
+	MethodMergeTask         Method = "MergeTask"
 	MethodPauseTask         Method = "PauseTask"
 	MethodCancelTask        Method = "CancelTask"
 	MethodResumeTask        Method = "ResumeTask"
@@ -89,7 +90,7 @@ func (method Method) valid() bool {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
 		MethodOperation, MethodListInitiatives, MethodGetInitiative, MethodListBacklog, MethodAddBacklog, MethodPromoteBacklog,
 		MethodPrepareTask, MethodPrepareInitiative, MethodApplyIntegration, MethodPauseInitiative, MethodResumeInitiative, MethodCancelInitiative,
-		MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
+		MethodReconcileTask, MethodHandbackTask, MethodCleanupTask, MethodMergeTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
 		MethodSyncPrimary, MethodAttestScout, MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs, MethodReadEvents, MethodReadTaskLogs, MethodCancelDecision,
 		MethodRespondDecision, MethodReadAudit:
@@ -115,7 +116,7 @@ func (method Method) SideEffect() SideEffectClass {
 		return SideEffectMutate
 	case MethodPrepareTask, MethodPrepareInitiative, MethodApplyIntegration, MethodAddBacklog, MethodPromoteBacklog,
 		MethodPauseInitiative, MethodResumeInitiative, MethodCancelInitiative,
-		MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
+		MethodReconcileTask, MethodHandbackTask, MethodCleanupTask, MethodMergeTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
 		MethodSyncPrimary, MethodAttestScout:
 		return SideEffectMutate
@@ -233,6 +234,15 @@ func (method Method) operatorOnly() bool {
 type HandbackTaskInput struct {
 	TaskHandle string                     `json:"taskHandle"`
 	Action     application.HandbackAction `json:"action"`
+}
+
+// MergeTaskInput names only the durable task on the operator socket. The MCP
+// socket additionally binds the private host approval identity to the same
+// operation; neither caller can supply forge coordinates or a merge method.
+type MergeTaskInput struct {
+	TaskHandle        string `json:"taskHandle"`
+	ApprovalRequestID string `json:"approvalRequestId,omitempty"`
+	MCPOperationID    string `json:"mcpOperationId,omitempty"`
 }
 
 // ReconcileTaskInput selects one unknown task and the closed clean-candidate

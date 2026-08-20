@@ -788,9 +788,12 @@ SQLite atomically reserves current accepted evidence, records the complete
 approval before forge mutation, and joins exact post-merge truth to the same
 operation. Pending approval and recorded mutation intent survive startup
 reconciliation; altered replays, stale evidence, split ledger writes, and
-unprotected branches fail closed. Installed service composition and the
-canonical local CLI/MCP surface remain open, so configuration alone still
-grants no reachable merge.
+unprotected branches fail closed. The canonical local API exposes one
+`MergeTask` mutation to both protected endpoint classes: operator calls can
+carry only the task handle, while MCP calls must bind the approval request and
+the identical operation ID; neither can choose forge coordinates or method.
+Installed service composition plus the CLI and MCP adapters remain open, so
+configuration alone still grants no reachable merge.
 
 ## Worker harnesses
 

@@ -29,6 +29,7 @@ type Handler struct {
 	reconciliation      TaskReconciliation
 	interventions       TaskInterventions
 	cleanup             TaskCleanup
+	merges              TaskMerges
 	primaryCheckouts    PrimaryCheckoutSync
 	scoutReviews        ScoutReviewAttestation
 	decisions           DecisionAuthority
@@ -48,7 +49,7 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 		return nil, errors.New("create local API handler: clock is required")
 	}
 	if (config.Mutations != nil || config.InitiativeMutations != nil || config.InitiativeControls != nil ||
-		config.BacklogAdditions != nil || config.BacklogPromotions != nil || config.Integrations != nil) &&
+		config.BacklogAdditions != nil || config.BacklogPromotions != nil || config.Integrations != nil || config.Merges != nil) &&
 		!localServiceInstancePattern.MatchString(config.ServiceInstanceID) {
 		return nil, errors.New("create local API handler: service instance identity is required for mutations")
 	}
@@ -60,7 +61,7 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 		initiativeControls: config.InitiativeControls,
 		backlogAdditions:   config.BacklogAdditions,
 		backlogPromotions:  config.BacklogPromotions,
-		interventions:      config.Interventions, cleanup: config.Cleanup,
+		interventions:      config.Interventions, cleanup: config.Cleanup, merges: config.Merges,
 		primaryCheckouts:  config.PrimaryCheckouts,
 		scoutReviews:      config.ScoutReviews,
 		decisions:         config.Decisions,
@@ -95,10 +96,13 @@ func (handler *Handler) serve(ctx context.Context, caller CallerClass, data []by
 		ctx, cancel = context.WithDeadline(ctx, deadline)
 		defer cancel()
 	}
-	return handler.dispatch(ctx, request)
+	return handler.dispatch(ctx, caller, request)
 }
 
-func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
+func (handler *Handler) dispatch(ctx context.Context, caller CallerClass, request Request) Outcome {
+	if outcome, handled := handler.dispatchTaskMerge(ctx, caller, request); handled {
+		return outcome
+	}
 	if outcome, handled := handler.dispatchIntegrationApplication(ctx, request); handled {
 		return outcome
 	}
