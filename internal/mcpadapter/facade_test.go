@@ -382,7 +382,7 @@ func TestFacade_UncertainTerminalMutationsReconcileBeforeExactRetry(t *testing.T
 
 func assertToolCatalog(t *testing.T, tools []*mcp.Tool) {
 	t.Helper()
-	want := map[string]bool{ToolPrepareTask: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolDiscardTask: false, ToolSyncPrimary: false, ToolAttestScout: false, ToolPauseTask: false, ToolCancelTask: false, ToolResumeTask: false, ToolVerifyTask: false, ToolPromoteScout: false, ToolReplaceWorker: false, ToolSteerTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
+	want := map[string]bool{ToolPrepareTask: false, ToolPrepareInitiative: false, ToolGetInitiative: true, ToolBacklogList: true, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolDiscardTask: false, ToolSyncPrimary: false, ToolAttestScout: false, ToolPauseTask: false, ToolCancelTask: false, ToolResumeTask: false, ToolVerifyTask: false, ToolPromoteScout: false, ToolReplaceWorker: false, ToolSteerTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
 	if len(tools) != len(want) {
 		t.Fatalf("tool count = %d, want %d", len(tools), len(want))
 	}
@@ -662,6 +662,33 @@ func (client *fakeClient) PrepareTask(_ context.Context, operationID string, _ l
 	result := client.prepareResults[0]
 	client.prepareResults = client.prepareResults[1:]
 	return result, nil
+}
+
+func (client *fakeClient) PrepareInitiative(
+	_ context.Context,
+	operationID string,
+	_ localapi.PrepareInitiativeInput,
+) (localapi.PrepareInitiativeResult, error) {
+	client.calls = append(client.calls, "prepare-initiative:"+operationID)
+	return localapi.PrepareInitiativeResult{}, nil
+}
+
+func (client *fakeClient) GetInitiative(
+	_ context.Context,
+	operationID string,
+	handle string,
+) (application.InitiativeDetail, error) {
+	client.calls = append(client.calls, "get-initiative:"+operationID+":"+handle)
+	return application.InitiativeDetail{}, nil
+}
+
+func (client *fakeClient) ListBacklog(
+	_ context.Context,
+	operationID string,
+	input localapi.ListBacklogInput,
+) (application.BacklogList, error) {
+	client.calls = append(client.calls, "list-backlog:"+operationID+":"+input.RepositoryID+":"+string(input.Readiness))
+	return application.BacklogList{}, nil
 }
 
 func (client *fakeClient) ListWorkerProfiles(

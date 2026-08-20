@@ -12,26 +12,29 @@ import (
 )
 
 const (
-	ToolPrepareTask    = "prepare_task"
-	ToolReconcileTask  = "reconcile_task"
-	ToolHandbackTask   = "handback_task"
-	ToolCleanupTask    = "cleanup_task"
-	ToolDiscardTask    = "discard_task"
-	ToolPauseTask      = "pause_task"
-	ToolCancelTask     = "cancel_task"
-	ToolResumeTask     = "resume_task"
-	ToolVerifyTask     = "verify_task"
-	ToolPromoteScout   = "promote_scout"
-	ToolReplaceWorker  = "replace_worker"
-	ToolSteerTask      = "steer_task"
-	ToolListTasks      = "list_tasks"
-	ToolWorkerProfiles = "worker_profiles"
-	ToolGetTask        = "get_task"
-	ToolExplainTask    = "explain_task"
-	ToolGetLaunchPlan  = "get_launch_plan"
-	ToolSyncPrimary    = "sync_primary"
-	ToolAttestScout    = "attest_scout_decisions"
-	ToolDoctor         = "doctor"
+	ToolPrepareTask       = "prepare_task"
+	ToolPrepareInitiative = "prepare_initiative"
+	ToolGetInitiative     = "get_initiative"
+	ToolBacklogList       = "backlog_list"
+	ToolReconcileTask     = "reconcile_task"
+	ToolHandbackTask      = "handback_task"
+	ToolCleanupTask       = "cleanup_task"
+	ToolDiscardTask       = "discard_task"
+	ToolPauseTask         = "pause_task"
+	ToolCancelTask        = "cancel_task"
+	ToolResumeTask        = "resume_task"
+	ToolVerifyTask        = "verify_task"
+	ToolPromoteScout      = "promote_scout"
+	ToolReplaceWorker     = "replace_worker"
+	ToolSteerTask         = "steer_task"
+	ToolListTasks         = "list_tasks"
+	ToolWorkerProfiles    = "worker_profiles"
+	ToolGetTask           = "get_task"
+	ToolExplainTask       = "explain_task"
+	ToolGetLaunchPlan     = "get_launch_plan"
+	ToolSyncPrimary       = "sync_primary"
+	ToolAttestScout       = "attest_scout_decisions"
+	ToolDoctor            = "doctor"
 
 	CallContextMetaKey      = "comis.callContext"
 	ManagedRunResultMetaKey = "comis.managedRun"
@@ -40,6 +43,9 @@ const (
 // Client is the sole canonical local-service surface used by the facade.
 type Client interface {
 	PrepareTask(context.Context, string, localapi.PrepareTaskInput) (localapi.PrepareTaskResult, error)
+	PrepareInitiative(context.Context, string, localapi.PrepareInitiativeInput) (localapi.PrepareInitiativeResult, error)
+	GetInitiative(context.Context, string, string) (application.InitiativeDetail, error)
+	ListBacklog(context.Context, string, localapi.ListBacklogInput) (application.BacklogList, error)
 	ReconcileTask(context.Context, string, localapi.ReconcileTaskInput) (localapi.TaskMutationResult, error)
 	HandbackTask(context.Context, string, localapi.HandbackTaskInput) (localapi.TaskMutationResult, error)
 	CleanupTask(context.Context, string, localapi.CleanupTaskInput) (localapi.TaskMutationResult, error)

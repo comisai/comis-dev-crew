@@ -206,12 +206,16 @@ devcrew-mcp \
   --service-instance service-instance-devcrew
 ```
 
-The facade defines twenty tools: `prepare_task`, `promote_scout`,
-`reconcile_task`, `handback_task`, `cleanup_task`, `discard_task`, `pause_task`,
-`cancel_task`, `resume_task`, `replace_worker`, `steer_task`, `verify_task`,
+The facade defines twenty-three tools: `prepare_task`, `prepare_initiative`,
+`get_initiative`, `backlog_list`, `promote_scout`, `reconcile_task`,
+`handback_task`, `cleanup_task`, `discard_task`, `pause_task`, `cancel_task`,
+`resume_task`, `replace_worker`, `steer_task`, `verify_task`,
 `attest_scout_decisions`, `sync_primary`, `list_tasks`, `get_task`,
-`explain_task`, `get_launch_plan`, `worker_profiles`, and `doctor`. `promote_scout` returns the
-same private managed-run registration metadata preparation does, because it
+`explain_task`, `get_launch_plan`, `worker_profiles`, and `doctor`.
+`prepare_initiative` returns the private managed-run group registration through
+the MCP result extension while keeping nonces and host resource paths out of
+model-visible structured content. `promote_scout` returns the same private
+single-run registration metadata ordinary task preparation does, because it
 mints a task the same way.
 `cancel_task` is destructive — it ends work an operator asked for and repeating
 it does not undo that — but it is not removal.

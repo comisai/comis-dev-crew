@@ -56,6 +56,9 @@ func (facade *Facade) Run(ctx context.Context, transport mcp.Transport) error {
 
 func (facade *Facade) registerTools() {
 	mcp.AddTool(facade.server, tool(ToolPrepareTask, "Prepare one durable development task; acceptanceCriteria and constraints must be JSON arrays.", false), facade.prepareTask)
+	mcp.AddTool(facade.server, tool(ToolPrepareInitiative, "Validate and prepare one complete multi-component graph without launching workers.", false), facade.prepareInitiative)
+	mcp.AddTool(facade.server, tool(ToolGetInitiative, "Get one bounded initiative graph, member states, dependencies, and safe next actions.", true), facade.getInitiative)
+	mcp.AddTool(facade.server, tool(ToolBacklogList, "List bounded development requests without creating run authority.", true), facade.listBacklog)
 	mcp.AddTool(facade.server, tool(ToolReconcileTask, "Validate one exact clean candidate after its worker terminal ended without a candidate report.", false), facade.reconcileTask)
 	mcp.AddTool(facade.server, tool(ToolHandbackTask, "Validate developer work after one safe paused worker exits.", false), facade.handbackTask)
 	mcp.AddTool(facade.server, cleanupTool(), facade.cleanupTask)
