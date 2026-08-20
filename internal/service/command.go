@@ -339,6 +339,8 @@ func serviceFailureCause(err error) string {
 		{"run service Codex", "codex_composition"},
 		{"run service Claude", "claude_composition"},
 		{"run service validation composition", "validation_composition"},
+		{"run service integration policy composition", "integration_policy_composition"},
+		{"run service: integration application composition", "integration_application_composition"},
 		{"run service forge read credential", "forge_read_credential"},
 		{"run service forge push credential", "forge_push_credential"},
 		{"run service: forge read and push identities", "forge_identity_separation"},
@@ -376,6 +378,8 @@ func serviceFailureClass(err error) string {
 		strings.Contains(message, "run service Codex"),
 		strings.Contains(message, "run service Claude"),
 		strings.Contains(message, "run service validation composition"),
+		strings.Contains(message, "run service integration policy composition"),
+		strings.Contains(message, "run service: integration application composition"),
 		strings.Contains(message, "run service forge"),
 		strings.Contains(message, "run service GitHub composition"),
 		strings.Contains(message, "run service: exact Codex version is unavailable"),
@@ -405,6 +409,10 @@ func serviceFailureClass(err error) string {
 }
 
 func serviceFailureHint(err error) string {
+	if strings.Contains(err.Error(), "integration policy composition") ||
+		strings.Contains(err.Error(), "integration application composition") {
+		return "inspect integrationPolicies in the owner-private candidate configuration"
+	}
 	if strings.Contains(err.Error(), "recover runtime attachments: prepare runtime attachment: workspace is not canonical") {
 		return "inspect cleaned-task attachment recovery and durable workspace state"
 	}

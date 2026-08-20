@@ -496,7 +496,8 @@ func installedCandidateConfig(t *testing.T, root string) string {
 				"kind": "regular_file", "relativePath": "report.md", "mediaType": "text/markdown", "maxBytes": 16384,
 			}},
 		}},
-		"maxOutputBytes": 65536, "pollInterval": "250ms",
+		"integrationPolicies": []map[string]any{{"id": "integration-default", "strategy": "merge"}},
+		"maxOutputBytes":      65536, "pollInterval": "250ms",
 		"forge": map[string]any{
 			"apiBaseUrl": "https://api.github.com", "owner": "comisai", "repository": "product-api",
 			"remoteUrl":          "https://github.com/comisai/product-api.git",

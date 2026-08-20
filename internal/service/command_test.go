@@ -177,6 +177,7 @@ func TestServiceFailureClassUsesSafeStableCategories(t *testing.T) {
 		{"run candidate supervisor: candidate evidence was not accepted", "candidate_evidence_rejected"},
 		{"run candidate supervisor: durable task queue is unavailable", "candidate_supervision"},
 		{"run service validation recovery: unavailable", "validation_process_recovery"},
+		{"run service integration policy composition: unavailable", "installed_composition"},
 		{"run service startup reconciliation: unavailable", "startup_reconciliation"},
 		{"run service local endpoint: unavailable", "operator_endpoint"},
 		{"run service MCP endpoint: unavailable", "mcp_endpoint"},
@@ -191,6 +192,11 @@ func TestServiceFailureClassUsesSafeStableCategories(t *testing.T) {
 	if got := serviceFailureCause(errors.New("unclassified private detail")); got != "" {
 		t.Fatalf("serviceFailureCause(unclassified) = %q, want empty", got)
 	}
+	integrationFailure := errors.New("run service integration policy composition: unavailable")
+	if got := serviceFailureCause(integrationFailure); got != "integration_policy_composition" ||
+		serviceFailureHint(integrationFailure) != "inspect integrationPolicies in the owner-private candidate configuration" {
+		t.Fatalf("integration failure diagnostic = %q / %q", got, serviceFailureHint(integrationFailure))
+	}
 }
 
 func TestRunCommand_ComposesInstalledLaneWithExplicitDeterministicFixture(t *testing.T) {
@@ -202,6 +208,7 @@ func TestRunCommand_ComposesInstalledLaneWithExplicitDeterministicFixture(t *tes
 	writeCandidateConfig(t, candidateConfigPath, `{
   "programs":[{"id":"repo-check","executable":"/usr/bin/true"}],
   "profiles":[{"id":"required","localChecks":[{"id":"unit","programId":"repo-check","arguments":[{"kind":"literal","value":"--version"}],"timeout":"2m","required":true}],"forgeChecks":[{"name":"ci/unit","required":true}],"evidenceTtl":"24h"}],
+  "integrationPolicies":[{"id":"integration-default","strategy":"merge"}],
   "maxOutputBytes":65536,"pollInterval":"250ms",
   "forge":{"apiBaseUrl":"https://api.github.com","owner":"comisai","repository":"product-api","remoteUrl":"https://github.com/comisai/product-api.git","readCredentialFile":"/private/config/forge-read.credential","pushCredentialFile":"/private/config/forge-push.credential","credentialDirectory":"/private/run/forge-credentials"}
 }`, 0o600)

@@ -40,6 +40,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	if config.Repositories != nil || config.Workspaces != nil || config.TaskIDs != nil ||
 		config.RuntimeAttachments != nil || config.WorkerHarnesses != nil || config.RegistrationNonces != nil || config.ComisControl != nil ||
 		config.candidateGit != nil || config.workspaceInspector != nil || config.primarySynchronizer != nil || config.validationCatalog != nil || config.pullRequests != nil ||
+		config.IntegrationPolicies != nil || config.integrationAdapter != nil ||
 		config.cleanupRemover != nil || config.cleanupForge != nil ||
 		config.fixtureCandidatePreparer != nil ||
 		config.validationMaxOutputBytes != 0 || config.validationPollInterval != 0 {
@@ -232,6 +233,11 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	config.validationCatalog = catalog
 	config.validationMaxOutputBytes = validationConfig.MaxOutputBytes
 	config.validationPollInterval = validationConfig.PollInterval
+	config.IntegrationPolicies, err = newIntegrationPolicyResolver(validationConfig.IntegrationPolicies)
+	if err != nil {
+		return Config{}, fmt.Errorf("run service integration policy composition: %w", err)
+	}
+	config.integrationAdapter = registry
 	config.pullRequests = pullRequests
 	config.cleanupRemover = registry
 	config.cleanupForge = pullRequests

@@ -9,17 +9,25 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
 	"github.com/comisai/comis-dev-crew/internal/validation"
 )
 
 const maximumCandidateConfigurationBytes = 1 << 20
 
 type candidateCompositionDocument struct {
-	Programs       []validation.Program       `json:"programs"`
-	Profiles       []candidateProfileDocument `json:"profiles"`
-	MaxOutputBytes int64                      `json:"maxOutputBytes"`
-	PollInterval   string                     `json:"pollInterval"`
-	Forge          candidateForgeDocument     `json:"forge"`
+	Programs            []validation.Program        `json:"programs"`
+	Profiles            []candidateProfileDocument  `json:"profiles"`
+	IntegrationPolicies []integrationPolicyDocument `json:"integrationPolicies"`
+	MaxOutputBytes      int64                       `json:"maxOutputBytes"`
+	PollInterval        string                      `json:"pollInterval"`
+	Forge               candidateForgeDocument      `json:"forge"`
+}
+
+type integrationPolicyDocument struct {
+	ID       string                          `json:"id"`
+	Strategy application.IntegrationStrategy `json:"strategy"`
 }
 
 type candidateProfileDocument struct {
@@ -92,8 +100,21 @@ func readCandidateComposition(path string) (*ValidationComposition, *ForgeCompos
 			ArtifactRules: configured.ArtifactRules, EvidenceTTL: evidenceTTL,
 		})
 	}
+	if len(document.IntegrationPolicies) == 0 || len(document.IntegrationPolicies) > 64 {
+		return nil, nil, errors.New("read candidate composition: integration policies are invalid")
+	}
+	integrationPolicies := make(map[string]application.IntegrationStrategy, len(document.IntegrationPolicies))
+	for _, configured := range document.IntegrationPolicies {
+		if domain.ValidateTaskHandle(configured.ID) != nil || !validIntegrationStrategy(configured.Strategy) {
+			return nil, nil, errors.New("read candidate composition: integration policy is invalid")
+		}
+		if _, exists := integrationPolicies[configured.ID]; exists {
+			return nil, nil, errors.New("read candidate composition: integration policy is duplicated")
+		}
+		integrationPolicies[configured.ID] = configured.Strategy
+	}
 	return &ValidationComposition{
-			Programs: document.Programs, Profiles: profiles,
+			Programs: document.Programs, Profiles: profiles, IntegrationPolicies: integrationPolicies,
 			MaxOutputBytes: document.MaxOutputBytes, PollInterval: pollInterval,
 		}, &ForgeComposition{
 			APIBaseURL: document.Forge.APIBaseURL, Owner: document.Forge.Owner, Repository: document.Forge.Repository,

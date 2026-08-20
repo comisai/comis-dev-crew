@@ -125,7 +125,11 @@ provides a trustworthy task-settle signal.
 
 The candidate configuration is a strict owner-private JSON document. It fixes
 absolute validation programs, typed argument templates, local and forge checks,
-evidence lifetimes, output and polling bounds, and one GitHub route. The route
+evidence lifetimes, output and polling bounds, one or more integration policies,
+and one GitHub route. Each integration policy has a unique opaque `id` and one
+closed `strategy`: `merge`, `rebase`, or `cherry_pick`. An initiative names only
+the policy ID; the installed service resolves the Git strategy from this immutable
+document and refuses missing, duplicate, or unknown policy entries. The route
 names distinct owner-private read and push credential files; the service rejects
 shared identities. `localFixtureRemoteRoot` permits a `file://` remote only for
 an explicitly bounded local test fixture and must be absent for the production

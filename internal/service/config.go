@@ -19,6 +19,7 @@ type Config struct {
 	WorkerProfiles                  application.WorkerProfileValidator
 	WorkerProfileCatalog            application.WorkerProfileCatalog
 	ValidationProfiles              application.ValidationProfileValidator
+	IntegrationPolicies             application.IntegrationPolicyResolver
 	Workspaces                      application.WorkspacePreparer
 	RuntimeAttachments              application.RuntimeAttachmentCoordinator
 	WorkerHarnesses                 application.WorkerHarnessResolver
@@ -53,6 +54,7 @@ type Config struct {
 	cleanupRemover           application.DeliveredWorkspaceRemover
 	cleanupForge             application.PullRequestDeliveryVerifier
 	cleanupLanded            application.LandedEvidenceGatherer
+	integrationAdapter       application.IntegrationAdapter
 	fixtureCandidatePreparer fixtureCandidatePreparer
 }
 
@@ -102,10 +104,11 @@ type ClaudeComposition struct {
 
 // ValidationComposition is the immutable operator-reviewed candidate policy.
 type ValidationComposition struct {
-	Programs       []validation.Program
-	Profiles       []validation.Profile
-	MaxOutputBytes int64
-	PollInterval   time.Duration
+	Programs            []validation.Program
+	Profiles            []validation.Profile
+	IntegrationPolicies map[string]application.IntegrationStrategy
+	MaxOutputBytes      int64
+	PollInterval        time.Duration
 }
 
 // ForgeComposition fixes the sole E0 pull-request route and keeps its read and

@@ -26,6 +26,13 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 	if configured.Repositories == nil || configured.Workspaces == nil {
 		t.Fatalf("installed repository configuration = %#v", configured)
 	}
+	strategy, policyErr := configured.IntegrationPolicies("integration-default")
+	if configured.integrationAdapter == nil || policyErr != nil || strategy != application.IntegrationMerge {
+		t.Fatalf("installed integration configuration = %#v, %q, %v", configured.integrationAdapter, strategy, policyErr)
+	}
+	if _, err := configured.IntegrationPolicies("integration-unreviewed"); err == nil {
+		t.Fatal("unreviewed integration policy resolved")
+	}
 	for _, shape := range []domain.TaskShape{domain.ShapeShip, domain.ShapeScout} {
 		if err := configured.ValidationProfiles("required", shape); err != nil {
 			t.Fatalf("ValidationProfiles(required, %s) error = %v", shape, err)
@@ -504,7 +511,8 @@ func installedServiceConfig(t *testing.T, root string) Config {
 			ConfigDirectory: serviceClaudeConfigDirectory(t, root),
 		},
 		ValidationComposition: &ValidationComposition{
-			Programs: []validation.Program{{ID: "repo-check", Executable: validationExecutable}},
+			Programs:            []validation.Program{{ID: "repo-check", Executable: validationExecutable}},
+			IntegrationPolicies: map[string]application.IntegrationStrategy{"integration-default": application.IntegrationMerge},
 			Profiles: []validation.Profile{{
 				ID: "required", EvidenceTTL: 10 * time.Minute,
 				LocalChecks: []validation.LocalCheck{{
