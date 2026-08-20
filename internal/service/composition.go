@@ -270,19 +270,27 @@ func stableTaskIdentity(serviceInstanceID, operationID string) string {
 	return "task-" + digest[:24]
 }
 
-func composeComisControl(config Config, mutations comiswire.DurableControlMutations) (ComisControl, error) {
+func composeComisControl(
+	config Config,
+	mutations comiswire.DurableControlMutations,
+	groupActivations comiswire.DurableGroupActivations,
+) (ComisControl, error) {
 	if config.ComisComposition == nil {
 		return config.ComisControl, nil
 	}
 	if mutations == nil {
 		return nil, errors.New("run service: Comis control requires durable mutations")
 	}
+	if groupActivations == nil {
+		return nil, errors.New("run service: Comis control requires durable group activations")
+	}
 	credential, err := readOwnerCredential(config.ComisComposition.CredentialFile)
 	if err != nil {
 		return nil, err
 	}
 	handler, err := comiswire.NewDurableControlHandler(comiswire.DurableControlHandlerConfig{
-		Mutations: mutations, ServiceInstanceID: comiswire.ServiceInstanceID(config.ServiceInstanceID),
+		Mutations: mutations, GroupActivations: groupActivations,
+		ServiceInstanceID: comiswire.ServiceInstanceID(config.ServiceInstanceID),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("run service Comis handler: %w", err)

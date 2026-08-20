@@ -17,6 +17,11 @@ type DurableControlMutations interface {
 	RecordTerminalEvent(context.Context, application.RecordTerminalEventCommand) (application.MutationResult, error)
 }
 
+// DurableGroupActivations is the application-owned same-scope binding surface.
+type DurableGroupActivations interface {
+	ActivateManagedRunGroup(context.Context, application.ActivateManagedRunGroupCommand) (application.InitiativeActivationResult, error)
+}
+
 // TerminalEvent commits the exact run, lease, session, and transition join
 // before returning the content-free protocol acknowledgement.
 func (handler *DurableControlHandler) TerminalEvent(ctx context.Context, params TerminalEventRequestParams) (TerminalEventResponseResult, error) {
@@ -41,6 +46,7 @@ func (handler *DurableControlHandler) TerminalEvent(ctx context.Context, params 
 // durable application mutation coordinator.
 type DurableControlHandlerConfig struct {
 	Mutations         DurableControlMutations
+	GroupActivations  DurableGroupActivations
 	ServiceInstanceID ServiceInstanceID
 }
 
@@ -48,6 +54,7 @@ type DurableControlHandlerConfig struct {
 // boundary and returns acknowledgements only from committed operation results.
 type DurableControlHandler struct {
 	mutations         DurableControlMutations
+	groupActivations  DurableGroupActivations
 	serviceInstanceID string
 }
 
@@ -60,7 +67,67 @@ func NewDurableControlHandler(config DurableControlHandlerConfig) (*DurableContr
 		return nil, errors.New("create durable Comis control handler: service instance identity is invalid")
 	}
 	return &DurableControlHandler{
-		mutations: config.Mutations, serviceInstanceID: string(config.ServiceInstanceID),
+		mutations: config.Mutations, groupActivations: config.GroupActivations,
+		serviceInstanceID: string(config.ServiceInstanceID),
+	}, nil
+}
+
+// GroupActivate translates the complete generated group request and preserves
+// the application-owned member outcomes in the host acknowledgement.
+func (handler *DurableControlHandler) GroupActivate(
+	ctx context.Context,
+	params GroupActivateRequestParams,
+) (GroupActivateResponseResult, error) {
+	if handler.groupActivations == nil {
+		return GroupActivateResponseResult{}, wireFailure(ErrorKindPreconditionFailed, "group activation is unavailable")
+	}
+	members := make([]application.ActivateManagedRunGroupMember, 0, len(params.Members))
+	for _, member := range params.Members {
+		workspaceLeaseID := ""
+		if member.WorkspaceLeaseID != nil {
+			workspaceLeaseID = string(*member.WorkspaceLeaseID)
+		}
+		executionAttachmentID := ""
+		if member.ExecutionAttachmentID != nil {
+			executionAttachmentID = string(*member.ExecutionAttachmentID)
+		}
+		attachmentTargetName := ""
+		if member.AttachmentTargetName != nil {
+			attachmentTargetName = string(*member.AttachmentTargetName)
+		}
+		members = append(members, application.ActivateManagedRunGroupMember{
+			ManagedRunID: string(member.ManagedRunID), ExternalRunRef: string(member.ExternalRunRef),
+			RegistrationNonce: string(member.RegistrationNonce), WorkspaceLeaseID: workspaceLeaseID,
+			ExecutionAttachmentID: executionAttachmentID, AttachmentTargetName: attachmentTargetName,
+		})
+	}
+	result, err := handler.groupActivations.ActivateManagedRunGroup(ctx, application.ActivateManagedRunGroupCommand{
+		OperationID: string(params.OperationID), ServiceInstanceID: handler.serviceInstanceID,
+		ManagedRunGroupID: string(params.ManagedRunGroupID), RegistrationNonce: string(params.RegistrationNonce),
+		Members: members,
+	})
+	if err != nil {
+		return GroupActivateResponseResult{}, controlMutationFailure(err)
+	}
+	if result.Operation.ID != string(params.OperationID) || result.Operation.Status != domain.OperationCompleted ||
+		result.Operation.UpdatedAt.Location() != time.UTC ||
+		result.Initiative.ManagedRunGroupID != string(params.ManagedRunGroupID) ||
+		len(result.Members) != len(params.Members) {
+		return GroupActivateResponseResult{}, wireFailure(ErrorKindInternalError, "durable group activation result is incomplete")
+	}
+	responseMembers := make([]GroupActivateResponseResultMembersItem, 0, len(result.Members))
+	for index, member := range result.Members {
+		if member.ManagedRunID != string(params.Members[index].ManagedRunID) ||
+			(member.Outcome != application.InitiativeActivationCompleted && member.Outcome != application.InitiativeActivationUnknown) {
+			return GroupActivateResponseResult{}, wireFailure(ErrorKindInternalError, "durable group member outcome is incomplete")
+		}
+		responseMembers = append(responseMembers, GroupActivateResponseResultMembersItem{
+			ManagedRunID: ManagedRunID(member.ManagedRunID), Outcome: string(member.Outcome),
+		})
+	}
+	return GroupActivateResponseResult{
+		ManagedRunGroupID: params.ManagedRunGroupID, Members: responseMembers,
+		ActivatedAtMs: result.Operation.UpdatedAt.UnixMilli(),
 	}, nil
 }
 

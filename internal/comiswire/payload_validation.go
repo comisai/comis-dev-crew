@@ -12,6 +12,8 @@ const (
 	PayloadRequest               PayloadTarget = "request"
 	PayloadAbandonResponse       PayloadTarget = "abandon-response"
 	PayloadActivateResponse      PayloadTarget = "activate-response"
+	PayloadGroupAbandonResponse  PayloadTarget = "group-abandon-response"
+	PayloadGroupActivateResponse PayloadTarget = "group-activate-response"
 	PayloadCancelResponse        PayloadTarget = "cancel-response"
 	PayloadErrorResponse         PayloadTarget = "error-response"
 	PayloadHandshakeResponse     PayloadTarget = "handshake-response"
@@ -22,6 +24,7 @@ const (
 	PayloadReportResponse        PayloadTarget = "report-response"
 	PayloadTerminalEventResponse PayloadTarget = "terminal-event-response"
 	PayloadMCPCallContext        PayloadTarget = "mcp-call-context"
+	PayloadMCPManagedRunGroup    PayloadTarget = "mcp-managed-run-group-result"
 	PayloadMCPManagedRunResult   PayloadTarget = "mcp-managed-run-result"
 )
 
@@ -35,9 +38,9 @@ type requestHeader struct {
 // Valid reports whether the target belongs to the pinned closed catalog.
 func (target PayloadTarget) Valid() bool {
 	switch target {
-	case PayloadRequest, PayloadAbandonResponse, PayloadActivateResponse, PayloadCancelResponse, PayloadErrorResponse,
+	case PayloadRequest, PayloadAbandonResponse, PayloadActivateResponse, PayloadGroupAbandonResponse, PayloadGroupActivateResponse, PayloadCancelResponse, PayloadErrorResponse,
 		PayloadHandshakeResponse, PayloadHealthResponse, PayloadPutEvidenceResponse, PayloadAttentionResponse, PayloadReleaseResponse, PayloadReportResponse,
-		PayloadTerminalEventResponse, PayloadMCPCallContext, PayloadMCPManagedRunResult:
+		PayloadTerminalEventResponse, PayloadMCPCallContext, PayloadMCPManagedRunGroup, PayloadMCPManagedRunResult:
 		return true
 	default:
 		return false
@@ -49,7 +52,7 @@ func ValidatePayload(target PayloadTarget, contents []byte) error {
 	if !target.Valid() {
 		return fmt.Errorf("unknown comis payload target %q", target)
 	}
-	if target != PayloadMCPCallContext && target != PayloadMCPManagedRunResult {
+	if target != PayloadMCPCallContext && target != PayloadMCPManagedRunGroup && target != PayloadMCPManagedRunResult {
 		limit := MaxResponseBytes
 		if target == PayloadRequest {
 			limit = MaxRequestBytes
@@ -95,6 +98,10 @@ func payloadContract(target PayloadTarget, contents []byte) (string, any, error)
 		return schemaAbandonResponse, &AbandonResponse{}, nil
 	case PayloadActivateResponse:
 		return schemaActivateResponse, &ActivateResponse{}, nil
+	case PayloadGroupAbandonResponse:
+		return schemaGroupAbandonResponse, &GroupAbandonResponse{}, nil
+	case PayloadGroupActivateResponse:
+		return schemaGroupActivateResponse, &GroupActivateResponse{}, nil
 	case PayloadCancelResponse:
 		return schemaCancelResponse, &CancelResponse{}, nil
 	case PayloadErrorResponse:
@@ -115,6 +122,8 @@ func payloadContract(target PayloadTarget, contents []byte) (string, any, error)
 		return schemaTerminalEventResponse, &TerminalEventResponse{}, nil
 	case PayloadMCPCallContext:
 		return schemaMCPCallContext, &MCPCallContext{}, nil
+	case PayloadMCPManagedRunGroup:
+		return schemaMCPManagedRunGroupResult, &MCPManagedRunGroupResult{}, nil
 	case PayloadMCPManagedRunResult:
 		return schemaMCPManagedRunResult, &MCPManagedRunResult{}, nil
 	default:
@@ -136,6 +145,12 @@ func requestContract(contents []byte) (string, any, error) {
 		return schemaAbandonRequest, &AbandonRequest{}, nil
 	case MethodManagedRunsActivate:
 		return schemaActivateRequest, &ActivateRequest{}, nil
+	case MethodManagedRunGroupsAbandon:
+		return schemaGroupAbandonRequest, &GroupAbandonRequest{}, nil
+	case MethodManagedRunGroupsActivate:
+		return schemaGroupActivateRequest, &GroupActivateRequest{}, nil
+	case MethodManagedRunGroupsGetHostRollup:
+		return schemaGroupGetHostRollupRequest, &GroupGetHostRollupRequest{}, nil
 	case MethodManagedRunsCancel:
 		return schemaCancelRequest, &CancelRequest{}, nil
 	case MethodManagedRunsHeartbeat:

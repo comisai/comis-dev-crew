@@ -412,8 +412,17 @@ func (harness *durableControlHarness) open(t *testing.T) {
 		_ = store.Close()
 		t.Fatal(err)
 	}
+	groups, err := application.NewInitiativeActivations(application.InitiativeActivationConfig{
+		Store: store, RuntimeAttachments: acceptingRuntimeAttachments{},
+		Acknowledger: mutations, Clock: func() time.Time { return harness.now },
+	})
+	if err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
 	handler, err := comiswire.NewDurableControlHandler(comiswire.DurableControlHandlerConfig{
-		Mutations: mutations, ServiceInstanceID: comiswire.ServiceInstanceID(harness.serviceInstanceID),
+		Mutations: mutations, GroupActivations: groups,
+		ServiceInstanceID: comiswire.ServiceInstanceID(harness.serviceInstanceID),
 	})
 	if err != nil {
 		_ = store.Close()

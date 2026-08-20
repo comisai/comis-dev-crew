@@ -19,6 +19,7 @@ import (
 // Implementations must durably deduplicate every operation ID.
 type ControlHandler interface {
 	Activate(context.Context, ActivateRequestParams) (ActivateResponseResult, error)
+	GroupActivate(context.Context, GroupActivateRequestParams) (GroupActivateResponseResult, error)
 	Abandon(context.Context, AbandonRequestParams) (AbandonResponseResult, error)
 	Cancel(context.Context, CancelRequestParams) (CancelResponseResult, error)
 	TerminalEvent(context.Context, TerminalEventRequestParams) (TerminalEventResponseResult, error)

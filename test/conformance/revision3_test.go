@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	pinnedSourceCommit = "abb1e802ec5612f860e71ff73041f89332ab92eb"
-	pinnedBundleDigest = "47bdab9ef7697a296f0b37f48b0d57c4b7f4dfbc961a99b43b4426c1a4edc64a"
+	pinnedSourceCommit = "6e7cc96d1b234113235ae83e89da8eeb63841037"
+	pinnedBundleDigest = "a718ad6b4dc34ab1efd34fbc29b15ed0f6a30a392e0c9571a443bb5574aaf020"
 )
 
 func TestContractPinsPreparedAttachmentAuthority(t *testing.T) {
@@ -22,7 +22,7 @@ func TestContractPinsPreparedAttachmentAuthority(t *testing.T) {
 	if pinned.Manifest.ProtocolID != "comis.capability-service/1" ||
 		pinned.Manifest.BundleDigest != pinnedBundleDigest ||
 		pinned.Provenance.SourceCommit != pinnedSourceCommit ||
-		len(pinned.Manifest.Artifacts) != 40 {
+		len(pinned.Manifest.Artifacts) != 41 {
 		t.Fatalf("pinned identity = protocol:%q digest:%q source:%q artifacts:%d",
 			pinned.Manifest.ProtocolID, pinned.Manifest.BundleDigest,
 			pinned.Provenance.SourceCommit, len(pinned.Manifest.Artifacts))
@@ -33,7 +33,7 @@ func TestContractPinsPreparedAttachmentAuthority(t *testing.T) {
 		t.Fatalf("prepared attachment metadata rejected: %v", err)
 	}
 
-	handshake := []byte(`{"jsonrpc":"2.0","id":"operation_handshake_attachment","method":"capabilityServices.handshake","params":{"protocolId":"comis.capability-service/1","bundleDigest":"` + pinnedBundleDigest + `","operationId":"operation_handshake_attachment","serviceInstanceId":"service-instance_attachment","requestedScopes":["health","attention_response","evidence","report","workspace_lease","terminal_events","execution_attachment"]}}`)
+	handshake := []byte(`{"jsonrpc":"2.0","id":"operation_handshake_attachment","method":"capabilityServices.handshake","params":{"protocolId":"comis.capability-service/1","bundleDigest":"` + pinnedBundleDigest + `","operationId":"operation_handshake_attachment","serviceInstanceId":"service-instance_attachment","requestedScopes":["health","attention_response","evidence","report","workspace_lease","terminal_events","execution_attachment","managed_run_group"]}}`)
 	if err := comiswire.ValidatePayload(comiswire.PayloadRequest, handshake); err != nil {
 		t.Fatalf("pinned scopes rejected: %v", err)
 	}

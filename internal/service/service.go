@@ -239,6 +239,10 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 			return fmt.Errorf("run service runtime attachment recovery: %w", err)
 		}
 	}
+	groupActivations, err := composeInitiativeActivations(config, store, mutations, clock)
+	if err != nil {
+		return err
+	}
 	var interventions *application.Interventions
 	if config.workspaceInspector != nil {
 		interventions, err = application.NewInterventions(application.InterventionConfig{
@@ -274,7 +278,7 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		}
 		controlMutations = launchSupervisor
 	}
-	control, err := composeComisControl(config, controlMutations)
+	control, err := composeComisControl(config, controlMutations, groupActivations)
 	if err != nil {
 		return err
 	}
@@ -469,24 +473,21 @@ func composeMutations(config Config, store *sqlite.Store, clock application.Cloc
 	return mutations, nil
 }
 
-func serveLocalEndpoints(ctx context.Context, servers []*localapi.Server) error {
-	if len(servers) == 1 {
-		return servers[0].Serve(ctx)
+func composeInitiativeActivations(
+	config Config,
+	store *sqlite.Store,
+	mutations *application.Mutations,
+	clock application.Clock,
+) (*application.InitiativeActivations, error) {
+	if mutations == nil {
+		return nil, nil
 	}
-	serveContext, cancel := context.WithCancel(ctx)
-	defer cancel()
-	results := make(chan error, len(servers))
-	for _, server := range servers {
-		go func(endpoint *localapi.Server) { results <- endpoint.Serve(serveContext) }(server)
+	activations, err := application.NewInitiativeActivations(application.InitiativeActivationConfig{
+		Store: store, RuntimeAttachments: config.RuntimeAttachments,
+		Acknowledger: mutations, Clock: clock,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("run service initiative activation coordinator: %w", err)
 	}
-	var resultErr error
-	for range servers {
-		err := <-results
-		resultErr = errors.Join(resultErr, err)
-		cancel()
-		for _, server := range servers {
-			resultErr = errors.Join(resultErr, server.Close())
-		}
-	}
-	return resultErr
+	return activations, nil
 }

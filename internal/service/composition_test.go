@@ -101,11 +101,18 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	control, err := composeComisControl(configured, mutations)
+	groups, err := application.NewInitiativeActivations(application.InitiativeActivationConfig{
+		Store: store, RuntimeAttachments: serviceRuntimeAttachments{}, Acknowledger: mutations,
+		Clock: func() time.Time { return time.Now().UTC() },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := composeComisControl(configured, mutations, groups)
 	if err != nil || control == nil {
 		t.Fatalf("composeComisControl() = %#v, %v", control, err)
 	}
-	if passthrough, err := composeComisControl(Config{}, nil); err != nil || passthrough != nil {
+	if passthrough, err := composeComisControl(Config{}, nil, nil); err != nil || passthrough != nil {
 		t.Fatalf("composeComisControl(empty) = %#v, %v", passthrough, err)
 	}
 }
@@ -275,21 +282,21 @@ func TestComisComposition_RequiresMutationsCredentialAndValidAuthority(t *testin
 		SocketPath: filepath.Join(root, "comis.sock"), CredentialFile: credentialFile,
 		HandshakeOperationID: "installed-handshake-0001",
 	}}
-	if _, err := composeComisControl(configured, nil); err == nil {
+	if _, err := composeComisControl(configured, nil, serviceGroupActivationStub{}); err == nil {
 		t.Fatal("composeComisControl(no mutations) error = nil")
 	}
 	configured.ServiceInstanceID = "bad identity"
-	if _, err := composeComisControl(configured, serviceMutationStub{}); err == nil {
+	if _, err := composeComisControl(configured, serviceMutationStub{}, serviceGroupActivationStub{}); err == nil {
 		t.Fatal("composeComisControl(invalid service identity) error = nil")
 	}
 	configured.ServiceInstanceID = "service-instance-fixture"
 	configured.ComisComposition.CredentialFile = filepath.Join(root, "missing")
-	if _, err := composeComisControl(configured, serviceMutationStub{}); err == nil {
+	if _, err := composeComisControl(configured, serviceMutationStub{}, serviceGroupActivationStub{}); err == nil {
 		t.Fatal("composeComisControl(missing credential) error = nil")
 	}
 	configured.ComisComposition.CredentialFile = credentialFile
 	configured.ComisComposition.HandshakeOperationID = "bad operation"
-	if _, err := composeComisControl(configured, serviceMutationStub{}); err == nil {
+	if _, err := composeComisControl(configured, serviceMutationStub{}, serviceGroupActivationStub{}); err == nil {
 		t.Fatal("composeComisControl(invalid handshake operation) error = nil")
 	}
 }
@@ -373,6 +380,15 @@ func TestReadOwnerCredential_AcceptsBoundedSSHDeployKeyMaterial(t *testing.T) {
 }
 
 type serviceMutationStub struct{}
+
+type serviceGroupActivationStub struct{}
+
+func (serviceGroupActivationStub) ActivateManagedRunGroup(
+	context.Context,
+	application.ActivateManagedRunGroupCommand,
+) (application.InitiativeActivationResult, error) {
+	return application.InitiativeActivationResult{}, nil
+}
 
 func (serviceMutationStub) ActivateManagedRun(context.Context, application.ActivateManagedRunCommand) (application.MutationResult, error) {
 	return application.MutationResult{}, nil

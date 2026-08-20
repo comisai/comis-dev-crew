@@ -44,6 +44,22 @@ func (handler *durableControlHandler) Activate(_ context.Context, params Activat
 	return activateResult(params), nil
 }
 
+func (handler *durableControlHandler) GroupActivate(
+	_ context.Context,
+	params GroupActivateRequestParams,
+) (GroupActivateResponseResult, error) {
+	members := make([]GroupActivateResponseResultMembersItem, 0, len(params.Members))
+	for _, member := range params.Members {
+		members = append(members, GroupActivateResponseResultMembersItem{
+			ManagedRunID: member.ManagedRunID, Outcome: "completed",
+		})
+	}
+	return GroupActivateResponseResult{
+		ManagedRunGroupID: params.ManagedRunGroupID, Members: members,
+		ActivatedAtMs: 1_800_000_000_000,
+	}, nil
+}
+
 func (handler *durableControlHandler) Abandon(_ context.Context, params AbandonRequestParams) (AbandonResponseResult, error) {
 	return abandonResult(params), nil
 }

@@ -416,7 +416,9 @@ every run, lease, and execution-attachment handle atomically at one state
 version. Runtime attachment binding begins only after that commit. If any local
 binding remains uncertain, the response reports the outcome per member and the
 initiative becomes durable `unknown`; only an all-completed result remains
-`active` and eligible for later scheduling.
+`active` and eligible for later scheduling. The persistent Comis control session
+negotiates `managed_run_group`, strictly validates the generated group request,
+and returns those same per-member outcomes over the authenticated socket.
 
 Startup reconciliation now includes every nonterminal initiative. Preparing,
 active, blocked, integrating, validating, and candidate-complete initiatives are

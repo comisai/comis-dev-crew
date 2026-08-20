@@ -24,6 +24,11 @@ type authenticatedAbandonRequest struct {
 	Bearer string `json:"bearer"`
 }
 
+type authenticatedGroupActivateRequest struct {
+	GroupActivateRequest
+	Bearer string `json:"bearer"`
+}
+
 type authenticatedTerminalEventRequest struct {
 	TerminalEventRequest
 	Bearer string `json:"bearer"`
@@ -211,6 +216,29 @@ func (session *controlSession) dispatch(ctx context.Context, method Method, line
 			return session.writeFailure(&id, handlerWireFailure(err))
 		}
 		return session.writeValidated(PayloadAbandonResponse, AbandonResponse{JSONRPC: JSONRPCVersion, ID: id, Result: result})
+	case MethodManagedRunGroupsActivate:
+		var authenticated authenticatedGroupActivateRequest
+		if err := decodeStrictObject(line, &authenticated); err != nil {
+			return session.writeFailure(nil, wireFailure(ErrorKindInvalidRequest, "invalid group activation envelope"))
+		}
+		id := authenticated.ID
+		if !session.authenticated(authenticated.Bearer) {
+			return session.writeFailure(&id, wireFailure(ErrorKindUnauthorizedInstance, "instance credential differs"))
+		}
+		if authenticated.ID != authenticated.Params.OperationID {
+			return session.writeFailure(&id, wireFailure(ErrorKindInvalidRequest, "group activation operation identity differs"))
+		}
+		if err := validateBaseRequest(authenticated.GroupActivateRequest); err != nil {
+			return session.writeFailure(&id, wireFailure(ErrorKindInvalidParams, "invalid group activation request"))
+		}
+		result, err := session.handler.GroupActivate(ctx, authenticated.Params)
+		if err != nil {
+			return session.writeFailure(&id, handlerWireFailure(err))
+		}
+		return session.writeValidated(
+			PayloadGroupActivateResponse,
+			GroupActivateResponse{JSONRPC: JSONRPCVersion, ID: id, Result: result},
+		)
 	case MethodManagedRunsCancel:
 		var authenticated authenticatedCancelRequest
 		if err := decodeStrictObject(line, &authenticated); err != nil {
@@ -410,6 +438,7 @@ func requiredControlScopes() []ServiceScope {
 		ServiceScopeWorkspaceLease,
 		ServiceScopeTerminalEvents,
 		ServiceScopeExecutionAttachment,
+		ServiceScopeManagedRunGroup,
 	}
 }
 
