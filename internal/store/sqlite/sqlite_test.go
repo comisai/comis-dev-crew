@@ -479,6 +479,7 @@ func TestStore_RejectsCorruptTaskCollectionsAndStoredTimes(t *testing.T) {
 	}{
 		{name: "acceptance criteria", column: "acceptance_criteria_json", value: "{"},
 		{name: "constraints", column: "constraints_json", value: "{"},
+		{name: "consumed contracts", column: "consumed_contracts_json", value: "{"},
 		{name: "created time", column: "created_at", value: "not-a-time"},
 		{name: "updated time", column: "updated_at", value: "not-a-time"},
 	}

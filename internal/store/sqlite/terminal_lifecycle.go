@@ -242,7 +242,8 @@ func getTaskByManagedRun(ctx context.Context, source queryer, managedRunID strin
 		workspace_lease_id, execution_attachment_id, attachment_target_name,
 		state, shape, repository_id, base_revision,
         brief_revision, brief_revision_hash, acceptance_criteria_json,
-        constraints_json, validation_profile, delivery_mode, worker_profile_id,
+        constraints_json, consumed_contracts_json,
+        validation_profile, delivery_mode, worker_profile_id,
         report_cursor, state_version, created_at, updated_at
     FROM tasks WHERE managed_run_id = ?`
 	rows, err := source.QueryContext(ctx, query, managedRunID)
@@ -273,7 +274,8 @@ func getTaskByBinding(ctx context.Context, source queryer, managedRunID, workspa
 		workspace_lease_id, execution_attachment_id, attachment_target_name,
 		state, shape, repository_id, base_revision,
         brief_revision, brief_revision_hash, acceptance_criteria_json,
-        constraints_json, validation_profile, delivery_mode, worker_profile_id,
+        constraints_json, consumed_contracts_json,
+        validation_profile, delivery_mode, worker_profile_id,
         report_cursor, state_version, created_at, updated_at
     FROM tasks WHERE managed_run_id = ? AND workspace_lease_id = ?`
 	rows, err := source.QueryContext(ctx, query, managedRunID, workspaceLeaseID)

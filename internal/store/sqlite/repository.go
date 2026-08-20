@@ -52,14 +52,19 @@ func insertTask(ctx context.Context, target execer, task domain.Task) error {
 	if err != nil {
 		return fmt.Errorf("encode task constraints: %w", err)
 	}
+	consumedContracts, err := json.Marshal(task.ConsumedContracts)
+	if err != nil {
+		return fmt.Errorf("encode task consumed contracts: %w", err)
+	}
 	const statement = `INSERT INTO tasks (
 		handle, schema_version, service_instance_id, managed_run_id,
 		workspace_lease_id, execution_attachment_id, attachment_target_name,
 		state, shape, repository_id, base_revision,
         brief_revision, brief_revision_hash, acceptance_criteria_json,
-        constraints_json, validation_profile, delivery_mode, worker_profile_id,
+        constraints_json, consumed_contracts_json,
+        validation_profile, delivery_mode, worker_profile_id,
         report_cursor, state_version, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err = target.ExecContext(ctx, statement,
 		task.Handle,
 		task.SchemaVersion,
@@ -76,6 +81,7 @@ func insertTask(ctx context.Context, target execer, task domain.Task) error {
 		task.BriefRevisionHash,
 		string(acceptanceCriteria),
 		string(constraints),
+		string(consumedContracts),
 		task.ValidationProfile,
 		task.DeliveryMode,
 		task.WorkerProfileID,
@@ -168,7 +174,8 @@ func listTasks(ctx context.Context, source queryer) (tasks []domain.Task, result
 		workspace_lease_id, execution_attachment_id, attachment_target_name,
 		state, shape, repository_id, base_revision,
         brief_revision, brief_revision_hash, acceptance_criteria_json,
-        constraints_json, validation_profile, delivery_mode, worker_profile_id,
+        constraints_json, consumed_contracts_json,
+        validation_profile, delivery_mode, worker_profile_id,
         report_cursor, state_version, created_at, updated_at
     FROM tasks ORDER BY handle`
 	rows, err := source.QueryContext(ctx, query)
@@ -203,7 +210,8 @@ func getTask(ctx context.Context, source queryer, handle string) (domain.Task, e
 		workspace_lease_id, execution_attachment_id, attachment_target_name,
 		state, shape, repository_id, base_revision,
         brief_revision, brief_revision_hash, acceptance_criteria_json,
-        constraints_json, validation_profile, delivery_mode, worker_profile_id,
+        constraints_json, consumed_contracts_json,
+        validation_profile, delivery_mode, worker_profile_id,
         report_cursor, state_version, created_at, updated_at
     FROM tasks WHERE handle = ?`
 	task, err := scanTask(source.QueryRowContext(ctx, query, handle))
@@ -294,6 +302,7 @@ func scanTask(row rowScanner) (domain.Task, error) {
 	var task domain.Task
 	var acceptanceCriteria string
 	var constraints string
+	var consumedContracts string
 	var createdAt string
 	var updatedAt string
 	if err := row.Scan(
@@ -312,6 +321,7 @@ func scanTask(row rowScanner) (domain.Task, error) {
 		&task.BriefRevisionHash,
 		&acceptanceCriteria,
 		&constraints,
+		&consumedContracts,
 		&task.ValidationProfile,
 		&task.DeliveryMode,
 		&task.WorkerProfileID,
@@ -327,6 +337,9 @@ func scanTask(row rowScanner) (domain.Task, error) {
 	}
 	if err := json.Unmarshal([]byte(constraints), &task.Constraints); err != nil {
 		return domain.Task{}, fmt.Errorf("decode task constraints: %w", err)
+	}
+	if err := json.Unmarshal([]byte(consumedContracts), &task.ConsumedContracts); err != nil {
+		return domain.Task{}, fmt.Errorf("decode task consumed contracts: %w", err)
 	}
 	var err error
 	task.CreatedAt, err = parseTime(createdAt)
