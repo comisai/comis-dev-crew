@@ -256,10 +256,17 @@ func (store *Store) GetBacklogItem(ctx context.Context, handle string) (domain.B
 
 // ListBacklogItems returns validated backlog requests ordered by handle.
 func (store *Store) ListBacklogItems(ctx context.Context) (items []domain.BacklogItem, resultErr error) {
+	return listBacklogItems(ctx, store.db)
+}
+
+func listBacklogItems(
+	ctx context.Context,
+	source queryer,
+) (items []domain.BacklogItem, resultErr error) {
 	const query = `SELECT handle, schema_version, repository_id, shape, requested_outcome,
         depends_on_json, priority, readiness, source_conversation_ref, created_at, updated_at
         FROM backlog_items ORDER BY handle`
-	rows, err := store.db.QueryContext(ctx, query)
+	rows, err := source.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("list backlog items: %w", err)
 	}

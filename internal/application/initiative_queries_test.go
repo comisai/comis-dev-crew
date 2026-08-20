@@ -119,7 +119,7 @@ func TestInitiativeQueriesRejectInvalidScopesAndTranslateStoreFailures(t *testin
 		return err
 	}(), domain.ErrorInternal)
 	assertFailureCode(t, func() error {
-		store.err = application.ErrNotFound
+		store.err = ErrNotFound
 		_, err := queries.GetInitiative(context.Background(), "initiative-missing")
 		return err
 	}(), domain.ErrorNotFound)

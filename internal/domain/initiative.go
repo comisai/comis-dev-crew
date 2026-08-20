@@ -85,26 +85,26 @@ func (kind ContractArtifactKind) valid() bool {
 // lets a worker's evidence stay meaningful: without it a worker could rebase
 // onto a moving default branch and still call its old result current.
 type InitiativeBaseRevision struct {
-	RepositoryID string
-	Revision     string
+	RepositoryID string `json:"repositoryId"`
+	Revision     string `json:"revision"`
 }
 
 // InitiativeComponent groups the tasks that carry one responsibility. The
 // responsibility text itself is domain content and stays private to the
 // companion; only the reference travels.
 type InitiativeComponent struct {
-	ComponentHandle   string
-	RepositoryID      string
-	ResponsibilityRef string
-	TaskHandles       []string
+	ComponentHandle   string   `json:"componentHandle"`
+	RepositoryID      string   `json:"repositoryId"`
+	ResponsibilityRef string   `json:"responsibilityRef"`
+	TaskHandles       []string `json:"taskHandles"`
 }
 
 // InitiativeEdge is one dependency at the current initiative revision.
 type InitiativeEdge struct {
-	FromTaskHandle       string
-	ToTaskHandle         string
-	Kind                 InitiativeEdgeKind
-	RequiredArtifactKind ContractArtifactKind
+	FromTaskHandle       string               `json:"fromTaskHandle"`
+	ToTaskHandle         string               `json:"toTaskHandle"`
+	Kind                 InitiativeEdgeKind   `json:"kind"`
+	RequiredArtifactKind ContractArtifactKind `json:"requiredArtifactKind,omitempty"`
 }
 
 // DevelopmentInitiative coordinates several components as one durable unit.
@@ -114,20 +114,20 @@ type InitiativeEdge struct {
 // an initiative from becoming a general workflow engine reaching across
 // authorities: a dependency can only ever be expressed between members.
 type DevelopmentInitiative struct {
-	SchemaVersion        int
-	Handle               string
-	ManagedRunGroupID    string
-	TitleRef             string
-	State                InitiativeState
-	BaseRevisionSet      []InitiativeBaseRevision
-	Components           []InitiativeComponent
-	Edges                []InitiativeEdge
-	ContractArtifacts    []string
-	IntegrationPolicyID  string
-	IntegrationOwnerTask string
-	StateVersion         int64
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	SchemaVersion        int                      `json:"schemaVersion"`
+	Handle               string                   `json:"handle"`
+	ManagedRunGroupID    string                   `json:"managedRunGroupId,omitempty"`
+	TitleRef             string                   `json:"titleRef"`
+	State                InitiativeState          `json:"state"`
+	BaseRevisionSet      []InitiativeBaseRevision `json:"baseRevisionSet"`
+	Components           []InitiativeComponent    `json:"components"`
+	Edges                []InitiativeEdge         `json:"edges"`
+	ContractArtifacts    []string                 `json:"contractArtifacts"`
+	IntegrationPolicyID  string                   `json:"integrationPolicyId"`
+	IntegrationOwnerTask string                   `json:"integrationOwnerTask,omitempty"`
+	StateVersion         int64                    `json:"stateVersion"`
+	CreatedAt            time.Time                `json:"createdAt"`
+	UpdatedAt            time.Time                `json:"updatedAt"`
 }
 
 // Validate enforces the initiative record and its graph invariants.

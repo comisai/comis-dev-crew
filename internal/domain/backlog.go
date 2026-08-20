@@ -56,17 +56,17 @@ func (readiness BacklogReadiness) valid() bool {
 // to put it, and promotion has to go through the normal two-phase flow to
 // obtain any.
 type BacklogItem struct {
-	SchemaVersion         int
-	Handle                string
-	RepositoryID          string
-	Shape                 TaskShape
-	RequestedOutcome      string
-	DependsOn             []string
-	Priority              BacklogPriority
-	Readiness             BacklogReadiness
-	SourceConversationRef string
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
+	SchemaVersion         int              `json:"schemaVersion"`
+	Handle                string           `json:"handle"`
+	RepositoryID          string           `json:"repositoryId"`
+	Shape                 TaskShape        `json:"shape"`
+	RequestedOutcome      string           `json:"requestedOutcome"`
+	DependsOn             []string         `json:"dependsOn"`
+	Priority              BacklogPriority  `json:"priority"`
+	Readiness             BacklogReadiness `json:"readiness"`
+	SourceConversationRef string           `json:"sourceConversationRef"`
+	CreatedAt             time.Time        `json:"createdAt"`
+	UpdatedAt             time.Time        `json:"updatedAt"`
 }
 
 // Validate enforces the strict backlog record.

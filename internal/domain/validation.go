@@ -97,6 +97,22 @@ func ValidateTaskState(value TaskState) error {
 	return nil
 }
 
+// ValidateInitiativeState rejects an initiative state outside the closed set.
+func ValidateInitiativeState(value InitiativeState) error {
+	if !value.valid() {
+		return &ValidationError{Field: "state", Reason: "must be a known initiative state"}
+	}
+	return nil
+}
+
+// ValidateBacklogReadiness rejects a readiness value outside the closed set.
+func ValidateBacklogReadiness(value BacklogReadiness) error {
+	if !value.valid() {
+		return &ValidationError{Field: "readiness", Reason: "must be a known backlog readiness"}
+	}
+	return nil
+}
+
 // MaximumDecisionResponseBytes bounds one answer before it is stored, so an
 // oversized reply is refused rather than truncated into a different answer.
 const MaximumDecisionResponseBytes = 8192
