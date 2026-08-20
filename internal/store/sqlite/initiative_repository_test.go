@@ -22,6 +22,12 @@ type initiativeBacklogRepository interface {
 	ListBacklogItems(context.Context) ([]domain.BacklogItem, error)
 }
 
+type initiativeQuerySnapshotRepository interface {
+	InitiativeSnapshot(context.Context) ([]domain.DevelopmentInitiative, int64, error)
+	InitiativeObservation(context.Context, string) (domain.DevelopmentInitiative, []domain.Task, int64, error)
+	BacklogSnapshot(context.Context) ([]domain.BacklogItem, int64, error)
+}
+
 func TestInitiativeAndBacklogRecordsSurviveAnExactStoreRestart(t *testing.T) {
 	ctx := context.Background()
 	databasePath := filepath.Join(canonicalTempDir(t), "devcrew.db")
@@ -73,6 +79,67 @@ func TestInitiativeAndBacklogRecordsSurviveAnExactStoreRestart(t *testing.T) {
 	if err != nil || len(backlogItems) != 2 || backlogItems[0].Handle != "backlog-persist-0001" ||
 		backlogItems[1].Handle != "backlog-persist-0002" {
 		t.Fatalf("ListBacklogItems() = %#v, %v, want deterministic handle order", backlogItems, err)
+	}
+}
+
+func TestInitiativeAndBacklogQuerySnapshotsCarryOneDurableVersion(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	member := storeTask("task-component-a", 12)
+	member.RepositoryID = "repo-primary"
+	member.BaseRevision = "0123456789abcdef0123456789abcdef01234567"
+	member.BriefRevisionHash = ""
+	member, err = member.PinBriefRevision()
+	if err != nil {
+		t.Fatalf("PinBriefRevision() error = %v", err)
+	}
+	if err := store.CreateTask(ctx, member); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	initiative := persistenceInitiative("initiative-snapshot", domain.InitiativeActive, 12)
+	initiative.Components = initiative.Components[:1]
+	initiative.Edges = []domain.InitiativeEdge{}
+	initiative.IntegrationOwnerTask = "task-component-a"
+	if err := store.CreateInitiative(ctx, initiative); err != nil {
+		t.Fatalf("CreateInitiative() error = %v", err)
+	}
+	backlog := persistenceBacklogItem("backlog-snapshot")
+	if err := store.CreateBacklogItem(ctx, backlog); err != nil {
+		t.Fatalf("CreateBacklogItem() error = %v", err)
+	}
+	repository, ok := any(store).(initiativeQuerySnapshotRepository)
+	if !ok {
+		t.Fatal("SQLite Store does not implement initiative query snapshots")
+	}
+
+	initiatives, version, err := repository.InitiativeSnapshot(ctx)
+	if err != nil || version != 12 || len(initiatives) != 1 || initiatives[0].Handle != initiative.Handle {
+		t.Fatalf("InitiativeSnapshot() = %#v, %d, %v", initiatives, version, err)
+	}
+	gotInitiative, tasks, version, err := repository.InitiativeObservation(ctx, initiative.Handle)
+	if err != nil || version != 12 || gotInitiative.Handle != initiative.Handle ||
+		len(tasks) != 1 || tasks[0].Handle != member.Handle {
+		t.Fatalf("InitiativeObservation() = %#v, %#v, %d, %v", gotInitiative, tasks, version, err)
+	}
+	items, version, err := repository.BacklogSnapshot(ctx)
+	if err != nil || version != 12 || len(items) != 1 || items[0].Handle != backlog.Handle {
+		t.Fatalf("BacklogSnapshot() = %#v, %d, %v", items, version, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if _, _, err := repository.InitiativeSnapshot(ctx); err == nil {
+		t.Fatal("InitiativeSnapshot(closed) error = nil")
+	}
+	if _, _, _, err := repository.InitiativeObservation(ctx, initiative.Handle); err == nil {
+		t.Fatal("InitiativeObservation(closed) error = nil")
+	}
+	if _, _, err := repository.BacklogSnapshot(ctx); err == nil {
+		t.Fatal("BacklogSnapshot(closed) error = nil")
 	}
 }
 
