@@ -70,6 +70,7 @@ func TestInitiativeAggregateFailureRollsBackTheMemberMutation(t *testing.T) {
 	mutation := application.TaskStartMutation{
 		TaskHandle: "task-integration", OperationID: "start-integration-0001",
 		SubjectDigest: strings.Repeat("c", 64), At: activation.At.Add(time.Minute),
+		SchedulingLimits: initiativeTestSchedulingLimits(2),
 	}
 	if _, err := store.CommitTaskStart(ctx, mutation); err == nil {
 		t.Fatal("CommitTaskStart(injected aggregate failure) error = nil")
@@ -96,6 +97,7 @@ func TestInitiativeMemberStartRequiresAtomicSchedulerAuthority(t *testing.T) {
 	mutation := application.TaskStartMutation{
 		TaskHandle: "task-integration", OperationID: "start-held-integration-0001",
 		SubjectDigest: strings.Repeat("d", 64), At: activation.At.Add(time.Minute),
+		SchedulingLimits: initiativeTestSchedulingLimits(2),
 	}
 	if _, err := store.CommitTaskStart(ctx, mutation); !errors.Is(err, application.ErrPrecondition) {
 		t.Fatalf("CommitTaskStart(dependency-held initiative member) error = %v, want ErrPrecondition", err)
@@ -106,5 +108,57 @@ func TestInitiativeMemberStartRequiresAtomicSchedulerAuthority(t *testing.T) {
 	}
 	if _, err := store.GetOperation(ctx, mutation.OperationID); !errors.Is(err, application.ErrNotFound) {
 		t.Fatalf("held start operation error = %v, want ErrNotFound", err)
+	}
+	allowed := application.TaskStartMutation{
+		TaskHandle: "task-component-a", OperationID: "start-ready-component-0001",
+		SubjectDigest: strings.Repeat("e", 64), At: activation.At.Add(2 * time.Minute),
+		SchedulingLimits: initiativeTestSchedulingLimits(2),
+	}
+	started, err := store.CommitTaskStart(ctx, allowed)
+	if err != nil || started.Task.State != domain.TaskLaunching {
+		t.Fatalf("CommitTaskStart(dependency-ready component) = %#v, %v", started, err)
+	}
+}
+
+func TestInitiativeMemberStartFailsClosedWithoutCapacityAuthority(t *testing.T) {
+	ctx := context.Background()
+	store, _, activation := preparedInitiativeActivationStore(t)
+	if _, err := store.CommitInitiativeActivation(ctx, activation); err != nil {
+		t.Fatalf("CommitInitiativeActivation() error = %v", err)
+	}
+	withoutLimits := application.TaskStartMutation{
+		TaskHandle: "task-component-a", OperationID: "start-without-limits-0001",
+		SubjectDigest: strings.Repeat("f", 64), At: activation.At.Add(time.Minute),
+	}
+	if _, err := store.CommitTaskStart(ctx, withoutLimits); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("CommitTaskStart(without limits) error = %v, want ErrPrecondition", err)
+	}
+
+	occupied := storeTask("task-standalone-worker", 1)
+	occupied.State = domain.TaskWorking
+	occupied.ManagedRunID = "managed-run-standalone-worker"
+	occupied.WorkspaceLeaseID = "workspace-lease-standalone-worker"
+	occupied.CreatedAt = activation.At
+	occupied.UpdatedAt = activation.At
+	occupied, err := occupied.PinBriefRevision()
+	if err != nil {
+		t.Fatalf("PinBriefRevision(occupied) error = %v", err)
+	}
+	if err := store.CreateTask(ctx, occupied); err != nil {
+		t.Fatalf("CreateTask(occupied) error = %v", err)
+	}
+	queued := withoutLimits
+	queued.OperationID = "start-capacity-queued-0001"
+	queued.SubjectDigest = strings.Repeat("1", 64)
+	queued.SchedulingLimits = initiativeTestSchedulingLimits(1)
+	if _, err := store.CommitTaskStart(ctx, queued); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("CommitTaskStart(capacity queued) error = %v, want ErrPrecondition", err)
+	}
+}
+
+func initiativeTestSchedulingLimits(maximum int) *application.InitiativeSchedulingLimits {
+	return &application.InitiativeSchedulingLimits{
+		MaxConcurrentTasks: maximum, MaxConcurrentTasksPerRepository: maximum,
+		WorkerProfileLimits: map[string]int{"codex-standard": maximum},
 	}
 }

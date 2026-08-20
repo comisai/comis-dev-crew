@@ -22,6 +22,7 @@ const serviceUsage = `Usage: devcrew-service [--database PATH] [--socket PATH]
          --comis-handshake-operation ID --codex-profile ID --codex-executable PATH
          --codex-version VERSION --codex-model MODEL --codex-effort EFFORT
 		 --codex-terminal-allow-entry ID --codex-network POSTURE --codex-concurrency N
+		 --max-concurrent-tasks N --max-concurrent-tasks-per-repository N
 		 [--claude-profile ID --claude-executable PATH --claude-version VERSION
 		  --claude-model MODEL --claude-effort EFFORT --claude-terminal-allow-entry ID
 		  --claude-network POSTURE --claude-concurrency N --claude-config-directory PATH]
@@ -58,6 +59,8 @@ Options:
   --codex-terminal-allow-entry ID Reviewed Comis terminal allow-entry identity
   --codex-network POSTURE         disabled, restricted, or host
   --codex-concurrency N           Reviewed profile concurrency limit
+  --max-concurrent-tasks N        Reviewed host-wide worker ceiling
+  --max-concurrent-tasks-per-repository N  Reviewed per-repository worker ceiling
   --claude-profile ID             Exact reviewed Claude Code profile identity
   --claude-executable PATH        Canonical Claude Code executable path
   --claude-version VERSION        Exact reviewed Claude Code version output
@@ -113,6 +116,8 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	var codexTerminalAllowEntry string
 	var codexNetwork string
 	var codexConcurrency int
+	var maxConcurrentTasks int
+	var maxConcurrentTasksPerRepository int
 	var claudeProfileID string
 	var claudeExecutable string
 	var claudeVersion string
@@ -157,6 +162,8 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	flags.StringVar(&codexTerminalAllowEntry, "codex-terminal-allow-entry", "", "reviewed Comis terminal allow-entry identity")
 	flags.StringVar(&codexNetwork, "codex-network", "", "reviewed network posture")
 	flags.IntVar(&codexConcurrency, "codex-concurrency", 0, "reviewed profile concurrency limit")
+	flags.IntVar(&maxConcurrentTasks, "max-concurrent-tasks", 0, "reviewed host-wide worker ceiling")
+	flags.IntVar(&maxConcurrentTasksPerRepository, "max-concurrent-tasks-per-repository", 0, "reviewed per-repository worker ceiling")
 	flags.StringVar(&claudeProfileID, "claude-profile", "", "exact reviewed Claude Code profile identity")
 	flags.StringVar(&claudeExecutable, "claude-executable", "", "canonical Claude Code executable path")
 	flags.StringVar(&claudeVersion, "claude-version", "", "exact reviewed Claude Code version output")
@@ -208,12 +215,14 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 		codexProfileID, codexExecutable, codexVersion, codexModel, codexEffort, codexTerminalAllowEntry, codexNetwork,
 		candidateConfigPath,
 	}
-	installed := preparationTTLConfigured || codexConcurrency != 0
+	installed := preparationTTLConfigured || codexConcurrency != 0 || maxConcurrentTasks != 0 || maxConcurrentTasksPerRepository != 0
 	for _, value := range installedValues {
 		installed = installed || value != ""
 	}
 	validNetwork := codexNetwork == string(workers.NetworkDisabled) || codexNetwork == string(workers.NetworkRestricted) || codexNetwork == string(workers.NetworkHost)
-	if installed && (preparationTTL <= 0 || preparationTTL > 24*time.Hour || codexConcurrency < 1 || codexConcurrency > 64 || !validNetwork) {
+	if installed && (preparationTTL <= 0 || preparationTTL > 24*time.Hour || codexConcurrency < 1 || codexConcurrency > 64 ||
+		maxConcurrentTasks < 1 || maxConcurrentTasks > 1024 || maxConcurrentTasksPerRepository < 1 ||
+		maxConcurrentTasksPerRepository > maxConcurrentTasks || !validNetwork) {
 		return writeServiceDiagnostic(stderr, "devcrew-service: installed composition is incomplete\nHint: configure every repository, MCP, Comis, and Codex option\n", 2)
 	}
 	if installed {
@@ -271,6 +280,8 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 		serviceConfig.RuntimeRoot = runtimeRoot
 		serviceConfig.ServiceInstanceID = serviceInstanceID
 		serviceConfig.PreparationTTL = preparationTTL
+		serviceConfig.MaxConcurrentTasks = maxConcurrentTasks
+		serviceConfig.MaxConcurrentTasksPerRepository = maxConcurrentTasksPerRepository
 		serviceConfig.RepositoryComposition = &RepositoryComposition{
 			GitExecutable: gitExecutable, ApprovedRoot: approvedRoot, RepositoryID: repositoryID,
 			PrimaryCheckout: repositoryPrimary, WorktreeRoot: worktreeRoot, DefaultBranch: repositoryDefaultBranch,

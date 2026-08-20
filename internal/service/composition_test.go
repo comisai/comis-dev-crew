@@ -171,6 +171,15 @@ func TestInstalledRuntime_ComposesFixtureBesideRealCandidatePipeline(t *testing.
 			t.Fatalf("WorkerProfiles(fixture-worker, %s) error = %v", shape, err)
 		}
 	}
+	foundFixtureLimit := false
+	for _, profile := range configured.WorkerProfileCatalog() {
+		if profile.ProfileID == "fixture-worker" && profile.ConcurrencyLimit == 1 {
+			foundFixtureLimit = true
+		}
+	}
+	if !foundFixtureLimit {
+		t.Fatal("fixture worker profile has no scheduler ceiling")
+	}
 }
 
 func TestInstalledRuntime_ValidationProfilesRejectShapeIncompletePolicy(t *testing.T) {
@@ -473,7 +482,8 @@ func installedServiceConfig(t *testing.T, root string) Config {
 	return Config{
 		DatabasePath: filepath.Join(root, "state", "devcrew.db"), SocketPath: filepath.Join(root, "operator.sock"),
 		MCPSocketPath: filepath.Join(root, "mcp.sock"), RuntimeRoot: filepath.Join(root, "runtime"), ServiceInstanceID: "service-instance-fixture",
-		PreparationTTL: 10 * time.Minute,
+		PreparationTTL:     10 * time.Minute,
+		MaxConcurrentTasks: 4, MaxConcurrentTasksPerRepository: 3,
 		RepositoryComposition: &RepositoryComposition{
 			GitExecutable: gitExecutable, ApprovedRoot: approvedRoot, RepositoryID: "product-api",
 			PrimaryCheckout: primary, WorktreeRoot: worktreeRoot, DefaultBranch: "main",

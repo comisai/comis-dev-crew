@@ -252,6 +252,9 @@ func (store *Store) CommitTaskStart(ctx context.Context, mutation application.Ta
 	if err != nil {
 		return application.MutationResult{}, err
 	}
+	if err := authorizeInitiativeTaskStart(ctx, transaction, task, mutation.SchedulingLimits); err != nil {
+		return application.MutationResult{}, err
+	}
 	started, err := task.ApplyTransition(domain.TransitionLaunchRequested, mutation.At)
 	if err != nil {
 		return application.MutationResult{}, fmt.Errorf("apply task start: %w", err)

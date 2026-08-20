@@ -55,6 +55,15 @@ type schedulingUsage struct {
 	profiles     map[string]int
 }
 
+func cloneInitiativeSchedulingLimits(limits InitiativeSchedulingLimits) InitiativeSchedulingLimits {
+	cloned := limits
+	cloned.WorkerProfileLimits = make(map[string]int, len(limits.WorkerProfileLimits))
+	for profileID, limit := range limits.WorkerProfileLimits {
+		cloned.WorkerProfileLimits[profileID] = limit
+	}
+	return cloned
+}
+
 // ScheduleInitiatives makes a fleet-wide, deterministic scheduling decision.
 // Existing workers consume capacity first. Remaining slots are offered in
 // initiative creation order, one member per initiative per round, so a large

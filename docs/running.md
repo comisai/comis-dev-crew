@@ -76,6 +76,8 @@ devcrew-service \
   --codex-terminal-allow-entry codex-confined \
   --codex-network restricted \
   --codex-concurrency 2 \
+  --max-concurrent-tasks 4 \
+  --max-concurrent-tasks-per-repository 3 \
   --claude-profile claude-reviewed \
   --claude-executable /absolute/path/to/claude \
   --claude-version "2.1.224 (Claude Code)" \
@@ -94,6 +96,13 @@ cryptographically random task and registration identities, advertises that
 verified worktree in the managed-run preparation, and binds the same mutation
 authority to the dedicated MCP endpoint. It never accepts the protected bearer on
 its command line.
+
+`--max-concurrent-tasks` and `--max-concurrent-tasks-per-repository` are the
+host-wide and repository-wide scheduler ceilings. Each reviewed worker
+profile's own `--*-concurrency` limit is enforced at the same time. Initiative
+launch authorization is recomputed under the SQLite write transaction, so a
+stale graph read cannot consume capacity or bypass a newly unsatisfied
+dependency.
 
 `--decision-resurface-initial` and `--decision-resurface-maximum` set how often an
 unanswered decision is put back in front of the liaison. The wait doubles from the

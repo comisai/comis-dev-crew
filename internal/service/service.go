@@ -16,59 +16,36 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/workers"
 )
 
-const (
-	comisReportPollInterval   = 250 * time.Millisecond
-	comisReportMinimumBackoff = 100 * time.Millisecond
-	comisReportMaximumBackoff = 5 * time.Second
-	comisRequestTimeout       = 5 * time.Second
-	// Well inside the host's own staleness bound, so one missed sweep — a slow
-	// store read, a reconnect — never makes a healthy service look departed.
-	comisLivenessInterval = 60 * time.Second
-	comisMinimumBackoff   = 100 * time.Millisecond
-	comisMaximumBackoff   = time.Second
-	fixturePollInterval   = 25 * time.Millisecond
-)
-
-// ComisControl is the single persistent authenticated connection supervised
-// by the service. The concrete control adapter also carries durable reports.
-type ComisControl interface {
-	comiswire.ReportSender
-	comiswire.EvidenceSender
-	comiswire.HeartbeatSender
-	comiswire.AttentionResponseReceiver
-	application.ManagedRunReleaser
-	application.HostIntegrationStatus
-	Run(context.Context) error
-}
-
 // Config identifies the service-owned database and operator endpoint.
 type Config struct {
-	DatabasePath          string
-	SocketPath            string
-	MCPSocketPath         string
-	RuntimeRoot           string
-	ServiceInstanceID     string
-	Repositories          application.RepositoryCatalog
-	WorkerProfiles        application.WorkerProfileValidator
-	WorkerProfileCatalog  application.WorkerProfileCatalog
-	ValidationProfiles    application.ValidationProfileValidator
-	Workspaces            application.WorkspacePreparer
-	RuntimeAttachments    application.RuntimeAttachmentCoordinator
-	WorkerHarnesses       application.WorkerHarnessResolver
-	TaskIDs               application.TaskIDSource
-	RegistrationNonces    application.RegistrationNonceSource
-	PreparationTTL        time.Duration
-	Clock                 application.Clock
-	DecisionSurfacing     application.DecisionSurfacingPolicy
-	ComisControl          ComisControl
-	RepositoryComposition *RepositoryComposition
-	ComisComposition      *ComisComposition
-	CodexComposition      *CodexComposition
-	ClaudeComposition     *ClaudeComposition
-	ValidationComposition *ValidationComposition
-	ForgeComposition      *ForgeComposition
-	FixtureComposition    *FixtureComposition
-	Ready                 func()
+	DatabasePath                    string
+	SocketPath                      string
+	MCPSocketPath                   string
+	RuntimeRoot                     string
+	ServiceInstanceID               string
+	Repositories                    application.RepositoryCatalog
+	WorkerProfiles                  application.WorkerProfileValidator
+	WorkerProfileCatalog            application.WorkerProfileCatalog
+	ValidationProfiles              application.ValidationProfileValidator
+	Workspaces                      application.WorkspacePreparer
+	RuntimeAttachments              application.RuntimeAttachmentCoordinator
+	WorkerHarnesses                 application.WorkerHarnessResolver
+	TaskIDs                         application.TaskIDSource
+	RegistrationNonces              application.RegistrationNonceSource
+	PreparationTTL                  time.Duration
+	MaxConcurrentTasks              int
+	MaxConcurrentTasksPerRepository int
+	Clock                           application.Clock
+	DecisionSurfacing               application.DecisionSurfacingPolicy
+	ComisControl                    ComisControl
+	RepositoryComposition           *RepositoryComposition
+	ComisComposition                *ComisComposition
+	CodexComposition                *CodexComposition
+	ClaudeComposition               *ClaudeComposition
+	ValidationComposition           *ValidationComposition
+	ForgeComposition                *ForgeComposition
+	FixtureComposition              *FixtureComposition
+	Ready                           func()
 	// Logger is optional. Without one the service serves exactly as before and
 	// records no boundary crossings.
 	Logger                   application.BoundaryLogger
@@ -457,6 +434,10 @@ func composeMutations(config Config, store *sqlite.Store, clock application.Cloc
 		}
 		return nil, nil
 	}
+	schedulingLimits, err := schedulingLimitsForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("run service initiative scheduling: %w", err)
+	}
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: config.Repositories,
 		WorkerProfiles: config.WorkerProfiles, ValidationProfiles: config.ValidationProfiles,
@@ -464,6 +445,7 @@ func composeMutations(config Config, store *sqlite.Store, clock application.Cloc
 		RuntimeAttachments: config.RuntimeAttachments,
 		RegistrationNonces: config.RegistrationNonces,
 		PreparationTTL:     config.PreparationTTL,
+		SchedulingLimits:   schedulingLimits,
 		// The durable store is the promotion authority: it proves the scout has
 		// evidence to preserve and records the link. Without it promotion is
 		// refused rather than minting a ship task with no recorded origin.

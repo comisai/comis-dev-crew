@@ -443,6 +443,15 @@ write failure rolls back the task, operation, and event with it. A durable
 `unknown` initiative is never reactivated by derivation after restart — only the
 explicit host reconciliation path may restore its authority.
 
+The launch boundary does not trust that projection as a reservation. For an
+initiative member, the `ready` to `launching` transaction rereads every durable
+initiative and task, recomputes fair allocation under the reviewed host,
+repository, and worker-profile ceilings, and refuses the mutation unless that
+exact member is selected. Missing scheduler configuration, a newly stale
+contract, a newly blocked dependency, or capacity consumed after an earlier read
+therefore commits no task, operation, or state event. Standalone task starts keep
+their existing path and still count against initiative capacity.
+
 Startup reconciliation now includes every nonterminal initiative. Preparing,
 active, blocked, integrating, validating, and candidate-complete initiatives are
 atomically moved to durable `unknown` with a new global state version before the

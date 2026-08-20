@@ -31,7 +31,10 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	}
 	if config.RepositoryComposition == nil || config.ComisComposition == nil || config.CodexComposition == nil ||
 		config.ValidationComposition == nil || config.ForgeComposition == nil ||
-		config.MCPSocketPath == "" || config.RuntimeRoot == "" || config.ServiceInstanceID == "" {
+		config.MCPSocketPath == "" || config.RuntimeRoot == "" || config.ServiceInstanceID == "" ||
+		config.MaxConcurrentTasks < 1 || config.MaxConcurrentTasks > 1024 ||
+		config.MaxConcurrentTasksPerRepository < 1 ||
+		config.MaxConcurrentTasksPerRepository > config.MaxConcurrentTasks {
 		return Config{}, errors.New("run service: installed composition is incomplete")
 	}
 	if config.Repositories != nil || config.Workspaces != nil || config.TaskIDs != nil ||
@@ -159,7 +162,15 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	// built by the workers package, so launch authority never reaches this
 	// composition — this hop only maps one published view onto the read DTO.
 	config.WorkerProfileCatalog = func() []application.WorkerProfileSummary {
-		return publishedWorkerProfileSummaries(profiles.PublishedProfiles())
+		summaries := publishedWorkerProfileSummaries(profiles.PublishedProfiles())
+		if config.FixtureComposition != nil {
+			summaries = append(summaries, application.WorkerProfileSummary{
+				ProfileID: "fixture-worker", Harness: "fixture",
+				AllowedShapes: []domain.TaskShape{domain.ShapeShip, domain.ShapeScout},
+				Availability:  "available", Unattended: true, ConcurrencyLimit: 1,
+			})
+		}
+		return summaries
 	}
 	config.ValidationProfiles = func(profileID string, shape domain.TaskShape) error {
 		_, resolveErr := catalog.ResolveProfileForShape(profileID, shape)

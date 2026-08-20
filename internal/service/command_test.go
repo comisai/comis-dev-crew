@@ -226,6 +226,8 @@ func TestRunCommand_ComposesInstalledLaneWithExplicitDeterministicFixture(t *tes
 		"--codex-terminal-allow-entry", "codex-confined",
 		"--codex-network", "restricted",
 		"--codex-concurrency", "2",
+		"--max-concurrent-tasks", "4",
+		"--max-concurrent-tasks-per-repository", "3",
 		"--claude-profile", "claude-reviewed",
 		"--claude-executable", "/opt/claude/bin/claude",
 		"--claude-version", "2.1.224 (Claude Code)",
@@ -264,7 +266,8 @@ func TestRunCommand_ComposesInstalledLaneWithExplicitDeterministicFixture(t *tes
 	}
 	if got.DatabasePath != "/private/state/devcrew.db" || got.SocketPath != "/private/run/operator.sock" ||
 		got.MCPSocketPath != "/private/run/mcp.sock" || got.RuntimeRoot != "/private/run/tasks" || got.ServiceInstanceID != "service-instance-fixture" ||
-		got.PreparationTTL != 15*time.Minute || !reflect.DeepEqual(got.RepositoryComposition, wantRepository) ||
+		got.PreparationTTL != 15*time.Minute || got.MaxConcurrentTasks != 4 || got.MaxConcurrentTasksPerRepository != 3 ||
+		!reflect.DeepEqual(got.RepositoryComposition, wantRepository) ||
 		!reflect.DeepEqual(got.ComisComposition, wantComis) || !reflect.DeepEqual(got.CodexComposition, wantCodex) ||
 		got.FixtureComposition == nil || got.FixtureComposition.Decision != "use the bounded fixture choice" {
 		t.Fatalf("installed service config = %#v", got)

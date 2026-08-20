@@ -83,6 +83,7 @@ func TestInstalledComposition_JoinsMCPActivationAndReviewedCodexLaunchPlan(t *te
 		"--codex-version", "codex-cli 0.147.0", "--codex-model", "gpt-5.5-codex",
 		"--codex-effort", "high", "--codex-terminal-allow-entry", "codex-confined",
 		"--codex-network", "restricted", "--codex-concurrency", "2",
+		"--max-concurrent-tasks", "2", "--max-concurrent-tasks-per-repository", "2",
 		"--candidate-config", candidateConfig,
 	)
 	serviceCommand.Stderr = serviceStderr

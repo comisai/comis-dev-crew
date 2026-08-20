@@ -222,6 +222,10 @@ type TaskStartMutation struct {
 	OperationID   string
 	SubjectDigest string
 	At            time.Time
+	// SchedulingLimits is required only when the task belongs to an initiative.
+	// The store applies it inside the start transaction; a read-side decision is
+	// not launch authority because member or capacity state could change after it.
+	SchedulingLimits *InitiativeSchedulingLimits
 }
 
 // TerminalEventMutation is the validated durable terminal-event transaction.
@@ -422,6 +426,9 @@ type MutationConfig struct {
 	TaskIDs            TaskIDSource
 	RegistrationNonces RegistrationNonceSource
 	PreparationTTL     time.Duration
+	// SchedulingLimits is absent only for deployments that cannot prepare
+	// initiatives. A member start fails closed if no reviewed limits arrive.
+	SchedulingLimits *InitiativeSchedulingLimits
 	// Absent when the deployment has no scout-promotion authority. Promotion is
 	// then refused rather than minting a ship task with no recorded origin.
 	Promotions ScoutPromotionStore
