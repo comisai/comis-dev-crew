@@ -20,7 +20,7 @@ func validManifest() Manifest {
 			ComisCommit: strings.Repeat("c", 40), DevCrewCommit: strings.Repeat("d", 40),
 		},
 		Protocol: ProtocolPin{
-			ID: "comis.capability-service/1", Digest: "a718ad6b4dc34ab1efd34fbc29b15ed0f6a30a392e0c9571a443bb5574aaf020",
+			ID: "comis.capability-service/1", Digest: "b42ab7a7662f3b02ede4d12d55e1ae7d50855990897fc4d24164b3a35f3c711d",
 		},
 		Artifacts: []ArtifactPin{
 			{Kind: "comis-cli", Path: "/opt/comis/packages/cli/dist/cli.js", SHA256: strings.Repeat("1", 64), Version: "1.0.61"},

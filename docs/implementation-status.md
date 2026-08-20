@@ -12,8 +12,8 @@ alongside the task lifecycle commands: prepare, reconcile, handback, cleanup, an
 the intervention set — pause, resume, cancel, verify, promote, replace, steer,
 and the acknowledged operator-only discard. The
 protocol foundation pins the 41-artifact Comis capability-service contract at
-source commit `6e7cc96d1b234113235ae83e89da8eeb63841037` and bundle digest
-`a718ad6b4dc34ab1efd34fbc29b15ed0f6a30a392e0c9571a443bb5574aaf020`, and generates
+source commit `ba05af9a7717d572aea18cb7603edc442ba253f3` and bundle digest
+`b42ab7a7662f3b02ede4d12d55e1ae7d50855990897fc4d24164b3a35f3c711d`, and generates
 a closed Go adapter.
 
 Installed composition supervises the Comis control lane, Codex and Claude Code
