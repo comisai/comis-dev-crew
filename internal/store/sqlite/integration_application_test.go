@@ -10,12 +10,14 @@ import (
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 func TestIntegrationApplicationPersistsAppliedAndConflictedResultsAcrossRestart(t *testing.T) {
 	for _, outcome := range []application.IntegrationOutcome{
 		application.IntegrationApplied,
 		application.IntegrationConflicted,
+		application.IntegrationOutcome("invalidated"),
 	} {
 		t.Run(string(outcome), func(t *testing.T) {
 			fixture := newStoredIntegrationFixture(t)
@@ -34,7 +36,7 @@ func TestIntegrationApplicationPersistsAppliedAndConflictedResultsAcrossRestart(
 			}
 			if outcome == application.IntegrationApplied {
 				adapterResult.ResultingHead = strings.Repeat("d", 40)
-			} else {
+			} else if outcome == application.IntegrationConflicted {
 				adapterResult.ConflictPaths = []string{"internal/api.go", "web/client.ts"}
 			}
 			completedAt := request.At.Add(time.Second)
@@ -46,6 +48,12 @@ func TestIntegrationApplicationPersistsAppliedAndConflictedResultsAcrossRestart(
 			}
 			if completed.Outcome != outcome || completed.StateVersion < 1 || !completed.CompletedAt.Equal(completedAt) {
 				t.Fatalf("completed = %#v", completed)
+			}
+			if outcome == application.IntegrationOutcome("invalidated") {
+				candidate, readErr := fixture.store.GetTask(context.Background(), reserved.Candidate.TaskHandle)
+				if readErr != nil || candidate.State != domain.TaskValidating {
+					t.Fatalf("invalidated candidate = %#v, %v", candidate, readErr)
+				}
 			}
 			operation, err := fixture.store.GetOperation(context.Background(), request.Command.OperationID)
 			if err != nil || operation.Command != "ApplyIntegrationCandidate" ||

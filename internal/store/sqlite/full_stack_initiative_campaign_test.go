@@ -112,15 +112,24 @@ func TestFullStackInitiativeCampaignPreservesParallelLanesAndExactHeadAuthority(
 	}
 
 	adapter.candidateHeads[backend.Handle] = strings.Repeat("e", 40)
-	if _, err := integrations.ApplyCandidate(ctx, application.ApplyIntegrationCandidateCommand{
+	invalidated, err := integrations.ApplyCandidate(ctx, application.ApplyIntegrationCandidateCommand{
 		OperationID: "campaign-integrate-backend-stale", InitiativeHandle: fixture.initiativeHandle,
 		IntegrationTaskHandle: integration.Handle, CandidateTaskHandle: backend.Handle,
 		CandidateHead: backendHead, ExpectedIntegrationHead: targetHead,
-	}); err == nil {
-		t.Fatal("ApplyCandidate(changed backend head) error = nil")
+	})
+	if err != nil || invalidated.Outcome != application.IntegrationOutcome("invalidated") {
+		t.Fatalf("ApplyCandidate(changed backend head) = %#v, %v", invalidated, err)
 	}
 	if adapter.targetHead != targetHead {
 		t.Fatalf("integration target moved after stale backend: %q", adapter.targetHead)
+	}
+	invalidatedBackend, err := fixture.store.GetTask(ctx, backend.Handle)
+	if err != nil || invalidatedBackend.State != domain.TaskValidating {
+		t.Fatalf("invalidated backend = %#v, %v", invalidatedBackend, err)
+	}
+	unaffectedFrontend, err := fixture.store.GetTask(ctx, frontend.Handle)
+	if err != nil || unaffectedFrontend.State != domain.TaskCandidateComplete {
+		t.Fatalf("frontend after backend invalidation = %#v, %v", unaffectedFrontend, err)
 	}
 	staleCalls := adapter.calls
 	if _, err := integrations.ApplyCandidate(ctx, application.ApplyIntegrationCandidateCommand{
@@ -139,7 +148,10 @@ func TestFullStackInitiativeCampaignPreservesParallelLanesAndExactHeadAuthority(
 	if err != nil || frontendResult.Outcome != application.IntegrationApplied {
 		t.Fatalf("ApplyCandidate(unaffected frontend) = %#v, %v", frontendResult, err)
 	}
-	adapter.candidateHeads[backend.Handle] = backendHead
+	backendHead = strings.Repeat("e", 40)
+	backend = acceptCampaignCandidate(
+		t, fixture, invalidatedBackend, backendHead, fixture.at.Add(20*time.Minute+30*time.Second),
+	)
 	backendResult, err := integrations.ApplyCandidate(ctx, application.ApplyIntegrationCandidateCommand{
 		OperationID: "campaign-integrate-backend-current", InitiativeHandle: fixture.initiativeHandle,
 		IntegrationTaskHandle: integration.Handle, CandidateTaskHandle: backend.Handle,
