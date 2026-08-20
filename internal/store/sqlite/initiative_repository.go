@@ -15,7 +15,7 @@ const initiativeBacklogMigration = `
 CREATE TABLE initiatives (
     handle TEXT PRIMARY KEY,
     schema_version INTEGER NOT NULL,
-    managed_run_group_id TEXT NOT NULL UNIQUE,
+    managed_run_group_id TEXT NOT NULL,
     title_ref TEXT NOT NULL,
     state TEXT NOT NULL,
     base_revision_set_json TEXT NOT NULL,
@@ -29,6 +29,8 @@ CREATE TABLE initiatives (
     updated_at TEXT NOT NULL
 );
 CREATE INDEX initiatives_state_handle_idx ON initiatives(state, handle);
+CREATE UNIQUE INDEX initiatives_bound_group_idx ON initiatives(managed_run_group_id)
+WHERE managed_run_group_id <> '';
 CREATE TABLE backlog_items (
     handle TEXT PRIMARY KEY,
     schema_version INTEGER NOT NULL,

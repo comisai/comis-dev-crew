@@ -141,7 +141,14 @@ func (initiative DevelopmentInitiative) Validate() error {
 	if err := validateOpaqueID("integrationPolicyId", initiative.IntegrationPolicyID); err != nil {
 		return err
 	}
-	if err := validateAuthorityReference("managedRunGroupId", initiative.ManagedRunGroupID); err != nil {
+	if initiative.ManagedRunGroupID == "" {
+		if initiative.State != InitiativePreparing && initiative.State != InitiativeUnknown {
+			return &ValidationError{
+				Field:  "managedRunGroupId",
+				Reason: "must be bound before an initiative becomes active or terminal",
+			}
+		}
+	} else if err := validateAuthorityReference("managedRunGroupId", initiative.ManagedRunGroupID); err != nil {
 		return err
 	}
 	if !initiative.State.valid() {

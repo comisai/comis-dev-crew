@@ -119,6 +119,26 @@ func TestInitiativeAndBacklogWritesRejectInvalidAndDuplicateRecords(t *testing.T
 	}
 }
 
+func TestSeveralPreparingInitiativesMayAwaitDistinctHostGroupBindings(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	repository := requireInitiativeBacklogRepository(t, store)
+	first := persistenceInitiative("initiative-unbound-0001", domain.InitiativePreparing, 1)
+	first.ManagedRunGroupID = ""
+	second := persistenceInitiative("initiative-unbound-0002", domain.InitiativePreparing, 2)
+	second.ManagedRunGroupID = ""
+	if err := repository.CreateInitiative(ctx, first); err != nil {
+		t.Fatalf("CreateInitiative(first unbound) error = %v", err)
+	}
+	if err := repository.CreateInitiative(ctx, second); err != nil {
+		t.Fatalf("CreateInitiative(second unbound) error = %v", err)
+	}
+}
+
 func TestStartupReconciliationPersistsUnknownForEveryAmbiguousInitiative(t *testing.T) {
 	ctx := context.Background()
 	databasePath := filepath.Join(canonicalTempDir(t), "devcrew.db")
