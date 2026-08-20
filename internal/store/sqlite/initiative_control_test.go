@@ -85,6 +85,17 @@ func TestInitiativeControlResultSurvivesRestartAndRejectsAlteredReplay(t *testin
 	); err == nil {
 		t.Fatal("ReplayInitiativeControl(altered) error = nil")
 	}
+	if _, err := reopened.db.ExecContext(ctx,
+		"DELETE FROM initiative_group_control_members WHERE operation_id = ? AND ordinal = 0",
+		mutation.OperationID,
+	); err != nil {
+		t.Fatalf("delete one durable member result: %v", err)
+	}
+	if _, _, err := reopened.ReplayInitiativeControl(
+		ctx, mutation.OperationID, mutation.Command, mutation.SubjectDigest,
+	); err == nil {
+		t.Fatal("ReplayInitiativeControl(missing durable member) error = nil")
+	}
 }
 
 func TestInitiativeControlStoreRejectsACompletedMemberWithoutItsTaskOperation(t *testing.T) {
