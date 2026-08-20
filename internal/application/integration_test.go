@@ -49,7 +49,7 @@ func TestIntegrationReservesPolicyBoundCandidateBeforeApplying(t *testing.T) {
 	if len(adapter.requests) != 1 || adapter.requests[0] != reserved.AdapterRequest() {
 		t.Fatalf("adapter requests = %#v", adapter.requests)
 	}
-	if store.completion.AdapterResult != adapter.result || store.completion.At != at {
+	if !reflect.DeepEqual(store.completion.AdapterResult, adapter.result) || store.completion.At != at {
 		t.Fatalf("completion = %#v", store.completion)
 	}
 	if store.request.SubjectDigest == "" || store.request.Strategy != IntegrationCherryPick ||
