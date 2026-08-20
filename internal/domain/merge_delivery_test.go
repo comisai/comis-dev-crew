@@ -113,3 +113,11 @@ func TestMergeIsAuthorizedForTheExactApprovedHead(t *testing.T) {
 		t.Fatalf("exact approved head refused: %v", err)
 	}
 }
+
+func TestMergeIsRefusedWhenApprovalTimeIsNotCurrent(t *testing.T) {
+	approval := approvalFixture()
+	approval.ApprovedAt = time.Unix(1_900_000_000, 0).UTC()
+	if err := approval.AuthorizeMerge(approval.ApprovedHead); err == nil {
+		t.Fatal("merge authorized without establishing a current approval window")
+	}
+}
