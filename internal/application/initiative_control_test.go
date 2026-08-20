@@ -150,18 +150,93 @@ func TestInitiativeControlsRejectInvalidCompositionAndUnavailableResume(t *testi
 	}
 }
 
+func TestInitiativeControlsFailClosedAcrossReplaySnapshotAndCancellationFaults(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		configure func(*initiativeControlStoreStub, *initiativeTaskControlsStub)
+		wantCode  domain.ErrorCode
+	}{
+		{
+			name: "altered replay",
+			configure: func(store *initiativeControlStoreStub, _ *initiativeTaskControlsStub) {
+				store.replayErr = ErrConflict
+			},
+			wantCode: domain.ErrorConflict,
+		},
+		{
+			name: "missing initiative",
+			configure: func(store *initiativeControlStoreStub, _ *initiativeTaskControlsStub) {
+				store.observationErr = ErrNotFound
+			},
+			wantCode: domain.ErrorNotFound,
+		},
+		{
+			name: "member set changed",
+			configure: func(store *initiativeControlStoreStub, _ *initiativeTaskControlsStub) {
+				store.dropMemberOnRefresh = true
+			},
+			wantCode: domain.ErrorPrecondition,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := initiativeControlStoreWithTasks()
+			tasks := &initiativeTaskControlsStub{}
+			test.configure(store, tasks)
+			controls, err := NewInitiativeControls(InitiativeControlConfig{
+				Store: store, Tasks: tasks, Clock: initiativeControlClock,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = controls.PauseInitiative(context.Background(), InitiativeControlCommand{
+				OperationID: "operation-pause-fault", InitiativeHandle: store.initiative.Handle,
+			})
+			var failure *domain.Failure
+			if !errors.As(err, &failure) || failure.Code != test.wantCode {
+				t.Fatalf("PauseInitiative(%s) error = %#v, want %q", test.name, err, test.wantCode)
+			}
+		})
+	}
+
+	store := initiativeControlStoreWithTasks()
+	tasks := &initiativeTaskControlsStub{}
+	ctx, cancel := context.WithCancel(context.Background())
+	tasks.afterPause = cancel
+	controls, err := NewInitiativeControls(InitiativeControlConfig{
+		Store: store, Tasks: tasks, Clock: initiativeControlClock,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controls.PauseInitiative(ctx, InitiativeControlCommand{
+		OperationID: "operation-pause-cancelled", InitiativeHandle: store.initiative.Handle,
+	}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("PauseInitiative(cancelled) error = %v", err)
+	}
+	if len(tasks.pauseCalls) != 1 || store.commits != 0 {
+		t.Fatalf("cancelled pause calls/commits = %d/%d", len(tasks.pauseCalls), store.commits)
+	}
+}
+
 type initiativeControlStoreStub struct {
-	initiative   domain.DevelopmentInitiative
-	tasks        []domain.Task
-	stateVersion int64
-	replay       *InitiativeControlResult
-	commits      int
+	initiative          domain.DevelopmentInitiative
+	tasks               []domain.Task
+	stateVersion        int64
+	replay              *InitiativeControlResult
+	replayErr           error
+	observationErr      error
+	dropMemberOnRefresh bool
+	observations        int
+	commits             int
 }
 
 func (store *initiativeControlStoreStub) ReplayInitiativeControl(
 	_ context.Context,
 	_, _, _ string,
 ) (InitiativeControlResult, bool, error) {
+	if store.replayErr != nil {
+		return InitiativeControlResult{}, false, store.replayErr
+	}
 	if store.replay == nil {
 		return InitiativeControlResult{}, false, nil
 	}
@@ -172,7 +247,15 @@ func (store *initiativeControlStoreStub) InitiativeObservation(
 	context.Context,
 	string,
 ) (domain.DevelopmentInitiative, []domain.Task, int64, error) {
-	return store.initiative, append([]domain.Task(nil), store.tasks...), store.stateVersion, nil
+	store.observations++
+	if store.observationErr != nil {
+		return domain.DevelopmentInitiative{}, nil, 0, store.observationErr
+	}
+	tasks := append([]domain.Task(nil), store.tasks...)
+	if store.dropMemberOnRefresh && store.observations > 1 {
+		tasks = tasks[:len(tasks)-1]
+	}
+	return store.initiative, tasks, store.stateVersion, nil
 }
 
 func (store *initiativeControlStoreStub) CommitInitiativeControl(
@@ -189,6 +272,7 @@ type initiativeTaskControlsStub struct {
 	pauseCalls  []PauseTaskCommand
 	cancelCalls []CancelTaskCommand
 	pauseErrors map[string]error
+	afterPause  func()
 }
 
 func (controls *initiativeTaskControlsStub) PauseTask(
@@ -196,12 +280,29 @@ func (controls *initiativeTaskControlsStub) PauseTask(
 	command PauseTaskCommand,
 ) (MutationResult, error) {
 	controls.pauseCalls = append(controls.pauseCalls, command)
+	if controls.afterPause != nil {
+		after := controls.afterPause
+		controls.afterPause = nil
+		after()
+	}
 	if err := controls.pauseErrors[command.TaskHandle]; err != nil {
 		return MutationResult{}, err
 	}
 	return MutationResult{Task: domain.Task{
 		Handle: command.TaskHandle, State: domain.TaskWorking, StateVersion: 5,
 	}}, nil
+}
+
+func initiativeControlStoreWithTasks() *initiativeControlStoreStub {
+	return &initiativeControlStoreStub{
+		initiative: initiativeControlFixture(),
+		tasks: []domain.Task{
+			{Handle: "task-control-a", State: domain.TaskWorking, StateVersion: 4},
+			{Handle: "task-control-b", State: domain.TaskWorking, StateVersion: 4},
+			{Handle: "task-control-c", State: domain.TaskWorking, StateVersion: 4},
+		},
+		stateVersion: 4,
+	}
 }
 
 func (controls *initiativeTaskControlsStub) CancelTask(
