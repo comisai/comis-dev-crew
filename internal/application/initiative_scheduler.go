@@ -377,8 +377,6 @@ func deriveInitiativeState(
 	switch ownerState {
 	case domain.TaskValidating:
 		return domain.InitiativeValidating
-	case domain.TaskCandidateComplete, domain.TaskDelivering:
-		return domain.InitiativeCandidateComplete
 	case domain.TaskLaunching, domain.TaskWorking, domain.TaskAwaitingDecision, domain.TaskPaused:
 		return domain.InitiativeIntegrating
 	}
