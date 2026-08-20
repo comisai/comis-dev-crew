@@ -139,6 +139,7 @@ func TestFacadeIntegrationApplicationRetriesOnlyUncertainExactCallAndValidatesRe
 		t.Fatal("applyIntegrationCandidate(definitive failure) error = nil")
 	}
 	original := errors.New("original integration failure")
+	//lint:ignore SA1012 This boundary test proves uncertain integration recovery preserves the original result without a context.
 	if _, err := facade.reconcileIntegrationApplication(nil, "operation-integration-mcp", localapi.ApplyIntegrationCandidateInput{}, original); !errors.Is(err, original) {
 		t.Fatalf("reconcileIntegrationApplication(nil) error = %v", err)
 	}

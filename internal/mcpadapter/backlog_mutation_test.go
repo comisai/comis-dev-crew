@@ -197,11 +197,13 @@ func TestFacadeBacklogReconciliationRequiresExactCompletedOperation(t *testing.T
 		t.Fatalf("reconcileBacklogAddition(invented) error = %v", err)
 	}
 	if _, err := facade.reconcileBacklogAddition(
+		//lint:ignore SA1012 This boundary test proves the helper preserves the original result without a context.
 		nil, "operation-mcp-backlog-add", addInput, original,
 	); !errors.Is(err, original) {
 		t.Fatalf("reconcileBacklogAddition(nil context) error = %v, want original", err)
 	}
 	if _, err := facade.reconcileBacklogPromotion(
+		//lint:ignore SA1012 This boundary test proves the helper preserves the original result without a context.
 		nil, "operation-mcp-backlog-promote", promoteInput, original,
 	); !errors.Is(err, original) {
 		t.Fatalf("reconcileBacklogPromotion(nil context) error = %v, want original", err)
