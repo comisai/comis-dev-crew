@@ -159,7 +159,8 @@ func mergeStoreFixture() *mergeStore {
 		TaskHandle: "task-merge", ManagedRunID: "managed-run-merge", RepositoryID: "repository-merge",
 		PullRequestID: "github-pr-31", Branch: "devcrew/task-merge", HeadRevision: strings.Repeat("a", 40),
 		EvidenceDigest: strings.Repeat("b", 64), RequiredChecks: []string{"ci/unit"},
-		State: TaskMergeAwaitingApproval,
+		State: TaskMergeAwaitingApproval, ReservedAt: time.Date(2026, time.August, 20, 11, 0, 0, 0, time.UTC),
+		StateVersion: 1,
 	}}
 }
 
@@ -179,6 +180,7 @@ func (store *mergeStore) AuthorizeTaskMerge(_ context.Context, request TaskMerge
 	}
 	store.record.Approval = request.Approval
 	store.record.State = TaskMergeExecutionAuthorized
+	store.record.StateVersion++
 	return store.record, nil
 }
 
@@ -190,6 +192,7 @@ func (store *mergeStore) CompleteTaskMerge(_ context.Context, request TaskMergeC
 	store.record.MergeCommitRevision = request.Receipt.MergeCommitRevision
 	store.record.Method = request.Receipt.Method
 	store.record.CompletedAt = request.At
+	store.record.StateVersion++
 	return store.record, nil
 }
 

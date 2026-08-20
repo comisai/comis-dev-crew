@@ -267,7 +267,14 @@ func nextReconciliationVersion(ctx context.Context, transaction *sql.Tx) (int64,
 }
 
 func acceptedOperationIDs(ctx context.Context, transaction *sql.Tx) (ids []string, resultErr error) {
-	rows, err := transaction.QueryContext(ctx, "SELECT id FROM operations WHERE status = ? ORDER BY id", domain.OperationAccepted)
+	// Approval-bound merges have their own durable recovery posture. Their
+	// accepted ledger row is paired atomically with either a pending approval or
+	// a persisted external-mutation intent, so the merge coordinator—not the
+	// generic unknown-outcome sweep—reconciles them after restart.
+	rows, err := transaction.QueryContext(ctx, `SELECT operations.id FROM operations
+		LEFT JOIN task_merges ON task_merges.operation_id = operations.id
+		WHERE operations.status = ? AND task_merges.operation_id IS NULL
+		ORDER BY operations.id`, domain.OperationAccepted)
 	if err != nil {
 		return nil, fmt.Errorf("list accepted operations: %w", err)
 	}

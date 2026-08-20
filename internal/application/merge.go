@@ -133,6 +133,7 @@ type TaskMergeRecord struct {
 	Method              PullRequestMergeMethod
 	ReservedAt          time.Time
 	CompletedAt         time.Time
+	StateVersion        int64
 }
 
 // TaskMergeAuthorization persists the authenticated receipt before forge mutation.
@@ -169,6 +170,7 @@ type MergeTaskResult struct {
 	MergeCommitRevision  string                 `json:"mergeCommitRevision,omitempty"`
 	Method               PullRequestMergeMethod `json:"method,omitempty"`
 	CompletedAt          time.Time              `json:"completedAt,omitempty"`
+	StateVersion         int64                  `json:"stateVersion"`
 }
 
 // MergeCoordinatorConfig supplies the complete approval-to-forge authority chain.
@@ -306,7 +308,8 @@ func validateTaskMergeRecord(record TaskMergeRecord, operationID, taskHandle, su
 		domain.ValidateAuthorityReference("pullRequestId", record.PullRequestID) != nil ||
 		record.Branch == "" || len([]byte(record.Branch)) > 256 || strings.ContainsAny(record.Branch, "\x00\r\n\t ") ||
 		domain.ValidateGitRevision(record.HeadRevision) != nil ||
-		domain.ValidateBriefRevisionHash(record.EvidenceDigest) != nil || len(record.RequiredChecks) == 0 {
+		domain.ValidateBriefRevisionHash(record.EvidenceDigest) != nil || len(record.RequiredChecks) == 0 ||
+		record.ReservedAt.IsZero() || record.ReservedAt.Location() != time.UTC || record.StateVersion < 1 {
 		return errors.New("merge task: durable reservation is invalid")
 	}
 	seen := make(map[string]struct{}, len(record.RequiredChecks))
@@ -359,5 +362,6 @@ func mergeResult(record TaskMergeRecord) MergeTaskResult {
 		RepositoryID: record.RepositoryID, PullRequestID: record.PullRequestID, HeadRevision: record.HeadRevision,
 		ApprovalRequestID: record.Approval.ApprovalID, ResolvingPrincipalID: record.Approval.ResolvingPrincipal,
 		MergeCommitRevision: record.MergeCommitRevision, Method: record.Method, CompletedAt: record.CompletedAt,
+		StateVersion: record.StateVersion,
 	}
 }

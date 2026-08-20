@@ -783,8 +783,14 @@ identity with one immutable `merge`, `squash`, or `rebase` method. Its file path
 must differ from both ordinary identities, and its contents are intentionally
 not read by installed composition. Only the merge adapter resolves it, after
 fresh exact-head, required-check, and matching branch-protection reads. The
-canonical service command and durable approval/receipt transaction remain the
-open merge-authority work; configuration alone grants no reachable merge.
+application coordinator consumes the exact authenticated Comis receipt and
+SQLite atomically reserves current accepted evidence, records the complete
+approval before forge mutation, and joins exact post-merge truth to the same
+operation. Pending approval and recorded mutation intent survive startup
+reconciliation; altered replays, stale evidence, split ledger writes, and
+unprotected branches fail closed. Installed service composition and the
+canonical local CLI/MCP surface remain open, so configuration alone still
+grants no reachable merge.
 
 ## Worker harnesses
 
