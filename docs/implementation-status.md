@@ -439,6 +439,20 @@ through that same canonical local client. Human views retain dependency
 readiness and closed safe actions; graph JSON is the graph DTO itself rather
 than a second wrapper contract.
 
+Initiative pause, resume, and cancel coordination reuses the existing task
+mutation path with a deterministic operation identity per member. The result is
+explicitly non-atomic: every member is reported as completed, rejected, unknown,
+or not attempted. A separate durable group-operation record preserves that
+whole answer for exact replay, including across restart, so a later state change
+cannot rewrite what an earlier control request actually observed. Completed
+member claims are accepted only when the durable member operation names the
+expected command, task, and state version.
+
+Threat posture: a group command carries only an initiative handle. It cannot
+select an unowned task, forge member operation identities, or collapse a partial
+distributed outcome into success; the authoritative member set is reread from
+one store snapshot before execution and again before the replay result commits.
+
 Group activation validates the private group nonce and the exact complete member
 set under the SQLite write lock. It commits the host-managed group identity and
 every run, lease, and execution-attachment handle atomically at one state

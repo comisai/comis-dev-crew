@@ -73,6 +73,89 @@ func TestInitiativePauseReportsEveryMemberAndReplaysTheExactGroupResult(t *testi
 	}
 }
 
+func TestInitiativeResumeAndCancelUseTheExistingPerTaskControls(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		run   func(*InitiativeControls) (InitiativeControlResult, error)
+		calls func(*initiativeTaskControlsStub, *initiativeTaskResumerStub) int
+	}{
+		{
+			name: "resume",
+			run: func(controls *InitiativeControls) (InitiativeControlResult, error) {
+				return controls.ResumeInitiative(context.Background(), InitiativeControlCommand{
+					OperationID: "operation-resume-initiative", InitiativeHandle: "initiative-control",
+				})
+			},
+			calls: func(_ *initiativeTaskControlsStub, resumer *initiativeTaskResumerStub) int {
+				return len(resumer.calls)
+			},
+		},
+		{
+			name: "cancel",
+			run: func(controls *InitiativeControls) (InitiativeControlResult, error) {
+				return controls.CancelInitiative(context.Background(), InitiativeControlCommand{
+					OperationID: "operation-cancel-initiative", InitiativeHandle: "initiative-control",
+				})
+			},
+			calls: func(tasks *initiativeTaskControlsStub, _ *initiativeTaskResumerStub) int {
+				return len(tasks.cancelCalls)
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &initiativeControlStoreStub{
+				initiative: initiativeControlFixture(),
+				tasks: []domain.Task{
+					{Handle: "task-control-a", State: domain.TaskPaused, StateVersion: 4},
+					{Handle: "task-control-b", State: domain.TaskPaused, StateVersion: 4},
+					{Handle: "task-control-c", State: domain.TaskPaused, StateVersion: 4},
+				},
+				stateVersion: 4,
+			}
+			tasks := &initiativeTaskControlsStub{}
+			resumer := &initiativeTaskResumerStub{}
+			controls, err := NewInitiativeControls(InitiativeControlConfig{
+				Store: store, Tasks: tasks, Resumer: resumer, Clock: initiativeControlClock,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := test.run(controls)
+			if err != nil || len(result.Members) != 3 {
+				t.Fatalf("initiative %s = %#v, %v", test.name, result, err)
+			}
+			if test.calls(tasks, resumer) != 3 {
+				t.Fatalf("initiative %s task calls = %d, want 3", test.name, test.calls(tasks, resumer))
+			}
+		})
+	}
+}
+
+func TestInitiativeControlsRejectInvalidCompositionAndUnavailableResume(t *testing.T) {
+	if _, err := NewInitiativeControls(InitiativeControlConfig{}); err == nil {
+		t.Fatal("NewInitiativeControls(empty) error = nil")
+	}
+	store := &initiativeControlStoreStub{initiative: initiativeControlFixture()}
+	controls, err := NewInitiativeControls(InitiativeControlConfig{
+		Store: store, Tasks: &initiativeTaskControlsStub{}, Clock: initiativeControlClock,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = controls.ResumeInitiative(context.Background(), InitiativeControlCommand{
+		OperationID: "operation-resume-unavailable", InitiativeHandle: store.initiative.Handle,
+	})
+	var failure *domain.Failure
+	if !errors.As(err, &failure) || failure.Code != domain.ErrorUnavailable || !failure.Retryable {
+		t.Fatalf("ResumeInitiative(unavailable) error = %#v", err)
+	}
+	if _, err := controls.CancelInitiative(context.Background(), InitiativeControlCommand{
+		OperationID: "bad id", InitiativeHandle: store.initiative.Handle,
+	}); err == nil {
+		t.Fatal("CancelInitiative(invalid operation) error = nil")
+	}
+}
+
 type initiativeControlStoreStub struct {
 	initiative   domain.DevelopmentInitiative
 	tasks        []domain.Task
@@ -110,6 +193,7 @@ func (store *initiativeControlStoreStub) CommitInitiativeControl(
 
 type initiativeTaskControlsStub struct {
 	pauseCalls  []PauseTaskCommand
+	cancelCalls []CancelTaskCommand
 	pauseErrors map[string]error
 }
 
@@ -127,10 +211,27 @@ func (controls *initiativeTaskControlsStub) PauseTask(
 }
 
 func (controls *initiativeTaskControlsStub) CancelTask(
-	context.Context,
-	CancelTaskCommand,
+	_ context.Context,
+	command CancelTaskCommand,
 ) (MutationResult, error) {
-	return MutationResult{}, errors.New("unexpected cancel")
+	controls.cancelCalls = append(controls.cancelCalls, command)
+	return MutationResult{Task: domain.Task{
+		Handle: command.TaskHandle, State: domain.TaskCancelled, StateVersion: 5,
+	}}, nil
+}
+
+type initiativeTaskResumerStub struct {
+	calls []ResumeTaskCommand
+}
+
+func (resumer *initiativeTaskResumerStub) ResumeTask(
+	_ context.Context,
+	command ResumeTaskCommand,
+) (MutationResult, error) {
+	resumer.calls = append(resumer.calls, command)
+	return MutationResult{Task: domain.Task{
+		Handle: command.TaskHandle, State: domain.TaskWorking, StateVersion: 5,
+	}}, nil
 }
 
 func initiativeControlFixture() domain.DevelopmentInitiative {
