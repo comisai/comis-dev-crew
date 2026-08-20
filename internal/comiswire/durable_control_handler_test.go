@@ -58,6 +58,87 @@ func TestDurableControlHandler_ActivationReplaysAcrossRestartAndRejectsAlteratio
 	}
 }
 
+func TestDurableControlHandler_MapsCompleteGroupActivationWithoutLosingMemberOutcomes(t *testing.T) {
+	at := time.Date(2026, time.August, 20, 18, 0, 0, 0, time.UTC)
+	activations := &durableGroupActivationStub{result: application.InitiativeActivationResult{
+		Initiative: domain.DevelopmentInitiative{
+			Handle: "initiative-group-handler", ManagedRunGroupID: "managed-run-group-handler",
+			State: domain.InitiativeUnknown,
+		},
+		Operation: domain.OperationRecord{
+			ID: "operation-group-handler", Status: domain.OperationCompleted, UpdatedAt: at,
+		},
+		Members: []application.InitiativeActivationMemberResult{
+			{ManagedRunID: "managed-run-member-a", Outcome: application.InitiativeActivationCompleted},
+			{ManagedRunID: "managed-run-member-b", Outcome: application.InitiativeActivationUnknown},
+		},
+	}}
+	handler, err := comiswire.NewDurableControlHandler(comiswire.DurableControlHandlerConfig{
+		Mutations: &durableMutationStub{}, GroupActivations: activations,
+		ServiceInstanceID: "service-instance-handler",
+	})
+	if err != nil {
+		t.Fatalf("NewDurableControlHandler() error = %v", err)
+	}
+	leaseA := comiswire.WorkspaceLeaseID("workspace-lease-member-a")
+	leaseB := comiswire.WorkspaceLeaseID("workspace-lease-member-b")
+	attachmentA := comiswire.ExecutionAttachmentID("execution-attachment-member-a")
+	attachmentB := comiswire.ExecutionAttachmentID("execution-attachment-member-b")
+	targetA := comiswire.AttachmentTargetName("attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock")
+	targetB := comiswire.AttachmentTargetName("attachment-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.sock")
+	params := comiswire.GroupActivateRequestParams{
+		OperationID: "operation-group-handler", ManagedRunGroupID: "managed-run-group-handler",
+		RegistrationNonce: "group-registration-nonce-handler",
+		Members: []comiswire.GroupActivateRequestParamsMembersItem{
+			{ManagedRunID: "managed-run-member-a", ExternalRunRef: "task-member-a", RegistrationNonce: "registration-nonce-member-a", WorkspaceLeaseID: &leaseA, ExecutionAttachmentID: &attachmentA, AttachmentTargetName: &targetA},
+			{ManagedRunID: "managed-run-member-b", ExternalRunRef: "task-member-b", RegistrationNonce: "registration-nonce-member-b", WorkspaceLeaseID: &leaseB, ExecutionAttachmentID: &attachmentB, AttachmentTargetName: &targetB},
+		},
+	}
+	result, err := handler.GroupActivate(context.Background(), params)
+	if err != nil {
+		t.Fatalf("GroupActivate() error = %v", err)
+	}
+	if result.ManagedRunGroupID != params.ManagedRunGroupID || result.ActivatedAtMs != at.UnixMilli() ||
+		len(result.Members) != 2 || result.Members[0].Outcome != "completed" || result.Members[1].Outcome != "unknown" {
+		t.Fatalf("GroupActivate() = %#v, want exact per-member outcomes", result)
+	}
+	if activations.command.RegistrationNonce != string(params.RegistrationNonce) ||
+		activations.command.Members[1].AttachmentTargetName != string(targetB) {
+		t.Fatalf("application command = %#v, want private group and attachment joins", activations.command)
+	}
+}
+
+type durableGroupActivationStub struct {
+	command application.ActivateManagedRunGroupCommand
+	result  application.InitiativeActivationResult
+}
+
+func (stub *durableGroupActivationStub) ActivateManagedRunGroup(
+	_ context.Context,
+	command application.ActivateManagedRunGroupCommand,
+) (application.InitiativeActivationResult, error) {
+	stub.command = command
+	return stub.result, nil
+}
+
+type durableMutationStub struct{}
+
+func (*durableMutationStub) ActivateManagedRun(context.Context, application.ActivateManagedRunCommand) (application.MutationResult, error) {
+	return application.MutationResult{}, nil
+}
+
+func (*durableMutationStub) AbandonManagedRun(context.Context, application.AbandonManagedRunCommand) (application.MutationResult, error) {
+	return application.MutationResult{}, nil
+}
+
+func (*durableMutationStub) CancelManagedRun(context.Context, application.CancelManagedRunCommand) (application.MutationResult, error) {
+	return application.MutationResult{}, nil
+}
+
+func (*durableMutationStub) RecordTerminalEvent(context.Context, application.RecordTerminalEventCommand) (application.MutationResult, error) {
+	return application.MutationResult{}, nil
+}
+
 func TestDurableControlHandler_ActivationValidatesPrivateJoinAndLeaseInvariant(t *testing.T) {
 	tests := []struct {
 		name   string
