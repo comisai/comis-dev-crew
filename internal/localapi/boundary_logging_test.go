@@ -3,6 +3,8 @@ package localapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -123,6 +125,29 @@ func TestBoundaryLogging_RecordsEveryRefusalWithItsClosedKindAndHint(t *testing.
 				t.Errorf("a failure carried no operator hint: %#v", record)
 			}
 		})
+	}
+}
+
+func TestBoundaryLogging_ClassifiesInvalidDurableTaskContractsWithoutLeakingTheCause(t *testing.T) {
+	cause := fmt.Errorf("read task: %w", &domain.ValidationError{
+		Field: "briefRevisionHash", Reason: "does not pin the canonical worker brief",
+	})
+	outcome := outcomeFromError("operation-log-durable-contract", cause)
+	record := boundaryRecord(
+		outcome,
+		request(t, MethodPrepareInitiative, "operation-log-durable-contract"),
+		time.Second,
+	)
+	failureCause := reflect.ValueOf(record).FieldByName("FailureCause")
+	if !failureCause.IsValid() || failureCause.String() != "durable_task_contract_invalid" {
+		t.Fatalf("failure cause = %v, want durable_task_contract_invalid", failureCause)
+	}
+	encoded, err := json.Marshal(outcome)
+	if err != nil {
+		t.Fatalf("encode outcome: %v", err)
+	}
+	if strings.Contains(string(encoded), cause.Error()) || strings.Contains(string(encoded), "briefRevisionHash") {
+		t.Fatalf("public outcome leaked the private cause: %s", encoded)
 	}
 }
 
