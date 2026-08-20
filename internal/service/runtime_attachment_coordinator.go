@@ -33,6 +33,7 @@ type runtimeAttachmentStore interface {
 
 type runtimeAttachmentCoordinatorConfig struct {
 	RuntimeRoot             string
+	Logger                  application.BoundaryLogger
 	Store                   runtimeAttachmentStore
 	Clock                   application.Clock
 	NewCredential           func() (string, error)
@@ -58,6 +59,7 @@ type runtimeAttachmentCoordinator struct {
 	runtimeRoot                            string
 	runtimeRootIdentity                    reporter.RuntimeSocketIdentity
 	runtimeRootMountID                     uint64
+	logger                                 application.BoundaryLogger
 	store                                  runtimeAttachmentStore
 	clock                                  application.Clock
 	reportSink                             *application.ReportSink
@@ -100,7 +102,7 @@ func newRuntimeAttachmentCoordinator(config runtimeAttachmentCoordinatorConfig) 
 	}
 	return &runtimeAttachmentCoordinator{
 		runtimeRoot: runtimeRoot, runtimeRootIdentity: runtimeRootIdentity, runtimeRootMountID: runtimeRootMountID,
-		store: config.Store, clock: config.Clock, reportSink: sink, newCredential: config.NewCredential,
+		store: config.Store, clock: config.Clock, logger: config.Logger, reportSink: sink, newCredential: config.NewCredential,
 		newAttentionOperationID: config.NewAttentionOperationID,
 		registrations:           make(chan runtimeAttachmentRegistration), releases: make(chan runtimeAttachmentRelease),
 		recoveryReady: make(chan struct{}), runDone: make(chan struct{}),

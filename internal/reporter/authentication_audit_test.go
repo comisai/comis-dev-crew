@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 	"github.com/comisai/comis-dev-crew/internal/reporter"
 )
@@ -113,5 +114,75 @@ func TestEndpoint_StillRejectsWhenTheAuditWriteFails(t *testing.T) {
 	_, err = client.Report(context.Background(), sparseReport(3, strings.Repeat("a", 64)))
 	if !errors.Is(err, reporter.ErrUnauthorized) {
 		t.Fatalf("Report() error = %v, want the rejection preserved", err)
+	}
+}
+
+type recordingBoundaryLogger struct {
+	records []application.BoundaryRecord
+}
+
+func (logger *recordingBoundaryLogger) Record(record application.BoundaryRecord) {
+	logger.records = append(logger.records, record)
+}
+
+// TestEndpoint_RecordsEveryWorkerCrossing gives an operator the only view there
+// is of a confined worker talking. Each closed refusal carries its own kind, so
+// a bad credential and a stale brief are distinguishable without a debugger.
+func TestEndpoint_RecordsEveryWorkerCrossing(t *testing.T) {
+	accepted := time.Date(2026, time.August, 20, 9, 0, 0, 0, time.UTC)
+	for name, test := range map[string]struct {
+		credential string
+		report     domain.WorkerReport
+		outcome    application.BoundaryOutcome
+		kind       domain.ErrorCode
+	}{
+		"accepted": {
+			credential: validCredential, report: sparseReport(3, strings.Repeat("a", 64)),
+			outcome: application.BoundaryCompleted,
+		},
+		"rejected credential": {
+			credential: "wrong-credential-0000000000000000", report: sparseReport(3, strings.Repeat("a", 64)),
+			outcome: application.BoundaryFailed, kind: domain.ErrorUnauthorized,
+		},
+		"stale brief": {
+			credential: validCredential, report: sparseReport(2, strings.Repeat("a", 64)),
+			outcome: application.BoundaryFailed, kind: domain.ErrorConflict,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			logger := &recordingBoundaryLogger{}
+			endpoint, err := reporter.NewEndpoint(reporter.EndpointConfig{
+				TaskHandle: "task-0001", BriefRevision: 3, BriefRevisionHash: strings.Repeat("a", 64),
+				Credential: validCredential, Auditor: &recordingAuditor{},
+				Sink: &recordingSink{receipt: domain.ReportReceipt{
+					TaskHandle: "task-0001", LocalReportID: "report-0001", StateVersion: 7, AcceptedAt: accepted,
+				}},
+				Logger: logger, Clock: func() time.Time { return accepted },
+			})
+			if err != nil {
+				t.Fatalf("NewEndpoint() error = %v", err)
+			}
+			client, err := reporter.NewClient(endpoint, test.credential)
+			if err != nil {
+				t.Fatalf("NewClient() error = %v", err)
+			}
+			_, _ = client.Report(context.Background(), test.report)
+			if len(logger.records) != 1 {
+				t.Fatalf("recorded %d crossings, want exactly 1", len(logger.records))
+			}
+			record := logger.records[0]
+			if record.Boundary != application.BoundaryReporter || record.TaskHandle != "task-0001" {
+				t.Errorf("record identity = %#v", record)
+			}
+			if record.Outcome != test.outcome {
+				t.Errorf("outcome = %q, want %q", record.Outcome, test.outcome)
+			}
+			if record.ErrorKind != test.kind {
+				t.Errorf("error kind = %q, want %q", record.ErrorKind, test.kind)
+			}
+			if test.outcome == application.BoundaryFailed && record.Hint == "" {
+				t.Error("a failed crossing carried no hint")
+			}
+		})
 	}
 }

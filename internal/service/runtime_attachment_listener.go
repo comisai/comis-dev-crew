@@ -32,7 +32,7 @@ func (coordinator *runtimeAttachmentCoordinator) listenRuntimeAttachment(
 	endpoint, err := reporter.NewEndpoint(reporter.EndpointConfig{
 		TaskHandle: request.TaskHandle, BriefRevision: request.BriefRevision,
 		BriefRevisionHash: request.BriefRevisionHash, Credential: credential, Sink: coordinator.reportSink,
-		Auditor: coordinator,
+		Auditor: coordinator, Logger: coordinator.logger, Clock: coordinator.clock,
 	})
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("prepare runtime attachment endpoint: %w", err), pinned.close())

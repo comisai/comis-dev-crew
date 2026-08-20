@@ -228,6 +228,23 @@ connection, which keeps the request/response transport and its bounded reads
 unchanged, survives a restart, and lets a dropped follower resume exactly where it
 stopped.
 
+## Boundary records
+
+The three seams an outside actor reaches — the local API, a worker's reporter
+endpoint, and the Comis control connection — each write one structured line per
+crossing to standard error, at a level selected by `--log-level`.
+
+The record is a closed struct, not a set of caller-supplied fields. That is the
+design rather than an implementation detail: "never log a brief, objective,
+report, diff, path, argument or credential" is a rule every future call site
+would have to remember, while a closed record has no field those could occupy.
+Failures reuse the same closed error kinds and operator hints callers receive,
+so failures group identically across all three seams.
+
+This is diagnostic output and not durable history. Transitions live in the event
+stream and refusals in the audit trail; both survive a restart, and a lost log
+line costs an operator context rather than a fact.
+
 ## Audit trail
 
 A refused cleanup and a rejected reporter credential are recorded as a durable

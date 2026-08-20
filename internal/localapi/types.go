@@ -294,6 +294,9 @@ type HandlerConfig struct {
 	Decisions         DecisionAuthority
 	ServiceInstanceID string
 	Clock             application.Clock
+	// Logger is optional. A deployment without one records nothing and serves
+	// exactly as before.
+	Logger application.BoundaryLogger
 }
 
 // HandbackTaskInput selects one paused task and closed E0 action.

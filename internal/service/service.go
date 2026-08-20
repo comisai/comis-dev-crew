@@ -43,32 +43,35 @@ type ComisControl interface {
 
 // Config identifies the service-owned database and operator endpoint.
 type Config struct {
-	DatabasePath             string
-	SocketPath               string
-	MCPSocketPath            string
-	RuntimeRoot              string
-	ServiceInstanceID        string
-	Repositories             application.RepositoryCatalog
-	WorkerProfiles           application.WorkerProfileValidator
-	WorkerProfileCatalog     application.WorkerProfileCatalog
-	ValidationProfiles       application.ValidationProfileValidator
-	Workspaces               application.WorkspacePreparer
-	RuntimeAttachments       application.RuntimeAttachmentCoordinator
-	WorkerHarnesses          application.WorkerHarnessResolver
-	TaskIDs                  application.TaskIDSource
-	RegistrationNonces       application.RegistrationNonceSource
-	PreparationTTL           time.Duration
-	Clock                    application.Clock
-	DecisionSurfacing        application.DecisionSurfacingPolicy
-	ComisControl             ComisControl
-	RepositoryComposition    *RepositoryComposition
-	ComisComposition         *ComisComposition
-	CodexComposition         *CodexComposition
-	ClaudeComposition        *ClaudeComposition
-	ValidationComposition    *ValidationComposition
-	ForgeComposition         *ForgeComposition
-	FixtureComposition       *FixtureComposition
-	Ready                    func()
+	DatabasePath          string
+	SocketPath            string
+	MCPSocketPath         string
+	RuntimeRoot           string
+	ServiceInstanceID     string
+	Repositories          application.RepositoryCatalog
+	WorkerProfiles        application.WorkerProfileValidator
+	WorkerProfileCatalog  application.WorkerProfileCatalog
+	ValidationProfiles    application.ValidationProfileValidator
+	Workspaces            application.WorkspacePreparer
+	RuntimeAttachments    application.RuntimeAttachmentCoordinator
+	WorkerHarnesses       application.WorkerHarnessResolver
+	TaskIDs               application.TaskIDSource
+	RegistrationNonces    application.RegistrationNonceSource
+	PreparationTTL        time.Duration
+	Clock                 application.Clock
+	DecisionSurfacing     application.DecisionSurfacingPolicy
+	ComisControl          ComisControl
+	RepositoryComposition *RepositoryComposition
+	ComisComposition      *ComisComposition
+	CodexComposition      *CodexComposition
+	ClaudeComposition     *ClaudeComposition
+	ValidationComposition *ValidationComposition
+	ForgeComposition      *ForgeComposition
+	FixtureComposition    *FixtureComposition
+	Ready                 func()
+	// Logger is optional. Without one the service serves exactly as before and
+	// records no boundary crossings.
+	Logger                   application.BoundaryLogger
 	candidateGit             candidateGitInspector
 	workspaceInspector       application.WorkspaceInspector
 	taskDiffs                application.TaskDiffInspector
@@ -334,7 +337,7 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		}
 		scoutReviews = reviews
 	}
-	handlerConfig := localapi.HandlerConfig{Queries: queries, Clock: clock}
+	handlerConfig := localapi.HandlerConfig{Queries: queries, Clock: clock, Logger: config.Logger}
 	if mutations != nil {
 		handlerConfig.Mutations = mutations
 		handlerConfig.ServiceInstanceID = config.ServiceInstanceID

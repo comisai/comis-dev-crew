@@ -34,6 +34,7 @@ func request(t *testing.T, method Method, operationID string) []byte {
 	t.Helper()
 	encoded, err := json.Marshal(Request{
 		ProtocolVersion: ProtocolVersion, OperationID: operationID, Method: method,
+		Payload: json.RawMessage("{}"),
 	})
 	if err != nil {
 		t.Fatalf("encode request: %v", err)

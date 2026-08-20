@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/logging"
 	"github.com/comisai/comis-dev-crew/internal/workers"
 )
 
@@ -30,6 +31,7 @@ Run the sole durable comis-dev-crew service authority.
 
 Options:
   --database PATH                 Owner-private SQLite database path
+  --log-level LEVEL               Boundary log level: debug, info, warn, error
   --socket PATH                   Owner-only operator Unix socket path
   --mcp-socket PATH               Owner-only MCP facade Unix socket path
   --runtime-root PATH             Owner-only per-task attachment root
@@ -90,6 +92,7 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	flags.SetOutput(io.Discard)
 	databasePath := config.DefaultDatabasePath
 	socketPath := config.DefaultSocketPath
+	logLevel := string(logging.LevelInfo)
 	var mcpSocketPath string
 	var runtimeRoot string
 	var serviceInstanceID string
@@ -130,6 +133,7 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	var version bool
 	flags.StringVar(&databasePath, "database", databasePath, "owner-private SQLite database path")
 	flags.StringVar(&socketPath, "socket", socketPath, "owner-only operator Unix socket path")
+	flags.StringVar(&logLevel, "log-level", logLevel, "boundary log level: debug, info, warn, or error")
 	flags.StringVar(&mcpSocketPath, "mcp-socket", "", "owner-only MCP facade Unix socket path")
 	flags.StringVar(&runtimeRoot, "runtime-root", "", "owner-only per-task attachment root")
 	flags.StringVar(&serviceInstanceID, "service-instance", "", "exact Comis service instance identity")
@@ -246,7 +250,22 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	if runService == nil {
 		runService = Run
 	}
-	serviceConfig := Config{DatabasePath: databasePath, SocketPath: socketPath, DecisionSurfacing: surfacing}
+	level, levelErr := logging.ParseLevel(logLevel)
+	if levelErr != nil {
+		return writeServiceDiagnostic(stderr,
+			"devcrew-service: log level is invalid\nHint: use debug, info, warn, or error\n", 2)
+	}
+	// Boundary records go to standard error, which the supervisor already
+	// collects; opening a file here would add a retention surface the host
+	// already provides.
+	logger, loggerErr := logging.New(stderr, level)
+	if loggerErr != nil {
+		return writeServiceDiagnostic(stderr, "devcrew-service: boundary logging is unavailable\n", 2)
+	}
+	serviceConfig := Config{
+		DatabasePath: databasePath, SocketPath: socketPath,
+		DecisionSurfacing: surfacing, Logger: logger,
+	}
 	if installed {
 		serviceConfig.MCPSocketPath = mcpSocketPath
 		serviceConfig.RuntimeRoot = runtimeRoot

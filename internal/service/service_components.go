@@ -98,7 +98,7 @@ func composeRuntimeAttachments(
 		return nil, nil
 	}
 	supervisor, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
-		RuntimeRoot: config.RuntimeRoot, Store: store, Clock: clock,
+		RuntimeRoot: config.RuntimeRoot, Store: store, Clock: clock, Logger: config.Logger,
 		NewCredential:           func() (string, error) { return randomIdentity("runtime-credential", 16) },
 		NewAttentionOperationID: func() (string, error) { return randomIdentity("attention-response", 16) },
 	})

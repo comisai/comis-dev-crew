@@ -13,6 +13,10 @@ import (
 
 const unknownRequestID = "request-unknown"
 
+// unknownRequestMethod names a crossing whose envelope never parsed, so the
+// record still counts the call instead of dropping it.
+const unknownRequestMethod = "unknown"
+
 // Handler authenticates, validates, and dispatches canonical local requests.
 type Handler struct {
 	queries           ReadQueries
@@ -25,6 +29,7 @@ type Handler struct {
 	decisions         DecisionAuthority
 	serviceInstanceID string
 	clock             application.Clock
+	logger            application.BoundaryLogger
 }
 
 var localServiceInstancePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._~-]{0,255}$`)
@@ -47,10 +52,11 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 		scoutReviews:      config.ScoutReviews,
 		decisions:         config.Decisions,
 		serviceInstanceID: config.ServiceInstanceID, clock: config.Clock,
+		logger: config.Logger,
 	}, nil
 }
 
-func (handler *Handler) handle(ctx context.Context, caller CallerClass, data []byte) Outcome {
+func (handler *Handler) serve(ctx context.Context, caller CallerClass, data []byte) Outcome {
 	var request Request
 	if err := decodeObject(data, &request); err != nil {
 		return rejectedOutcome(unknownRequestID, domain.ErrorInvalidArgument, false, "invalid request envelope", "send one strict bounded request", err)

@@ -290,6 +290,7 @@ func composeComisControl(config Config, mutations comiswire.DurableControlMutati
 		HandshakeOperationID: comiswire.OperationID(config.ComisComposition.HandshakeOperationID),
 		Handler:              handler, RequestTimeout: comisRequestTimeout,
 		MinimumBackoff: comisMinimumBackoff, MaximumBackoff: comisMaximumBackoff,
+		Logger: config.Logger, Clock: config.Clock,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("run service Comis connection: %w", err)

@@ -52,6 +52,7 @@ service without hand-editing generated or runtime files:
 devcrew-service \
   --database /absolute/private/state/devcrew.db \
   --socket /absolute/private/run/operator.sock \
+  --log-level info \
   --mcp-socket /absolute/private/run/mcp.sock \
   --runtime-root /absolute/private/run/tasks \
   --service-instance service-instance-devcrew \
@@ -336,6 +337,33 @@ The skill recommends procedure only. It grants no tool, credential, or approval,
 and it renders no operator command line: worker credentials, terminal profiles,
 workspace roots, approval gates, forge branch protection, and service scopes
 enforce the boundary in code regardless of what the prose says.
+
+## Boundary records
+
+Every crossing of the three seams an outside actor reaches — the owner-only
+local API, a worker's per-task reporter endpoint, and the authenticated Comis
+control connection — is written to standard error as one structured JSON line.
+`--log-level` selects `debug`, `info`, `warn`, or `error` and defaults to `info`;
+an unrecognised level is refused at startup rather than quietly defaulted.
+
+A completion carries the boundary, the closed operation name, opaque operation
+and task identities, and `durationMs`. A failure carries the closed `errorKind`
+and the same operator `hint` the caller received, at `error`. An intermediate
+stage carries neither and is written at `debug`, so a call that never finished
+can still be located.
+
+The record is a closed structure rather than free-form fields, which is what
+makes it safe to leave on: there is no field a brief, objective, report body,
+diff, path, argument or credential could occupy. Failure classification is the
+same closed vocabulary the caller sees, so an operator groups reporter, control
+and console failures the same way.
+
+Standard error is the destination because the service runs supervised and its
+stderr is already collected and rotated by the host; writing a file here would
+add a second retention surface for a stream the supervisor already keeps. This
+is diagnostic output, not the durable history — task transitions live in the
+event stream and refusals in the audit trail below, both of which survive a
+restart.
 
 ## Audit trail
 
