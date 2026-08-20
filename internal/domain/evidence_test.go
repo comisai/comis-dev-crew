@@ -77,6 +77,14 @@ func TestCandidateJudge_AcceptsOnlyCurrentShipEvidenceAndForgeTruth(t *testing.T
 	}
 }
 
+func TestDeliveryEvidenceRefusesForgeTruthWithoutExactBranch(t *testing.T) {
+	task := validTask(ShapeShip, DeliveryPullRequest)
+	bundle := shipEvidence(task)
+	if _, err := SealDeliveryEvidence(bundle); err == nil {
+		t.Fatal("SealDeliveryEvidence() accepted forge truth without a branch")
+	}
+}
+
 func TestCandidateJudge_RequiresImmutableScoutReportArtifact(t *testing.T) {
 	task := validTask(ShapeScout, DeliveryReport)
 	bundle := shipEvidence(task)
