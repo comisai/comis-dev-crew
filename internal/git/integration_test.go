@@ -24,7 +24,8 @@ func TestRegistry_AppliesEveryReviewedIntegrationStrategyAndReplays(t *testing.T
 			fixture := newIntegrationFixture(t)
 			candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "component.txt", "component\n")
 			targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "integration.txt", "integration\n")
-			request := fixture.request("integration-apply-"+string(strategy), strategy, candidateHead, targetHead)
+			operationID := "integration-apply-" + strings.ReplaceAll(string(strategy), "_", "-")
+			request := fixture.request(operationID, strategy, candidateHead, targetHead)
 
 			result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
 			if err != nil {
@@ -163,7 +164,7 @@ func (fixture integrationFixture) request(
 	return application.IntegrationAdapterRequest{
 		OperationID: operationID, Strategy: strategy,
 		Target: application.IntegrationTargetReference{
-			RepositoryID: fixture.repository.repositoryID,
+			TaskHandle: fixture.target.TaskHandle, RepositoryID: fixture.repository.repositoryID,
 			WorktreePath: fixture.target.CanonicalPath, ExpectedHead: targetHead,
 		},
 		Candidate: application.IntegrationCandidateReference{

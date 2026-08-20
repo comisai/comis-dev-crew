@@ -46,6 +46,7 @@ type ApplyIntegrationCandidateCommand struct {
 
 // IntegrationTargetReference is the store-resolved dedicated writer target.
 type IntegrationTargetReference struct {
+	TaskHandle   string
 	RepositoryID string
 	WorktreePath string
 	ExpectedHead string
@@ -259,7 +260,8 @@ func validateIntegrationReservation(
 		reserved.InitiativeHandle != command.InitiativeHandle || reserved.IntegrationTaskHandle != command.IntegrationTaskHandle ||
 		reserved.PolicyID != policyID || reserved.Strategy != strategy || reserved.Candidate.TaskHandle != command.CandidateTaskHandle ||
 		reserved.Candidate.HeadRevision != command.CandidateHead || reserved.Target.ExpectedHead != command.ExpectedIntegrationHead ||
-		reserved.Target.RepositoryID == "" || reserved.Target.RepositoryID != reserved.Candidate.RepositoryID ||
+		reserved.Target.TaskHandle != command.IntegrationTaskHandle || reserved.Target.RepositoryID == "" ||
+		reserved.Target.RepositoryID != reserved.Candidate.RepositoryID ||
 		reserved.Target.WorktreePath == reserved.Candidate.WorktreePath || !canonicalAbsolutePath(reserved.Target.WorktreePath) ||
 		!canonicalAbsolutePath(reserved.Candidate.WorktreePath) || domain.ValidateGitRevision(reserved.Candidate.BaseRevision) != nil {
 		return errors.New("reserved integration identity is invalid")

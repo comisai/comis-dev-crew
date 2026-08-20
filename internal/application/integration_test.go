@@ -179,7 +179,7 @@ func integrationReservation(command ApplyIntegrationCandidateCommand, strategy I
 		InitiativeHandle: command.InitiativeHandle, IntegrationTaskHandle: command.IntegrationTaskHandle,
 		PolicyID: "integration-reviewed", Strategy: strategy,
 		Target: IntegrationTargetReference{
-			RepositoryID: "product-api", WorktreePath: "/approved/worktrees/task-integration",
+			TaskHandle: "task-integration", RepositoryID: "product-api", WorktreePath: "/approved/worktrees/task-integration",
 			ExpectedHead: command.ExpectedIntegrationHead,
 		},
 		Candidate: IntegrationCandidateReference{
