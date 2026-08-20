@@ -1,6 +1,12 @@
 package forge
 
 import (
+	"context"
+	"errors"
+	"net/http"
+	"net/url"
+	"strconv"
+
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
@@ -45,3 +51,97 @@ func toLandedEvidence(truth application.LandedEvidenceTruth) domain.LandedEviden
 func ProveLandedFromForge(truth application.LandedEvidenceTruth) domain.LandedProof {
 	return domain.ProveLanded(toLandedEvidence(truth))
 }
+
+// githubComparison is the subset of a commit comparison the proof needs.
+type githubComparison struct {
+	Status string `json:"status"`
+}
+
+// githubMergedPull adds the merge facts the delivery path never needed.
+type githubMergedPull struct {
+	Number         int    `json:"number"`
+	Merged         bool   `json:"merged"`
+	MergeCommitSHA string `json:"merge_commit_sha"`
+}
+
+// containedStatuses are the comparison results that mean "already contains".
+// `behind` means the base is behind the head's ancestor set — the content is in
+// — and `identical` is the same thing with nothing left over. `ahead` and
+// `diverged` both mean it is not.
+func comparisonContains(status string) bool {
+	return status == "behind" || status == "identical"
+}
+
+// GatherLandedEvidence reads what the forge can prove about one head.
+//
+// Every read is best-effort in one specific sense: a forge that will not answer
+// yields Available=false rather than an error, because a transient outage must
+// never reach the proof looking like an answer of "no". A caller that treated
+// an unreachable forge as proof of non-delivery would remove work that had in
+// fact landed.
+func (adapter *GitHubAdapter) GatherLandedEvidence(
+	ctx context.Context,
+	request application.LandedEvidenceRequest,
+) (application.LandedEvidenceTruth, error) {
+	if adapter == nil || request.RepositoryID != adapter.config.RepositoryIdentity {
+		return application.LandedEvidenceTruth{}, errors.New("gather landed evidence: repository identity differs")
+	}
+	credential, err := adapter.config.ReadCredentials.Resolve(ctx)
+	if err != nil || !validReadCredential(credential) {
+		return application.LandedEvidenceTruth{}, errors.New("gather landed evidence: read authority is unavailable")
+	}
+
+	truth := application.LandedEvidenceTruth{WorkHead: request.HeadRevision}
+
+	// The pull request is looked up BY HEAD BRANCH across every state. A record
+	// that was never written, or written and lost, must not make landed work
+	// look unlanded.
+	query := url.Values{"head": {adapter.config.Owner + ":" + request.Branch}, "state": {"all"}}
+	var summaries []githubPullSummary
+	if err := adapter.requestJSON(ctx, credential.Secret, http.MethodGet,
+		adapter.repositoryPath("pulls"), query, nil, &summaries); err != nil {
+		return truth, nil
+	}
+	truth.Available = true
+
+	for _, summary := range summaries {
+		if summary.Number < 1 {
+			continue
+		}
+		var pull githubMergedPull
+		if err := adapter.requestJSON(ctx, credential.Secret, http.MethodGet,
+			adapter.repositoryPath("pulls", strconv.Itoa(summary.Number)), nil, nil, &pull); err != nil {
+			continue
+		}
+		if !pull.Merged || pull.MergeCommitSHA == "" {
+			continue
+		}
+		contains := false
+		var comparison githubComparison
+		if err := adapter.requestJSON(ctx, credential.Secret, http.MethodGet,
+			adapter.repositoryPath("compare", pull.MergeCommitSHA+"..."+request.HeadRevision),
+			nil, nil, &comparison); err == nil {
+			contains = comparisonContains(comparison.Status)
+		}
+		truth.MergedPullRequest = &application.MergedPullRequestTruth{
+			Number: pull.Number, Merged: true, MergeCommitContainsHead: contains,
+		}
+		break
+	}
+
+	// Containment in the default branch is the squash-merge-then-delete case,
+	// where no branch and no matching head survive but the content is in.
+	var containment githubComparison
+	if err := adapter.requestJSON(ctx, credential.Secret, http.MethodGet,
+		adapter.repositoryPath("compare", adapter.config.BaseBranch+"..."+request.HeadRevision),
+		nil, nil, &containment); err == nil {
+		truth.DefaultBranchContainsContent = comparisonContains(containment.Status)
+		// The comparison was answered by the forge just now, so the base it
+		// compared against is current by construction.
+		truth.DefaultBranchUpToDate = true
+		truth.DefaultBranchHead = request.HeadRevision
+	}
+	return truth, nil
+}
+
+var _ application.LandedEvidenceGatherer = (*GitHubAdapter)(nil)

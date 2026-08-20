@@ -686,11 +686,19 @@ squash-merge-then-delete-branch case. Unreadable forge truth refuses rather than
 letting a later route answer a question the earlier one never asked, and every
 refusal names the evidence gap.
 
-The proof and its forge-side gathering port are in place; the cleanup path has
-not been switched over to consume them yet, so today's removals are still
-decided by the delivery rule above. Gathering landed evidence needs read
-authority only — stated in code, so the merge credential cannot drift into a
-path every cleanup runs.
+Cleanup consults the proof in exactly one place: where the delivery rule cannot
+answer at all, having found neither a recorded pull request nor a report
+artifact hash. That case used to refuse outright, and a missing record is not
+evidence that nothing landed — a squash merge that deleted the branch leaves
+precisely this state. The consultation can only turn that refusal into an
+acceptance, never the reverse, so every removal the delivery rule already
+refused is still refused.
+
+A deployment that configures no evidence source keeps the earlier behaviour
+rather than acquiring a route it never opted into, and a gatherer that fails is
+not a cleanup failure — it established nothing, and nothing is not proof.
+Gathering needs read authority only, stated in code, so the merge credential
+cannot drift into a path every cleanup runs.
 
 **Process signals are not exposed.** No interrupt, terminate, or kill verb
 exists. Stopping a task's execution runs through terminal lifecycle rather than

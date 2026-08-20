@@ -96,3 +96,39 @@ func TestSupersessionStalesNothingForAProducerOutsideTheInitiative(t *testing.T)
 		t.Fatalf("foreign producer staled %v", stale)
 	}
 }
+
+func TestHeadChangeStalesTheProducerAndItsArtifactConsumers(t *testing.T) {
+	initiative := initiativeFixture()
+	initiative.Edges = append(initiative.Edges,
+		domain.InitiativeEdge{
+			FromTaskHandle: "task-backend", ToTaskHandle: "task-frontend",
+			Kind: domain.EdgeConsumesArtifact, RequiredArtifactKind: domain.ArtifactAPISchema,
+		},
+	)
+
+	stale := initiative.TasksStaleAfterHeadChange("task-backend")
+	// The producer itself first: its own validation evidence was gathered
+	// against content that no longer exists. Then whoever pinned an artifact it
+	// produced, because that artifact was built from the old head.
+	if len(stale) != 2 || stale[0] != "task-backend" || stale[1] != "task-frontend" {
+		t.Fatalf("stale = %v", stale)
+	}
+}
+
+func TestHeadChangeLeavesLanesThatConsumeNothingAlone(t *testing.T) {
+	initiative := initiativeFixture()
+	// task-integration depends on task-backend through integrates_after, which
+	// consumes no artifact. Its evidence is about integration, not about the
+	// producer's content, so a head move must not discard it.
+	stale := initiative.TasksStaleAfterHeadChange("task-backend")
+	if len(stale) != 1 || stale[0] != "task-backend" {
+		t.Fatalf("stale = %v", stale)
+	}
+}
+
+func TestHeadChangeForANonMemberStalesNothing(t *testing.T) {
+	initiative := initiativeFixture()
+	if stale := initiative.TasksStaleAfterHeadChange("task-elsewhere"); len(stale) != 0 {
+		t.Fatalf("foreign task staled %v", stale)
+	}
+}

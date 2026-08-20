@@ -224,6 +224,9 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	config.pullRequests = pullRequests
 	config.cleanupRemover = registry
 	config.cleanupForge = pullRequests
+	// The same read-only adapter answers both. A deployment that can verify
+	// delivery truth can also prove whether work landed.
+	config.cleanupLanded = pullRequests
 	if config.FixtureComposition != nil {
 		config.fixtureCandidatePreparer = registry
 	}

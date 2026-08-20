@@ -100,3 +100,46 @@ func (initiative DevelopmentInitiative) TasksStaleAfterSupersession(
 	sort.Strings(stale)
 	return stale
 }
+
+// TasksStaleAfterHeadChange names the members whose evidence stopped meaning
+// anything when one task's head moved.
+//
+// Two groups, and only two. The producer itself, because its validation
+// evidence was gathered against content that no longer exists; and whoever
+// pinned an artifact it produced, because that artifact was built from the old
+// head. A lane that merely waits on the producer — an integration step, say —
+// consumed nothing from it, so its evidence is about a different question and
+// survives.
+//
+// A task outside the initiative stales nothing: a head move in another
+// initiative is not this initiative's business.
+func (initiative DevelopmentInitiative) TasksStaleAfterHeadChange(taskHandle string) []string {
+	if !initiative.contains(taskHandle) {
+		return nil
+	}
+	stale := []string{taskHandle}
+	seen := map[string]struct{}{taskHandle: {}}
+	for _, edge := range initiative.Edges {
+		if edge.Kind != EdgeConsumesArtifact || edge.FromTaskHandle != taskHandle {
+			continue
+		}
+		if _, exists := seen[edge.ToTaskHandle]; exists {
+			continue
+		}
+		seen[edge.ToTaskHandle] = struct{}{}
+		stale = append(stale, edge.ToTaskHandle)
+	}
+	sort.Strings(stale[1:])
+	return stale
+}
+
+func (initiative DevelopmentInitiative) contains(taskHandle string) bool {
+	for _, component := range initiative.Components {
+		for _, handle := range component.TaskHandles {
+			if handle == taskHandle {
+				return true
+			}
+		}
+	}
+	return false
+}

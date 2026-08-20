@@ -207,9 +207,12 @@ type DeliveredWorkspaceRemover interface {
 
 // CleanupCoordinatorConfig supplies the complete E0 cleanup authority set.
 type CleanupCoordinatorConfig struct {
-	Store       TaskCleanupStore
-	Workspaces  WorkspaceInspector
-	Forge       PullRequestDeliveryVerifier
+	Store      TaskCleanupStore
+	Workspaces WorkspaceInspector
+	Forge      PullRequestDeliveryVerifier
+	// Landed is optional. A deployment without one keeps the delivery rule
+	// exactly as it was rather than acquiring a route it never opted into.
+	Landed      LandedEvidenceGatherer
 	Releaser    ManagedRunReleaser
 	Attachments RuntimeAttachmentReleaser
 	Remover     DeliveredWorkspaceRemover
@@ -389,8 +392,8 @@ func (coordinator *CleanupCoordinator) verifyCurrentSafety(
 		return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, cleanupDirtyWorkspaceFailure()
 	}
 	if record.PullRequestID == "" {
-		if record.ReportArtifactHash == "" {
-			return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, errors.New("cleanup delivery evidence is unavailable")
+		if err := coordinator.acceptUndeliveredIfLanded(ctx, record, snapshot); err != nil {
+			return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, err
 		}
 		return snapshot, PullRequestDeliveryTruth{}, nil
 	}

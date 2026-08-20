@@ -83,6 +83,7 @@ type Config struct {
 	pullRequests             candidatePullRequestDeliverer
 	cleanupRemover           application.DeliveredWorkspaceRemover
 	cleanupForge             application.PullRequestDeliveryVerifier
+	cleanupLanded            application.LandedEvidenceGatherer
 	fixtureCandidatePreparer fixtureCandidatePreparer
 }
 
@@ -299,6 +300,7 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		}
 		cleanup, err = application.NewCleanupCoordinator(application.CleanupCoordinatorConfig{
 			Store: store, Workspaces: config.workspaceInspector, Forge: config.cleanupForge,
+			Landed:   config.cleanupLanded,
 			Releaser: control, Attachments: config.RuntimeAttachments,
 			Remover: config.cleanupRemover, Clock: clock,
 		})
