@@ -22,6 +22,7 @@ type Handler struct {
 	initiativeQueries   InitiativeReadQueries
 	mutations           TaskMutations
 	initiativeMutations InitiativeMutations
+	initiativeControls  InitiativeControls
 	reconciliation      TaskReconciliation
 	interventions       TaskInterventions
 	cleanup             TaskCleanup
@@ -43,7 +44,7 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 	if config.Clock == nil {
 		return nil, errors.New("create local API handler: clock is required")
 	}
-	if (config.Mutations != nil || config.InitiativeMutations != nil) &&
+	if (config.Mutations != nil || config.InitiativeMutations != nil || config.InitiativeControls != nil) &&
 		!localServiceInstancePattern.MatchString(config.ServiceInstanceID) {
 		return nil, errors.New("create local API handler: service instance identity is required for mutations")
 	}
@@ -51,7 +52,8 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 		queries: config.Queries, initiativeQueries: config.InitiativeQueries,
 		mutations:           config.Mutations,
 		initiativeMutations: config.InitiativeMutations, reconciliation: config.Reconciliation,
-		interventions: config.Interventions, cleanup: config.Cleanup,
+		initiativeControls: config.InitiativeControls,
+		interventions:      config.Interventions, cleanup: config.Cleanup,
 		primaryCheckouts:  config.PrimaryCheckouts,
 		scoutReviews:      config.ScoutReviews,
 		decisions:         config.Decisions,

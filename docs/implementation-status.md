@@ -448,6 +448,12 @@ cannot rewrite what an earlier control request actually observed. Completed
 member claims are accepted only when the durable member operation names the
 expected command, task, and state version.
 
+The strict local boundary exposes `PauseInitiative`, `ResumeInitiative`, and
+`CancelInitiative` only to the operator endpoint. Each accepts only an
+initiative handle, validates the complete durable result before projection, and
+returns the per-member outcomes with a `mutate` classification. The MCP endpoint
+refuses all three commands before dispatch.
+
 Threat posture: a group command carries only an initiative handle. It cannot
 select an unowned task, forge member operation identities, or collapse a partial
 distributed outcome into success; the authoritative member set is reread from

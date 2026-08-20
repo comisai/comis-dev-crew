@@ -94,6 +94,9 @@ func (client *Client) ListBacklog(
 }
 
 func (handler *Handler) dispatchInitiative(ctx context.Context, request Request) (Outcome, bool) {
+	if outcome, handled := handler.dispatchInitiativeControl(ctx, request); handled {
+		return outcome, true
+	}
 	switch request.Method {
 	case MethodListInitiatives:
 		var input ListInitiativesInput

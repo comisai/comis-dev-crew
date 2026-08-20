@@ -54,6 +54,9 @@ const (
 	MethodListBacklog       Method = "ListBacklog"
 	MethodPrepareTask       Method = "PrepareTask"
 	MethodPrepareInitiative Method = "PrepareInitiative"
+	MethodPauseInitiative   Method = "PauseInitiative"
+	MethodResumeInitiative  Method = "ResumeInitiative"
+	MethodCancelInitiative  Method = "CancelInitiative"
 	MethodReconcileTask     Method = "ReconcileTask"
 	MethodHandbackTask      Method = "HandbackTask"
 	MethodCleanupTask       Method = "CleanupTask"
@@ -82,7 +85,8 @@ func (method Method) valid() bool {
 	switch method {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
 		MethodOperation, MethodListInitiatives, MethodGetInitiative, MethodListBacklog,
-		MethodPrepareTask, MethodPrepareInitiative, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
+		MethodPrepareTask, MethodPrepareInitiative, MethodPauseInitiative, MethodResumeInitiative, MethodCancelInitiative,
+		MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
 		MethodSyncPrimary, MethodAttestScout, MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs, MethodReadEvents, MethodReadTaskLogs, MethodCancelDecision,
 		MethodRespondDecision, MethodReadAudit:
@@ -106,7 +110,8 @@ func (method Method) SideEffect() SideEffectClass {
 	switch method {
 	case MethodCancelDecision, MethodRespondDecision:
 		return SideEffectMutate
-	case MethodPrepareTask, MethodPrepareInitiative, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
+	case MethodPrepareTask, MethodPrepareInitiative, MethodPauseInitiative, MethodResumeInitiative, MethodCancelInitiative,
+		MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
 		MethodSyncPrimary, MethodAttestScout:
 		return SideEffectMutate
@@ -211,7 +216,8 @@ type Outcome struct {
 // the operator console was meant to hold alone.
 func (method Method) operatorOnly() bool {
 	switch method {
-	case MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs,
+	case MethodPauseInitiative, MethodResumeInitiative, MethodCancelInitiative,
+		MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs,
 		MethodReadTaskLogs, MethodCancelDecision, MethodRespondDecision, MethodReadAudit:
 		return true
 	default:

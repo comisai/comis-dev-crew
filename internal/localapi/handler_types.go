@@ -41,6 +41,13 @@ type InitiativeMutations interface {
 	PrepareInitiative(context.Context, application.PrepareInitiativeCommand) (application.InitiativePreparationResult, error)
 }
 
+// InitiativeControls is the operator-only non-atomic group control surface.
+type InitiativeControls interface {
+	PauseInitiative(context.Context, application.InitiativeControlCommand) (application.InitiativeControlResult, error)
+	ResumeInitiative(context.Context, application.InitiativeControlCommand) (application.InitiativeControlResult, error)
+	CancelInitiative(context.Context, application.InitiativeControlCommand) (application.InitiativeControlResult, error)
+}
+
 // InitiativeReadQueries is the narrow initiative and backlog read surface.
 type InitiativeReadQueries interface {
 	ListInitiatives(context.Context, domain.InitiativeState) (application.InitiativeList, error)
@@ -88,6 +95,7 @@ type HandlerConfig struct {
 	InitiativeQueries   InitiativeReadQueries
 	Mutations           TaskMutations
 	InitiativeMutations InitiativeMutations
+	InitiativeControls  InitiativeControls
 	Reconciliation      TaskReconciliation
 	Interventions       TaskInterventions
 	Cleanup             TaskCleanup
