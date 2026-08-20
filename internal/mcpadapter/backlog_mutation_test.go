@@ -3,9 +3,11 @@ package mcpadapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/comiswire"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 	"github.com/comisai/comis-dev-crew/internal/localapi"
@@ -134,12 +136,156 @@ func TestFacadeBacklogSchemasExcludeProvenanceAndHostAuthority(t *testing.T) {
 	}
 }
 
+func TestFacadeBacklogReconciliationRequiresExactCompletedOperation(t *testing.T) {
+	client := &backlogMCPClient{
+		fakeClient: &fakeClient{}, addition: backlogMCPAddition(), promotion: backlogMCPPromotion(),
+	}
+	facade, err := New(Config{
+		Client: client, ServiceInstanceID: "service-instance-0001", Version: "test",
+		NewOperationID: func() (string, error) { return "reconcile-backlog-0001", nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := errors.New("local outcome uncertain")
+	addInput := localapi.AddBacklogInput{RepositoryID: "repo-primary", SourceConversationRef: "conversation-0001"}
+	promoteInput := localapi.PromoteBacklogInput{BacklogHandle: "backlog-added"}
+	client.operation = application.OperationView{
+		OperationID: "operation-mcp-backlog-add", Command: "AddBacklog", Status: domain.OperationCompleted,
+	}
+	added, err := facade.reconcileBacklogAddition(
+		context.Background(), "operation-mcp-backlog-add", addInput, original,
+	)
+	if err != nil || added.Item.Handle != "backlog-added" || client.addInput.SourceConversationRef != "conversation-0001" {
+		t.Fatalf("reconcileBacklogAddition(completed) = %#v, %v", added, err)
+	}
+	client.operation = application.OperationView{
+		OperationID: "operation-mcp-backlog-promote", Command: "PromoteBacklog", Status: domain.OperationCompleted,
+	}
+	promoted, err := facade.reconcileBacklogPromotion(
+		context.Background(), "operation-mcp-backlog-promote", promoteInput, original,
+	)
+	if err != nil || promoted.TaskHandle != "task-backlog-promoted" {
+		t.Fatalf("reconcileBacklogPromotion(completed) = %#v, %v", promoted, err)
+	}
+	client.operation.Command = "PrepareTask"
+	if _, err := facade.reconcileBacklogPromotion(
+		context.Background(), "operation-mcp-backlog-promote", promoteInput, original,
+	); !errors.Is(err, original) {
+		t.Fatalf("reconcileBacklogPromotion(mismatched) error = %v, want original", err)
+	}
+	client.operation = application.OperationView{
+		OperationID: "operation-mcp-backlog-add", Command: "AddBacklog",
+		Status: domain.OperationRejected, ErrorCode: domain.ErrorConflict,
+	}
+	if _, err := facade.reconcileBacklogAddition(
+		context.Background(), "operation-mcp-backlog-add", addInput, original,
+	); errors.Is(err, original) {
+		t.Fatalf("reconcileBacklogAddition(rejected) error = %v, want safe rejection", err)
+	}
+	client.operation.Status = domain.OperationAccepted
+	client.operation.ErrorCode = ""
+	if _, err := facade.reconcileBacklogAddition(
+		context.Background(), "operation-mcp-backlog-add", addInput, original,
+	); !errors.Is(err, original) {
+		t.Fatalf("reconcileBacklogAddition(accepted) error = %v, want original", err)
+	}
+	client.operation.Status = "invented"
+	if _, err := facade.reconcileBacklogAddition(
+		context.Background(), "operation-mcp-backlog-add", addInput, original,
+	); err == nil || errors.Is(err, original) {
+		t.Fatalf("reconcileBacklogAddition(invented) error = %v", err)
+	}
+	if _, err := facade.reconcileBacklogAddition(
+		nil, "operation-mcp-backlog-add", addInput, original,
+	); !errors.Is(err, original) {
+		t.Fatalf("reconcileBacklogAddition(nil context) error = %v, want original", err)
+	}
+	if _, err := facade.reconcileBacklogPromotion(
+		nil, "operation-mcp-backlog-promote", promoteInput, original,
+	); !errors.Is(err, original) {
+		t.Fatalf("reconcileBacklogPromotion(nil context) error = %v, want original", err)
+	}
+	client.operation = application.OperationView{
+		OperationID: "operation-mcp-backlog-promote", Command: "PromoteBacklog",
+		Status: domain.OperationRejected, ErrorCode: domain.ErrorPrecondition,
+	}
+	if _, err := facade.reconcileBacklogPromotion(
+		context.Background(), "operation-mcp-backlog-promote", promoteInput, original,
+	); errors.Is(err, original) {
+		t.Fatalf("reconcileBacklogPromotion(rejected) error = %v, want safe rejection", err)
+	}
+	client.operation.Status = domain.OperationUnknown
+	client.operation.ErrorCode = ""
+	if _, err := facade.reconcileBacklogPromotion(
+		context.Background(), "operation-mcp-backlog-promote", promoteInput, original,
+	); !errors.Is(err, original) {
+		t.Fatalf("reconcileBacklogPromotion(unknown) error = %v, want original", err)
+	}
+	client.operation.Status = "invented"
+	if _, err := facade.reconcileBacklogPromotion(
+		context.Background(), "operation-mcp-backlog-promote", promoteInput, original,
+	); err == nil || errors.Is(err, original) {
+		t.Fatalf("reconcileBacklogPromotion(invented) error = %v", err)
+	}
+}
+
+func TestFacadeBacklogMutationHandlersFailClosedOnInvalidLocalResults(t *testing.T) {
+	client := &backlogMCPClient{fakeClient: &fakeClient{}}
+	facade, err := New(Config{
+		Client: client, ServiceInstanceID: "service-instance-0001", Version: "test",
+		NewOperationID: func() (string, error) { return "reconcile-backlog-0001", nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addInput := AddBacklogInput{RepositoryID: "repo-primary", Shape: domain.ShapeShip}
+	promoteInput := PromoteBacklogInput{BacklogHandle: "backlog-added"}
+	if _, _, err := facade.addBacklog(context.Background(), nil, addInput); err == nil {
+		t.Fatal("addBacklog(missing authorization) error = nil")
+	}
+	if _, _, err := facade.promoteBacklog(context.Background(), nil, promoteInput); err == nil {
+		t.Fatal("promoteBacklog(missing authorization) error = nil")
+	}
+	addRequest := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{
+		Meta: callMeta("operation-mcp-backlog-add", "service-instance-0001"),
+	}}
+	promoteRequest := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{
+		Meta: callMeta("operation-mcp-backlog-promote", "service-instance-0001"),
+	}}
+	client.addErr = errors.New("addition client failed")
+	if _, _, err := facade.addBacklog(context.Background(), addRequest, addInput); !errors.Is(err, client.addErr) {
+		t.Fatalf("addBacklog(client failure) error = %v", err)
+	}
+	client.addErr = nil
+	if _, _, err := facade.addBacklog(context.Background(), addRequest, addInput); err == nil {
+		t.Fatal("addBacklog(empty result) error = nil")
+	}
+	client.promoteErr = errors.New("promotion client failed")
+	if _, _, err := facade.promoteBacklog(context.Background(), promoteRequest, promoteInput); !errors.Is(err, client.promoteErr) {
+		t.Fatalf("promoteBacklog(client failure) error = %v", err)
+	}
+	client.promoteErr = nil
+	if _, _, err := facade.promoteBacklog(context.Background(), promoteRequest, promoteInput); err == nil {
+		t.Fatal("promoteBacklog(empty result) error = nil")
+	}
+	client.promotion = backlogMCPPromotion()
+	client.promotion.ManagedRun.RequestedAttachment.SourcePath = ""
+	if _, _, err := facade.promoteBacklog(context.Background(), promoteRequest, PromoteBacklogInput{
+		BacklogHandle: "backlog-added",
+	}); err == nil {
+		t.Fatal("promoteBacklog(invalid private metadata) error = nil")
+	}
+}
+
 type backlogMCPClient struct {
 	*fakeClient
 	addition     localapi.AddBacklogResult
 	promotion    localapi.PromoteBacklogResult
 	addInput     localapi.AddBacklogInput
 	promoteInput localapi.PromoteBacklogInput
+	addErr       error
+	promoteErr   error
 }
 
 func (client *backlogMCPClient) AddBacklog(
@@ -149,7 +295,7 @@ func (client *backlogMCPClient) AddBacklog(
 ) (localapi.AddBacklogResult, error) {
 	client.addInput = input
 	client.addition.OperationID = operationID
-	return client.addition, nil
+	return client.addition, client.addErr
 }
 
 func (client *backlogMCPClient) PromoteBacklog(
@@ -159,7 +305,7 @@ func (client *backlogMCPClient) PromoteBacklog(
 ) (localapi.PromoteBacklogResult, error) {
 	client.promoteInput = input
 	client.promotion.OperationID = operationID
-	return client.promotion, nil
+	return client.promotion, client.promoteErr
 }
 
 func backlogMCPAddition() localapi.AddBacklogResult {

@@ -206,8 +206,9 @@ devcrew-mcp \
   --service-instance service-instance-devcrew
 ```
 
-The facade defines twenty-three tools: `prepare_task`, `prepare_initiative`,
-`get_initiative`, `backlog_list`, `promote_scout`, `reconcile_task`,
+The facade defines twenty-five tools: `prepare_task`, `prepare_initiative`,
+`get_initiative`, `backlog_list`, `backlog_add`, `backlog_promote`,
+`promote_scout`, `reconcile_task`,
 `handback_task`, `cleanup_task`, `discard_task`, `pause_task`, `cancel_task`,
 `resume_task`, `replace_worker`, `steer_task`, `verify_task`,
 `attest_scout_decisions`, `sync_primary`, `list_tasks`, `get_task`,
@@ -217,6 +218,12 @@ the MCP result extension while keeping nonces and host resource paths out of
 model-visible structured content. `promote_scout` returns the same private
 single-run registration metadata ordinary task preparation does, because it
 mints a task the same way.
+`backlog_add` records bounded intent and derives its source conversation from
+the authenticated call context; conversation provenance is absent from both the
+tool arguments and model-visible result. `backlog_promote` completes the normal
+task contract for one ready item but cannot select repository or shape. It
+returns private single-run registration metadata through `comis.managedRun`
+while keeping nonces and host resource paths out of structured content.
 `cancel_task` is destructive — it ends work an operator asked for and repeating
 it does not undo that — but it is not removal.
 `discard_task` is the removal a cancelled task has no other route to: cleanup

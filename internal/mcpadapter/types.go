@@ -16,6 +16,8 @@ const (
 	ToolPrepareInitiative = "prepare_initiative"
 	ToolGetInitiative     = "get_initiative"
 	ToolBacklogList       = "backlog_list"
+	ToolAddBacklog        = "backlog_add"
+	ToolPromoteBacklog    = "backlog_promote"
 	ToolReconcileTask     = "reconcile_task"
 	ToolHandbackTask      = "handback_task"
 	ToolCleanupTask       = "cleanup_task"
@@ -46,6 +48,8 @@ type Client interface {
 	PrepareInitiative(context.Context, string, localapi.PrepareInitiativeInput) (localapi.PrepareInitiativeResult, error)
 	GetInitiative(context.Context, string, string) (application.InitiativeDetail, error)
 	ListBacklog(context.Context, string, localapi.ListBacklogInput) (application.BacklogList, error)
+	AddBacklog(context.Context, string, localapi.AddBacklogInput) (localapi.AddBacklogResult, error)
+	PromoteBacklog(context.Context, string, localapi.PromoteBacklogInput) (localapi.PromoteBacklogResult, error)
 	ReconcileTask(context.Context, string, localapi.ReconcileTaskInput) (localapi.TaskMutationResult, error)
 	HandbackTask(context.Context, string, localapi.HandbackTaskInput) (localapi.TaskMutationResult, error)
 	CleanupTask(context.Context, string, localapi.CleanupTaskInput) (localapi.TaskMutationResult, error)

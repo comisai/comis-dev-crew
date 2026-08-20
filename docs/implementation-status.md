@@ -470,9 +470,11 @@ through the strict local boundary as `ListInitiatives`, `GetInitiative`, and
 `ListBacklog` read commands to both operator and MCP caller classes while
 refusing fields outside their narrow scope.
 
-The stateless MCP facade maps `prepare_initiative`, `get_initiative`, and
-`backlog_list` to those canonical commands. Preparation is marked `mutate`; both
-reads are marked `read`. The complete private group join is validated against
+The stateless MCP facade maps `prepare_initiative`, `get_initiative`,
+`backlog_list`, `backlog_add`, and `backlog_promote` to those canonical commands.
+Preparation, addition, and promotion are marked `mutate`; both reads are marked
+`read`. Addition provenance comes only from authenticated call context, and the
+promotion schema contains no repository or shape field. The complete private group join is validated against
 the pinned protocol schema and returned only in the MCP result extension, while
 the model-visible preparation result contains bounded initiative and task
 identities but no registration nonce or host resource path.

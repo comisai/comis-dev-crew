@@ -382,7 +382,7 @@ func TestFacade_UncertainTerminalMutationsReconcileBeforeExactRetry(t *testing.T
 
 func assertToolCatalog(t *testing.T, tools []*mcp.Tool) {
 	t.Helper()
-	want := map[string]bool{ToolPrepareTask: false, ToolPrepareInitiative: false, ToolGetInitiative: true, ToolBacklogList: true, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolDiscardTask: false, ToolSyncPrimary: false, ToolAttestScout: false, ToolPauseTask: false, ToolCancelTask: false, ToolResumeTask: false, ToolVerifyTask: false, ToolPromoteScout: false, ToolReplaceWorker: false, ToolSteerTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
+	want := map[string]bool{ToolPrepareTask: false, ToolPrepareInitiative: false, ToolGetInitiative: true, ToolBacklogList: true, ToolAddBacklog: false, ToolPromoteBacklog: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolDiscardTask: false, ToolSyncPrimary: false, ToolAttestScout: false, ToolPauseTask: false, ToolCancelTask: false, ToolResumeTask: false, ToolVerifyTask: false, ToolPromoteScout: false, ToolReplaceWorker: false, ToolSteerTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
 	if len(tools) != len(want) {
 		t.Fatalf("tool count = %d, want %d", len(tools), len(want))
 	}
@@ -645,6 +645,24 @@ func (client *fakeClient) HandbackTask(
 	err := client.handbackErrors[0]
 	client.handbackErrors = client.handbackErrors[1:]
 	return client.handbackResult, err
+}
+
+func (client *fakeClient) AddBacklog(
+	_ context.Context,
+	operationID string,
+	_ localapi.AddBacklogInput,
+) (localapi.AddBacklogResult, error) {
+	client.calls = append(client.calls, "add-backlog:"+operationID)
+	return localapi.AddBacklogResult{}, nil
+}
+
+func (client *fakeClient) PromoteBacklog(
+	_ context.Context,
+	operationID string,
+	_ localapi.PromoteBacklogInput,
+) (localapi.PromoteBacklogResult, error) {
+	client.calls = append(client.calls, "promote-backlog:"+operationID)
+	return localapi.PromoteBacklogResult{}, nil
 }
 
 func (client *fakeClient) PrepareTask(_ context.Context, operationID string, _ localapi.PrepareTaskInput) (localapi.PrepareTaskResult, error) {
