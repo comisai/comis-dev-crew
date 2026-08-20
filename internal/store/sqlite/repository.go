@@ -273,6 +273,8 @@ func currentStateVersion(ctx context.Context, source queryer) (int64, error) {
         UNION ALL
         SELECT state_version FROM operations
 		UNION ALL
+		SELECT state_version FROM initiatives
+		UNION ALL
 		SELECT state_version FROM reports
 		UNION ALL
 		SELECT state_version FROM candidate_evidence

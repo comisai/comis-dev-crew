@@ -392,6 +392,30 @@ postures for head, activity, validation, blocking, and attention. Custody and
 process observations remain explicitly `unknown` until a process-evidence
 contract exists.
 
+## Initiative and backlog durability
+
+Multi-component initiatives and bounded backlog requests are stored in the same
+owner-private SQLite database as task authority. Each write validates the closed
+domain record and commits in its own transaction; duplicate stable handles are
+conflicts, malformed stored JSON fails closed, and deterministic reads validate
+the reconstructed record before returning it. Backlog rows contain request and
+readiness data only and have no managed-run, workspace, credential, terminal, or
+delivery authority.
+
+Startup reconciliation now includes every nonterminal initiative. Preparing,
+active, blocked, integrating, validating, and candidate-complete initiatives are
+atomically moved to durable `unknown` with a new global state version before the
+service advertises readiness. Delivered, failed, cancelled, and already-unknown
+initiatives remain stable, and replay is idempotent. A corrupt initiative aborts
+the whole reconciliation transaction, so no subset can be presented as recovered.
+
+Threat posture: nested initiative graphs and backlog dependencies are encoded as
+data, never executable input, and are revalidated after decoding. Only the
+single-writer service process opens the mutable store. Restart cannot silently
+resume initiative authority: ambiguous nonterminal coordination is downgraded to
+`unknown`, and corrupted durable state prevents readiness rather than broadening
+run or scheduling authority.
+
 ## Mutation boundary
 
 The first mutation boundary prepares a service-minted task and later activates it

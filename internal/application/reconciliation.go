@@ -9,9 +9,10 @@ import (
 // StartupReconciliation reports the durable state changes completed before the
 // service advertises readiness.
 type StartupReconciliation struct {
-	TasksMarkedUnknown      int
-	OperationsMarkedUnknown int
-	StateVersion            int64
+	InitiativesMarkedUnknown int
+	TasksMarkedUnknown       int
+	OperationsMarkedUnknown  int
+	StateVersion             int64
 }
 
 // StartupReconciliationStore owns the atomic startup recovery transaction.

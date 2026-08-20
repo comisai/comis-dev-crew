@@ -234,7 +234,7 @@ func persistenceInitiative(handle string, state domain.InitiativeState, version 
 	return domain.DevelopmentInitiative{
 		SchemaVersion:     1,
 		Handle:            handle,
-		ManagedRunGroupID: "managed-run-group_a",
+		ManagedRunGroupID: "managed-run-group_" + handle,
 		TitleRef:          "title-ref-0001",
 		State:             state,
 		BaseRevisionSet: []domain.InitiativeBaseRevision{
