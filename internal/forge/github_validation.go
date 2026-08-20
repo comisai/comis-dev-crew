@@ -19,6 +19,19 @@ func validatePullRequestRequest(request PullRequestRequest) error {
 	return nil
 }
 
+func validatePullRequestMergeRequest(request PullRequestMergeRequest) error {
+	if !operationIDPattern.MatchString(request.OperationID) || !branchPattern.MatchString(request.Branch) ||
+		strings.Contains(request.Branch, "..") || !revisionPattern.MatchString(request.HeadRevision) ||
+		!pullRequestPattern.MatchString(request.PullRequestID) || validateRequiredChecks(request.RequiredChecks) != nil {
+		return errors.New("merge GitHub pull request: request is invalid")
+	}
+	return nil
+}
+
+func validMergeMethod(method MergeMethod) bool {
+	return method == MergeCommit || method == MergeSquash || method == MergeRebase
+}
+
 func validateRequiredChecks(required []string) error {
 	if len(required) == 0 || len(required) > 64 {
 		return errors.New("required checks are invalid")

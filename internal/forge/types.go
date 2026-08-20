@@ -12,6 +12,11 @@ import (
 // to retry without changing pull-request delivery authority.
 var ErrPullRequestTruthUnavailable = errors.New("pull-request truth is temporarily unavailable")
 
+// ErrPullRequestMergeOutcomeUnknown marks a merge mutation whose final forge
+// truth could not be proved. Retrying the same operation is required; callers
+// must never translate this into success from the PUT response alone.
+var ErrPullRequestMergeOutcomeUnknown = errors.New("pull-request merge outcome is unknown")
+
 // CredentialKind is the closed forge authority vocabulary.
 //
 // Merge is a THIRD identity, not a wider push. It is resolved only inside the
@@ -84,4 +89,33 @@ type PullRequestVerificationRequest struct {
 type PullRequestTruth struct {
 	URL      string
 	Evidence domain.ForgeEvidence
+}
+
+// MergeMethod is the operator-selected GitHub merge strategy.
+type MergeMethod string
+
+const (
+	MergeCommit MergeMethod = "merge"
+	MergeSquash MergeMethod = "squash"
+	MergeRebase MergeMethod = "rebase"
+)
+
+// PullRequestMergeRequest binds one merge to the already-approved exact forge
+// identity and every required check observed in its evidence bundle.
+type PullRequestMergeRequest struct {
+	OperationID    string
+	Branch         string
+	HeadRevision   string
+	PullRequestID  string
+	RequiredChecks []string
+}
+
+// PullRequestMergeReceipt is post-mutation forge truth, not the API call's
+// optimistic acknowledgement.
+type PullRequestMergeReceipt struct {
+	RepositoryID        string
+	PullRequestID       string
+	HeadRevision        string
+	MergeCommitRevision string
+	Method              MergeMethod
 }
