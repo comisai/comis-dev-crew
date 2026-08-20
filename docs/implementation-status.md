@@ -658,8 +658,8 @@ terminal success.
 
 ## Deliberately not built at E0
 
-Three surfaces are absent for a reason worth stating, because each would be easy
-to add badly.
+Two surfaces are absent for a reason worth stating, because each would be easy
+to add badly, and one has since become reachable.
 
 **There is no `task processes` projection.** A per-process view is meant to join
 what this service launched with what the host observed beneath the task's
@@ -671,15 +671,26 @@ list and quietly answer "nothing else is running" whenever the missing half was
 the interesting part. The validation half is reachable through the task views;
 the joined projection waits for the contract that makes it honest.
 
-**Cleanup proves delivery, not reachability.** A worktree is removable when its
-recorded pull request is open at exactly the evidence head with every required
-check passed, or when a report artifact hash is recorded — plus a clean tree.
-It does not search for a merged pull request by head branch, walk
-remote-tracking branches, or test containment in the default branch. Those
-questions matter once work can land; at E0 delivery is an open pull request under
-branch protection and this service holds no merge credential, so none of them can
-be true yet and a check for them would be untestable code guarding an
-unreachable state.
+**Cleanup still proves delivery; the landed proof exists beside it.** A worktree
+is removable when its recorded pull request is open at exactly the evidence head
+with every required check passed, or when a report artifact hash is recorded —
+plus a clean tree. That rule is unchanged.
+
+What changed is that work can now land. With `merge_after_approval` and a
+separate merge credential, the three reachability questions became answerable,
+so the proof they need is built and tested: reachability from any
+remote-tracking branch including a fork remote, a merged pull request looked up
+BY HEAD BRANCH so a missing local record never refuses on its own, and
+containment in an up-to-date default branch for the
+squash-merge-then-delete-branch case. Unreadable forge truth refuses rather than
+letting a later route answer a question the earlier one never asked, and every
+refusal names the evidence gap.
+
+The proof and its forge-side gathering port are in place; the cleanup path has
+not been switched over to consume them yet, so today's removals are still
+decided by the delivery rule above. Gathering landed evidence needs read
+authority only — stated in code, so the merge credential cannot drift into a
+path every cleanup runs.
 
 **Process signals are not exposed.** No interrupt, terminate, or kill verb
 exists. Stopping a task's execution runs through terminal lifecycle rather than
