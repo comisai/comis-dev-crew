@@ -464,6 +464,7 @@ devcrew [--socket PATH] task promote SCOUT --input FILE|- [--operation OPERATION
 devcrew [--socket PATH] task replace TASK --worker PROFILE [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task steer TASK --input FILE|- [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task cleanup TASK [--operation OPERATION] [--format json]
+devcrew [--socket PATH] task merge TASK [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task discard TASK --yes [--operation OPERATION] [--format json]
 devcrew [--socket PATH] events tail [--after SEQUENCE] [--task TASK] [--format text|jsonl]
 devcrew [--socket PATH] repair reconcile [--task TASK] [--format table|json]
@@ -653,6 +654,15 @@ worker's own paused report is what settles the state. That ordering is what
 makes the worktree safe to hand to a developer — a task marked paused while its
 worker kept committing would be changing under their editor. The request carries
 no instruction text and no interrupt, and a repeat replays rather than stacking.
+
+`task merge` reserves the latest current accepted forge evidence for one
+delivered `merge_after_approval` task and returns JSON with
+`state: "awaiting_approval"`. The CLI can supply only the task and stable
+operation ID; it cannot attach an approval, select a repository, choose a pull
+request or head, or override the configured merge method. The destructive
+follow-up must arrive through the private managed MCP call with a Comis approval
+receipt bound to that identical operation. A repeat with changed evidence or an
+expired candidate refuses and requires fresh validation and approval.
 
 `task discard` removes the worktree of a task that stopped without delivering
 anything. It exists because cancellation preserves work on purpose and cleanup

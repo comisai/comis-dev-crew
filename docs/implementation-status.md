@@ -794,8 +794,10 @@ carry only the task handle, while MCP calls must bind the approval request and
 the identical operation ID; neither can choose forge coordinates or method.
 Installed composition now joins that mutation to the sole SQLite writer, the
 persistent authenticated Comis connection, and the separately credentialed
-forge adapter only when all three authorities exist. The CLI and MCP adapters
-remain open, so no executable currently invokes the reachable local mutation.
+forge adapter only when all three authorities exist. The operator CLI now
+reserves exact evidence through `task merge TASK` without accepting approval or
+forge fields. The destructive MCP adapter remains open, so the CLI can reach
+only `awaiting_approval` and no executable yet submits the approved follow-up.
 
 ## Worker harnesses
 

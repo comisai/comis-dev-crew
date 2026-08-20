@@ -81,6 +81,42 @@ func parseCleanupTaskCommand(command parsedCommand, args []string) (parsedComman
 	return command, nil
 }
 
+// parseMergeTaskCommand accepts no approval or forge authority. The command
+// reserves current evidence under its stable operation; only the private MCP
+// adapter may bind host approval metadata to a follow-up call.
+func parseMergeTaskCommand(command parsedCommand, args []string) (parsedCommand, error) {
+	if len(args) < 1 || domain.ValidateTaskHandle(args[0]) != nil {
+		return parsedCommand{}, errors.New("merge task reference is required")
+	}
+	command.kind = commandMergeTask
+	command.reference = args[0]
+	command.format = "json"
+	args = args[1:]
+	seen := make(map[string]bool)
+	for len(args) > 0 {
+		if len(args) < 2 || seen[args[0]] {
+			return parsedCommand{}, errors.New("invalid merge arguments")
+		}
+		name, value := args[0], args[1]
+		seen[name] = true
+		switch name {
+		case "--operation":
+			if domain.ValidateOperationID(value) != nil {
+				return parsedCommand{}, errors.New("invalid merge operation")
+			}
+			command.operationID = value
+		case "--format":
+			if value != "json" {
+				return parsedCommand{}, errors.New("merge format must be JSON")
+			}
+		default:
+			return parsedCommand{}, errors.New("unknown merge option")
+		}
+		args = args[2:]
+	}
+	return command, nil
+}
+
 func parseHandbackTaskCommand(command parsedCommand, args []string) (parsedCommand, error) {
 	if len(args) < 1 || domain.ValidateTaskHandle(args[0]) != nil {
 		return parsedCommand{}, errors.New("handback task reference is required")

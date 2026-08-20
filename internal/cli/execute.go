@@ -121,6 +121,8 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 		})
 	case commandCleanupTask:
 		return client.CleanupTask(ctx, operationID, localapi.CleanupTaskInput{TaskHandle: command.reference})
+	case commandMergeTask:
+		return client.MergeTask(ctx, operationID, localapi.MergeTaskInput{TaskHandle: command.reference})
 	case commandPauseTask:
 		return client.PauseTask(ctx, operationID, localapi.PauseTaskInput{TaskHandle: command.reference})
 	case commandCancelTask:

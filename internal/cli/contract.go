@@ -45,6 +45,7 @@ Commands:
   task promote SCOUT --input FILE|- [--operation OPERATION] [--format json]
   task replace TASK --worker PROFILE [--operation OPERATION] [--format json]
   task steer TASK --input FILE|- [--operation OPERATION] [--format json]
+  task merge TASK [--operation OPERATION] [--format json]
   task cleanup TASK [--operation OPERATION] [--format json]
   task discard TASK --yes [--operation OPERATION] [--format json]
   events tail [--after SEQUENCE] [--task TASK] [--format text|jsonl]
@@ -101,6 +102,7 @@ type ReadClient interface {
 	ReconcileTask(context.Context, string, localapi.ReconcileTaskInput) (localapi.TaskMutationResult, error)
 	HandbackTask(context.Context, string, localapi.HandbackTaskInput) (localapi.TaskMutationResult, error)
 	CleanupTask(context.Context, string, localapi.CleanupTaskInput) (localapi.TaskMutationResult, error)
+	MergeTask(context.Context, string, localapi.MergeTaskInput) (application.MergeTaskResult, error)
 }
 
 // Config injects host paths, client creation, and operation identity.

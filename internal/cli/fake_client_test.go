@@ -40,6 +40,7 @@ type fakeClient struct {
 	logs                application.TaskLogPage
 	prepared            localapi.PrepareTaskResult
 	taskMutation        localapi.TaskMutationResult
+	mergeResult         application.MergeTaskResult
 	err                 error
 	calls               []string
 	operationID         string
@@ -289,6 +290,19 @@ func (client *fakeClient) CleanupTask(
 ) (localapi.TaskMutationResult, error) {
 	client.record(operationID, "cleanup:"+input.TaskHandle)
 	return client.taskMutation, client.err
+}
+
+func (client *fakeClient) MergeTask(
+	_ context.Context,
+	operationID string,
+	input localapi.MergeTaskInput,
+) (application.MergeTaskResult, error) {
+	call := "merge:" + input.TaskHandle
+	if input.ApprovalRequestID != "" || input.MCPOperationID != "" {
+		call += ":unexpected-authority"
+	}
+	client.record(operationID, call)
+	return client.mergeResult, client.err
 }
 
 func (client *fakeClient) HandbackTask(

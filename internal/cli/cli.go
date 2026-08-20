@@ -48,6 +48,7 @@ const (
 	commandReconcileTask
 	commandHandbackTask
 	commandCleanupTask
+	commandMergeTask
 	commandDiscardTask
 	commandPauseTask
 	commandCancelTask
@@ -222,6 +223,9 @@ func parseTaskCommand(command parsedCommand, args []string) (parsedCommand, erro
 	}
 	if len(args) > 0 && args[0] == "cleanup" {
 		return parseCleanupTaskCommand(command, args[1:])
+	}
+	if len(args) > 0 && args[0] == "merge" {
+		return parseMergeTaskCommand(command, args[1:])
 	}
 	if len(args) > 0 && args[0] == "discard" {
 		return parseDiscardTaskCommand(command, args[1:])
