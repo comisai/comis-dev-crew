@@ -12,22 +12,28 @@ import (
 // to retry without changing pull-request delivery authority.
 var ErrPullRequestTruthUnavailable = errors.New("pull-request truth is temporarily unavailable")
 
-// CredentialKind is the closed non-merge E0 forge authority vocabulary.
+// CredentialKind is the closed forge authority vocabulary.
+//
+// Merge is a THIRD identity, not a wider push. It is resolved only inside the
+// approved merge operation and never reaches a worker, so the ability to push a
+// branch never carries the ability to merge it.
 type CredentialKind string
 
 const (
-	CredentialRead CredentialKind = "read"
-	CredentialPush CredentialKind = "push"
+	CredentialRead  CredentialKind = "read"
+	CredentialPush  CredentialKind = "push"
+	CredentialMerge CredentialKind = "merge"
 )
 
 // CredentialScope is one operator-asserted least-privilege grant.
 type CredentialScope string
 
 const (
-	ScopeContentsRead     CredentialScope = "contents:read"
-	ScopeContentsWrite    CredentialScope = "contents:write"
-	ScopePullRequestsRead CredentialScope = "pull_requests:read"
-	ScopeChecksRead       CredentialScope = "checks:read"
+	ScopeContentsRead      CredentialScope = "contents:read"
+	ScopeContentsWrite     CredentialScope = "contents:write"
+	ScopePullRequestsRead  CredentialScope = "pull_requests:read"
+	ScopeChecksRead        CredentialScope = "checks:read"
+	ScopePullRequestsWrite CredentialScope = "pull_requests:write"
 )
 
 // Credential is resolved only within one adapter operation and is never logged.

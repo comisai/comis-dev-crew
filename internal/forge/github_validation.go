@@ -46,6 +46,14 @@ func validPushCredential(credential Credential) bool {
 		equalScopes(credential.Scopes, []CredentialScope{ScopeContentsWrite})
 }
 
+// validMergeCredential accepts only the exact merge grant. It is deliberately
+// narrower than push rather than a superset: a merge identity closes a pull
+// request, it does not write contents.
+func validMergeCredential(credential Credential) bool {
+	return credential.Kind == CredentialMerge && validSecret(credential.Secret) &&
+		equalScopes(credential.Scopes, []CredentialScope{ScopePullRequestsWrite})
+}
+
 func validSecret(secret string) bool {
 	return secret != "" && len(secret) <= 4096 && !strings.ContainsAny(secret, "\x00\r\n\t ")
 }

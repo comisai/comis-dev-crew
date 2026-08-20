@@ -14,17 +14,46 @@ func (shape TaskShape) valid() bool {
 	return shape == ShapeShip || shape == ShapeScout
 }
 
-// DeliveryMode is the closed E0 delivery set. Local branch and merge modes are
-// intentionally absent until E1.
+// DeliveryMode is the closed delivery set.
 type DeliveryMode string
 
 const (
 	DeliveryPullRequest DeliveryMode = "pull_request"
+	DeliveryLocalBranch DeliveryMode = "local_branch"
 	DeliveryReport      DeliveryMode = "report"
+	// DeliveryMergeAfterApproval is a separate ACTION, not a more permissive
+	// worker mode. The merge credential is resolved only inside the approved
+	// merge operation and is never held by a worker, and an operator may
+	// disable the mode outright.
+	DeliveryMergeAfterApproval DeliveryMode = "merge_after_approval"
 )
 
 func (mode DeliveryMode) valid() bool {
-	return mode == DeliveryPullRequest || mode == DeliveryReport
+	switch mode {
+	case DeliveryPullRequest, DeliveryLocalBranch, DeliveryReport, DeliveryMergeAfterApproval:
+		return true
+	}
+	return false
+}
+
+// ValidForShape reports whether one shape may deliver through this mode. Ship
+// produces changes and may hand them over any of the change-bearing routes;
+// scout produces a report and only ever delivers that.
+func (mode DeliveryMode) ValidForShape(shape TaskShape) bool {
+	if !mode.valid() || !shape.valid() {
+		return false
+	}
+	if shape == ShapeScout {
+		return mode == DeliveryReport
+	}
+	return mode != DeliveryReport
+}
+
+// RequiresMergeAuthority reports whether delivering through this mode needs the
+// separate merge credential. Only one mode does, which is what keeps the
+// credential out of every worker that merely pushes a branch.
+func (mode DeliveryMode) RequiresMergeAuthority() bool {
+	return mode == DeliveryMergeAfterApproval
 }
 
 // TaskState is the closed E0 lifecycle. Unknown is a durable state, not a
@@ -172,11 +201,11 @@ func (task Task) Validate() error {
 	if !task.DeliveryMode.valid() {
 		return &ValidationError{Field: "deliveryMode", Reason: "must be an E0 delivery mode"}
 	}
-	if task.Shape == ShapeShip && task.DeliveryMode != DeliveryPullRequest {
-		return &ValidationError{Field: "deliveryMode", Reason: "ship tasks require pull_request in E0"}
-	}
-	if task.Shape == ShapeScout && task.DeliveryMode != DeliveryReport {
-		return &ValidationError{Field: "deliveryMode", Reason: "scout tasks require report in E0"}
+	if !task.DeliveryMode.ValidForShape(task.Shape) {
+		return &ValidationError{
+			Field:  "deliveryMode",
+			Reason: "ship tasks deliver changes; scout tasks deliver a report",
+		}
 	}
 	if task.ReportCursor < 0 {
 		return &ValidationError{Field: "reportCursor", Reason: "must not be negative"}
