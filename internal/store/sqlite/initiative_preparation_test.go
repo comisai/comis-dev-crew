@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -66,6 +67,76 @@ func TestPreparedInitiativeCommitsAndReplaysAllMembersInOneTransaction(t *testin
 		ctx, mutation.OperationID, strings.Repeat("f", 64),
 	); !errors.Is(err, application.ErrConflict) {
 		t.Fatalf("ReplayInitiativePreparation(altered) error = %v, want ErrConflict", err)
+	}
+}
+
+func TestPreparedInitiativeCommitsFiveMemberFullStackGraph(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	mutation := sqlitePreparedInitiativeMutation()
+	handles := []string{
+		"task-contract", "task-backend", "task-frontend", "task-integration", "task-validation",
+	}
+	mutation.Initiative.Components = make([]domain.InitiativeComponent, 0, len(handles))
+	mutation.Initiative.ContractArtifacts = []string{"artifact-api-v1"}
+	mutation.Members = make([]application.PreparedInitiativeMember, 0, len(handles))
+	for index, handle := range handles {
+		mutation.Initiative.Components = append(mutation.Initiative.Components, domain.InitiativeComponent{
+			ComponentHandle: "component-" + handle,
+			RepositoryID:    "repo-primary", ResponsibilityRef: "responsibility-" + handle,
+			TaskHandles: []string{handle},
+		})
+		task := storeTask(handle, 1)
+		task.RepositoryID = "repo-primary"
+		task.BaseRevision = mutation.Initiative.BaseRevisionSet[0].Revision
+		if handle == "task-backend" || handle == "task-frontend" {
+			task.ConsumedContracts = []domain.PinnedContract{{
+				ArtifactHandle: "artifact-api-v1", Kind: domain.ArtifactAPISchema,
+				ContentHash: strings.Repeat("a", 64),
+			}}
+		}
+		task.CreatedAt = mutation.At
+		task.UpdatedAt = mutation.At
+		task, err = task.PinBriefRevision()
+		if err != nil {
+			t.Fatalf("PinBriefRevision(%q) error = %v", handle, err)
+		}
+		mutation.Members = append(mutation.Members, application.PreparedInitiativeMember{
+			Task: task,
+			Preparation: application.ManagedRunPreparation{
+				ExternalRunRef: handle, RegistrationNonce: fmt.Sprintf("registration-nonce_member_%d", index),
+				RequestedWorkspaceRoot: "/approved/workspaces/" + handle,
+				RequestedAttachment: application.PreparedRuntimeAttachment{
+					Kind:          application.RuntimeAttachmentUnixSocket,
+					SourcePath:    "/approved/runtime/" + handle + "/attachment.sock",
+					RelayIdentity: strings.Repeat(fmt.Sprintf("%x", index+1), 64)[:64],
+				},
+				ExpiresAt: mutation.GroupExpiresAt, State: application.PreparationOpen,
+			},
+			OperationID:   fmt.Sprintf("prepare-member-full-stack-%d", index),
+			SubjectDigest: strings.Repeat(fmt.Sprintf("%x", index+1), 64)[:64],
+		})
+	}
+	mutation.Initiative.Edges = []domain.InitiativeEdge{
+		{FromTaskHandle: "task-contract", ToTaskHandle: "task-backend", Kind: domain.EdgeConsumesArtifact, RequiredArtifactKind: domain.ArtifactAPISchema},
+		{FromTaskHandle: "task-contract", ToTaskHandle: "task-frontend", Kind: domain.EdgeConsumesArtifact, RequiredArtifactKind: domain.ArtifactAPISchema},
+		{FromTaskHandle: "task-backend", ToTaskHandle: "task-integration", Kind: domain.EdgeIntegratesAfter},
+		{FromTaskHandle: "task-frontend", ToTaskHandle: "task-integration", Kind: domain.EdgeIntegratesAfter},
+		{FromTaskHandle: "task-integration", ToTaskHandle: "task-validation", Kind: domain.EdgeBlocksStart},
+	}
+	mutation.Initiative.IntegrationOwnerTask = "task-integration"
+	recordInitiativeMemberIntents(t, store, mutation)
+
+	result, err := store.CommitPreparedInitiative(ctx, mutation)
+	if err != nil {
+		t.Fatalf("CommitPreparedInitiative() error = %v", err)
+	}
+	if len(result.Tasks) != len(handles) || len(result.Preparation.Members) != len(handles) {
+		t.Fatalf("CommitPreparedInitiative() members = %d/%d, want %d", len(result.Tasks), len(result.Preparation.Members), len(handles))
 	}
 }
 
