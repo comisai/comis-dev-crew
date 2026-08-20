@@ -446,7 +446,8 @@ or not attempted. A separate durable group-operation record preserves that
 whole answer for exact replay, including across restart, so a later state change
 cannot rewrite what an earlier control request actually observed. Completed
 member claims are accepted only when the durable member operation names the
-expected command, task, and state version.
+expected command, task, and state version. The replay envelope stores the exact
+member count and fails closed if any result row is missing.
 
 The strict local boundary exposes `PauseInitiative`, `ResumeInitiative`, and
 `CancelInitiative` only to the operator endpoint. Each accepts only an

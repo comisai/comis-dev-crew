@@ -16,6 +16,7 @@ const initiativeControlMigration = `
 CREATE TABLE initiative_group_controls (
     operation_id TEXT PRIMARY KEY,
     initiative_state TEXT NOT NULL,
+	member_count INTEGER NOT NULL,
     FOREIGN KEY(operation_id) REFERENCES operations(id)
 );
 CREATE TABLE initiative_group_control_members (
@@ -97,8 +98,8 @@ func (store *Store) CommitInitiativeControl(
 		return application.InitiativeControlResult{}, fmt.Errorf("insert initiative control operation: %w", err)
 	}
 	if _, err := transaction.ExecContext(ctx,
-		"INSERT INTO initiative_group_controls(operation_id, initiative_state) VALUES (?, ?)",
-		mutation.OperationID, mutation.Result.State,
+		"INSERT INTO initiative_group_controls(operation_id, initiative_state, member_count) VALUES (?, ?, ?)",
+		mutation.OperationID, mutation.Result.State, len(mutation.Result.Members),
 	); err != nil {
 		return application.InitiativeControlResult{}, fmt.Errorf("insert initiative control result: %w", err)
 	}
@@ -168,9 +169,10 @@ func readInitiativeControlResult(
 	operation domain.OperationRecord,
 ) (application.InitiativeControlResult, error) {
 	var state domain.InitiativeState
+	var memberCount int
 	if err := source.QueryRowContext(ctx,
-		"SELECT initiative_state FROM initiative_group_controls WHERE operation_id = ?", operation.ID,
-	).Scan(&state); err != nil {
+		"SELECT initiative_state, member_count FROM initiative_group_controls WHERE operation_id = ?", operation.ID,
+	).Scan(&state, &memberCount); err != nil {
 		return application.InitiativeControlResult{}, fmt.Errorf("read initiative control result: %w", err)
 	}
 	rows, err := source.QueryContext(ctx, `SELECT task_handle, member_operation_id, outcome,
@@ -193,6 +195,9 @@ func readInitiativeControlResult(
 	}
 	if err := rows.Err(); err != nil {
 		return application.InitiativeControlResult{}, fmt.Errorf("read initiative control members: %w", err)
+	}
+	if memberCount != len(members) {
+		return application.InitiativeControlResult{}, errors.New("initiative control replay member set is incomplete")
 	}
 	result := application.InitiativeControlResult{
 		InitiativeHandle: operation.ResultRef, State: state,
