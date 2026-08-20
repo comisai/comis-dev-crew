@@ -422,10 +422,10 @@ their records and advertised state version from one read-only SQLite snapshot.
 State and backlog-readiness filters reject unknown vocabulary instead of
 returning an ambiguous empty list. Detail reads require every durable member,
 carry the graph's source/confidence/completeness envelope, and return closed
-non-executable next-action identifiers. The strict local boundary publishes
-these as `ListInitiatives`, `GetInitiative`, and `ListBacklog` read commands to
-both operator and MCP caller classes while refusing fields outside their narrow
-scope.
+non-executable next-action identifiers. The running service publishes these
+through the strict local boundary as `ListInitiatives`, `GetInitiative`, and
+`ListBacklog` read commands to both operator and MCP caller classes while
+refusing fields outside their narrow scope.
 
 Group activation validates the private group nonce and the exact complete member
 set under the SQLite write lock. It commits the host-managed group identity and

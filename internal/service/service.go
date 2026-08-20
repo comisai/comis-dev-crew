@@ -284,6 +284,12 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if err != nil {
 		return fmt.Errorf("run service queries: %w", err)
 	}
+	initiativeQueries, err := application.NewInitiativeQueries(application.InitiativeQueryConfig{
+		Store: store, Clock: clock,
+	})
+	if err != nil {
+		return fmt.Errorf("run service initiative queries: %w", err)
+	}
 	var cleanup *application.CleanupCoordinator
 	if config.cleanupRemover != nil || config.cleanupForge != nil {
 		if control == nil || config.workspaceInspector == nil || config.cleanupRemover == nil || config.cleanupForge == nil {
@@ -330,7 +336,9 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		}
 		scoutReviews = reviews
 	}
-	handlerConfig := localapi.HandlerConfig{Queries: queries, Clock: clock, Logger: config.Logger}
+	handlerConfig := localapi.HandlerConfig{
+		Queries: queries, InitiativeQueries: initiativeQueries, Clock: clock, Logger: config.Logger,
+	}
 	if mutations != nil {
 		handlerConfig.Mutations = mutations
 		handlerConfig.InitiativeMutations = initiativeMutations
