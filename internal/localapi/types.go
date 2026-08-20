@@ -42,43 +42,44 @@ func (caller CallerClass) valid() bool {
 type Method string
 
 const (
-	MethodDiagnose        Method = "Diagnose"
-	MethodFleet           Method = "FleetStatus"
-	MethodListTasks       Method = "ListTasks"
-	MethodWorkerProfiles  Method = "ListWorkerProfiles"
-	MethodShowTask        Method = "ShowTask"
-	MethodExplainTask     Method = "ExplainTask"
-	MethodGetLaunchPlan   Method = "GetLaunchPlan"
-	MethodOperation       Method = "GetOperation"
-	MethodPrepareTask     Method = "PrepareTask"
-	MethodReconcileTask   Method = "ReconcileTask"
-	MethodHandbackTask    Method = "HandbackTask"
-	MethodCleanupTask     Method = "CleanupTask"
-	MethodPauseTask       Method = "PauseTask"
-	MethodCancelTask      Method = "CancelTask"
-	MethodResumeTask      Method = "ResumeTask"
-	MethodVerifyTask      Method = "VerifyTask"
-	MethodPromoteScout    Method = "PromoteScout"
-	MethodReplaceWorker   Method = "ReplaceWorker"
-	MethodSteerTask       Method = "SteerTask"
-	MethodDiscardTask     Method = "DiscardTask"
-	MethodSyncPrimary     Method = "SyncPrimary"
-	MethodAttestScout     Method = "AttestScoutDecisions"
-	MethodListDecisions   Method = "ListTaskDecisions"
-	MethodShowDecision    Method = "ShowTaskDecision"
-	MethodDiffTask        Method = "DiffTask"
-	MethodSurveyRepairs   Method = "SurveyRepairs"
-	MethodReadEvents      Method = "ReadEvents"
-	MethodReadTaskLogs    Method = "ReadTaskLogs"
-	MethodCancelDecision  Method = "CancelDecision"
-	MethodRespondDecision Method = "RespondDecision"
-	MethodReadAudit       Method = "ReadAudit"
+	MethodDiagnose          Method = "Diagnose"
+	MethodFleet             Method = "FleetStatus"
+	MethodListTasks         Method = "ListTasks"
+	MethodWorkerProfiles    Method = "ListWorkerProfiles"
+	MethodShowTask          Method = "ShowTask"
+	MethodExplainTask       Method = "ExplainTask"
+	MethodGetLaunchPlan     Method = "GetLaunchPlan"
+	MethodOperation         Method = "GetOperation"
+	MethodPrepareTask       Method = "PrepareTask"
+	MethodPrepareInitiative Method = "PrepareInitiative"
+	MethodReconcileTask     Method = "ReconcileTask"
+	MethodHandbackTask      Method = "HandbackTask"
+	MethodCleanupTask       Method = "CleanupTask"
+	MethodPauseTask         Method = "PauseTask"
+	MethodCancelTask        Method = "CancelTask"
+	MethodResumeTask        Method = "ResumeTask"
+	MethodVerifyTask        Method = "VerifyTask"
+	MethodPromoteScout      Method = "PromoteScout"
+	MethodReplaceWorker     Method = "ReplaceWorker"
+	MethodSteerTask         Method = "SteerTask"
+	MethodDiscardTask       Method = "DiscardTask"
+	MethodSyncPrimary       Method = "SyncPrimary"
+	MethodAttestScout       Method = "AttestScoutDecisions"
+	MethodListDecisions     Method = "ListTaskDecisions"
+	MethodShowDecision      Method = "ShowTaskDecision"
+	MethodDiffTask          Method = "DiffTask"
+	MethodSurveyRepairs     Method = "SurveyRepairs"
+	MethodReadEvents        Method = "ReadEvents"
+	MethodReadTaskLogs      Method = "ReadTaskLogs"
+	MethodCancelDecision    Method = "CancelDecision"
+	MethodRespondDecision   Method = "RespondDecision"
+	MethodReadAudit         Method = "ReadAudit"
 )
 
 func (method Method) valid() bool {
 	switch method {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
-		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
+		MethodOperation, MethodPrepareTask, MethodPrepareInitiative, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
 		MethodSyncPrimary, MethodAttestScout, MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs, MethodReadEvents, MethodReadTaskLogs, MethodCancelDecision,
 		MethodRespondDecision, MethodReadAudit:
@@ -102,7 +103,7 @@ func (method Method) SideEffect() SideEffectClass {
 	switch method {
 	case MethodCancelDecision, MethodRespondDecision:
 		return SideEffectMutate
-	case MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
+	case MethodPrepareTask, MethodPrepareInitiative, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
 		MethodSyncPrimary, MethodAttestScout:
 		return SideEffectMutate
@@ -244,6 +245,11 @@ type TaskMutations interface {
 	CancelTask(context.Context, application.CancelTaskCommand) (application.MutationResult, error)
 }
 
+// InitiativeMutations is the canonical all-or-none group preparation surface.
+type InitiativeMutations interface {
+	PrepareInitiative(context.Context, application.PrepareInitiativeCommand) (application.InitiativePreparationResult, error)
+}
+
 // TaskInterventions is the canonical paused-worktree handback surface.
 type TaskInterventions interface {
 	ResumeTask(context.Context, application.ResumeTaskCommand) (application.MutationResult, error)
@@ -284,16 +290,17 @@ type PrimaryCheckoutSync interface {
 
 // HandlerConfig binds local endpoint authority to canonical application seams.
 type HandlerConfig struct {
-	Queries           ReadQueries
-	Mutations         TaskMutations
-	Reconciliation    TaskReconciliation
-	Interventions     TaskInterventions
-	Cleanup           TaskCleanup
-	PrimaryCheckouts  PrimaryCheckoutSync
-	ScoutReviews      ScoutReviewAttestation
-	Decisions         DecisionAuthority
-	ServiceInstanceID string
-	Clock             application.Clock
+	Queries             ReadQueries
+	Mutations           TaskMutations
+	InitiativeMutations InitiativeMutations
+	Reconciliation      TaskReconciliation
+	Interventions       TaskInterventions
+	Cleanup             TaskCleanup
+	PrimaryCheckouts    PrimaryCheckoutSync
+	ScoutReviews        ScoutReviewAttestation
+	Decisions           DecisionAuthority
+	ServiceInstanceID   string
+	Clock               application.Clock
 	// Logger is optional. A deployment without one records nothing and serves
 	// exactly as before.
 	Logger application.BoundaryLogger

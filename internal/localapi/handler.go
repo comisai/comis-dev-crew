@@ -19,17 +19,18 @@ const unknownRequestMethod = "unknown"
 
 // Handler authenticates, validates, and dispatches canonical local requests.
 type Handler struct {
-	queries           ReadQueries
-	mutations         TaskMutations
-	reconciliation    TaskReconciliation
-	interventions     TaskInterventions
-	cleanup           TaskCleanup
-	primaryCheckouts  PrimaryCheckoutSync
-	scoutReviews      ScoutReviewAttestation
-	decisions         DecisionAuthority
-	serviceInstanceID string
-	clock             application.Clock
-	logger            application.BoundaryLogger
+	queries             ReadQueries
+	mutations           TaskMutations
+	initiativeMutations InitiativeMutations
+	reconciliation      TaskReconciliation
+	interventions       TaskInterventions
+	cleanup             TaskCleanup
+	primaryCheckouts    PrimaryCheckoutSync
+	scoutReviews        ScoutReviewAttestation
+	decisions           DecisionAuthority
+	serviceInstanceID   string
+	clock               application.Clock
+	logger              application.BoundaryLogger
 }
 
 var localServiceInstancePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._~-]{0,255}$`)
@@ -42,11 +43,13 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 	if config.Clock == nil {
 		return nil, errors.New("create local API handler: clock is required")
 	}
-	if config.Mutations != nil && !localServiceInstancePattern.MatchString(config.ServiceInstanceID) {
+	if (config.Mutations != nil || config.InitiativeMutations != nil) &&
+		!localServiceInstancePattern.MatchString(config.ServiceInstanceID) {
 		return nil, errors.New("create local API handler: service instance identity is required for mutations")
 	}
 	return &Handler{
-		queries: config.Queries, mutations: config.Mutations, reconciliation: config.Reconciliation,
+		queries: config.Queries, mutations: config.Mutations,
+		initiativeMutations: config.InitiativeMutations, reconciliation: config.Reconciliation,
 		interventions: config.Interventions, cleanup: config.Cleanup,
 		primaryCheckouts:  config.PrimaryCheckouts,
 		scoutReviews:      config.ScoutReviews,
@@ -86,6 +89,9 @@ func (handler *Handler) serve(ctx context.Context, caller CallerClass, data []by
 }
 
 func (handler *Handler) dispatch(ctx context.Context, request Request) Outcome {
+	if outcome, handled := handler.dispatchInitiative(ctx, request); handled {
+		return outcome
+	}
 	// Observation reads are dispatched first and live beside each other, so
 	// the transition surface below stays readable as reads accumulate.
 	if outcome, handled := handler.dispatchObservation(ctx, request); handled {

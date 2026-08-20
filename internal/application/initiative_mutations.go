@@ -17,37 +17,37 @@ const maximumInitiativeMembers = 16
 // PrepareInitiativeTaskContract is one immutable member task contract. Its base
 // revision and repository come from the containing component and frozen base set.
 type PrepareInitiativeTaskContract struct {
-	Shape              domain.TaskShape
-	AcceptanceCriteria []string
-	Constraints        []string
-	ConsumedContracts  []domain.PinnedContract
-	ValidationProfile  string
-	DeliveryMode       domain.DeliveryMode
-	WorkerProfileID    string
+	Shape              domain.TaskShape        `json:"shape"`
+	AcceptanceCriteria []string                `json:"acceptanceCriteria"`
+	Constraints        []string                `json:"constraints"`
+	ConsumedContracts  []domain.PinnedContract `json:"consumedContracts,omitempty"`
+	ValidationProfile  string                  `json:"validationProfile"`
+	DeliveryMode       domain.DeliveryMode     `json:"deliveryMode"`
+	WorkerProfileID    string                  `json:"workerProfileId"`
 }
 
 // PrepareInitiativeTask gives one caller-local reference to a task contract.
 // The service replaces the reference with a minted durable task handle before
 // any workspace is allocated.
 type PrepareInitiativeTask struct {
-	TaskRef  string
-	Contract PrepareInitiativeTaskContract
+	TaskRef  string                        `json:"taskRef"`
+	Contract PrepareInitiativeTaskContract `json:"contract"`
 }
 
 // PrepareInitiativeComponent groups task contracts under one repository responsibility.
 type PrepareInitiativeComponent struct {
-	ComponentHandle   string
-	RepositoryID      string
-	ResponsibilityRef string
-	Tasks             []PrepareInitiativeTask
+	ComponentHandle   string                  `json:"componentHandle"`
+	RepositoryID      string                  `json:"repositoryId"`
+	ResponsibilityRef string                  `json:"responsibilityRef"`
+	Tasks             []PrepareInitiativeTask `json:"tasks"`
 }
 
 // PrepareInitiativeEdge names dependencies using caller-local task references.
 type PrepareInitiativeEdge struct {
-	FromTaskRef          string
-	ToTaskRef            string
-	Kind                 domain.InitiativeEdgeKind
-	RequiredArtifactKind domain.ContractArtifactKind
+	FromTaskRef          string                      `json:"fromTaskRef"`
+	ToTaskRef            string                      `json:"toTaskRef"`
+	Kind                 domain.InitiativeEdgeKind   `json:"kind"`
+	RequiredArtifactKind domain.ContractArtifactKind `json:"requiredArtifactKind,omitempty"`
 }
 
 // PrepareInitiativeCommand is the complete graph and immutable member contract set.

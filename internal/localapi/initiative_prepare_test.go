@@ -169,8 +169,8 @@ func initiativeMemberPreparation(now time.Time, taskHandle, nonce string) applic
 		ExternalRunRef: taskHandle, RegistrationNonce: nonce,
 		RequestedWorkspaceRoot: "/approved/worktrees/" + taskHandle,
 		RequestedAttachment: application.PreparedRuntimeAttachment{
-			Kind: application.RuntimeAttachmentUnixSocket,
-			SourcePath: "/approved/runtime/" + taskHandle + "/attachment.sock",
+			Kind:          application.RuntimeAttachmentUnixSocket,
+			SourcePath:    "/approved/runtime/" + taskHandle + "/attachment.sock",
 			RelayIdentity: strings.Repeat("ab", 32),
 		},
 		ExpiresAt: now.Add(time.Hour), State: application.PreparationOpen,
