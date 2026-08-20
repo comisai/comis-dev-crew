@@ -281,6 +281,11 @@ func stableTaskIdentity(serviceInstanceID, operationID string) string {
 	return "task-" + digest[:24]
 }
 
+func stableBacklogIdentity(serviceInstanceID, operationID string) string {
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(serviceInstanceID+"\x00"+operationID)))
+	return "backlog-" + digest[:24]
+}
+
 func composeComisControl(
 	config Config,
 	mutations comiswire.DurableControlMutations,

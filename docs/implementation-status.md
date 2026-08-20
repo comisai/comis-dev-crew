@@ -438,6 +438,13 @@ are refused during strict decoding. The trusted local promotion result retains
 the private managed-run preparation for the MCP adapter and distinguishes the
 child task version from the later parent promotion version.
 
+The writable service composes both backlog coordinators from its sole SQLite
+store and clock. Addition handles are stable hashes of the configured service
+identity and operation ID. Promotion delegates its child creation to the same
+reviewed task mutation coordinator used by `PrepareTask`, so repository,
+workspace, attachment, validation, and worker checks cannot diverge between
+ordinary preparation and backlog promotion.
+
 Initiative preparation validates the complete caller-local graph and every
 member contract before allocating a workspace. It then records stable member
 intents, prepares each reversible worktree and task-scoped runtime attachment,

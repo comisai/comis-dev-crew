@@ -8,11 +8,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 	"github.com/comisai/comis-dev-crew/internal/localapi"
 )
 
 func TestRunComposesBacklogAdditionAndNormalPromotion(t *testing.T) {
+	additions, promotions, err := composeBacklogWorkflows(Config{}, nil, nil, time.Now)
+	if err != nil || additions != nil || promotions != nil {
+		t.Fatalf("composeBacklogWorkflows(read only) = %#v, %#v, %v", additions, promotions, err)
+	}
+	if additions, promotions, err := composeBacklogWorkflows(
+		Config{}, nil, &application.Mutations{}, time.Now,
+	); err == nil || additions != nil || promotions != nil {
+		t.Fatalf("composeBacklogWorkflows(missing store) = %#v, %#v, %v", additions, promotions, err)
+	}
 	root := shortTempDir(t)
 	mcpSocket := filepath.Join(root, "run", "mcp.sock")
 	ready := make(chan struct{})

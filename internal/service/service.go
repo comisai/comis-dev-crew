@@ -89,6 +89,10 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if err != nil {
 		return err
 	}
+	backlogAdditions, backlogPromotions, err := composeBacklogWorkflows(config, store, mutations, clock)
+	if err != nil {
+		return err
+	}
 	if attachmentSupervisor != nil {
 		if err := attachmentSupervisor.SetRecoveryAcknowledger(mutations); err != nil {
 			return fmt.Errorf("run service runtime attachment recovery: %w", err)
@@ -226,6 +230,8 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		handlerConfig.Mutations = mutations
 		handlerConfig.InitiativeMutations = initiativeMutations
 		handlerConfig.InitiativeControls = initiativeControls
+		handlerConfig.BacklogAdditions = backlogAdditions
+		handlerConfig.BacklogPromotions = backlogPromotions
 		handlerConfig.ServiceInstanceID = config.ServiceInstanceID
 	}
 	if interventions != nil {
