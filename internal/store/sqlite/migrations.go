@@ -61,7 +61,7 @@ func (store *Store) migrate(ctx context.Context) error {
 		{31, decisionCancellationMigration}, {32, decisionResponseMigration},
 		{33, auditMigration}, {34, initiativeBacklogMigration},
 		{35, initiativePreparationMigration}, {36, initiativeAbandonmentMigration},
-		{37, initiativeControlMigration},
+		{37, initiativeControlMigration}, {38, backlogPromotionMigration},
 	}
 	for _, migration := range remaining {
 		if err := store.applyVersionedMigration(ctx, migration.version, migration.script); err != nil {

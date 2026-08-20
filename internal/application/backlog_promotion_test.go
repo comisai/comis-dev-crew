@@ -84,12 +84,78 @@ func TestBacklogPromotionFailsBeforePreparationWhenReservationIsRefused(t *testi
 	}
 }
 
+func TestBacklogPromotionRejectsDivergentDependencyResults(t *testing.T) {
+	item := queryBacklogItem("backlog-promote", "repo-primary", domain.BacklogReady)
+	newCoordinator := func(store *backlogPromotionStoreStub, tasks *backlogTaskPreparerStub) *BacklogPromotions {
+		t.Helper()
+		store.item = item
+		promotions, err := NewBacklogPromotions(BacklogPromotionConfig{
+			Store: store, Tasks: tasks, Clock: backlogAdditionClock,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return promotions
+	}
+	t.Run("replay dependency failure stops reservation", func(t *testing.T) {
+		store := &backlogPromotionStoreStub{replayErr: ErrConflict}
+		tasks := &backlogTaskPreparerStub{}
+		if _, err := newCoordinator(store, tasks).PromoteBacklog(
+			context.Background(), validBacklogPromotionCommand(),
+		); err == nil || store.reserveCalls != 0 || tasks.calls != 0 {
+			t.Fatalf("PromoteBacklog(replay failure) calls = %d/%d, error %v", store.reserveCalls, tasks.calls, err)
+		}
+	})
+	t.Run("altered reservation stops task preparation", func(t *testing.T) {
+		store := &backlogPromotionStoreStub{reservationMutation: func(reservation *BacklogPromotionReservation) {
+			reservation.TaskOperationID = "backlog-task-substituted"
+		}}
+		tasks := &backlogTaskPreparerStub{}
+		if _, err := newCoordinator(store, tasks).PromoteBacklog(
+			context.Background(), validBacklogPromotionCommand(),
+		); err == nil || tasks.calls != 0 || store.commitCalls != 0 {
+			t.Fatalf("PromoteBacklog(altered reservation) calls = %d/%d, error %v", tasks.calls, store.commitCalls, err)
+		}
+	})
+	t.Run("altered prepared task stops finalization", func(t *testing.T) {
+		store := &backlogPromotionStoreStub{}
+		tasks := &backlogTaskPreparerStub{resultMutation: func(result *MutationResult) {
+			result.Task.RepositoryID = "repository-substituted"
+		}}
+		if _, err := newCoordinator(store, tasks).PromoteBacklog(
+			context.Background(), validBacklogPromotionCommand(),
+		); err == nil || store.commitCalls != 0 {
+			t.Fatalf("PromoteBacklog(altered task) commits = %d, error %v", store.commitCalls, err)
+		}
+	})
+	t.Run("altered final result fails closed", func(t *testing.T) {
+		store := &backlogPromotionStoreStub{resultMutation: func(result *BacklogPromotionResult) {
+			result.Operation.ResultRef = "task-substituted"
+		}}
+		if _, err := newCoordinator(store, &backlogTaskPreparerStub{}).PromoteBacklog(
+			context.Background(), validBacklogPromotionCommand(),
+		); err == nil {
+			t.Fatal("PromoteBacklog(altered final result) error = nil")
+		}
+	})
+	invalid := validBacklogPromotionCommand()
+	invalid.OperationID = ""
+	if _, err := newCoordinator(&backlogPromotionStoreStub{}, &backlogTaskPreparerStub{}).PromoteBacklog(
+		context.Background(), invalid,
+	); err == nil {
+		t.Fatal("PromoteBacklog(invalid identity) error = nil")
+	}
+}
+
 type backlogPromotionStoreStub struct {
-	item         domain.BacklogItem
-	replay       *BacklogPromotionResult
-	reserveErr   error
-	reserveCalls int
-	commitCalls  int
+	item                domain.BacklogItem
+	replay              *BacklogPromotionResult
+	replayErr           error
+	reserveErr          error
+	reservationMutation func(*BacklogPromotionReservation)
+	resultMutation      func(*BacklogPromotionResult)
+	reserveCalls        int
+	commitCalls         int
 }
 
 func (store *backlogPromotionStoreStub) ReplayBacklogPromotion(
@@ -97,6 +163,9 @@ func (store *backlogPromotionStoreStub) ReplayBacklogPromotion(
 	string,
 	string,
 ) (BacklogPromotionResult, bool, error) {
+	if store.replayErr != nil {
+		return BacklogPromotionResult{}, false, store.replayErr
+	}
 	if store.replay == nil {
 		return BacklogPromotionResult{}, false, nil
 	}
@@ -113,6 +182,9 @@ func (store *backlogPromotionStoreStub) ReserveBacklogPromotion(
 	}
 	reservation.Item = store.item
 	reservation.SatisfiedDependencies = append([]string(nil), store.item.DependsOn...)
+	if store.reservationMutation != nil {
+		store.reservationMutation(&reservation)
+	}
 	return reservation, nil
 }
 
@@ -128,12 +200,16 @@ func (store *backlogPromotionStoreStub) CommitBacklogPromotion(
 	result.Task = mutation.Prepared.Task
 	result.Preparation = mutation.Prepared.Preparation
 	result.Operation.SubjectDigest = mutation.Reservation.SubjectDigest
+	if store.resultMutation != nil {
+		store.resultMutation(&result)
+	}
 	return result, nil
 }
 
 type backlogTaskPreparerStub struct {
-	calls   int
-	command PrepareTaskCommand
+	calls          int
+	command        PrepareTaskCommand
+	resultMutation func(*MutationResult)
 }
 
 func (tasks *backlogTaskPreparerStub) PrepareTask(
@@ -160,10 +236,14 @@ func (tasks *backlogTaskPreparerStub) PrepareTask(
 		},
 		ExpiresAt: preparedAt.Add(time.Hour), State: PreparationOpen,
 	}
-	return MutationResult{
+	result := MutationResult{
 		Task: task, Preparation: preparation,
 		Operation: completedBacklogOperation(command.OperationID, "PrepareTask", "", task.Handle, preparedAt),
-	}, nil
+	}
+	if tasks.resultMutation != nil {
+		tasks.resultMutation(&result)
+	}
+	return result, nil
 }
 
 func validBacklogPromotionCommand() BacklogPromotionCommand {

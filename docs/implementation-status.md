@@ -413,6 +413,22 @@ existing backlog handles, but it cannot select a worktree, credential, terminal,
 delivery route, or managed run. Initial readiness is limited to `ready` or
 `needs_refinement`; terminal backlog postures cannot be forged at intake.
 
+Backlog promotion reserves one ready item to one parent operation and one
+deterministic child preparation operation before a worktree is allocated. The
+reservation and its original timestamp survive restart. Only dependencies whose
+durable backlog rows are already `promoted` satisfy the reservation. Finalization
+then rereads the exact completed `PrepareTask` operation, moves the item to
+`promoted`, records the item-to-task link, and commits the parent operation in one
+transaction. A crash before preparation, after preparation, or during final
+operation persistence can be retried without minting a second task.
+
+Threat posture: promotion inherits repository and task shape from the reserved
+item and prepends its requested outcome to the task acceptance contract. The
+caller can complete validation, worker, delivery, and revision fields, but cannot
+retarget the request or supply a worktree, credential, terminal, attachment, or
+managed-run identity. Competing promotion operations are refused before task
+preparation begins.
+
 Initiative preparation validates the complete caller-local graph and every
 member contract before allocating a workspace. It then records stable member
 intents, prepares each reversible worktree and task-scoped runtime attachment,
