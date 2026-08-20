@@ -2,6 +2,7 @@ package localapi
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -19,6 +20,30 @@ type ApplyIntegrationCandidateInput struct {
 	CandidateTaskHandle     string `json:"candidateTaskHandle"`
 	CandidateHead           string `json:"candidateHead"`
 	ExpectedIntegrationHead string `json:"expectedIntegrationHead"`
+}
+
+type applyIntegrationCandidateContract struct {
+	IntegrationTaskHandle   string `json:"integrationTaskHandle"`
+	CandidateTaskHandle     string `json:"candidateTaskHandle"`
+	CandidateHead           string `json:"candidateHead"`
+	ExpectedIntegrationHead string `json:"expectedIntegrationHead"`
+}
+
+// DecodeApplyIntegrationCandidateInput reads one strict bounded operator
+// contract whose initiative is supplied separately by the visible command.
+func DecodeApplyIntegrationCandidateInput(data []byte) (ApplyIntegrationCandidateInput, error) {
+	if len(data) == 0 || len(data) > MaxRequestBytes {
+		return ApplyIntegrationCandidateInput{}, errors.New("integration application input exceeds its bound")
+	}
+	var contract applyIntegrationCandidateContract
+	if err := decodeObject(data, &contract); err != nil {
+		return ApplyIntegrationCandidateInput{}, err
+	}
+	return ApplyIntegrationCandidateInput{
+		IntegrationTaskHandle: contract.IntegrationTaskHandle,
+		CandidateTaskHandle:   contract.CandidateTaskHandle, CandidateHead: contract.CandidateHead,
+		ExpectedIntegrationHead: contract.ExpectedIntegrationHead,
+	}, nil
 }
 
 // ApplyIntegrationCandidateResult is the path-free local boundary projection.

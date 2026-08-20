@@ -25,6 +25,7 @@ Commands:
   initiative pause INITIATIVE [--operation OPERATION] [--format json]
   initiative resume INITIATIVE [--operation OPERATION] [--format json]
   initiative cancel INITIATIVE [--operation OPERATION] [--format json]
+  initiative integrate INITIATIVE --input FILE|- [--operation OPERATION] [--format json]
   backlog add --input FILE|- [--operation OPERATION] [--format json]
   backlog promote BACKLOG --input FILE|- [--operation OPERATION] [--format json]
   task show TASK [--format yaml|json]
@@ -71,6 +72,7 @@ type ReadClient interface {
 	PauseInitiative(context.Context, string, localapi.InitiativeControlInput) (localapi.InitiativeControlResult, error)
 	ResumeInitiative(context.Context, string, localapi.InitiativeControlInput) (localapi.InitiativeControlResult, error)
 	CancelInitiative(context.Context, string, localapi.InitiativeControlInput) (localapi.InitiativeControlResult, error)
+	ApplyIntegrationCandidate(context.Context, string, localapi.ApplyIntegrationCandidateInput) (localapi.ApplyIntegrationCandidateResult, error)
 	AddBacklog(context.Context, string, localapi.AddBacklogInput) (localapi.AddBacklogResult, error)
 	PromoteBacklog(context.Context, string, localapi.PromoteBacklogInput) (localapi.PromoteBacklogResult, error)
 	PauseTask(context.Context, string, localapi.PauseTaskInput) (localapi.TaskMutationResult, error)

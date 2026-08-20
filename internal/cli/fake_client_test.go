@@ -25,6 +25,8 @@ type fakeClient struct {
 	initiativeList      application.InitiativeList
 	initiativeDetail    application.InitiativeDetail
 	initiativeControl   localapi.InitiativeControlResult
+	integrationResult   localapi.ApplyIntegrationCandidateResult
+	integrationInput    localapi.ApplyIntegrationCandidateInput
 	backlogAdded        localapi.AddBacklogResult
 	backlogPromoted     localapi.PromoteBacklogResult
 	backlogAddInput     localapi.AddBacklogInput
@@ -41,6 +43,16 @@ type fakeClient struct {
 	err                 error
 	calls               []string
 	operationID         string
+}
+
+func (client *fakeClient) ApplyIntegrationCandidate(
+	_ context.Context,
+	operationID string,
+	input localapi.ApplyIntegrationCandidateInput,
+) (localapi.ApplyIntegrationCandidateResult, error) {
+	client.record(operationID, "apply-integration:"+input.InitiativeHandle+":"+input.CandidateTaskHandle)
+	client.integrationInput = input
+	return client.integrationResult, client.err
 }
 
 func (client *fakeClient) AddBacklog(

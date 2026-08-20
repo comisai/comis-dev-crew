@@ -37,6 +37,8 @@ func parseInitiativeCommand(command parsedCommand, args []string) (parsedCommand
 		return parseInitiativeControlCommand(command, commandResumeInitiative, args[2:])
 	case "cancel":
 		return parseInitiativeControlCommand(command, commandCancelInitiative, args[2:])
+	case "integrate":
+		return parseInitiativeIntegrationCommand(command, args[2:])
 	default:
 		return parsedCommand{}, errors.New("unknown initiative command")
 	}
@@ -45,6 +47,41 @@ func parseInitiativeCommand(command parsedCommand, args []string) (parsedCommand
 		return parsedCommand{}, err
 	}
 	command.format = format
+	return command, nil
+}
+
+func parseInitiativeIntegrationCommand(command parsedCommand, args []string) (parsedCommand, error) {
+	command.kind, command.format = commandApplyIntegration, "json"
+	seen := make(map[string]bool)
+	for len(args) > 0 {
+		if len(args) < 2 || seen[args[0]] {
+			return parsedCommand{}, errors.New("invalid initiative integration arguments")
+		}
+		name, value := args[0], args[1]
+		seen[name] = true
+		switch name {
+		case "--input":
+			if value == "" {
+				return parsedCommand{}, errors.New("initiative integration input is required")
+			}
+			command.inputPath = value
+		case "--operation":
+			if domain.ValidateOperationID(value) != nil {
+				return parsedCommand{}, errors.New("invalid initiative integration operation")
+			}
+			command.operationID = value
+		case "--format":
+			if value != "json" {
+				return parsedCommand{}, errors.New("initiative integration format must be JSON")
+			}
+		default:
+			return parsedCommand{}, errors.New("unknown initiative integration option")
+		}
+		args = args[2:]
+	}
+	if command.inputPath == "" {
+		return parsedCommand{}, errors.New("initiative integration input is required")
+	}
 	return command, nil
 }
 

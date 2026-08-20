@@ -438,6 +438,7 @@ devcrew [--socket PATH] initiative watch INITIATIVE [--passes N] [--interval DUR
 devcrew [--socket PATH] initiative pause INITIATIVE [--operation OPERATION] [--format json]
 devcrew [--socket PATH] initiative resume INITIATIVE [--operation OPERATION] [--format json]
 devcrew [--socket PATH] initiative cancel INITIATIVE [--operation OPERATION] [--format json]
+devcrew [--socket PATH] initiative integrate INITIATIVE --input FILE|- [--operation OPERATION] [--format json]
 devcrew [--socket PATH] backlog add --input FILE|- [--operation OPERATION] [--format json]
 devcrew [--socket PATH] backlog promote BACKLOG --input FILE|- [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task show TASK [--format yaml|json]
@@ -481,6 +482,10 @@ action identifiers.
 authoritative initiative detail on every pass. Initiative pause, resume, and
 cancel print the durable per-member JSON result; they never summarize a partial
 distributed outcome as one atomic success.
+`initiative integrate` derives the initiative from the visible command and reads
+the integration-owner task, candidate task, candidate head, and expected target
+head from one strict bounded JSON contract. The contract cannot select policy,
+strategy, repository, worktree, or argv, and the command emits JSON only.
 
 The stream records transitions, not writes. A task that is still waiting is
 rewritten on every supervisor pass to refresh its liveness, and those rewrites

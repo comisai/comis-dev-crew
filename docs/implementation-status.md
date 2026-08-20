@@ -610,6 +610,9 @@ candidate base path.
 The official MCP facade exposes the same operation as
 `apply_integration_candidate`, marks it idempotent and mutating, and keeps policy,
 strategy selection, repository paths, and argv out of its input schema.
+The operator CLI reaches the identical boundary through `initiative integrate`
+and rejects authority-bearing or self-retargeting contract fields before opening
+the service socket.
 
 ## Mutation boundary
 

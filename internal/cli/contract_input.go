@@ -15,6 +15,18 @@ import (
 // It reports the operator message and exit code when a contract is unusable, and
 // whether it handled the command at all.
 func applyContractInput(command *parsedCommand, config Config) (string, int, bool) {
+	if command.kind == commandApplyIntegration {
+		data, readErr := readBoundedContract(command.inputPath, config)
+		if readErr != nil {
+			return "devcrew: invalid integration contract\nHint: provide one strict bounded JSON input without policy or host paths\n", ExitUsage, true
+		}
+		input, decodeErr := localapi.DecodeApplyIntegrationCandidateInput(data)
+		if decodeErr != nil {
+			return "devcrew: invalid integration contract\nHint: provide one strict bounded JSON input without policy or host paths\n", ExitUsage, true
+		}
+		input.InitiativeHandle = command.reference
+		command.integrationInput = &input
+	}
 	if command.kind == commandPrepareTask {
 		input, readErr := readPrepareInput(command.inputPath, config)
 		if readErr != nil {

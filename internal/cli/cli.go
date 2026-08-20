@@ -37,6 +37,7 @@ const (
 	commandPauseInitiative
 	commandResumeInitiative
 	commandCancelInitiative
+	commandApplyIntegration
 	commandAddBacklog
 	commandPromoteBacklog
 	commandShowTask
@@ -88,6 +89,7 @@ type parsedCommand struct {
 	promoteInput        *localapi.PromoteScoutInput
 	backlogAddInput     *localapi.AddBacklogInput
 	backlogPromoteInput *localapi.PromoteBacklogInput
+	integrationInput    *localapi.ApplyIntegrationCandidateInput
 	workerProfileID     string
 	instruction         string
 	acknowledged        bool

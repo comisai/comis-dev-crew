@@ -48,6 +48,11 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 		return client.ResumeInitiative(ctx, operationID, localapi.InitiativeControlInput{InitiativeHandle: command.reference})
 	case commandCancelInitiative:
 		return client.CancelInitiative(ctx, operationID, localapi.InitiativeControlInput{InitiativeHandle: command.reference})
+	case commandApplyIntegration:
+		if command.integrationInput == nil {
+			return nil, errors.New("initiative integration input is unavailable")
+		}
+		return client.ApplyIntegrationCandidate(ctx, operationID, *command.integrationInput)
 	case commandAddBacklog:
 		if command.backlogAddInput == nil {
 			return nil, errors.New("backlog addition input is unavailable")
