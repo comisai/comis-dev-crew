@@ -220,9 +220,16 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 		installed = installed || value != ""
 	}
 	validNetwork := codexNetwork == string(workers.NetworkDisabled) || codexNetwork == string(workers.NetworkRestricted) || codexNetwork == string(workers.NetworkHost)
-	if installed && (preparationTTL <= 0 || preparationTTL > 24*time.Hour || codexConcurrency < 1 || codexConcurrency > 64 ||
-		maxConcurrentTasks < 1 || maxConcurrentTasks > 1024 || maxConcurrentTasksPerRepository < 1 ||
-		maxConcurrentTasksPerRepository > maxConcurrentTasks || !validNetwork) {
+	if installed && (maxConcurrentTasks < 1 || maxConcurrentTasks > 1024 ||
+		maxConcurrentTasksPerRepository < 1 || maxConcurrentTasksPerRepository > maxConcurrentTasks) {
+		return writeServiceDiagnostic(stderr, fmt.Sprintf(
+			"devcrew-service: installed composition is incomplete\n"+
+				"Configured task concurrency: --max-concurrent-tasks=%d --max-concurrent-tasks-per-repository=%d\n"+
+				"Hint: set both flags to positive limits and keep the per-repository limit no greater than the host-wide limit\n",
+			maxConcurrentTasks, maxConcurrentTasksPerRepository,
+		), 2)
+	}
+	if installed && (preparationTTL <= 0 || preparationTTL > 24*time.Hour || codexConcurrency < 1 || codexConcurrency > 64 || !validNetwork) {
 		return writeServiceDiagnostic(stderr, "devcrew-service: installed composition is incomplete\nHint: configure every repository, MCP, Comis, and Codex option\n", 2)
 	}
 	if installed {
