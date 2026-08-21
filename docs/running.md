@@ -521,6 +521,9 @@ conflicted application, DevCrew's index already contains every non-conflicting
 candidate change. The worker edits only the recorded conflict paths, stages
 those resolutions, and commits the complete index. Committing only a conflict
 path while leaving other candidate changes staged remains dirty and is refused.
+The ordering does not authorize the next action. An apply-only operator request
+ends after the durable receipt; launch-plan and terminal operations require
+separate explicit authorization.
 An `invalidated` outcome means the candidate head or cleanliness changed after
 its evidence was accepted. No integration write occurred: the same durable
 transaction returns that candidate to `validating`, while the integration owner

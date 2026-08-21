@@ -109,6 +109,12 @@ commits itself. Its
 `candidate_complete` report is refused until every predecessor's latest accepted
 evidence has an `applied` or `conflicted` durable application receipt.
 
+This ordering is not implicit authorization for the next step. Invoke only the
+integration actions that the user's current request authorizes. In particular,
+after an apply-only request, report the durable receipt and stop; never fetch a
+launch plan, create a terminal, or settle a terminal unless that request also
+explicitly authorizes launch.
+
 ## What you never send
 
 Do not provide a path, command, executable, credential, run, lease, attachment,
