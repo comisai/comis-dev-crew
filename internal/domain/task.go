@@ -51,7 +51,7 @@ func (mode DeliveryMode) ValidForShape(shape TaskShape) bool {
 
 // RequiresMergeAuthority reports whether delivering through this mode needs the
 // separate merge credential. Only one mode does, which is what keeps the
-// credential out of every worker that merely pushes a branch.
+// credential out of every worker that merely produces a branch.
 func (mode DeliveryMode) RequiresMergeAuthority() bool {
 	return mode == DeliveryMergeAfterApproval
 }
