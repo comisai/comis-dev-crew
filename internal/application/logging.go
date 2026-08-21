@@ -49,11 +49,19 @@ const (
 type BoundaryFailureCause string
 
 const (
-	BoundaryFailureDurableTaskContractInvalid BoundaryFailureCause = "durable_task_contract_invalid"
+	BoundaryFailureDurableTaskContractInvalid   BoundaryFailureCause = "durable_task_contract_invalid"
+	BoundaryFailureControlHandshakePrecondition BoundaryFailureCause = "control_handshake_precondition_failed"
+	BoundaryFailureControlConnectionUnavailable BoundaryFailureCause = "control_connection_unavailable"
 )
 
 func (cause BoundaryFailureCause) valid() bool {
-	return cause == "" || cause == BoundaryFailureDurableTaskContractInvalid
+	switch cause {
+	case "", BoundaryFailureDurableTaskContractInvalid, BoundaryFailureControlHandshakePrecondition,
+		BoundaryFailureControlConnectionUnavailable:
+		return true
+	default:
+		return false
+	}
 }
 
 // BoundaryRecord is everything this service will say about one crossing.

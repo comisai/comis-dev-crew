@@ -99,13 +99,20 @@ func (connection *ControlConnection) Run(ctx context.Context) error {
 		return err
 	}
 	backoff := connection.config.MinimumBackoff
+	failureRecorded := false
 	for {
+		started := controlConnectionClock(connection.config)()
 		session, err := connection.connect(ctx)
 		if err == nil {
+			connection.recordConnectionCompletion(started)
+			failureRecorded = false
 			connection.publish(session)
 			_ = session.serve(ctx)
 			connection.unpublish(session)
 			_ = session.close()
+		} else if !failureRecorded {
+			connection.recordConnectionFailure(err, started)
+			failureRecorded = true
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
