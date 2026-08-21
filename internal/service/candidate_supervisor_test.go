@@ -57,6 +57,27 @@ func TestCandidateSupervisor_BuildsShipEvidenceFromChecksAndRereadForgeTruth(t *
 	}
 }
 
+func TestCandidateSupervisorPromotesOperationBoundCandidateBeforeValidation(t *testing.T) {
+	fixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
+	supervisor, err := newCandidateSupervisor(fixture.config())
+	if err != nil {
+		t.Fatalf("newCandidateSupervisor() error = %v", err)
+	}
+	if _, _, err := supervisor.ValidateTask(context.Background(), fixture.task.Handle); err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	want := application.ReconciliationWorkspaceRequest{
+		PreparationOperationID: fixture.store.preparationOperationID,
+		TaskHandle:             fixture.task.Handle,
+		RepositoryID:           fixture.task.RepositoryID,
+		WorktreePath:           fixture.preparation.RequestedWorkspaceRoot,
+		BaseRevision:           fixture.task.BaseRevision,
+	}
+	if fixture.git.promotions != 1 || !reflect.DeepEqual(fixture.git.promotionRequest, want) {
+		t.Fatalf("candidate promotions = %d/%#v, want one %#v", fixture.git.promotions, fixture.git.promotionRequest, want)
+	}
+}
+
 func TestCandidateSupervisor_BuildsScoutEvidenceOnlyFromReviewedArtifactPath(t *testing.T) {
 	fixture := newCandidateSupervisorFixture(t, domain.ShapeScout)
 	supervisor, err := newCandidateSupervisor(fixture.config())
@@ -540,8 +561,18 @@ func newCandidateSupervisorFixture(t *testing.T, shape domain.TaskShape) *candid
 		preparation: application.ManagedRunPreparation{RequestedWorkspaceRoot: worktree},
 		snapshot:    snapshot, catalog: catalog, now: now,
 	}
-	fixture.store = &candidateSupervisorStore{task: task, preparation: fixture.preparation}
-	fixture.git = &candidateSupervisorGit{snapshots: []devgit.CandidateSnapshot{snapshot, snapshot}}
+	fixture.store = &candidateSupervisorStore{
+		task: task, preparation: fixture.preparation,
+		preparationOperationID: "operation-prepare-candidate",
+	}
+	fixture.git = &candidateSupervisorGit{
+		snapshots: []devgit.CandidateSnapshot{snapshot, snapshot},
+		promotionSnapshot: application.WorkspaceSnapshot{
+			TaskHandle: task.Handle, RepositoryID: snapshot.RepositoryID,
+			WorktreePath: snapshot.WorktreePath, Branch: snapshot.Branch,
+			HeadRevision: snapshot.HeadRevision, Cleanliness: application.WorkspaceClean,
+		},
+	}
 	fixture.runner = &candidateSupervisorRunner{receipt: receipt}
 	fixture.pullRequests = &candidateSupervisorPullRequests{truth: forge.PullRequestTruth{
 		URL: "https://example.com/pull/17",
@@ -575,22 +606,23 @@ func (fixture *candidateSupervisorFixture) config() candidateSupervisorConfig {
 }
 
 type candidateSupervisorStore struct {
-	task                  domain.Task
-	preparation           application.ManagedRunPreparation
-	reports               []domain.AcceptedReport
-	evidence              *domain.SealedDeliveryEvidence
-	requiredLocalChecks   []string
-	requiredForgeChecks   []string
-	judgedAt              time.Time
-	publicationKinds      []string
-	publicationDeliveries []string
-	publicationBodies     [][]byte
-	onCommit              func()
-	list                  func(context.Context) ([]domain.Task, error)
-	reconciledSnapshot    application.WorkspaceSnapshot
-	reconciled            bool
-	reconciledErr         error
-	reconciledReads       int
+	task                   domain.Task
+	preparation            application.ManagedRunPreparation
+	preparationOperationID string
+	reports                []domain.AcceptedReport
+	evidence               *domain.SealedDeliveryEvidence
+	requiredLocalChecks    []string
+	requiredForgeChecks    []string
+	judgedAt               time.Time
+	publicationKinds       []string
+	publicationDeliveries  []string
+	publicationBodies      [][]byte
+	onCommit               func()
+	list                   func(context.Context) ([]domain.Task, error)
+	reconciledSnapshot     application.WorkspaceSnapshot
+	reconciled             bool
+	reconciledErr          error
+	reconciledReads        int
 }
 
 func (store *candidateSupervisorStore) ListTasks(ctx context.Context) ([]domain.Task, error) {
@@ -606,6 +638,16 @@ func (store *candidateSupervisorStore) GetTask(context.Context, string) (domain.
 
 func (store *candidateSupervisorStore) GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error) {
 	return store.preparation, nil
+}
+
+func (store *candidateSupervisorStore) ReadTaskReconciliationAuthority(
+	context.Context,
+	string,
+) (application.TaskReconciliationAuthority, error) {
+	return application.TaskReconciliationAuthority{
+		Task: store.task, Preparation: store.preparation,
+		PreparationOperationID: store.preparationOperationID,
+	}, nil
 }
 
 func (store *candidateSupervisorStore) ListAcceptedReports(context.Context, string) ([]domain.AcceptedReport, error) {
@@ -675,9 +717,21 @@ func (store *candidateSupervisorStore) CommitCandidateEvidence(
 }
 
 type candidateSupervisorGit struct {
-	snapshots []devgit.CandidateSnapshot
-	errors    []error
-	calls     int
+	snapshots         []devgit.CandidateSnapshot
+	errors            []error
+	calls             int
+	promotions        int
+	promotionRequest  application.ReconciliationWorkspaceRequest
+	promotionSnapshot application.WorkspaceSnapshot
+}
+
+func (git *candidateSupervisorGit) PromoteReconciliationCandidate(
+	_ context.Context,
+	request application.ReconciliationWorkspaceRequest,
+) (application.WorkspaceSnapshot, error) {
+	git.promotions++
+	git.promotionRequest = request
+	return git.promotionSnapshot, nil
 }
 
 func (git *candidateSupervisorGit) InspectCandidate(context.Context, devgit.CandidateSnapshotRequest) (devgit.CandidateSnapshot, error) {
