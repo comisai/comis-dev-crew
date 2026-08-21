@@ -58,7 +58,16 @@ func runGit(ctx context.Context, executable string, arguments ...string) (string
 }
 
 func runGitBytes(ctx context.Context, executable string, arguments ...string) ([]byte, error) {
-	output, exitCode, err := executeGit(ctx, executable, arguments...)
+	return runGitBytesWithLimit(ctx, maximumGitOutputBytes, executable, arguments...)
+}
+
+func runGitBytesWithLimit(
+	ctx context.Context,
+	outputLimit int,
+	executable string,
+	arguments ...string,
+) ([]byte, error) {
+	output, exitCode, err := executeGitWithEnvironmentAndOutputLimit(ctx, executable, nil, outputLimit, arguments...)
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +166,18 @@ func executeGitWithEnvironment(
 	workspace *gitWorkspaceEnvironment,
 	arguments ...string,
 ) ([]byte, int, error) {
+	return executeGitWithEnvironmentAndOutputLimit(
+		ctx, executable, workspace, maximumGitOutputBytes, arguments...,
+	)
+}
+
+func executeGitWithEnvironmentAndOutputLimit(
+	ctx context.Context,
+	executable string,
+	workspace *gitWorkspaceEnvironment,
+	outputLimit int,
+	arguments ...string,
+) ([]byte, int, error) {
 	if ctx == nil {
 		return nil, -1, errors.New("git command context is required")
 	}
@@ -179,7 +200,7 @@ func executeGitWithEnvironment(
 		)
 	}
 	command.WaitDelay = time.Second
-	stdout := &boundedBuffer{limit: maximumGitOutputBytes}
+	stdout := &boundedBuffer{limit: outputLimit}
 	stderr := &boundedBuffer{limit: maximumGitOutputBytes}
 	command.Stdout = stdout
 	command.Stderr = stderr

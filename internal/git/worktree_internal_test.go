@@ -44,19 +44,7 @@ func TestWorktreeInventoryDecoder_AcceptsMachineRecordsAndRejectsAmbiguity(t *te
 
 func TestWorktreeInventoryReaderAcceptsThirtyTwoRegisteredWorktrees(t *testing.T) {
 	root := internalCanonicalTempDir(t)
-	executable := filepath.Join(root, "git-many-worktrees")
-	padding := strings.Repeat("x", 220)
-	script := "#!/bin/sh\n" +
-		"index=0\n" +
-		"while [ \"$index\" -lt 32 ]; do\n" +
-		"  printf 'worktree /approved/worktrees/task-%02d-" + padding +
-		"\\000HEAD " + strings.Repeat("a", 40) +
-		"\\000branch refs/heads/devcrew/task-%02d\\000\\000' \"$index\" \"$index\"\n" +
-		"  index=$((index+1))\n" +
-		"done\n"
-	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	executable := writeWorktreeInventoryScript(t, root, "git-many-worktrees", 32, 220)
 	registry := &Registry{gitExecutable: executable}
 	entries, err := registry.worktreeEntries(context.Background(), Repository{PrimaryCheckout: "/approved/primary"})
 	if err != nil {
@@ -65,6 +53,35 @@ func TestWorktreeInventoryReaderAcceptsThirtyTwoRegisteredWorktrees(t *testing.T
 	if len(entries) != 32 {
 		t.Fatalf("worktreeEntries(32 registered worktrees) count = %d, want 32", len(entries))
 	}
+}
+
+func TestWorktreeInventoryReaderRejectsUnboundedRegisteredWorktrees(t *testing.T) {
+	root := internalCanonicalTempDir(t)
+	executable := writeWorktreeInventoryScript(t, root, "git-excess-worktrees", 5_000, 220)
+	registry := &Registry{gitExecutable: executable}
+	if _, err := registry.worktreeEntries(
+		context.Background(), Repository{PrimaryCheckout: "/approved/primary"},
+	); err == nil {
+		t.Fatal("worktreeEntries(unbounded registered worktrees) error = nil")
+	}
+}
+
+func writeWorktreeInventoryScript(t *testing.T, root, name string, count, paddingBytes int) string {
+	t.Helper()
+	executable := filepath.Join(root, name)
+	padding := strings.Repeat("x", paddingBytes)
+	script := "#!/bin/sh\n" +
+		"index=0\n" +
+		"while [ \"$index\" -lt " + strconv.Itoa(count) + " ]; do\n" +
+		"  printf 'worktree /approved/worktrees/task-%02d-" + padding +
+		"\\000HEAD " + strings.Repeat("a", 40) +
+		"\\000branch refs/heads/devcrew/task-%02d\\000\\000' \"$index\" \"$index\"\n" +
+		"  index=$((index+1))\n" +
+		"done\n"
+	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return executable
 }
 
 func TestPreparedWorktreeBoundaryHelpers_AreBoundedAndFailClosed(t *testing.T) {

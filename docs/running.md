@@ -161,6 +161,12 @@ local checks, it seals that drift afterward. While the observed head and
 cleanliness are unchanged, later polls reuse the sealed unknown judgment instead
 of rerunning validation processes.
 
+Threat posture: the repository-wide worktree inventory has a dedicated 1 MiB
+machine-output ceiling because its valid size grows with retained task worktrees.
+Individual Git fact reads remain capped at 8 KiB. This keeps a legitimate larger
+inventory from disabling candidate supervision while still refusing unbounded or
+malformed Git output before it can influence task authority.
+
 Diagnostic reads report validation as `unknown` when a task is already
 `validating` but no durable judgment or active validation process can be found;
 they never turn that inconsistent posture into `not_started`.

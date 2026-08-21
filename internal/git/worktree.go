@@ -363,7 +363,13 @@ func (registry *Registry) branchExists(ctx context.Context, repository Repositor
 }
 
 func (registry *Registry) worktreeEntries(ctx context.Context, repository Repository) ([]worktreeListEntry, error) {
-	encoded, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", repository.PrimaryCheckout,
+	// The inventory grows with every retained task worktree, so its ceiling must
+	// be independent from the small-output limit used for individual Git facts.
+	// One MiB admits thousands of ordinary entries while still bounding a child
+	// process that returns corrupt or hostile machine output.
+	const maximumWorktreeInventoryBytes = 1 << 20
+	encoded, err := runGitBytesWithLimit(ctx, maximumWorktreeInventoryBytes, registry.gitExecutable,
+		"--no-optional-locks", "-C", repository.PrimaryCheckout,
 		"worktree", "list", "--porcelain", "-z")
 	if err != nil {
 		return nil, errors.New("inspect task worktree inventory: Git query failed")
