@@ -3,6 +3,7 @@ package comiswire_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -181,7 +182,9 @@ func (stub *durableGroupActivationStub) ActivateManagedRunGroup(
 	return stub.result, nil
 }
 
-type durableMutationStub struct{}
+type durableMutationStub struct {
+	terminalError error
+}
 
 func (*durableMutationStub) ActivateManagedRun(context.Context, application.ActivateManagedRunCommand) (application.MutationResult, error) {
 	return application.MutationResult{}, nil
@@ -195,8 +198,29 @@ func (*durableMutationStub) CancelManagedRun(context.Context, application.Cancel
 	return application.MutationResult{}, nil
 }
 
-func (*durableMutationStub) RecordTerminalEvent(context.Context, application.RecordTerminalEventCommand) (application.MutationResult, error) {
-	return application.MutationResult{}, nil
+func (stub *durableMutationStub) RecordTerminalEvent(context.Context, application.RecordTerminalEventCommand) (application.MutationResult, error) {
+	return application.MutationResult{}, stub.terminalError
+}
+
+func TestDurableControlHandler_PreservesApplicationPreconditionClassification(t *testing.T) {
+	mutations := &durableMutationStub{
+		terminalError: fmt.Errorf("authorize task start: resource_queued: %w", application.ErrPrecondition),
+	}
+	handler, err := comiswire.NewDurableControlHandler(comiswire.DurableControlHandlerConfig{
+		Mutations: mutations, ServiceInstanceID: "service-instance-handler",
+	})
+	if err != nil {
+		t.Fatalf("NewDurableControlHandler() error = %v", err)
+	}
+
+	_, terminalErr := handler.TerminalEvent(context.Background(), comiswire.TerminalEventRequestParams{
+		OperationID: "operation-terminal-resource-queued", ManagedRunID: "managed-run-resource-queued",
+		WorkspaceLeaseID: "workspace-lease-resource-queued", TerminalSessionID: "terminal-session-resource-queued",
+		Transition: comiswire.CapabilityTerminalTransitionCreated,
+	})
+	if !wireErrorKind(terminalErr, comiswire.ErrorKindPreconditionFailed) {
+		t.Fatalf("TerminalEvent() error = %v, want precondition_failed", terminalErr)
+	}
 }
 
 func TestDurableControlHandler_ActivationValidatesPrivateJoinAndLeaseInvariant(t *testing.T) {
