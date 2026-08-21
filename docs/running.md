@@ -763,10 +763,11 @@ second trigger for that pipeline, able to launch it against a candidate the
 supervisor has not verified. `task verify` opens validation; delivery follows
 from its result.
 
-The canonical worker brief therefore prohibits pushes and Git-remote changes in
-addition to merges. A worker commits only inside its task worktree and reports
-the candidate through the protected reporter; the service owns the reviewed
-credential, remote route, exact push, and pull-request delivery.
+The reviewed Codex and Claude launch bootstrap prohibits pushes and Git-remote
+changes. A worker commits only inside its task worktree and reports the candidate
+through the protected reporter; the service owns the reviewed credential, remote
+route, exact push, and pull-request delivery. This harness-level rule does not
+rewrite the pinned brief bytes of durable tasks during a service upgrade.
 
 Handback likewise exposes one action, `validate-developer-work`. The other ways
 to resume a paused task are their own commands — `task resume` continues with the

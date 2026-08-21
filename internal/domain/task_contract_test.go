@@ -23,6 +23,10 @@ func TestTaskPinBriefRevision_RendersOneCanonicalWorkerContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PinBriefRevision() error = %v", err)
 	}
+	const stableBriefHash = "b7f002b1512ce52d0e95a34498aeb1b3595b9b8953f52a113a2fb0bcee108010"
+	if pinned.BriefRevisionHash != stableBriefHash {
+		t.Fatalf("pinned brief hash = %q, want durable contract %q", pinned.BriefRevisionHash, stableBriefHash)
+	}
 	brief, err := pinned.RenderWorkerBrief()
 	if err != nil {
 		t.Fatalf("RenderWorkerBrief() error = %v", err)
@@ -40,7 +44,7 @@ func TestTaskPinBriefRevision_RendersOneCanonicalWorkerContract(t *testing.T) {
 		"acceptanceCriteria:",
 		"reportKinds: progress, attention, blocked, paused, candidate_complete, failed, resolution",
 		"completionMeaning: candidate_complete requires service validation and evidence",
-		"prohibitedActions: merge, push, change Git remotes, mutate the primary checkout, change task shape, or bypass the reporter",
+		"prohibitedActions: merge, mutate the primary checkout, change task shape, or bypass the reporter",
 	} {
 		if !strings.Contains(brief.Content, required) {
 			t.Fatalf("brief content is missing %q:\n%s", required, brief.Content)

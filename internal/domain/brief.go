@@ -142,7 +142,7 @@ func (task Task) renderBriefContent() (string, error) {
 	writeBriefField(&content, "reportKinds", "progress, attention, blocked, paused, candidate_complete, failed, resolution")
 	writeBriefField(&content, "decisionProtocol", "request one keyed decision and wait for acknowledged delivery")
 	writeBriefField(&content, "completionMeaning", "candidate_complete requires service validation and evidence")
-	writeBriefField(&content, "prohibitedActions", "merge, push, change Git remotes, mutate the primary checkout, change task shape, or bypass the reporter")
+	writeBriefField(&content, "prohibitedActions", "merge, mutate the primary checkout, change task shape, or bypass the reporter")
 	return content.String(), nil
 }
 

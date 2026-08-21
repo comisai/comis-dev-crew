@@ -788,9 +788,10 @@ from a naming convention. Scout delivery reads only the
 reviewed bounded artifact. Both use durable outbox identities for exactly-once
 host delivery across restart.
 
-The generated worker brief prohibits pushes and Git-remote changes. Workers
-produce and report task-local commits; only the service may select the configured
-remote and use its scoped delivery credential after candidate verification.
+The reviewed Codex and Claude launch bootstrap prohibits pushes and Git-remote
+changes without changing persisted brief bytes. Workers produce and report
+task-local commits; only the service may select the configured remote and use its
+scoped delivery credential after candidate verification.
 
 Task explanation reads the latest durable candidate judgment while validation is
 in progress as well as after failure. Operator-facing candidate diagnoses are
