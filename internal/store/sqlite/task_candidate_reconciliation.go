@@ -66,6 +66,30 @@ func (store *Store) ReadTaskReconciliationAuthority(
 	return authority, nil
 }
 
+// ReadCandidateHandoffAuthority returns the exact durable preparation used by
+// normal worker-candidate validation without requiring terminal settlement.
+func (store *Store) ReadCandidateHandoffAuthority(
+	ctx context.Context,
+	taskHandle string,
+) (application.CandidateHandoffAuthority, error) {
+	if ctx == nil || domain.ValidateTaskHandle(taskHandle) != nil {
+		return application.CandidateHandoffAuthority{}, errors.New("read candidate handoff authority: invalid task")
+	}
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return application.CandidateHandoffAuthority{}, fmt.Errorf("begin candidate handoff authority read: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	authority, err := readCandidateHandoffAuthority(ctx, transaction, taskHandle)
+	if err != nil {
+		return application.CandidateHandoffAuthority{}, err
+	}
+	if err := transaction.Commit(); err != nil {
+		return application.CandidateHandoffAuthority{}, fmt.Errorf("commit candidate handoff authority read: %w", err)
+	}
+	return authority, nil
+}
+
 // CommitTaskCandidateReconciliation atomically records fresh recovery
 // evidence and advances unknown through reconciling into normal validation.
 // It does not insert or advance a worker report.
@@ -175,36 +199,51 @@ func readTaskReconciliationAuthority(
 	source queryer,
 	taskHandle string,
 ) (application.TaskReconciliationAuthority, error) {
-	refused, err := runtimeRelayIdentityRefusalExists(ctx, source, taskHandle)
+	handoff, err := readCandidateHandoffAuthority(ctx, source, taskHandle)
 	if err != nil {
 		return application.TaskReconciliationAuthority{}, err
 	}
-	if refused {
-		return application.TaskReconciliationAuthority{}, fmt.Errorf("task reconciliation relay authority is unproven: %w", application.ErrPrecondition)
-	}
-	task, err := getTask(ctx, source, taskHandle)
+	binding, found, err := findTerminalBinding(ctx, source, taskHandle)
 	if err != nil {
 		return application.TaskReconciliationAuthority{}, err
 	}
-	preparation, err := getManagedRunPreparation(ctx, source, task)
-	if err != nil {
-		return application.TaskReconciliationAuthority{}, fmt.Errorf("read task reconciliation preparation: %w", err)
-	}
-	preparationOperationID, err := taskPreparationOperationID(ctx, source, task.Handle)
-	if err != nil {
-		return application.TaskReconciliationAuthority{}, err
-	}
-	binding, found, err := findTerminalBinding(ctx, source, task.Handle)
-	if err != nil {
-		return application.TaskReconciliationAuthority{}, err
-	}
-	if !found || binding.managedRunID != task.ManagedRunID || binding.workspaceLeaseID != task.WorkspaceLeaseID {
+	if !found || binding.managedRunID != handoff.Task.ManagedRunID || binding.workspaceLeaseID != handoff.Task.WorkspaceLeaseID {
 		return application.TaskReconciliationAuthority{}, fmt.Errorf("task reconciliation terminal binding is unavailable: %w", application.ErrPrecondition)
 	}
 	return application.TaskReconciliationAuthority{
-		Task: task, Preparation: preparation, PreparationOperationID: preparationOperationID,
-		TerminalSessionID: binding.terminalSessionID, TerminalTransition: binding.latestTransition,
+		Task: handoff.Task, Preparation: handoff.Preparation,
+		PreparationOperationID: handoff.PreparationOperationID,
+		TerminalSessionID:      binding.terminalSessionID, TerminalTransition: binding.latestTransition,
 		TerminalObservedAt: binding.updatedAt,
+	}, nil
+}
+
+func readCandidateHandoffAuthority(
+	ctx context.Context,
+	source queryer,
+	taskHandle string,
+) (application.CandidateHandoffAuthority, error) {
+	refused, err := runtimeRelayIdentityRefusalExists(ctx, source, taskHandle)
+	if err != nil {
+		return application.CandidateHandoffAuthority{}, err
+	}
+	if refused {
+		return application.CandidateHandoffAuthority{}, fmt.Errorf("task preparation relay authority is unproven: %w", application.ErrPrecondition)
+	}
+	task, err := getTask(ctx, source, taskHandle)
+	if err != nil {
+		return application.CandidateHandoffAuthority{}, err
+	}
+	preparation, err := getManagedRunPreparation(ctx, source, task)
+	if err != nil {
+		return application.CandidateHandoffAuthority{}, fmt.Errorf("read task preparation authority: %w", err)
+	}
+	preparationOperationID, err := taskPreparationOperationID(ctx, source, task.Handle)
+	if err != nil {
+		return application.CandidateHandoffAuthority{}, err
+	}
+	return application.CandidateHandoffAuthority{
+		Task: task, Preparation: preparation, PreparationOperationID: preparationOperationID,
 	}, nil
 }
 

@@ -372,10 +372,14 @@ unresolved after restart and refuses a second reconciliation record.
 The normal candidate supervisor uses the same server-owned handoff before it
 validates a task that already has an accepted worker candidate report. That report
 has already moved the task into `validating`, so no separate recovery mutation is
-needed. The supervisor derives every Git identity from the durable preparation,
-requires the promoted snapshot to match a fresh host inspection, and runs no
-validation or forge operation when those authorities differ. A task without an
-accepted candidate report still requires the explicit unknown-task recovery flow.
+needed. Its handoff authority reads the exact durable task, preparation, and
+preparation operation without borrowing the recovery reader's terminal-settlement
+precondition; terminal evidence remains mandatory for unknown-task recovery and
+cannot be weakened by normal validation. The supervisor derives every Git identity
+from the durable preparation, requires the promoted snapshot to match a fresh host
+inspection, and runs no validation or forge operation when those authorities differ.
+A task without an accepted candidate report still requires the explicit unknown-task
+recovery flow.
 
 The private Git handoff is a high-risk boundary. Paths come only from the
 registered worktree and its canonical Git administration, and the source record,

@@ -20,7 +20,7 @@ type candidateEvidenceStore interface {
 	ListTasks(context.Context) ([]domain.Task, error)
 	GetTask(context.Context, string) (domain.Task, error)
 	GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error)
-	ReadTaskReconciliationAuthority(context.Context, string) (application.TaskReconciliationAuthority, error)
+	ReadCandidateHandoffAuthority(context.Context, string) (application.CandidateHandoffAuthority, error)
 	ListAcceptedReports(context.Context, string) ([]domain.AcceptedReport, error)
 	ReadReconciledCandidateSnapshot(context.Context, string) (application.WorkspaceSnapshot, bool, error)
 	LatestCandidateEvidence(context.Context, string) (*domain.SealedDeliveryEvidence, domain.CandidateJudgment, error)

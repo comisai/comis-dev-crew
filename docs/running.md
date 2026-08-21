@@ -317,10 +317,13 @@ lease-private Git confinement remains read-only during explanation; only this
 mutation may perform that handoff for a task without an accepted candidate report.
 For a task already moved to `validating` by an accepted candidate report, the
 candidate supervisor performs the same server-owned handoff before running any
-validation. Both paths validate the source, generated controls, and inert commit identity, import its objects,
-compare-and-swap the prepared branch from the pinned base, and synchronize the
-worktree index without replacing files. Recovery records fresh evidence and enters the
-existing validation pipeline without creating a worker candidate report or
+validation. This normal handoff is bound to the durable preparation operation but
+does not claim that the worker terminal has settled; the unknown-task recovery path
+still requires that independent terminal evidence. Both paths validate the source,
+generated controls, and inert commit identity, import its objects, compare-and-swap
+the prepared branch from the pinned base, and synchronize the worktree index without
+replacing files. Recovery records fresh evidence and enters the existing validation
+pipeline without creating a worker candidate report or
 advancing the report cursor. Validation and pull-request delivery must match the
 persisted recovery branch and head; a changed worktree is refused before validation
 or forge mutation. Task detail and explanation keep that reconciliation operation

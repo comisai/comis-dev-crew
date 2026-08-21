@@ -620,14 +620,14 @@ func (store *candidateSupervisorStore) GetManagedRunPreparation(context.Context,
 	return store.preparation, nil
 }
 
-func (store *candidateSupervisorStore) ReadTaskReconciliationAuthority(
+func (store *candidateSupervisorStore) ReadCandidateHandoffAuthority(
 	context.Context,
 	string,
-) (application.TaskReconciliationAuthority, error) {
+) (application.CandidateHandoffAuthority, error) {
 	if store.handoffAuthorityErr != nil {
-		return application.TaskReconciliationAuthority{}, store.handoffAuthorityErr
+		return application.CandidateHandoffAuthority{}, store.handoffAuthorityErr
 	}
-	return application.TaskReconciliationAuthority{
+	return application.CandidateHandoffAuthority{
 		Task: store.task, Preparation: store.preparation,
 		PreparationOperationID: store.preparationOperationID,
 	}, nil

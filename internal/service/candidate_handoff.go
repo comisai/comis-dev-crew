@@ -19,7 +19,7 @@ func (supervisor *candidateSupervisor) promoteCandidate(
 	task domain.Task,
 	preparation application.ManagedRunPreparation,
 ) (application.WorkspaceSnapshot, error) {
-	authority, err := supervisor.config.Store.ReadTaskReconciliationAuthority(ctx, task.Handle)
+	authority, err := supervisor.config.Store.ReadCandidateHandoffAuthority(ctx, task.Handle)
 	if err != nil || domain.ValidateOperationID(authority.PreparationOperationID) != nil ||
 		authority.Task.Handle != task.Handle || authority.Task.RepositoryID != task.RepositoryID ||
 		authority.Task.BaseRevision != task.BaseRevision ||

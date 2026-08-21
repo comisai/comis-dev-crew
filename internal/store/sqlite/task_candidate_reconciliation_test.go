@@ -37,6 +37,31 @@ func TestCandidateHandoffAuthorityDoesNotRequireTerminalSettlement(t *testing.T)
 	}
 }
 
+func TestCandidateHandoffAuthorityRefusesIncompleteDurableAuthority(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Store, domain.Task)
+	}{
+		{name: "preparation is missing", mutate: func(store *Store, task domain.Task) {
+			_, _ = store.db.Exec("DELETE FROM task_preparations WHERE task_handle = ?", task.Handle)
+		}},
+		{name: "relay identity is unproven", mutate: func(store *Store, task domain.Task) {
+			_, _ = store.db.Exec(`INSERT INTO runtime_relay_identity_refusals(task_handle, reason)
+				VALUES (?, ?)`, task.Handle, application.RuntimeRelayIdentityUnproven)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store, task, _, _ := openTerminalLifecycleFixture(t, "task-candidate-handoff-refusal", false)
+			t.Cleanup(func() { _ = store.Close() })
+			test.mutate(store, task)
+			if _, err := store.ReadCandidateHandoffAuthority(context.Background(), task.Handle); err == nil {
+				t.Fatal("ReadCandidateHandoffAuthority() error = nil")
+			}
+		})
+	}
+}
+
 func TestTaskCandidateReconciliation_PersistsExactEvidenceWithoutWorkerReport(t *testing.T) {
 	store, task, workspace, now := openUnknownCandidateReconciliationFixture(t, "task-reconcile-clean")
 	t.Cleanup(func() { _ = store.Close() })
