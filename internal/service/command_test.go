@@ -197,6 +197,10 @@ func TestServiceFailureClassUsesSafeStableCategories(t *testing.T) {
 		serviceFailureHint(integrationFailure) != "inspect integrationPolicies in the owner-private candidate configuration" {
 		t.Fatalf("integration failure diagnostic = %q / %q", got, serviceFailureHint(integrationFailure))
 	}
+	candidatePolicyFailure := errors.New("read candidate composition: integration policies are invalid")
+	if got := serviceFailureHint(candidatePolicyFailure); got != "add one to 64 valid integrationPolicies entries to the owner-private candidate configuration" {
+		t.Fatalf("candidate policy failure hint = %q", got)
+	}
 }
 
 func TestRunCommand_ComposesInstalledLaneWithExplicitDeterministicFixture(t *testing.T) {
