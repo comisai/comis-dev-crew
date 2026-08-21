@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 func TestIntegrationReservesPolicyBoundCandidateBeforeApplying(t *testing.T) {
@@ -119,6 +121,32 @@ func TestIntegrationEvidenceExpiryBlocksNewMutationButNotCompletedReplay(t *test
 	result, err := integrations.ApplyCandidate(context.Background(), command)
 	if err != nil || !reflect.DeepEqual(result, replayed) {
 		t.Fatalf("ApplyCandidate(expired replay) = %#v, %v", result, err)
+	}
+}
+
+func TestIntegrationReservationPreservesDurablePreconditionFailure(t *testing.T) {
+	at := time.Unix(1_800_000_000, 0).UTC()
+	store := &integrationStore{
+		policyID:   "integration-reviewed",
+		reserveErr: ErrPrecondition,
+	}
+	adapter := &integrationAdapter{}
+	integrations, err := NewIntegrations(IntegrationConfig{
+		Store: store, Adapter: adapter,
+		Policies: func(string) (IntegrationStrategy, error) { return IntegrationMerge, nil },
+		Clock:    func() time.Time { return at },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = integrations.ApplyCandidate(context.Background(), integrationCommand())
+	var failure *domain.Failure
+	if !errors.As(err, &failure) || failure.Code != domain.ErrorPrecondition || failure.Retryable {
+		t.Fatalf("ApplyCandidate(precondition) error = %#v, want non-retryable precondition", err)
+	}
+	if len(adapter.requests) != 0 || store.sequence != "policy,reserve" {
+		t.Fatalf("precondition crossed integration adapter: requests=%d sequence=%q", len(adapter.requests), store.sequence)
 	}
 }
 
