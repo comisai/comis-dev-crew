@@ -40,7 +40,7 @@ func TestTaskPinBriefRevision_RendersOneCanonicalWorkerContract(t *testing.T) {
 		"acceptanceCriteria:",
 		"reportKinds: progress, attention, blocked, paused, candidate_complete, failed, resolution",
 		"completionMeaning: candidate_complete requires service validation and evidence",
-		"prohibitedActions: merge, mutate the primary checkout, change task shape, or bypass the reporter",
+		"prohibitedActions: merge, push, change Git remotes, mutate the primary checkout, change task shape, or bypass the reporter",
 	} {
 		if !strings.Contains(brief.Content, required) {
 			t.Fatalf("brief content is missing %q:\n%s", required, brief.Content)
