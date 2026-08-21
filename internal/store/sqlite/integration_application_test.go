@@ -108,6 +108,49 @@ func TestIntegrationReservationSurvivesRestartBeforeGitCompletion(t *testing.T) 
 	}
 }
 
+func TestIntegrationReservationRejectsAnotherOperationForTheSameCandidate(t *testing.T) {
+	for _, outcome := range []string{"reserved", string(application.IntegrationApplied), string(application.IntegrationConflicted)} {
+		t.Run(outcome, func(t *testing.T) {
+			fixture := newStoredIntegrationFixture(t)
+			firstRequest := fixture.reservationRequest("integration-first-application", application.IntegrationMerge)
+			first, err := fixture.store.ReserveIntegrationApplication(context.Background(), firstRequest)
+			if err != nil {
+				t.Fatalf("ReserveIntegrationApplication(first) error = %v", err)
+			}
+			currentHead := firstRequest.Command.ExpectedIntegrationHead
+			if outcome != "reserved" {
+				adapterResult := application.IntegrationAdapterResult{
+					Outcome: application.IntegrationOutcome(outcome), PreviousHead: currentHead,
+				}
+				if outcome == string(application.IntegrationApplied) {
+					adapterResult.ResultingHead = strings.Repeat("d", 40)
+					currentHead = adapterResult.ResultingHead
+				} else {
+					adapterResult.ConflictPaths = []string{"README.md"}
+				}
+				if _, err := fixture.store.CompleteIntegrationApplication(context.Background(), application.IntegrationCompletion{
+					Reservation: first, AdapterResult: adapterResult, At: firstRequest.At.Add(time.Second),
+				}); err != nil {
+					t.Fatalf("CompleteIntegrationApplication(first) error = %v", err)
+				}
+			}
+
+			secondRequest := fixture.reservationRequest("integration-second-application", application.IntegrationMerge)
+			secondRequest.Command.ExpectedIntegrationHead = currentHead
+			if _, err := fixture.store.ReserveIntegrationApplication(context.Background(), secondRequest); !errors.Is(err, application.ErrPrecondition) {
+				t.Fatalf("ReserveIntegrationApplication(second) error = %v, want ErrPrecondition", err)
+			}
+			var count int
+			if err := fixture.store.db.QueryRow(`SELECT COUNT(*) FROM integration_applications`).Scan(&count); err != nil || count != 1 {
+				t.Fatalf("integration applications after duplicate = %d, %v", count, err)
+			}
+			if _, err := fixture.store.GetOperation(context.Background(), secondRequest.Command.OperationID); !errors.Is(err, application.ErrNotFound) {
+				t.Fatalf("GetOperation(second duplicate) error = %v", err)
+			}
+		})
+	}
+}
+
 func TestIntegrationReservationAcceptsReadyOwnerBeforeTerminalLaunch(t *testing.T) {
 	fixture := newStoredIntegrationFixture(t)
 	if _, err := fixture.store.db.Exec(`UPDATE tasks SET state = CASE handle
