@@ -606,7 +606,10 @@ registry then revalidates both worktree identities,
 cleanliness, and heads while holding its mutation lock. Fixed argv performs the
 selected operation with hooks and signing disabled. Applied heads and sorted,
 bounded conflict paths are durable records; conflicts remain in the dedicated
-integration worktree for an actionable resolution.
+integration worktree for an actionable resolution. The integration worker may
+edit only those paths, but it preserves the server-staged non-conflicting
+candidate changes and commits the complete index. A path-limited conflict commit
+that leaves candidate changes staged cannot pass clean-candidate handoff.
 
 Content-free Git refs bridge the interval between a Git result and its SQLite
 commit. Exact applied and conflicted calls replay without repeating Git. A crash

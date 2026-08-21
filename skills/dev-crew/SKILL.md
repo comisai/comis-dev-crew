@@ -94,10 +94,18 @@ inside a new integration owner's acceptance criteria. Its contract should say
 that it validates the candidates applied by the operator and resolves only
 reported conflicts.
 
-After every `integrates_after` predecessor has accepted evidence, launch the
-recorded integration owner and apply each candidate with
+When an application reports conflicts, the worker may edit only those reported
+conflict paths. Non-conflicting candidate changes already staged by DevCrew are
+also part of the integration result: preserve that index, stage the resolved
+conflict paths, and commit the complete staged result. A path-limited commit
+that leaves any candidate change staged is not a clean integration candidate.
+
+After every `integrates_after` predecessor has accepted evidence, apply each
+candidate to the dependency-ready, unlaunched integration owner with
 `apply_integration_candidate`, carrying the resulting integration head into the
-next call. The worker must not cherry-pick component commits itself. Its
+next call. Launch the integration owner only after every application has an
+`applied` or `conflicted` receipt. The worker must not cherry-pick component
+commits itself. Its
 `candidate_complete` report is refused until every predecessor's latest accepted
 evidence has an `applied` or `conflicted` durable application receipt.
 

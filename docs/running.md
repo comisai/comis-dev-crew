@@ -516,7 +516,11 @@ Apply delivered component candidates before launching a dependency-ready
 integration owner. This lets the confined worker start from the exact applied or
 conflicted worktree instead of snapshotting an earlier Git state. Candidate
 handoff then accepts only a clean private commit that fast-forwards that exact
-server-owned integration head; divergent history remains a refusal.
+server-owned integration head; divergent history remains a refusal. For a
+conflicted application, DevCrew's index already contains every non-conflicting
+candidate change. The worker edits only the recorded conflict paths, stages
+those resolutions, and commits the complete index. Committing only a conflict
+path while leaving other candidate changes staged remains dirty and is refused.
 An `invalidated` outcome means the candidate head or cleanliness changed after
 its evidence was accepted. No integration write occurred: the same durable
 transaction returns that candidate to `validating`, while the integration owner
