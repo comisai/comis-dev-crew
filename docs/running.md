@@ -236,6 +236,12 @@ only the reviewed strategy, evidence digest, applied head or bounded conflicts,
 and durable state version. An uncertain call retries the exact reserved operation,
 whose receipt-backed Git adapter either replays one known result or refuses
 ambiguity.
+An integration owner cannot complete by running an equivalent Git operation in
+its terminal. Before accepting its `candidate_complete` report, the service
+requires an `applied` or `conflicted` durable application receipt for the latest
+accepted evidence of every incoming `integrates_after` predecessor. Missing,
+reserved, invalidated, stale, or cross-initiative receipts leave the task
+unchanged and return a precondition failure.
 `backlog_add` records bounded intent and derives its source conversation from
 the authenticated call context; conversation provenance is absent from both the
 tool arguments and model-visible result. `backlog_promote` completes the normal

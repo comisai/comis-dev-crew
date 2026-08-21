@@ -36,6 +36,9 @@ func (store *Store) CommitReport(ctx context.Context, mutation application.Repor
 	if err != nil {
 		return domain.ReportReceipt{}, err
 	}
+	if err := requireIntegrationReportProvenance(ctx, transaction, task, mutation.Report.Report.Kind); err != nil {
+		return domain.ReportReceipt{}, err
+	}
 	if err := validateDecisionReport(ctx, transaction, mutation.Report); err != nil {
 		return domain.ReportReceipt{}, err
 	}

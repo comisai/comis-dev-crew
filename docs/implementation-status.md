@@ -628,6 +628,13 @@ The operator CLI reaches the identical boundary through `initiative integrate`
 and rejects authority-bearing or self-retargeting contract fields before opening
 the service socket.
 
+Integration-owner completion is also provenance-gated. A `candidate_complete`
+report is accepted only after every incoming `integrates_after` predecessor has
+a completed `applied` or `conflicted` application receipt bound to that
+initiative, owner, and predecessor's latest accepted evidence. A direct terminal
+cherry-pick therefore cannot make an initiative look delivered, even if later
+validation would pass the resulting tree.
+
 ## Mutation boundary
 
 The first mutation boundary prepares a service-minted task and later activates it

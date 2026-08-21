@@ -61,6 +61,8 @@ product does, and this list is not permission to guess a name.
 | See what can run | `worker_profiles` | Nothing |
 | Check readiness | `doctor` | Nothing |
 | Start work | `prepare_task` | Creates a prepared task and worktree |
+| Start coordinated work | `prepare_initiative` | Creates one validated graph and its isolated member worktrees |
+| Apply a component candidate | `apply_integration_candidate` | Mutates only the recorded integration owner's worktree through reviewed Git policy |
 | Settle a worker safely | `pause_task` | Asks the worker to stop at a safe boundary; changes no state itself |
 | Stop work, keep it | `cancel_task` | Stops the task; worktree and artifacts survive |
 | Continue a paused task | `resume_task` | Returns it to the same worker; refused on a dirty worktree |
@@ -83,6 +85,21 @@ Anything not in the live tool set is unavailable, not merely undocumented. If a
 user asks for a merge, a force-push, a deployment, raw terminal custody, or
 sibling-worktree access, say plainly that it is not available here and name who
 can do it instead.
+
+## Initiative integration
+
+Treat component candidate identities as live durable state, not task-contract
+prose. Never freeze task handles or candidate heads from an earlier initiative
+inside a new integration owner's acceptance criteria. Its contract should say
+that it validates the candidates applied by the operator and resolves only
+reported conflicts.
+
+After every `integrates_after` predecessor has accepted evidence, launch the
+recorded integration owner and apply each candidate with
+`apply_integration_candidate`, carrying the resulting integration head into the
+next call. The worker must not cherry-pick component commits itself. Its
+`candidate_complete` report is refused until every predecessor's latest accepted
+evidence has an `applied` or `conflicted` durable application receipt.
 
 ## What you never send
 
