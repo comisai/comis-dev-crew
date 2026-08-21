@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -147,6 +148,30 @@ func TestIntegrationReservationPreservesDurablePreconditionFailure(t *testing.T)
 	}
 	if len(adapter.requests) != 0 || store.sequence != "policy,reserve" {
 		t.Fatalf("precondition crossed integration adapter: requests=%d sequence=%q", len(adapter.requests), store.sequence)
+	}
+}
+
+func TestIntegrationDuplicateReservationNamesTheExistingOperation(t *testing.T) {
+	at := time.Unix(1_800_000_000, 0).UTC()
+	store := &integrationStore{
+		policyID:   "integration-reviewed",
+		reserveErr: fmt.Errorf("store duplicate: %w", ErrIntegrationApplicationExists),
+	}
+	integrations, err := NewIntegrations(IntegrationConfig{
+		Store: store, Adapter: &integrationAdapter{},
+		Policies: func(string) (IntegrationStrategy, error) { return IntegrationMerge, nil },
+		Clock:    func() time.Time { return at },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = integrations.ApplyCandidate(context.Background(), integrationCommand())
+	var failure *domain.Failure
+	if !errors.As(err, &failure) || failure.Code != domain.ErrorPrecondition || failure.Retryable ||
+		failure.Message != "integration candidate already has a durable application operation" ||
+		failure.Hint != "reuse the original operation or continue from its applied or conflicted receipt" {
+		t.Fatalf("ApplyCandidate(duplicate) error = %#v", err)
 	}
 }
 

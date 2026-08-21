@@ -236,6 +236,9 @@ only the reviewed strategy, evidence digest, applied head or bounded conflicts,
 and durable state version. An uncertain call retries the exact reserved operation,
 whose receipt-backed Git adapter either replays one known result or refuses
 ambiguity.
+Submitting a different operation for a candidate task and head that already has
+a reserved, applied, or conflicted application is a precondition failure before
+Git. Reuse the original operation or continue from its durable receipt.
 An integration owner cannot complete by running an equivalent Git operation in
 its terminal. Before accepting its `candidate_complete` report, the service
 requires an `applied` or `conflicted` durable application receipt for the latest

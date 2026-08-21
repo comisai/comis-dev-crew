@@ -291,6 +291,13 @@ func resolveIntegrationReservation(
 	if judgment.Outcome != domain.CandidateAccepted || bundle.HeadRevision != request.Command.CandidateHead {
 		return integrationApplicationRow{}, fmt.Errorf("integration candidate evidence is stale: %w", application.ErrPrecondition)
 	}
+	if _, found, readErr := findCandidateIntegrationApplication(
+		ctx, transaction, initiative.Handle, integrationTask.Handle, candidateTask.Handle, request.Command.CandidateHead,
+	); readErr != nil {
+		return integrationApplicationRow{}, readErr
+	} else if found {
+		return integrationApplicationRow{}, fmt.Errorf("integration candidate application already exists: %w", application.ErrIntegrationApplicationExists)
+	}
 	return integrationApplicationRow{
 		operationID: request.Command.OperationID, subjectDigest: request.SubjectDigest,
 		initiativeHandle: initiative.Handle, integrationTaskHandle: integrationTask.Handle,

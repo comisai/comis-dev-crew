@@ -618,6 +618,9 @@ ambiguous, so the retry refuses instead of inferring success. A crash after the
 receipt or after SQLite completion replays the one exact result. Completion and
 the canonical operation ledger commit in one transaction, and accepted evidence
 expiry blocks a new mutation without invalidating a result already completed.
+Another operation for the same candidate task and head is rejected before Git
+and before a second reservation is inserted. Its typed precondition directs the
+caller to the original operation or its applied or conflicted receipt.
 
 The closed local service protocol exposes `ApplyIntegrationCandidate` to the
 operator and MCP caller classes as a mutation. Its request contains only the

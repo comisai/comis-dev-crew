@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -10,6 +11,10 @@ import (
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
+
+// ErrIntegrationApplicationExists identifies a candidate head that already
+// has a durable reserved, applied, or conflicted application operation.
+var ErrIntegrationApplicationExists = fmt.Errorf("integration candidate already has a durable application operation: %w", ErrPrecondition)
 
 // IntegrationStrategy is the closed set of operator-reviewed Git operations.
 // A caller selects an initiative, never an argv fragment or strategy.
@@ -247,6 +252,17 @@ func (integrations *Integrations) ApplyCandidate(
 
 func integrationReservationFailure(cause error) error {
 	switch {
+	case errors.Is(cause, ErrIntegrationApplicationExists):
+		failure, err := domain.NewFailure(
+			domain.ErrorPrecondition, false,
+			"integration candidate already has a durable application operation",
+			"reuse the original operation or continue from its applied or conflicted receipt",
+			cause,
+		)
+		if err != nil {
+			return errors.New("integration duplicate classification failed")
+		}
+		return failure
 	case errors.Is(cause, ErrConflict), errors.Is(cause, ErrInvalidInput),
 		errors.Is(cause, ErrNotFound), errors.Is(cause, ErrPrecondition),
 		errors.Is(cause, domain.ErrInvalidTransition):

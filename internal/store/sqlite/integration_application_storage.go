@@ -69,6 +69,35 @@ func findIntegrationApplication(ctx context.Context, source queryer, operationID
 	return row, true, nil
 }
 
+func findCandidateIntegrationApplication(
+	ctx context.Context,
+	source queryer,
+	initiativeHandle string,
+	integrationTaskHandle string,
+	candidateTaskHandle string,
+	candidateHead string,
+) (integrationApplicationRow, bool, error) {
+	const query = `SELECT operation_id, subject_digest, initiative_handle, integration_task_handle,
+        candidate_task_handle, repository_id, policy_id, strategy, target_worktree, expected_target_head,
+        candidate_worktree, candidate_base, candidate_head, evidence_digest, evidence_expires_at,
+        status, resulting_head, conflicts_json, reserved_at, completed_at, state_version
+        FROM integration_applications
+        WHERE initiative_handle = ? AND integration_task_handle = ?
+          AND candidate_task_handle = ? AND candidate_head = ?
+          AND status IN ('reserved', 'applied', 'conflicted')
+        ORDER BY reserved_at, operation_id LIMIT 1`
+	row, err := scanIntegrationApplication(source.QueryRowContext(
+		ctx, query, initiativeHandle, integrationTaskHandle, candidateTaskHandle, candidateHead,
+	))
+	if errors.Is(err, sql.ErrNoRows) {
+		return integrationApplicationRow{}, false, nil
+	}
+	if err != nil {
+		return integrationApplicationRow{}, false, fmt.Errorf("read candidate integration application: %w", err)
+	}
+	return row, true, nil
+}
+
 func scanIntegrationApplication(scanner rowScanner) (integrationApplicationRow, error) {
 	var row integrationApplicationRow
 	var evidenceExpiresAt, conflicts, reservedAt, completedAt string
