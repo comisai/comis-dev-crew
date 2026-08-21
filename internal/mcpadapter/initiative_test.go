@@ -73,6 +73,9 @@ func TestFacade_InitiativeToolsPreserveCanonicalAuthorityAndSideEffects(t *testi
 	if err != nil || comiswire.ValidatePayload(comiswire.PayloadMCPManagedRunGroup, extension) != nil {
 		t.Fatalf("managed-run group extension = %s, %v", extension, err)
 	}
+	if !strings.Contains(string(extension), `"relayIdentity":"`+strings.Repeat("ab", 32)+`"`) {
+		t.Fatalf("managed-run group extension omitted the prepared relay identity: %s", extension)
+	}
 
 	if _, err := session.CallTool(context.Background(), &mcp.CallToolParams{
 		Meta: callMeta("get-initiative-mcp", "service-instance-0001"), Name: ToolGetInitiative,

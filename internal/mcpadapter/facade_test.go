@@ -58,6 +58,9 @@ func TestFacade_OfficialSDKCatalogAndPrivatePreparation(t *testing.T) {
 	if err != nil || comiswire.ValidatePayload(comiswire.PayloadMCPManagedRunResult, encodedExtension) != nil {
 		t.Fatalf("managed-run extension = %s, %v", encodedExtension, err)
 	}
+	if !strings.Contains(string(encodedExtension), `"relayIdentity":"`+strings.Repeat("ab", 32)+`"`) {
+		t.Fatalf("managed-run extension omitted the prepared relay identity: %s", encodedExtension)
+	}
 	var prepared comiswire.MCPManagedRunResult
 	if err := json.Unmarshal(encodedExtension, &prepared); err != nil || prepared.RequestedWorkspace == nil ||
 		prepared.RequestedWorkspace.RootHint != "/approved/workspaces/task-0001" || prepared.RequestedAttachment == nil ||
