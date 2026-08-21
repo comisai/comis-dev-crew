@@ -245,6 +245,37 @@ func TestRegistry_PromotesPrivateCandidateFromExactAdvancedSharedHead(t *testing
 	}
 }
 
+func TestRegistry_RefusesPrivateCandidateWhenSharedHeadDiverges(t *testing.T) {
+	fixture := newRepositoryFixture(t, "product-private-divergence")
+	registry := newLifecycleRegistry(t, fixture)
+	request := lifecycleRequest(t, fixture, "prepare-private-divergence", "task-private-divergence")
+	prepared, err := registry.PrepareWorktree(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	private := createLeasePrivateCandidate(t, fixture, prepared)
+	tree := gitOutput(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary,
+		"rev-parse", request.BaseRevision+"^{tree}")
+	divergentHead := gitOutput(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary,
+		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
+		"commit-tree", tree, "-p", request.BaseRevision, "-m", "Divergent server candidate")
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", fixture.primary,
+		"update-ref", "refs/heads/"+prepared.Branch, divergentHead, request.BaseRevision)
+	reconciliationRequest := application.ReconciliationWorkspaceRequest{
+		PreparationOperationID: request.OperationID, TaskHandle: request.TaskHandle,
+		RepositoryID: request.RepositoryID, WorktreePath: prepared.CanonicalPath,
+		BaseRevision: request.BaseRevision,
+	}
+
+	if _, err := registry.PromoteReconciliationCandidate(context.Background(), reconciliationRequest); err == nil {
+		t.Fatal("PromoteReconciliationCandidate(divergent shared head) error = nil")
+	}
+	if finalHead := gitOutput(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath,
+		"rev-parse", "HEAD"); finalHead != divergentHead {
+		t.Fatalf("shared head = %q, want preserved divergent %q; private=%q", finalHead, divergentHead, private.head)
+	}
+}
+
 func TestRegistry_RefusesUnsafeLeasePrivateCandidateWithoutMovingSharedBranch(t *testing.T) {
 	tests := []struct {
 		name   string

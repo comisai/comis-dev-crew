@@ -514,7 +514,9 @@ head from one strict bounded JSON contract. The contract cannot select policy,
 strategy, repository, worktree, or argv, and the command emits JSON only.
 Apply delivered component candidates before launching a dependency-ready
 integration owner. This lets the confined worker start from the exact applied or
-conflicted worktree instead of snapshotting an earlier Git state.
+conflicted worktree instead of snapshotting an earlier Git state. Candidate
+handoff then accepts only a clean private commit that fast-forwards that exact
+server-owned integration head; divergent history remains a refusal.
 An `invalidated` outcome means the candidate head or cleanliness changed after
 its evidence was accepted. No integration write occurred: the same durable
 transaction returns that candidate to `validating`, while the integration owner

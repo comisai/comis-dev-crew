@@ -98,13 +98,10 @@ func (registry *Registry) PromoteReconciliationCandidate(
 		return application.WorkspaceSnapshot{}, errors.New("promote reconciliation candidate: private candidate changed during handoff")
 	}
 	sharedHead := rechecked.shared.HeadRevision
-	if sharedHead != request.BaseRevision && sharedHead != privateHead {
-		return application.WorkspaceSnapshot{}, errors.New("promote reconciliation candidate: shared branch changed during handoff")
-	}
-	if sharedHead == request.BaseRevision {
+	if sharedHead != privateHead {
 		if _, err := runGitBytes(ctx, registry.gitExecutable,
 			"-c", "core.hooksPath=/dev/null", "--no-optional-locks", "-C", evidence.repository.PrimaryCheckout,
-			"update-ref", "refs/heads/"+evidence.expectedBranch, privateHead, request.BaseRevision); err != nil {
+			"update-ref", "refs/heads/"+evidence.expectedBranch, privateHead, sharedHead); err != nil {
 			return application.WorkspaceSnapshot{}, errors.New("promote reconciliation candidate: exact branch update was refused")
 		}
 	}
@@ -171,8 +168,17 @@ func (registry *Registry) inspectReconciliationCandidate(
 		}
 		return reconciliationCandidateEvidence{}, fmt.Errorf("inspect reconciliation candidate: worktree is not clean: %w", err)
 	}
-	if shared.HeadRevision != request.BaseRevision && shared.HeadRevision != private.snapshot.HeadRevision {
-		return reconciliationCandidateEvidence{}, errors.New("inspect reconciliation candidate: shared and private heads differ")
+	if shared.HeadRevision != private.snapshot.HeadRevision {
+		privateEnvironment := gitWorkspaceEnvironment{
+			gitDir: private.commonDir, gitWorkTree: request.WorktreePath,
+			gitIndex: filepath.Join(private.worktree, "index"),
+		}
+		fastForward, predicateErr := gitPredicateInWorkspace(ctx, registry.gitExecutable, privateEnvironment,
+			"-c", "core.hooksPath=/dev/null", "merge-base", "--is-ancestor",
+			shared.HeadRevision, private.snapshot.HeadRevision)
+		if predicateErr != nil || !fastForward {
+			return reconciliationCandidateEvidence{}, errors.New("inspect reconciliation candidate: shared and private heads differ")
+		}
 	}
 	return reconciliationCandidateEvidence{
 		repository: repository, expectedBranch: expectedBranch, shared: shared, private: &private,

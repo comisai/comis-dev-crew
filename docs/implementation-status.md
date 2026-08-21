@@ -381,9 +381,11 @@ The private Git handoff is a high-risk boundary. Paths come only from the
 registered worktree and its canonical Git administration, and the source record,
 generated configuration, inert commit identity, copied worktree controls, branch, clean index, and base
 ancestry must all match. Symlinks, executable Git configuration, alternate object
-indirection, dirty content, or shared/private head drift are refused before any
-host branch mutation. Promotion imports no tags or submodules, advances the exact
-branch with an old-head compare-and-swap, and synchronizes only the worktree index;
+indirection, dirty content, or divergent shared/private history are refused before
+any host branch mutation. When server-owned integration application advanced the
+shared task branch before worker launch, the private candidate must be a strict
+fast-forward of that exact shared head. Promotion imports no tags or submodules,
+advances the exact branch with an old-head compare-and-swap, and synchronizes only the worktree index;
 it never replaces workspace files. Replay re-verifies the same clean head.
 
 `ExplainTask` combines durable terminal posture, current host connectivity, and
