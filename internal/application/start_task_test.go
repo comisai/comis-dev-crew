@@ -1,8 +1,13 @@
 package application
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
+
+	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 func TestStartTaskConfigurationRejectsInvalidSchedulingLimits(t *testing.T) {
@@ -20,5 +25,16 @@ func TestStartTaskConfigurationRejectsInvalidSchedulingLimits(t *testing.T) {
 	}
 	if _, err := NewMutations(config); err == nil {
 		t.Fatal("NewMutations(repository ceiling above host ceiling) error = nil")
+	}
+}
+
+func TestStartTaskClassifiesResourceQueueAsPrecondition(t *testing.T) {
+	store := &mutationStore{startErr: fmt.Errorf("resource_queued: %w", ErrPrecondition)}
+	_, err := newTestMutations(t, store).StartTask(context.Background(), StartTaskCommand{
+		OperationID: "operation-start-resource-queued", TaskHandle: "task-resource-queued",
+	})
+	var failure *domain.Failure
+	if !errors.As(err, &failure) || failure.Code != domain.ErrorPrecondition || !errors.Is(err, ErrPrecondition) {
+		t.Fatalf("StartTask() error = %v, want typed precondition preserving the application cause", err)
 	}
 }

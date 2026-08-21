@@ -542,6 +542,7 @@ type mutationStore struct {
 	replayErr       error
 	activationErr   error
 	abandonErr      error
+	startErr        error
 }
 
 func (store *mutationStore) RecordTaskPreparationIntent(
@@ -584,7 +585,7 @@ func (store *mutationStore) CommitManagedRunAbandon(_ context.Context, mutation 
 
 func (store *mutationStore) CommitTaskStart(_ context.Context, mutation TaskStartMutation) (MutationResult, error) {
 	store.start = mutation
-	return MutationResult{}, nil
+	return MutationResult{}, store.startErr
 }
 
 func (store *mutationStore) CommitTerminalEvent(_ context.Context, mutation TerminalEventMutation) (MutationResult, error) {
