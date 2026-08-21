@@ -297,6 +297,15 @@ func controlMutationFailure(err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return wireFailure(ErrorKindDeadlineExceeded, "control mutation deadline elapsed")
 	}
+	switch {
+	case errors.Is(err, application.ErrInvalidInput):
+		return wireFailure(ErrorKindInvalidParams, "control mutation fields are invalid")
+	case errors.Is(err, application.ErrConflict):
+		return wireFailure(ErrorKindReplayConflict, "control operation replay conflicts")
+	case errors.Is(err, application.ErrNotFound), errors.Is(err, application.ErrPrecondition),
+		errors.Is(err, domain.ErrInvalidTransition):
+		return wireFailure(ErrorKindPreconditionFailed, "managed-run preparation precondition failed")
+	}
 	var failure *domain.Failure
 	if !errors.As(err, &failure) {
 		return wireFailure(ErrorKindInternalError, "durable control mutation failed")
