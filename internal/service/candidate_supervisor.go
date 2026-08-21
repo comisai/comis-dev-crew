@@ -20,14 +20,11 @@ type candidateEvidenceStore interface {
 	ListTasks(context.Context) ([]domain.Task, error)
 	GetTask(context.Context, string) (domain.Task, error)
 	GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error)
+	ReadTaskReconciliationAuthority(context.Context, string) (application.TaskReconciliationAuthority, error)
 	ListAcceptedReports(context.Context, string) ([]domain.AcceptedReport, error)
 	ReadReconciledCandidateSnapshot(context.Context, string) (application.WorkspaceSnapshot, bool, error)
 	LatestCandidateEvidence(context.Context, string) (*domain.SealedDeliveryEvidence, domain.CandidateJudgment, error)
 	CommitCandidateEvidence(context.Context, string, *domain.SealedDeliveryEvidence, []string, []string, time.Time, []application.ComisEvidencePublication) (domain.Task, domain.CandidateJudgment, error)
-}
-
-type candidateGitInspector interface {
-	InspectCandidate(context.Context, devgit.CandidateSnapshotRequest) (devgit.CandidateSnapshot, error)
 }
 
 type candidateValidationRunner interface {
@@ -166,6 +163,7 @@ func (supervisor *candidateSupervisor) ValidateTask(
 	if openDecisions != 0 {
 		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: unresolved decisions remain")
 	}
+	promoted, promotionErr := supervisor.promoteCandidate(ctx, task, preparation)
 	snapshot, err := supervisor.config.Git.InspectCandidate(ctx, devgit.CandidateSnapshotRequest{
 		TaskHandle: taskHandle, RepositoryID: task.RepositoryID, WorktreePath: preparation.RequestedWorkspaceRoot,
 	})
@@ -198,7 +196,18 @@ func (supervisor *candidateSupervisor) ValidateTask(
 	if candidateRequiresUnverifiedEvidence(task, snapshot) {
 		return supervisor.commitUnverifiedCandidate(ctx, task, profile, snapshot, openDecisions, "")
 	}
-	if reconciled && !candidateMatchesReconciledSnapshot(task, snapshot, reconciledSnapshot) {
+	if promotionErr != nil {
+		if ctx.Err() != nil {
+			return domain.Task{}, domain.CandidateJudgment{}, ctx.Err()
+		}
+		return domain.Task{}, domain.CandidateJudgment{}, errors.New("validate task candidate: candidate handoff is unavailable")
+	}
+	if !candidateMatchesWorkspaceSnapshot(task, snapshot, promoted) {
+		return supervisor.commitUnverifiedCandidate(
+			ctx, task, profile, snapshot, openDecisions, domain.CandidateReconciliationMismatch,
+		)
+	}
+	if reconciled && !candidateMatchesWorkspaceSnapshot(task, snapshot, reconciledSnapshot) {
 		return supervisor.commitUnverifiedCandidate(
 			ctx, task, profile, snapshot, openDecisions, domain.CandidateReconciliationMismatch,
 		)

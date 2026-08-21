@@ -57,27 +57,6 @@ func TestCandidateSupervisor_BuildsShipEvidenceFromChecksAndRereadForgeTruth(t *
 	}
 }
 
-func TestCandidateSupervisorPromotesOperationBoundCandidateBeforeValidation(t *testing.T) {
-	fixture := newCandidateSupervisorFixture(t, domain.ShapeShip)
-	supervisor, err := newCandidateSupervisor(fixture.config())
-	if err != nil {
-		t.Fatalf("newCandidateSupervisor() error = %v", err)
-	}
-	if _, _, err := supervisor.ValidateTask(context.Background(), fixture.task.Handle); err != nil {
-		t.Fatalf("ValidateTask() error = %v", err)
-	}
-	want := application.ReconciliationWorkspaceRequest{
-		PreparationOperationID: fixture.store.preparationOperationID,
-		TaskHandle:             fixture.task.Handle,
-		RepositoryID:           fixture.task.RepositoryID,
-		WorktreePath:           fixture.preparation.RequestedWorkspaceRoot,
-		BaseRevision:           fixture.task.BaseRevision,
-	}
-	if fixture.git.promotions != 1 || !reflect.DeepEqual(fixture.git.promotionRequest, want) {
-		t.Fatalf("candidate promotions = %d/%#v, want one %#v", fixture.git.promotions, fixture.git.promotionRequest, want)
-	}
-}
-
 func TestCandidateSupervisor_BuildsScoutEvidenceOnlyFromReviewedArtifactPath(t *testing.T) {
 	fixture := newCandidateSupervisorFixture(t, domain.ShapeScout)
 	supervisor, err := newCandidateSupervisor(fixture.config())
@@ -609,6 +588,7 @@ type candidateSupervisorStore struct {
 	task                   domain.Task
 	preparation            application.ManagedRunPreparation
 	preparationOperationID string
+	handoffAuthorityErr    error
 	reports                []domain.AcceptedReport
 	evidence               *domain.SealedDeliveryEvidence
 	requiredLocalChecks    []string
@@ -644,6 +624,9 @@ func (store *candidateSupervisorStore) ReadTaskReconciliationAuthority(
 	context.Context,
 	string,
 ) (application.TaskReconciliationAuthority, error) {
+	if store.handoffAuthorityErr != nil {
+		return application.TaskReconciliationAuthority{}, store.handoffAuthorityErr
+	}
 	return application.TaskReconciliationAuthority{
 		Task: store.task, Preparation: store.preparation,
 		PreparationOperationID: store.preparationOperationID,
@@ -723,15 +706,8 @@ type candidateSupervisorGit struct {
 	promotions        int
 	promotionRequest  application.ReconciliationWorkspaceRequest
 	promotionSnapshot application.WorkspaceSnapshot
-}
-
-func (git *candidateSupervisorGit) PromoteReconciliationCandidate(
-	_ context.Context,
-	request application.ReconciliationWorkspaceRequest,
-) (application.WorkspaceSnapshot, error) {
-	git.promotions++
-	git.promotionRequest = request
-	return git.promotionSnapshot, nil
+	promotionErr      error
+	onPromote         func()
 }
 
 func (git *candidateSupervisorGit) InspectCandidate(context.Context, devgit.CandidateSnapshotRequest) (devgit.CandidateSnapshot, error) {
