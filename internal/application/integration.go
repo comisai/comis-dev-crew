@@ -212,7 +212,7 @@ func (integrations *Integrations) ApplyCandidate(
 		Command: command, PolicyID: policyID, Strategy: strategy, SubjectDigest: subjectDigest, At: at,
 	})
 	if err != nil {
-		return IntegrationApplicationResult{}, &dependencyFailure{message: "integration reservation failed", cause: err}
+		return IntegrationApplicationResult{}, integrationReservationFailure(err)
 	}
 	if err := validateIntegrationReservation(reserved, command, policyID, strategy, subjectDigest); err != nil {
 		return IntegrationApplicationResult{}, &dependencyFailure{message: "integration reservation differs", cause: err}
@@ -243,6 +243,17 @@ func (integrations *Integrations) ApplyCandidate(
 		return IntegrationApplicationResult{}, &dependencyFailure{message: "integration completion differs", cause: err}
 	}
 	return cloneIntegrationResult(completed), nil
+}
+
+func integrationReservationFailure(cause error) error {
+	switch {
+	case errors.Is(cause, ErrConflict), errors.Is(cause, ErrInvalidInput),
+		errors.Is(cause, ErrNotFound), errors.Is(cause, ErrPrecondition),
+		errors.Is(cause, domain.ErrInvalidTransition):
+		return mutationCommitFailure(cause)
+	default:
+		return &dependencyFailure{message: "integration reservation failed", cause: cause}
+	}
 }
 
 func (strategy IntegrationStrategy) valid() bool {
