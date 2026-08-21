@@ -42,6 +42,31 @@ func TestWorktreeInventoryDecoder_AcceptsMachineRecordsAndRejectsAmbiguity(t *te
 	}
 }
 
+func TestWorktreeInventoryReaderAcceptsThirtyTwoRegisteredWorktrees(t *testing.T) {
+	root := internalCanonicalTempDir(t)
+	executable := filepath.Join(root, "git-many-worktrees")
+	padding := strings.Repeat("x", 220)
+	script := "#!/bin/sh\n" +
+		"index=0\n" +
+		"while [ \"$index\" -lt 32 ]; do\n" +
+		"  printf 'worktree /approved/worktrees/task-%02d-" + padding +
+		"\\000HEAD " + strings.Repeat("a", 40) +
+		"\\000branch refs/heads/devcrew/task-%02d\\000\\000' \"$index\" \"$index\"\n" +
+		"  index=$((index+1))\n" +
+		"done\n"
+	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	registry := &Registry{gitExecutable: executable}
+	entries, err := registry.worktreeEntries(context.Background(), Repository{PrimaryCheckout: "/approved/primary"})
+	if err != nil {
+		t.Fatalf("worktreeEntries(32 registered worktrees) error = %v", err)
+	}
+	if len(entries) != 32 {
+		t.Fatalf("worktreeEntries(32 registered worktrees) count = %d, want 32", len(entries))
+	}
+}
+
 func TestPreparedWorktreeBoundaryHelpers_AreBoundedAndFailClosed(t *testing.T) {
 	repository := Repository{PrimaryCheckout: "/approved/primary", WorktreeRoot: "/approved/worktrees"}
 	target := "/approved/worktrees/task-valid"
