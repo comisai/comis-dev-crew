@@ -208,6 +208,43 @@ func TestRegistry_PromotesOnlyVerifiedLeasePrivateCandidateIntoExactSharedBranch
 	}
 }
 
+func TestRegistry_PromotesPrivateCandidateFromExactAdvancedSharedHead(t *testing.T) {
+	fixture := newRepositoryFixture(t, "product-private-fast-forward")
+	registry := newLifecycleRegistry(t, fixture)
+	request := lifecycleRequest(t, fixture, "prepare-private-fast-forward", "task-private-fast-forward")
+	prepared, err := registry.PrepareWorktree(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(prepared.CanonicalPath, "applied.txt"), []byte("applied\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath, "add", "applied.txt")
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath,
+		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
+		"commit", "-m", "Apply component candidate")
+	sharedHead := gitOutput(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath,
+		"rev-parse", "HEAD")
+	private := createLeasePrivateCandidateFrom(t, fixture, prepared, sharedHead)
+	reconciliationRequest := application.ReconciliationWorkspaceRequest{
+		PreparationOperationID: request.OperationID, TaskHandle: request.TaskHandle,
+		RepositoryID: request.RepositoryID, WorktreePath: prepared.CanonicalPath,
+		BaseRevision: request.BaseRevision,
+	}
+
+	promoted, err := registry.PromoteReconciliationCandidate(context.Background(), reconciliationRequest)
+	if err != nil {
+		t.Fatalf("PromoteReconciliationCandidate(advanced shared head) error = %v", err)
+	}
+	if promoted.HeadRevision != private.head {
+		t.Fatalf("promoted head = %q, want private %q", promoted.HeadRevision, private.head)
+	}
+	if finalHead := gitOutput(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath,
+		"rev-parse", "HEAD"); finalHead != private.head {
+		t.Fatalf("shared head = %q, want private %q", finalHead, private.head)
+	}
+}
+
 func TestRegistry_RefusesUnsafeLeasePrivateCandidateWithoutMovingSharedBranch(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -373,6 +410,16 @@ func createLeasePrivateCandidate(
 	prepared devgit.PreparedWorktree,
 ) leasePrivateCandidate {
 	t.Helper()
+	return createLeasePrivateCandidateFrom(t, fixture, prepared, prepared.BaseRevision)
+}
+
+func createLeasePrivateCandidateFrom(
+	t *testing.T,
+	fixture repositoryFixture,
+	prepared devgit.PreparedWorktree,
+	initialHead string,
+) leasePrivateCandidate {
+	t.Helper()
 	gitDir := gitOutput(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath,
 		"rev-parse", "--path-format=absolute", "--git-dir")
 	commonDir := gitOutput(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath,
@@ -409,7 +456,7 @@ func createLeasePrivateCandidate(
 	writeTestFile(t, filepath.Join(privateCommon, "system-config"), []byte("[safe]\n\tdirectory = "+string(quotedWorkspace)+"\n"))
 	writeTestFile(t, filepath.Join(privateCommon, "objects", "info", "alternates"), []byte(filepath.Join(commonDir, "objects")+"\n"))
 	writeTestFile(t, filepath.Join(privateCommon, "info", "exclude"), []byte("/.comis-terminal-git/\n"))
-	writeTestFile(t, filepath.Join(privateCommon, "refs", "heads", prepared.Branch), []byte(prepared.BaseRevision+"\n"))
+	writeTestFile(t, filepath.Join(privateCommon, "refs", "heads", prepared.Branch), []byte(initialHead+"\n"))
 	writeLeasePrivateSource(t, privateRoot, commonDir, gitDir)
 	sharedExclude := filepath.Join(commonDir, "info", "exclude")
 	if err := os.MkdirAll(filepath.Dir(sharedExclude), 0o700); err != nil {
@@ -439,8 +486,8 @@ func createLeasePrivateCandidate(
 		"-c", "user.name=DevCrew Fixture", "-c", "user.email=fixture@example.invalid",
 		"commit", "-m", "private candidate")
 	head := gitOutputWithEnvironment(t, fixture.gitExecutable, gitEnvironment, "rev-parse", "HEAD")
-	if parent := gitOutputWithEnvironment(t, fixture.gitExecutable, gitEnvironment, "rev-parse", head+"^"); parent != prepared.BaseRevision {
-		t.Fatalf("private candidate parent = %q, want base %q", parent, prepared.BaseRevision)
+	if parent := gitOutputWithEnvironment(t, fixture.gitExecutable, gitEnvironment, "rev-parse", head+"^"); parent != initialHead {
+		t.Fatalf("private candidate parent = %q, want initial head %q", parent, initialHead)
 	}
 	return leasePrivateCandidate{
 		root: privateRoot, common: privateCommon, worktree: privateWorktree, gitDir: gitDir, head: head,
