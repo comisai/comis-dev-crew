@@ -315,6 +315,10 @@ func TestRunCommand_RejectsPartialInstalledCompositionWithoutLeakingValues(t *te
 	if exitCode != 2 || !strings.Contains(stderr.String(), "installed composition is incomplete") {
 		t.Fatalf("RunCommand(partial) = %d, stderr=%q", exitCode, stderr.String())
 	}
+	if !strings.Contains(stderr.String(), "--max-concurrent-tasks=0") ||
+		!strings.Contains(stderr.String(), "--max-concurrent-tasks-per-repository=0") {
+		t.Fatalf("partial-composition diagnostic omitted task concurrency values: %q", stderr.String())
+	}
 	if strings.Contains(stdout.String()+stderr.String(), privateValue) {
 		t.Fatalf("partial-composition diagnostic leaked private value: %q", stderr.String())
 	}
