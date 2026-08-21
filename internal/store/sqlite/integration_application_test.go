@@ -110,7 +110,10 @@ func TestIntegrationReservationSurvivesRestartBeforeGitCompletion(t *testing.T) 
 
 func TestIntegrationReservationAcceptsReadyOwnerBeforeTerminalLaunch(t *testing.T) {
 	fixture := newStoredIntegrationFixture(t)
-	if _, err := fixture.store.db.Exec(`UPDATE tasks SET state = 'ready' WHERE handle = 'task-integration'`); err != nil {
+	if _, err := fixture.store.db.Exec(`UPDATE tasks SET state = CASE handle
+		WHEN 'task-integration' THEN 'ready'
+		WHEN 'task-component-a' THEN 'delivered'
+		ELSE state END`); err != nil {
 		t.Fatal(err)
 	}
 	request := fixture.reservationRequest("integration-ready-owner", application.IntegrationMerge)

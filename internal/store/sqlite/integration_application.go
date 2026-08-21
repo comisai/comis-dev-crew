@@ -243,10 +243,8 @@ func resolveIntegrationReservation(
 	if candidateTask.State != domain.TaskCandidateComplete && candidateTask.State != domain.TaskDelivered {
 		return integrationApplicationRow{}, fmt.Errorf("integration candidate is not complete: %w", application.ErrPrecondition)
 	}
-	if integrationTask.State != domain.TaskWorking && integrationTask.State != domain.TaskAwaitingDecision && integrationTask.State != domain.TaskBlocked {
-		return integrationApplicationRow{}, fmt.Errorf("integration owner is not writable: %w", application.ErrPrecondition)
-	}
 	worktrees := make(map[string]string)
+	deliverySatisfied := make(map[string]bool)
 	for _, component := range initiative.Components {
 		for _, taskHandle := range component.TaskHandles {
 			task, readErr := getTask(ctx, transaction, taskHandle)
@@ -258,7 +256,21 @@ func resolveIntegrationReservation(
 				return integrationApplicationRow{}, fmt.Errorf("integration worktree authority is unavailable: %w", application.ErrPrecondition)
 			}
 			worktrees[taskHandle] = preparation.RequestedWorkspaceRoot
+			deliverySatisfied[taskHandle] = task.State == domain.TaskDelivered || task.State == domain.TaskCleaned
 		}
+	}
+	ownerWritable := integrationTask.State == domain.TaskWorking ||
+		integrationTask.State == domain.TaskAwaitingDecision || integrationTask.State == domain.TaskBlocked
+	if integrationTask.State == domain.TaskReady {
+		for _, taskHandle := range initiative.DependencyReadyTasks(deliverySatisfied) {
+			if taskHandle == integrationTask.Handle {
+				ownerWritable = true
+				break
+			}
+		}
+	}
+	if !ownerWritable {
+		return integrationApplicationRow{}, fmt.Errorf("integration owner is not writable: %w", application.ErrPrecondition)
 	}
 	if err := initiative.AuthorizeIntegrationWorktree(integrationTask.Handle, worktrees); err != nil {
 		return integrationApplicationRow{}, fmt.Errorf("integration worktree authority differs: %w", application.ErrPrecondition)

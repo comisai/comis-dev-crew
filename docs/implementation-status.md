@@ -596,7 +596,11 @@ operation.
 
 The reservation resolves distinct task worktrees from durable preparations and
 requires current accepted candidate evidence whose repository, base, task, head,
-and expiry still agree. The Git registry then revalidates both worktree identities,
+and expiry still agree. A dependency-ready integration owner may receive those
+server-owned applications while it is still `ready`; this keeps Git application
+and conflict materialization ahead of the confined worker launch. A launched owner
+remains writable only in its explicit working, decision, or blocked states. The Git
+registry then revalidates both worktree identities,
 cleanliness, and heads while holding its mutation lock. Fixed argv performs the
 selected operation with hooks and signing disabled. Applied heads and sorted,
 bounded conflict paths are durable records; conflicts remain in the dedicated

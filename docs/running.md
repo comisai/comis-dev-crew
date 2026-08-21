@@ -512,6 +512,9 @@ distributed outcome as one atomic success.
 the integration-owner task, candidate task, candidate head, and expected target
 head from one strict bounded JSON contract. The contract cannot select policy,
 strategy, repository, worktree, or argv, and the command emits JSON only.
+Apply delivered component candidates before launching a dependency-ready
+integration owner. This lets the confined worker start from the exact applied or
+conflicted worktree instead of snapshotting an earlier Git state.
 An `invalidated` outcome means the candidate head or cleanliness changed after
 its evidence was accepted. No integration write occurred: the same durable
 transaction returns that candidate to `validating`, while the integration owner
