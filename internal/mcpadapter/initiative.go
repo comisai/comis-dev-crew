@@ -135,7 +135,9 @@ func initiativePreparationMetadata(operationID string, prepared localapi.Prepare
 			RegistrationNonce: comiswire.RegistrationNonce(member.RegistrationNonce),
 			ExpiresAt:         member.ExpiresAt.Format(time.RFC3339Nano),
 			RequestedAttachment: &comiswire.MCPManagedRunGroupResultMembersItemRequestedAttachment{
-				Kind: string(member.RequestedAttachment.Kind), SourcePath: member.RequestedAttachment.SourcePath,
+				Kind:          string(member.RequestedAttachment.Kind),
+				SourcePath:    member.RequestedAttachment.SourcePath,
+				RelayIdentity: member.RequestedAttachment.RelayIdentity,
 			},
 		}
 		if member.RequestedWorkspaceRoot != "" {

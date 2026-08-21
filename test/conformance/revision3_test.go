@@ -3,6 +3,7 @@ package conformance_test
 import (
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/comisai/comis-dev-crew/internal/comiswire"
@@ -10,8 +11,8 @@ import (
 )
 
 const (
-	pinnedSourceCommit = "72c5ea3d75a8ed9ccddaaac8e999324f87477ca8"
-	pinnedBundleDigest = "9dcf3e3120a42f671c615a60e1ff149401da7b5380543d37b71efca4eec5548f"
+	pinnedSourceCommit = "4deb33ed59b272d4a84046a20a7f51a615f06039"
+	pinnedBundleDigest = "dea251a955a4d68faf402aa6977db1b4544737e43aa1f624f39dc359008f6414"
 )
 
 func TestContractPinsPreparedAttachmentAuthority(t *testing.T) {
@@ -28,9 +29,21 @@ func TestContractPinsPreparedAttachmentAuthority(t *testing.T) {
 			pinned.Provenance.SourceCommit, len(pinned.Manifest.Artifacts))
 	}
 
-	preparation := []byte(`{"state":"prepared","externalRunRef":"external-run_attachment","registrationNonce":"registration-nonce_attachment","expiresAt":"2030-01-01T00:00:00.000Z","requestedWorkspace":{"rootHint":"/approved/workspaces/task"},"requestedAttachment":{"kind":"unix_socket","sourcePath":"/approved/runtime/task/attachment.sock"}}`)
+	preparation := []byte(`{"state":"prepared","externalRunRef":"external-run_attachment","registrationNonce":"registration-nonce_attachment","expiresAt":"2030-01-01T00:00:00.000Z","requestedWorkspace":{"rootHint":"/approved/workspaces/task"},"requestedAttachment":{"kind":"unix_socket","sourcePath":"/approved/runtime/task/attachment.sock","relayIdentity":"abababababababababababababababababababababababababababababababab"}}`)
 	if err := comiswire.ValidatePayload(comiswire.PayloadMCPManagedRunResult, preparation); err != nil {
 		t.Fatalf("prepared attachment metadata rejected: %v", err)
+	}
+	validIdentity := strings.Repeat("ab", 32)
+	for name, invalid := range map[string][]byte{
+		"missing":   []byte(strings.Replace(string(preparation), `,"relayIdentity":"`+validIdentity+`"`, "", 1)),
+		"all zero":  []byte(strings.Replace(string(preparation), validIdentity, strings.Repeat("0", 64), 1)),
+		"uppercase": []byte(strings.Replace(string(preparation), validIdentity, strings.ToUpper(validIdentity), 1)),
+	} {
+		t.Run("rejects "+name+" relay identity", func(t *testing.T) {
+			if err := comiswire.ValidatePayload(comiswire.PayloadMCPManagedRunResult, invalid); err == nil {
+				t.Fatal("invalid prepared attachment relay identity was accepted")
+			}
+		})
 	}
 
 	handshake := []byte(`{"jsonrpc":"2.0","id":"operation_handshake_attachment","method":"capabilityServices.handshake","params":{"protocolId":"comis.capability-service/1","bundleDigest":"` + pinnedBundleDigest + `","operationId":"operation_handshake_attachment","serviceInstanceId":"service-instance_attachment","requestedScopes":["health","attention_response","evidence","report","workspace_lease","terminal_events","execution_attachment","managed_run_group","approval_receipt"]}}`)
@@ -63,7 +76,7 @@ func TestContractRequiresPreparedMemberIdentitiesForGroupAbandon(t *testing.T) {
 
 func TestContractRequiresActivationHandlesWhenAttachmentWasPrepared(t *testing.T) {
 	boundary := semanticBoundary{operations: make(map[string]string)}
-	preparation := []byte(`{"state":"prepared","externalRunRef":"external-run_attachment_join","registrationNonce":"registration-nonce_attachment_join","expiresAt":"2030-01-01T00:00:00.000Z","requestedWorkspace":{"rootHint":"/approved/workspaces/task"},"requestedAttachment":{"kind":"unix_socket","sourcePath":"/approved/runtime/task/attachment.sock"}}`)
+	preparation := []byte(`{"state":"prepared","externalRunRef":"external-run_attachment_join","registrationNonce":"registration-nonce_attachment_join","expiresAt":"2030-01-01T00:00:00.000Z","requestedWorkspace":{"rootHint":"/approved/workspaces/task"},"requestedAttachment":{"kind":"unix_socket","sourcePath":"/approved/runtime/task/attachment.sock","relayIdentity":"abababababababababababababababababababababababababababababababab"}}`)
 	if kind := boundary.validate(comiswire.PayloadMCPManagedRunResult, preparation); kind != nil {
 		t.Fatalf("attachment preparation rejected: %q", *kind)
 	}

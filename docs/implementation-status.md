@@ -12,8 +12,8 @@ alongside the task lifecycle commands: prepare, reconcile, handback, cleanup, an
 the intervention set — pause, resume, cancel, verify, promote, replace, steer,
 and the acknowledged operator-only discard. The
 protocol foundation pins the 43-artifact Comis capability-service contract at
-source commit `72c5ea3d75a8ed9ccddaaac8e999324f87477ca8` and bundle digest
-`9dcf3e3120a42f671c615a60e1ff149401da7b5380543d37b71efca4eec5548f`, and generates
+source commit `4deb33ed59b272d4a84046a20a7f51a615f06039` and bundle digest
+`dea251a955a4d68faf402aa6977db1b4544737e43aa1f624f39dc359008f6414`, and generates
 a closed Go adapter that can consume an exact one-shot approval receipt.
 
 Installed composition supervises the Comis control lane, Codex and Claude Code
@@ -475,7 +475,8 @@ The stateless MCP facade maps `prepare_initiative`, `get_initiative`,
 Preparation, addition, and promotion are marked `mutate`; both reads are marked
 `read`. Addition provenance comes only from authenticated call context, and the
 promotion schema contains no repository or shape field. The complete private group join is validated against
-the pinned protocol schema and returned only in the MCP result extension, while
+the pinned protocol schema, including each canonical public relay identity, and
+returned only in the MCP result extension, while
 the model-visible preparation result contains bounded initiative and task
 identities but no registration nonce or host resource path.
 

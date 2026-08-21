@@ -223,8 +223,9 @@ The facade defines twenty-seven tools: `prepare_task`, `prepare_initiative`,
 `resume_task`, `replace_worker`, `steer_task`, `verify_task`,
 `attest_scout_decisions`, `sync_primary`, `list_tasks`, `get_task`,
 `explain_task`, `get_launch_plan`, `worker_profiles`, and `doctor`.
-`prepare_initiative` returns the private managed-run group registration through
-the MCP result extension while keeping nonces and host resource paths out of
+`prepare_initiative` returns the private managed-run group registration, including
+each canonical public relay identity, through the MCP result extension while
+keeping nonces and host resource paths out of
 model-visible structured content. `promote_scout` returns the same private
 single-run registration metadata ordinary task preparation does, because it
 mints a task the same way.

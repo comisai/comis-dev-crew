@@ -61,8 +61,9 @@ func preparationMetadata(operationID string, prepared localapi.PrepareTaskResult
 		return nil, internalResultFailure()
 	}
 	extension.RequestedAttachment = &comiswire.MCPManagedRunResultRequestedAttachment{
-		Kind:       comiswire.ExecutionAttachmentKind(prepared.ManagedRun.RequestedAttachment.Kind),
-		SourcePath: prepared.ManagedRun.RequestedAttachment.SourcePath,
+		Kind:          comiswire.ExecutionAttachmentKind(prepared.ManagedRun.RequestedAttachment.Kind),
+		SourcePath:    prepared.ManagedRun.RequestedAttachment.SourcePath,
+		RelayIdentity: prepared.ManagedRun.RequestedAttachment.RelayIdentity,
 	}
 	encoded, err := json.Marshal(extension)
 	if err != nil || comiswire.ValidatePayload(comiswire.PayloadMCPManagedRunResult, encoded) != nil {

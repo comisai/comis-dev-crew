@@ -65,7 +65,8 @@ func TestFacade_OfficialSDKCatalogAndPrivatePreparation(t *testing.T) {
 	if err := json.Unmarshal(encodedExtension, &prepared); err != nil || prepared.RequestedWorkspace == nil ||
 		prepared.RequestedWorkspace.RootHint != "/approved/workspaces/task-0001" || prepared.RequestedAttachment == nil ||
 		prepared.RequestedAttachment.Kind != comiswire.ExecutionAttachmentKindUnixSocket ||
-		prepared.RequestedAttachment.SourcePath != "/approved/runtime/task-0001/attachment.sock" {
+		prepared.RequestedAttachment.SourcePath != "/approved/runtime/task-0001/attachment.sock" ||
+		prepared.RequestedAttachment.RelayIdentity != strings.Repeat("ab", 32) {
 		t.Fatalf("managed-run requested resources = workspace:%#v attachment:%#v, %v", prepared.RequestedWorkspace, prepared.RequestedAttachment, err)
 	}
 	if got := strings.Join(client.calls, ","); got != "prepare:prepare-0001" {
