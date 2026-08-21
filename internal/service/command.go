@@ -312,7 +312,10 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 		}
 		validationComposition, forgeComposition, readErr := readCandidateComposition(candidateConfigPath)
 		if readErr != nil {
-			return writeServiceDiagnostic(stderr, "devcrew-service: candidate configuration is invalid\nHint: provide one canonical owner-private reviewed candidate policy\n", 2)
+			return writeServiceDiagnostic(stderr, fmt.Sprintf(
+				"devcrew-service: candidate configuration is invalid\nHint: %s\n",
+				serviceFailureHint(readErr),
+			), 2)
 		}
 		serviceConfig.ValidationComposition = validationComposition
 		serviceConfig.ForgeComposition = forgeComposition
@@ -416,6 +419,9 @@ func serviceFailureClass(err error) string {
 }
 
 func serviceFailureHint(err error) string {
+	if strings.Contains(err.Error(), "integration policies are invalid") {
+		return "add one to 64 valid integrationPolicies entries to the owner-private candidate configuration"
+	}
 	if strings.Contains(err.Error(), "integration policy composition") ||
 		strings.Contains(err.Error(), "integration application composition") {
 		return "inspect integrationPolicies in the owner-private candidate configuration"
