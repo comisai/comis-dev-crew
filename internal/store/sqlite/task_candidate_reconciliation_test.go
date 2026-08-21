@@ -19,6 +19,24 @@ type durableTaskCandidateReconciliationStore interface {
 	CommitTaskCandidateReconciliation(context.Context, application.TaskCandidateReconciliationMutation) (application.MutationResult, error)
 }
 
+func TestCandidateHandoffAuthorityDoesNotRequireTerminalSettlement(t *testing.T) {
+	store, task, workspace, _ := openTerminalLifecycleFixture(t, "task-candidate-handoff", false)
+	t.Cleanup(func() { _ = store.Close() })
+
+	authority, err := store.ReadCandidateHandoffAuthority(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("ReadCandidateHandoffAuthority() error = %v", err)
+	}
+	if !reflect.DeepEqual(authority.Task, task) ||
+		authority.PreparationOperationID != "operation-prepare-"+task.Handle ||
+		authority.Preparation.RequestedWorkspaceRoot != workspace {
+		t.Fatalf("candidate handoff authority = %#v", authority)
+	}
+	if _, err := store.ReadTaskReconciliationAuthority(context.Background(), task.Handle); err == nil {
+		t.Fatal("ReadTaskReconciliationAuthority() accepted authority without terminal settlement")
+	}
+}
+
 func TestTaskCandidateReconciliation_PersistsExactEvidenceWithoutWorkerReport(t *testing.T) {
 	store, task, workspace, now := openUnknownCandidateReconciliationFixture(t, "task-reconcile-clean")
 	t.Cleanup(func() { _ = store.Close() })
