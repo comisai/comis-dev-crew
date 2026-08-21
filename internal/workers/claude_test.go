@@ -78,7 +78,8 @@ func TestClaudeAdapterBuildsConfinedProtectedLaunchWithoutAuthorityLeak(t *testi
 			"changing the workspace; do not continue task work. Run `devcrew-report --help` before reporting and use only " +
 			"its exact flag syntax; do not invent JSON or stdin formats. Use `devcrew-report` for sparse progress, " +
 			"decisions, blocked state, candidate completion, and failure. Treat the protected runtime attachment as " +
-			"the only task/report authority.\n",
+			"the only task/report authority. Do not push or change Git remotes; commit locally and let DevCrew own " +
+			"validation and delivery.\n",
 	}
 	if strings.Join(descriptor.Arguments, "\x00") != strings.Join(wantArguments, "\x00") ||
 		len(descriptor.StandardInput) != 0 ||
@@ -103,7 +104,8 @@ func TestClaudeAdapterBuildsConfinedProtectedLaunchWithoutAuthorityLeak(t *testi
 		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "devcrew-report acknowledge") ||
 		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "devcrew-report brief") ||
 		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "If either command fails, stop without reading or changing the workspace") ||
-		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "Run `devcrew-report --help` before reporting") {
+		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "Run `devcrew-report --help` before reporting") ||
+		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "Do not push or change Git remotes") {
 		t.Fatalf("Claude protected launch bindings = %#v", descriptor)
 	}
 	if descriptor.ExpectedAcknowledgement.TaskHandle != request.TaskHandle ||
