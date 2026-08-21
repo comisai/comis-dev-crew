@@ -27,9 +27,10 @@ func (mutations *Mutations) StartTask(ctx context.Context, command StartTaskComm
 	} else if found {
 		return replay, nil
 	}
-	return mutations.store.CommitTaskStart(ctx, TaskStartMutation{
+	result, err := mutations.store.CommitTaskStart(ctx, TaskStartMutation{
 		TaskHandle: command.TaskHandle, OperationID: command.OperationID,
 		SubjectDigest: subjectDigest, At: mutations.clock(),
 		SchedulingLimits: mutations.schedulingLimits,
 	})
+	return result, mutationCommitFailure(err)
 }
