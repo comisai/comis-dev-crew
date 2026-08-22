@@ -9,6 +9,20 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/localapi"
 )
 
+// runAfterRuntimeAttachmentRecovery prevents a dependent boundary from
+// observing socket identities that the recovery pass is about to replace.
+func runAfterRuntimeAttachmentRecovery(
+	coordinator *runtimeAttachmentCoordinator,
+	component func(context.Context) error,
+) func(context.Context) error {
+	return func(ctx context.Context) error {
+		if err := coordinator.waitForRecovery(ctx); err != nil {
+			return err
+		}
+		return component(ctx)
+	}
+}
+
 func serveServiceComponents(
 	ctx context.Context,
 	servers []*localapi.Server,

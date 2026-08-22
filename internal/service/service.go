@@ -317,8 +317,12 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if err := errors.Join(forwarderErr, evidenceErr, livenessErr, surfacingErr); err != nil {
 		return fmt.Errorf("run service Comis control components: %w", err)
 	}
+	controlRun := control.Run
+	if attachmentSupervisor != nil {
+		controlRun = runAfterRuntimeAttachmentRecovery(attachmentSupervisor, control.Run)
+	}
 	components := []func(context.Context) error{
-		control.Run,
+		controlRun,
 		evidenceForwarder.Run,
 		forwarder.Run,
 		liveness.Run,

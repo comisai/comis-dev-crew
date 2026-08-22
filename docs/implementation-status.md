@@ -783,6 +783,9 @@ binding are reconstructed after a service restart only when the recorded runtime
 directory, socket, and relay identities still match. Ambiguous ownership preserves
 the filesystem objects, moves an affected live task to `unknown`, and exposes a
 closed recovery explanation instead of granting cleanup or relaunch authority.
+The authenticated Comis control connection starts only after this attachment
+recovery finishes, so host reconciliation observes the reconstructed socket
+identity rather than an inode that the same startup is about to replace.
 
 After a decision report is locally accepted, the reporter blocks on that same
 protected socket until Comis returns the exact keyed owner response. The service
