@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/comisai/comis-dev-crew/internal/application"
 )
 
 func newPublishedGroupRollupConnection(t *testing.T) (*ControlConnection, net.Conn) {
@@ -146,6 +148,46 @@ func TestControlConnectionRejectsSchemaInvalidGroupRollupResponse(t *testing.T) 
 
 	if err == nil || !strings.Contains(err.Error(), "invalid response") {
 		t.Fatalf("GroupHostRollup(invalid response) error = %v", err)
+	}
+	if err := <-hostDone; err != nil {
+		t.Fatalf("host exchange: %v", err)
+	}
+}
+
+func TestControlConnectionMapsGroupRollupOntoTheApplicationPort(t *testing.T) {
+	connection, host := newPublishedGroupRollupConnection(t)
+	hostDone := make(chan error, 1)
+	go func() {
+		active, waiting := int64(1), int64(2)
+		var request authenticatedGroupGetHostRollupRequest
+		if err := readControlFrame(host, &request); err != nil {
+			hostDone <- err
+			return
+		}
+		hostDone <- writeControlFrame(host, GroupGetHostRollupResponse{
+			JSONRPC: JSONRPCVersion,
+			ID:      request.ID,
+			Result: GroupGetHostRollupResponseResult{
+				ManagedRunGroupID: request.Params.ManagedRunGroupID,
+				MemberManagedRunIds: []string{
+					"managed-run_backend", "managed-run_frontend", "managed-run_integration",
+				},
+				StateCounts: GroupGetHostRollupResponseResultStateCounts{
+					Active: &active, Waiting: &waiting,
+				},
+				AttentionCount: 2, ActiveCustodyCount: 1, UpdatedAtMs: 1_800_000_000_005,
+			},
+		})
+	}()
+
+	result, err := connection.ReadInitiativeHostRollup(context.Background(), application.InitiativeHostRollupRequest{
+		OperationID: "operation_group_rollup_port", ManagedRunGroupID: "managed-run-group_expected",
+	})
+
+	if err != nil || result.ManagedRunGroupID != "managed-run-group_expected" ||
+		result.StateCounts.Active != 1 || result.StateCounts.Waiting != 2 ||
+		result.AttentionCount != 2 || result.ActiveCustodyCount != 1 || result.UpdatedAtMs != 1_800_000_000_005 {
+		t.Fatalf("ReadInitiativeHostRollup() = %#v, %v", result, err)
 	}
 	if err := <-hostDone; err != nil {
 		t.Fatalf("host exchange: %v", err)
