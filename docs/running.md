@@ -830,7 +830,13 @@ binding and lease. It names no disposition: stopping and discarding are separate
 decisions with deliberately different evidence requirements, and removal stays
 behind `task cleanup`. Cancelling an already-cancelled task reports the settled
 task rather than refusing, and cancelling clears any pause request standing
-against it — a cancelled task has no worker left to answer one.
+against it — a cancelled task has no worker left to answer one. An `unknown`
+task is cancellable only when its exact durable run and lease binding has an
+authenticated `exited` or `released` terminal observation and no validation
+process remains active. The service reconciles that proven-settled posture to
+`cancelled`; a missing, lost, running, or mismatched terminal, or an active
+validation process, leaves the task unchanged and returns a precondition
+refusal.
 
 `workers list` reports the reviewed dispatch catalog: each profile's identity,
 the task shapes it accepts, whether its harness is available and why not, and

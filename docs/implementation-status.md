@@ -106,6 +106,17 @@ Inbound `managedRuns.cancel` is dispatched to the durable task record: it stops
 an activated run, preserves its artifacts, and reports an already-settled run
 rather than refusing, so a second operator cancelling the same run is safe.
 
+Operator cancellation can also settle an `unknown` task when durable evidence
+proves there is nothing left to stop: the recorded terminal must belong to the
+task's exact managed run and workspace lease, its latest trusted posture must be
+`exited` or `released`, and no validation process may remain active. The task is
+then reconciled to `cancelled` without releasing its worktree, artifacts, run,
+lease, or execution attachment. Threat posture: missing or contradictory
+terminal authority, a lost or active terminal, and active validation all refuse
+the mutation and preserve `unknown`; cancellation never converts process
+uncertainty into a claim of safe settlement, and discard remains a separate
+explicitly acknowledged operation.
+
 ## Scout review attestation
 
 A scout's worktree holds the only copy of its investigation, so removing it

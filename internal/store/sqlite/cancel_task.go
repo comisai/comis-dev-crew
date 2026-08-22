@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -40,7 +41,7 @@ func (store *Store) CommitTaskCancel(
 		if task.State == domain.TaskCancelled {
 			return task, nil
 		}
-		updated, err := task.ApplyTransition(domain.TransitionCancelRequested, mutation.At)
+		updated, err := cancelTaskState(ctx, transaction, task, mutation.At)
 		if err != nil {
 			return domain.Task{}, fmt.Errorf("apply task cancel: %w", err)
 		}
@@ -52,4 +53,27 @@ func (store *Store) CommitTaskCancel(
 		}
 		return updated, nil
 	})
+}
+
+// cancelTaskState resolves an unknown task only when durable execution evidence
+// proves the worktree has no remaining owner. Terminal loss or an active
+// validation process keeps the task unknown; cancellation must not turn
+// uncertainty into a false claim that execution stopped.
+func cancelTaskState(
+	ctx context.Context,
+	transaction *sql.Tx,
+	task domain.Task,
+	at time.Time,
+) (domain.Task, error) {
+	if task.State != domain.TaskUnknown {
+		return task.ApplyTransition(domain.TransitionCancelRequested, at)
+	}
+	if err := proveNothingIsStillRunning(ctx, transaction, task, "task cancel", true); err != nil {
+		return domain.Task{}, err
+	}
+	reconciling, err := task.ApplyTransition(domain.TransitionReconcileRequired, at)
+	if err != nil {
+		return domain.Task{}, err
+	}
+	return reconciling.ApplyTransition(domain.TransitionReconciledCancelled, at)
 }

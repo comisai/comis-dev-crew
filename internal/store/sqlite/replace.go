@@ -126,10 +126,11 @@ func proveReplacementSafety(
 		mutation.Snapshot.WorktreePath != preparation.RequestedWorkspaceRoot {
 		return fmt.Errorf("worker replacement authority differs: %w", application.ErrPrecondition)
 	}
-	return proveNothingIsStillRunning(ctx, transaction, task.Handle, "worker replacement", true)
+	return proveNothingIsStillRunning(ctx, transaction, task, "worker replacement", true)
 }
 
-// proveNothingIsStillRunning refuses while anything still owns the worktree.
+// proveNothingIsStillRunning refuses while anything still owns the worktree or
+// the terminal binding does not match the task's durable run and lease.
 //
 // A worker whose terminal never settled may still be alive, and a validation
 // process reads and writes the same tree. Every command that takes a worktree
@@ -146,16 +147,20 @@ func proveReplacementSafety(
 func proveNothingIsStillRunning(
 	ctx context.Context,
 	transaction *sql.Tx,
-	taskHandle string,
+	task domain.Task,
 	label string,
 	requireBinding bool,
 ) error {
-	binding, found, err := findTerminalBinding(ctx, transaction, taskHandle)
+	binding, found, err := findTerminalBinding(ctx, transaction, task.Handle)
 	if err != nil {
 		return err
 	}
 	if !found && requireBinding {
 		return fmt.Errorf("%s terminal is unsettled: %w", label, application.ErrPrecondition)
+	}
+	if found && (binding.managedRunID != task.ManagedRunID ||
+		binding.workspaceLeaseID != task.WorkspaceLeaseID) {
+		return fmt.Errorf("%s terminal authority differs: %w", label, application.ErrPrecondition)
 	}
 	if found && binding.latestTransition != application.TerminalExited &&
 		binding.latestTransition != application.TerminalReleased {
@@ -164,7 +169,7 @@ func proveNothingIsStillRunning(
 	var activeProcesses int
 	if err := transaction.QueryRowContext(ctx,
 		"SELECT COUNT(*) FROM validation_processes WHERE task_handle = ? AND state NOT IN ('exited', 'absent')",
-		taskHandle,
+		task.Handle,
 	).Scan(&activeProcesses); err != nil {
 		return fmt.Errorf("inspect %s validation processes: %w", label, err)
 	}

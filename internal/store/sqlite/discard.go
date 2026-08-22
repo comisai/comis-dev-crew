@@ -64,7 +64,7 @@ func (store *Store) BeginTaskDiscard(
 	if task.ManagedRunID == "" || task.WorkspaceLeaseID == "" || mutation.At.Before(task.UpdatedAt) {
 		return application.TaskCleanupRecord{}, fmt.Errorf("task discard authority: %w", application.ErrPrecondition)
 	}
-	if err := proveNothingIsStillRunning(ctx, transaction, task.Handle, "task discard", false); err != nil {
+	if err := proveNothingIsStillRunning(ctx, transaction, task, "task discard", false); err != nil {
 		return application.TaskCleanupRecord{}, err
 	}
 	preparationOperationID, worktreePath, err := cleanupPreparation(ctx, transaction, task.Handle)
