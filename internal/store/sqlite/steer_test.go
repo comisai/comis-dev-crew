@@ -50,6 +50,41 @@ func TestStore_ASteeringInstructionReachesTheWorkerExactlyOnce(t *testing.T) {
 	}
 }
 
+func TestStore_ADecisionReportLeavesSteeringForTheNextVisibleReceipt(t *testing.T) {
+	store, task := openReportFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	at := time.Date(2026, time.August, 9, 16, 0, 0, 0, time.UTC)
+	if _, err := store.CommitTaskSteer(context.Background(),
+		steerMutation(task.Handle, "operation-steer-0001", "Prefer the existing parser.", at)); err != nil {
+		t.Fatalf("CommitTaskSteer() error = %v", err)
+	}
+
+	decision := sqliteWorkerReport(task, "report-decision-0001", domain.ReportDecision)
+	decision.ExternalKey = "database-choice"
+	decisionReceipt, err := store.CommitReport(context.Background(),
+		directReportMutation(task, decision, at.Add(time.Minute)))
+	if err != nil {
+		t.Fatalf("CommitReport(decision) error = %v", err)
+	}
+	if decisionReceipt.Instruction != "" {
+		t.Fatalf("decision receipt consumed an instruction it cannot render: %q", decisionReceipt.Instruction)
+	}
+	pending, err := store.PendingSteeringInstructions(context.Background(), task.Handle)
+	if err != nil || pending != 1 {
+		t.Fatalf("PendingSteeringInstructions(decision) = %d, %v, want 1", pending, err)
+	}
+
+	resolution := sqliteWorkerReport(task, "report-resolution-0001", domain.ReportResolution)
+	resolution.ExternalKey = decision.ExternalKey
+	resolutionReceipt, err := store.CommitReport(context.Background(),
+		directReportMutation(task, resolution, at.Add(2*time.Minute)))
+	if err != nil {
+		t.Fatalf("CommitReport(resolution) error = %v", err)
+	}
+	if resolutionReceipt.Instruction != "Prefer the existing parser." {
+		t.Fatalf("next visible receipt instruction = %q", resolutionReceipt.Instruction)
+	}
+}
+
 // Two instructions are two things the operator said. Keeping only the newest
 // would silently drop the first, and nothing would tell the operator it never
 // arrived.

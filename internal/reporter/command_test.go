@@ -90,6 +90,55 @@ func TestRunCommand_DecisionWaitsForExactPrivateResponseAfterReportAcceptance(t 
 	}
 }
 
+func TestRunCommand_RendersPauseAndSteeringControlsFromAcceptedReceipt(t *testing.T) {
+	brief := commandBrief()
+	now := time.Date(2026, time.August, 10, 14, 0, 0, 0, time.UTC)
+	capability := &commandCapability{
+		brief: brief,
+		receipt: domain.ReportReceipt{
+			TaskHandle: "task-command-0001", LocalReportID: "report-command-0001",
+			StateVersion: 4, AcceptedAt: now, PauseRequested: true,
+			Instruction: "Prefer the existing parser.",
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	exit := reporter.RunCommand(context.Background(), []string{
+		"progress", "--summary", "implemented parser",
+	}, &stdout, &stderr, reporter.CommandConfig{
+		Capability: capability, Clock: func() time.Time { return now },
+		NewLocalReportID: func() (string, error) { return "report-command-0001", nil }, Version: "test",
+	})
+	const want = "accepted report-command-0001 at state 4\n" +
+		"PauseRequested=true\n" +
+		"Instruction=Prefer the existing parser.\n"
+	if exit != 0 || stderr.Len() != 0 || stdout.String() != want {
+		t.Fatalf("RunCommand(controls) = %d, stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
+	}
+}
+
+func TestRunCommand_RefusesUnsafeInstructionBeforeRenderingReceipt(t *testing.T) {
+	brief := commandBrief()
+	now := time.Date(2026, time.August, 10, 14, 0, 0, 0, time.UTC)
+	capability := &commandCapability{
+		brief: brief,
+		receipt: domain.ReportReceipt{
+			TaskHandle: "task-command-0001", LocalReportID: "report-command-0001",
+			StateVersion: 4, AcceptedAt: now, Instruction: "unsafe\ninstruction",
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	exit := reporter.RunCommand(context.Background(), []string{
+		"progress", "--summary", "implemented parser",
+	}, &stdout, &stderr, reporter.CommandConfig{
+		Capability: capability, Clock: func() time.Time { return now },
+		NewLocalReportID: func() (string, error) { return "report-command-0001", nil }, Version: "test",
+	})
+	if exit != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "runtime attachment") ||
+		strings.Contains(stderr.String(), capability.receipt.Instruction) {
+		t.Fatalf("RunCommand(unsafe control) = %d, stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
+	}
+}
+
 func TestRunCommand_BriefHelpAndVersionExposeNoAuthoritySelector(t *testing.T) {
 	brief := commandBrief()
 	capability := &commandCapability{brief: brief}
