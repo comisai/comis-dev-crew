@@ -574,6 +574,48 @@ func TestRegistry_RemoveDeliveredWorktreeUsesExactHeadAndConvergesAfterRemoval(t
 	}
 }
 
+func TestRegistry_RemoveDiscardedWorktreeRemovesAcknowledgedDirtyWorkspace(t *testing.T) {
+	fixture := newRepositoryFixture(t, "product-api")
+	registry := newLifecycleRegistry(t, fixture)
+	prepare := lifecycleRequest(t, fixture, "prepare-discarded", "task-discarded")
+	prepared, err := registry.PrepareWorktree(context.Background(), prepare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(prepared.CanonicalPath, "uncommitted.txt"), []byte("discard me\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := devgit.DeliveredWorktreeCleanupRequest{
+		PreparationOperationID: prepare.OperationID,
+		TaskHandle:             prepare.TaskHandle,
+		RepositoryID:           prepare.RepositoryID,
+		WorktreePath:           prepared.CanonicalPath,
+		Branch:                 prepared.Branch,
+		HeadRevision:           prepared.HeadRevision,
+	}
+
+	if err := registry.RemoveDiscardedWorktree(context.Background(), request); err != nil {
+		t.Fatalf("RemoveDiscardedWorktree() error = %v", err)
+	}
+	if _, err := os.Lstat(prepared.CanonicalPath); !os.IsNotExist(err) {
+		t.Fatalf("discarded worktree remains: %v", err)
+	}
+	showRef := exec.Command(
+		fixture.gitExecutable,
+		"--no-optional-locks",
+		"-C",
+		fixture.primary,
+		"show-ref",
+		"--verify",
+		"--quiet",
+		"refs/heads/"+prepared.Branch,
+	)
+	showRef.Env = gitTestEnvironment(nil)
+	if err := showRef.Run(); err == nil {
+		t.Fatalf("discarded branch %q remains", prepared.Branch)
+	}
+}
+
 func TestRegistry_RemoveDeliveredWorktreeRefusesAmbiguousAbsentAndChangedBranches(t *testing.T) {
 	t.Run("absent path retained in inventory", func(t *testing.T) {
 		fixture := newRepositoryFixture(t, "product-api")
