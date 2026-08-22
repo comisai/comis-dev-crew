@@ -147,6 +147,28 @@ func TestTaskApplyTransition_InvalidatedEvidenceRequiresFreshValidation(t *testi
 	}
 }
 
+func TestTaskApplyTransition_InvalidatesDeliveredEvidenceForFreshValidation(t *testing.T) {
+	task := transitionTaskToWorking(t)
+	transitions := []TaskTransition{
+		TransitionValidationStarted,
+		TransitionValidationAccepted,
+		TransitionDeliveryStarted,
+		TransitionDeliveryAccepted,
+	}
+	for _, transition := range transitions {
+		var err error
+		task, err = task.ApplyTransition(transition, task.UpdatedAt.Add(time.Second))
+		if err != nil {
+			t.Fatalf("ApplyTransition(%q) error = %v", transition, err)
+		}
+	}
+
+	invalidated, err := task.ApplyTransition(TransitionEvidenceInvalidated, task.UpdatedAt.Add(time.Second))
+	if err != nil || invalidated.State != TaskValidating {
+		t.Fatalf("delivered evidence invalidation = %#v, %v", invalidated, err)
+	}
+}
+
 func TestTaskAcknowledgeBinding_RequiresExactHostAndWorkspaceIdentity(t *testing.T) {
 	task := validTask(ShapeShip, DeliveryPullRequest)
 	binding := TaskBinding{ManagedRunID: "managed-run-0001", WorkspaceLeaseID: "workspace-lease-0001"}
