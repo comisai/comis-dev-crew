@@ -154,10 +154,14 @@ local or forge check records the rejection and advances only that task to
 `failed`; the candidate supervisor remains available for unrelated tasks and a
 service restart does not rerun the rejected candidate. Incomplete, pending, or
 otherwise unknown evidence stays `validating` and is retried without being
-treated as success or failure. Temporary GitHub pull-request truth failures
-also leave the task `validating` and are retried without stopping the candidate
-supervisor. Other pull-request delivery errors still stop supervision so that
-permanent failures remain visible.
+treated as success or failure. A reviewed validation process that durably
+settles as absent before producing a receipt is retried under a fresh process
+operation without stopping the service; no receipt or candidate evidence is
+invented for the absent attempt. A malformed receipt remains a fatal invariant
+failure. Temporary GitHub pull-request truth failures also leave the task
+`validating` and are retried without stopping the candidate supervisor. Other
+pull-request delivery errors still stop supervision so that permanent failures
+remain visible.
 
 A dirty worktree, a head that still equals the pinned base, a structurally
 unverified worktree, a reconciliation mismatch, or candidate authority that

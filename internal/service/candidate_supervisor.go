@@ -27,22 +27,21 @@ type candidateEvidenceStore interface {
 	CommitCandidateEvidence(context.Context, string, *domain.SealedDeliveryEvidence, []string, []string, time.Time, []application.ComisEvidencePublication) (domain.Task, domain.CandidateJudgment, error)
 }
 
-type candidateValidationRunner interface {
-	Run(context.Context, validation.RunRequest) (validation.Receipt, error)
-}
-
-type candidatePullRequestDeliverer interface {
-	DeliverPullRequest(context.Context, forge.PullRequestRequest) (forge.PullRequestTruth, error)
-}
-
-type candidateArtifactInspector func(context.Context, string, int64, string) (delivery.InspectedReportArtifact, error)
+type (
+	candidateValidationRunner interface {
+		Run(context.Context, validation.RunRequest) (validation.Receipt, error)
+	}
+	candidatePullRequestDeliverer interface {
+		DeliverPullRequest(context.Context, forge.PullRequestRequest) (forge.PullRequestTruth, error)
+	}
+	candidateArtifactInspector func(context.Context, string, int64, string) (delivery.InspectedReportArtifact, error)
+)
 
 type candidateDeliveryMaterial struct {
 	referenceURL string
 	artifact     *delivery.InspectedReportArtifact
 	fileName     string
 }
-
 type candidateSupervisorConfig struct {
 	Store                    candidateEvidenceStore
 	Git                      candidateGitInspector
@@ -98,7 +97,8 @@ func (supervisor *candidateSupervisor) Run(ctx context.Context) error {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				if errors.Is(err, errCandidatePullRequestTruthUnavailable) {
+				if errors.Is(err, errCandidatePullRequestTruthUnavailable) ||
+					errors.Is(err, validation.ErrProcessAbsent) {
 					continue
 				}
 				return fmt.Errorf("run candidate supervisor: %w", err)
@@ -310,6 +310,9 @@ func (supervisor *candidateSupervisor) runLocalChecks(
 		receipt, runErr := supervisor.config.Runner.Run(ctx, validation.RunRequest{
 			OperationID: operationID, TaskHandle: task.Handle, ProfileID: profile.ID, CheckID: check.ID, Fields: fields,
 		})
+		if errors.Is(runErr, validation.ErrProcessAbsent) {
+			return nil, nil, runErr
+		}
 		if !completeValidationReceipt(receipt, operationID, task, profile, check, snapshot) {
 			return nil, nil, errors.New("validate task candidate: validation receipt is incomplete")
 		}
@@ -465,21 +468,6 @@ func requiredForgeCheckNames(checks []validation.ForgeCheck) []string {
 		}
 	}
 	return required
-}
-
-func completeValidationReceipt(
-	receipt validation.Receipt,
-	operationID string,
-	task domain.Task,
-	profile validation.Profile,
-	check validation.LocalCheck,
-	snapshot devgit.CandidateSnapshot,
-) bool {
-	return receipt.OperationID == operationID &&
-		receipt.TaskHandle == task.Handle && receipt.ProfileID == profile.ID && receipt.CheckID == check.ID &&
-		receipt.ProgramID == check.ProgramID && receipt.HeadRevision == snapshot.HeadRevision &&
-		receipt.StartedAt.Location() == time.UTC && receipt.CompletedAt.Location() == time.UTC &&
-		!receipt.CompletedAt.Before(receipt.StartedAt) && len(receipt.OutputHash) == 64
 }
 
 func candidateCleanliness(cleanliness devgit.CandidateCleanliness) domain.WorktreeCleanliness {

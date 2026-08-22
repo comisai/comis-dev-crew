@@ -868,6 +868,12 @@ from a naming convention. Scout delivery reads only the
 reviewed bounded artifact. Both use durable outbox identities for exactly-once
 host delivery across restart.
 
+A validation process that is durably absent before it can produce a receipt
+leaves its task validating and is retried with a fresh operation identity. The
+absent attempt cannot contribute evidence, while a malformed purported receipt
+still stops supervision as an invariant failure. This keeps transient process
+admission failure from restarting the service without weakening receipt checks.
+
 The reviewed Codex and Claude launch bootstrap prohibits pushes and Git-remote
 changes without changing persisted brief bytes. Workers produce and report
 task-local commits; only the service may select the configured remote and use its
