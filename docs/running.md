@@ -232,7 +232,12 @@ The facade defines twenty-seven tools: `prepare_task`, `prepare_initiative`,
 `prepare_initiative` returns the private managed-run group registration, including
 each canonical public relay identity, through the MCP result extension while
 keeping nonces and host resource paths out of
-model-visible structured content. `promote_scout` returns the same private
+model-visible structured content. An exact retry after group activation still
+returns the original `preparing`/`prepared` projection at the preparation
+operation's state version and cannot allocate another artifact. Private member
+preparation closures remain authoritative during reconstruction, so replay
+cannot turn an abandoned join back into an open one. Reusing the operation with
+altered input remains a conflict. `promote_scout` returns the same private
 single-run registration metadata ordinary task preparation does, because it
 mints a task the same way.
 `apply_integration_candidate` names only the initiative, dedicated integration

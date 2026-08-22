@@ -93,6 +93,27 @@ func TestPreparedInitiativeReplayPreservesOriginalProjectionAfterActivation(t *t
 	}
 }
 
+func TestPreparedInitiativeReplayDoesNotReopenAbandonedMemberAuthority(t *testing.T) {
+	ctx := context.Background()
+	store, abandonment := preparedInitiativeAbandonStore(t, application.AbandonDispositionReapSafe)
+	prepared := sqlitePreparedInitiativeMutation()
+	if _, err := store.CommitInitiativeAbandonment(ctx, abandonment); err != nil {
+		t.Fatalf("CommitInitiativeAbandonment() error = %v", err)
+	}
+
+	replayed, found, err := store.ReplayInitiativePreparation(ctx, prepared.OperationID, prepared.SubjectDigest)
+	if err != nil || !found {
+		t.Fatalf("ReplayInitiativePreparation(after abandonment) = %#v, %t, %v", replayed, found, err)
+	}
+	for _, preparation := range replayed.Preparation.Members {
+		if preparation.State != application.PreparationAbandoned ||
+			preparation.AbandonReason != abandonment.Reason ||
+			preparation.Disposition != abandonment.Disposition || preparation.ClosedAt == nil {
+			t.Fatalf("replayed abandoned preparation = %#v, want closed authority", preparation)
+		}
+	}
+}
+
 func TestPreparedInitiativeCommitsFiveMemberFullStackGraph(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(ctx, filepath.Join(canonicalTempDir(t), "devcrew.db"))

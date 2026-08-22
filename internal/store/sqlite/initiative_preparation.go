@@ -255,6 +255,10 @@ func initiativePreparationResult(
 		tasks = append(tasks, task)
 		preparations = append(preparations, preparation)
 	}
+	initiative, tasks, err = restoreInitiativePreparationProjection(initiative, tasks, operation)
+	if err != nil {
+		return application.InitiativePreparationResult{}, err
+	}
 	group := application.ManagedRunGroupPreparation{
 		ExternalGroupRef: initiative.Handle, RegistrationNonce: registrationNonce,
 		Members: preparations, ExpiresAt: expiresAt,
@@ -265,6 +269,41 @@ func initiativePreparationResult(
 	return application.InitiativePreparationResult{
 		Initiative: initiative, Tasks: tasks, Preparation: group, Operation: operation,
 	}, nil
+}
+
+func restoreInitiativePreparationProjection(
+	initiative domain.DevelopmentInitiative,
+	tasks []domain.Task,
+	operation domain.OperationRecord,
+) (domain.DevelopmentInitiative, []domain.Task, error) {
+	if operation.Command != commandPrepareInitiative || operation.Status != domain.OperationCompleted ||
+		operation.ResultRef != initiative.Handle || !initiative.CreatedAt.Equal(operation.CreatedAt) {
+		return domain.DevelopmentInitiative{}, nil, errors.New("stored initiative preparation operation is invalid")
+	}
+	initiative.ManagedRunGroupID = ""
+	initiative.State = domain.InitiativePreparing
+	initiative.StateVersion = operation.StateVersion
+	initiative.UpdatedAt = operation.UpdatedAt
+	if err := initiative.Validate(); err != nil {
+		return domain.DevelopmentInitiative{}, nil, fmt.Errorf("restore initiative preparation projection: %w", err)
+	}
+	for index := range tasks {
+		if !tasks[index].CreatedAt.Equal(operation.CreatedAt) {
+			return domain.DevelopmentInitiative{}, nil, errors.New("stored initiative preparation member time is invalid")
+		}
+		tasks[index].ManagedRunID = ""
+		tasks[index].WorkspaceLeaseID = ""
+		tasks[index].ExecutionAttachmentID = ""
+		tasks[index].AttachmentTargetName = ""
+		tasks[index].State = domain.TaskPrepared
+		tasks[index].ReportCursor = 0
+		tasks[index].StateVersion = operation.StateVersion
+		tasks[index].UpdatedAt = operation.UpdatedAt
+		if err := tasks[index].Validate(); err != nil {
+			return domain.DevelopmentInitiative{}, nil, fmt.Errorf("restore initiative preparation member projection: %w", err)
+		}
+	}
+	return initiative, tasks, nil
 }
 
 func getInitiativePreparation(

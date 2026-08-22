@@ -477,6 +477,12 @@ and commits the unbound initiative, all member tasks, all private activation
 joins, and their replay outcomes in one transaction at one state version. A
 partial allocation failure preserves the intents and already-created reversible
 artifacts for exact retry, but writes no half-initiative and launches nothing.
+Exact preparation replay reconstructs the original `preparing` initiative and
+`prepared` task projection from the completed operation even after activation
+has bound the live records. It clears only later activation bindings and restores
+the operation's version and timestamp; the private preparation records retain
+their live closure state, so abandoned authority stays closed. Altered reuse is
+still audited and rejected as a conflict.
 
 The running service exposes `PrepareInitiative` to operator and MCP caller
 classes through the strict local boundary and the same reviewed preparation
