@@ -208,6 +208,23 @@ func TestStore_DiscardResumesHeldRemovalUnderFreshAcknowledgedOperation(t *testi
 	}
 }
 
+func TestStore_DiscardResumeRefusesAnOperationOwnedByAnotherCommand(t *testing.T) {
+	store, task := settledTask(t, "task-discard-operation-collision")
+	at := task.UpdatedAt.Add(time.Minute).UTC()
+	if _, err := store.BeginTaskDiscard(context.Background(),
+		discardMutation(task.Handle, "operation-discard-original", at)); err != nil {
+		t.Fatalf("BeginTaskDiscard() error = %v", err)
+	}
+	collision := storeOperation("operation-discard-collision", task.StateVersion+10)
+	if err := store.RecordOperation(context.Background(), collision); err != nil {
+		t.Fatalf("RecordOperation(collision) error = %v", err)
+	}
+	retry := discardMutation(task.Handle, collision.ID, at.Add(time.Minute))
+	if _, err := store.BeginTaskDiscard(context.Background(), retry); !errors.Is(err, application.ErrConflict) {
+		t.Fatalf("BeginTaskDiscard(operation collision) error = %v, want ErrConflict", err)
+	}
+}
+
 func TestStore_DiscardCompletesDirtyUnpinnedRemovalWithDiscardOperations(t *testing.T) {
 	store, task := settledTask(t, "task-discard-complete")
 	at := task.UpdatedAt.Add(time.Minute).UTC()
