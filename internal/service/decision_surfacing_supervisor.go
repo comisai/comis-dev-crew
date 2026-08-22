@@ -32,6 +32,18 @@ type decisionSurfacingSupervisor struct {
 	config decisionSurfacingSupervisorConfig
 }
 
+type decisionRaisingError struct {
+	cause error
+}
+
+func (failure *decisionRaisingError) Error() string {
+	return "run decision surfacing supervisor: raise decision: " + failure.cause.Error()
+}
+
+func (failure *decisionRaisingError) Unwrap() error {
+	return failure.cause
+}
+
 func newDecisionSurfacingSupervisor(
 	config decisionSurfacingSupervisorConfig,
 ) (*decisionSurfacingSupervisor, error) {
@@ -58,7 +70,10 @@ func (supervisor *decisionSurfacingSupervisor) run(ctx context.Context) error {
 			return err
 		}
 		if err := supervisor.raiseDueDecisions(ctx); err != nil {
-			return err
+			var raisingFailure *decisionRaisingError
+			if !errors.As(err, &raisingFailure) {
+				return err
+			}
 		}
 		timer := time.NewTimer(supervisor.config.PollInterval)
 		select {
@@ -85,7 +100,7 @@ func (supervisor *decisionSurfacingSupervisor) raiseDueDecisions(ctx context.Con
 	}
 	for _, decision := range due {
 		if err := supervisor.config.Raiser.RaiseOpenDecision(ctx, decision); err != nil {
-			return fmt.Errorf("run decision surfacing supervisor: raise decision: %w", err)
+			return &decisionRaisingError{cause: err}
 		}
 		if err := supervisor.config.Surfacer.RecordSurfaced(ctx, decision); err != nil {
 			return fmt.Errorf("run decision surfacing supervisor: record surfaced decision: %w", err)

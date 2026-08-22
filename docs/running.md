@@ -122,6 +122,10 @@ answered keeps coming back without ever competing with fresh work indefinitely.
 Both default to the reviewed cadence of thirty minutes growing to four hours. A
 non-positive interval, or a maximum shorter than the initial wait, is refused
 before the service opens its endpoints.
+An uncertain attention send leaves the decision due and retries it on the next
+supervisor tick under the same identity; it does not restart the service or stop
+the operator socket and worker supervisors. A durable decision-ledger failure
+still stops the service because its authoritative airing state is unavailable.
 
 The Codex profile is required by the installed E0 composition. The Claude Code
 profile is optional but all of its flags are an atomic group. Its executable must

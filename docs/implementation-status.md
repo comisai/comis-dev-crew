@@ -182,6 +182,10 @@ the configured initial wait, capped at one minute so a long cadence still runs a
 live loop. The supervisor is composed alongside the report forwarder, the evidence
 forwarder and the liveness reporter whenever an authenticated host connection
 exists; it is bounded by its context and joins on cancellation with them.
+An uncertain attention send leaves the decision due and is retried on the next
+supervisor tick without stopping the service. Durable ledger read or write
+failures still stop supervision because continuing without authoritative state
+could record or omit the wrong airing.
 
 The raising itself is an ordinary attention report on the authenticated control
 lane, carrying the original question and the run it belongs to. Its operation and
