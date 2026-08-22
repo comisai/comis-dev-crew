@@ -102,6 +102,35 @@ func TestPrepareInitiativeBoundaryRefusesForgedAuthorityAndIncompleteResults(t *
 	}
 }
 
+func TestPrepareInitiativeBoundaryRefusesAbandonedReplayAuthority(t *testing.T) {
+	now := time.Date(2026, time.August, 20, 12, 0, 0, 0, time.UTC)
+	result := initiativePreparationFixture(now)
+	closedAt := now
+	result.Preparation.Members[0].State = application.PreparationAbandoned
+	result.Preparation.Members[0].AbandonReason = application.AbandonReasonActivationRejected
+	result.Preparation.Members[0].Disposition = application.AbandonDispositionReapSafe
+	result.Preparation.Members[0].ClosedAt = &closedAt
+	handler, err := NewHandler(HandlerConfig{
+		Queries: &apiQueries{}, InitiativeMutations: &apiInitiativeMutations{result: result},
+		ServiceInstanceID: "service-instance_a", Clock: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	encoded, err := json.Marshal(prepareInitiativeInputFixture())
+	if err != nil {
+		t.Fatalf("marshal initiative input: %v", err)
+	}
+	request := []byte(`{"protocolVersion":"` + ProtocolVersion + `","operationId":"operation-initiative-prepare",` +
+		`"method":"PrepareInitiative","payload":` + string(encoded) + `}`)
+
+	outcome := handler.handle(context.Background(), CallerMCPFacade, request)
+	if outcome.Status != domain.OperationRejected || outcome.Error == nil ||
+		outcome.Error.Code != domain.ErrorInternal {
+		t.Fatalf("abandoned initiative preparation outcome = %#v, want internal rejection", outcome)
+	}
+}
+
 type apiInitiativeMutations struct {
 	command application.PrepareInitiativeCommand
 	result  application.InitiativePreparationResult
