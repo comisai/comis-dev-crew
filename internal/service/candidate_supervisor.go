@@ -313,8 +313,8 @@ func (supervisor *candidateSupervisor) runLocalChecks(
 		if errors.Is(runErr, validation.ErrProcessAbsent) {
 			return nil, nil, runErr
 		}
-		if !completeValidationReceipt(receipt, operationID, task, profile, check, snapshot) {
-			return nil, nil, errors.New("validate task candidate: validation receipt is incomplete")
+		if mismatch := validationReceiptMismatch(receipt, operationID, task, profile, check, snapshot); mismatch != "" {
+			return nil, nil, fmt.Errorf("validate task candidate: validation receipt is incomplete: %s", mismatch)
 		}
 		conclusion := domain.CheckFailed
 		if runErr == nil && receipt.Passed {

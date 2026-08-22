@@ -8,17 +8,36 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/validation"
 )
 
-func completeValidationReceipt(
+func validationReceiptMismatch(
 	receipt validation.Receipt,
 	operationID string,
 	task domain.Task,
 	profile validation.Profile,
 	check validation.LocalCheck,
 	snapshot devgit.CandidateSnapshot,
-) bool {
-	return receipt.OperationID == operationID &&
-		receipt.TaskHandle == task.Handle && receipt.ProfileID == profile.ID && receipt.CheckID == check.ID &&
-		receipt.ProgramID == check.ProgramID && receipt.HeadRevision == snapshot.HeadRevision &&
-		receipt.StartedAt.Location() == time.UTC && receipt.CompletedAt.Location() == time.UTC &&
-		!receipt.CompletedAt.Before(receipt.StartedAt) && len(receipt.OutputHash) == 64
+) string {
+	switch {
+	case receipt.OperationID != operationID:
+		return "operation_id"
+	case receipt.TaskHandle != task.Handle:
+		return "task_handle"
+	case receipt.ProfileID != profile.ID:
+		return "profile_id"
+	case receipt.CheckID != check.ID:
+		return "check_id"
+	case receipt.ProgramID != check.ProgramID:
+		return "program_id"
+	case receipt.HeadRevision != snapshot.HeadRevision:
+		return "head_revision"
+	case receipt.StartedAt.Location() != time.UTC:
+		return "started_at_timezone"
+	case receipt.CompletedAt.Location() != time.UTC:
+		return "completed_at_timezone"
+	case receipt.CompletedAt.Before(receipt.StartedAt):
+		return "completion_order"
+	case len(receipt.OutputHash) != 64:
+		return "output_hash_length"
+	default:
+		return ""
+	}
 }

@@ -686,6 +686,10 @@ records that outcome with the affected candidate's transition back to
 the integration owner are untouched. Delivering, cleaned, and every other task
 state remain outside that invalidation authority.
 Exact replay returns the durable invalidation without re-entering Git.
+If automatic revalidation receives an incomplete process receipt, the service
+diagnostic names only the closed mismatched field (for example `profile_id` or
+`output_hash_length`). It never emits the receipt, process output, or task
+content, so one service diagnostic identifies the broken contract safely.
 The official MCP facade exposes the same operation as
 `apply_integration_candidate`, marks it idempotent and mutating, and keeps policy,
 strategy selection, repository paths, and argv out of its input schema. A new
