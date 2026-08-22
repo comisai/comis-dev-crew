@@ -43,7 +43,11 @@ func taskHandleMutation[Command any](
 	} else if found {
 		return replay, nil
 	}
-	return commit(ctx, subjectDigest, taskHandle)
+	result, err := commit(ctx, subjectDigest, taskHandle)
+	if err != nil {
+		return MutationResult{}, mutationCommitFailure(err)
+	}
+	return result, nil
 }
 
 // PauseTask records a request for one task's worker to reach a safe boundary.
