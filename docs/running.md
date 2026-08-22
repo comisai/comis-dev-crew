@@ -258,7 +258,10 @@ resolves policy, strategy, repository, and worktrees; the visible result contain
 only the reviewed strategy, evidence digest, applied head or bounded conflicts,
 and durable state version. An uncertain call retries the exact reserved operation,
 whose receipt-backed Git adapter either replays one known result or refuses
-ambiguity.
+ambiguity. If that call ends before reconciliation completes, a later call may
+set `recoveryOperationId` to the exact failed operation identity. It resumes the
+same reservation; changing any initiative, task, or head remains a precondition
+failure before Git.
 Submitting a different operation for a candidate task and head that already has
 a reserved, applied, or conflicted application is a precondition failure before
 Git. Reuse the original operation or continue from its durable receipt.

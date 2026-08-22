@@ -115,10 +115,19 @@ after an apply-only request, report the durable receipt and stop; never fetch a
 launch plan, create a terminal, or settle a terminal unless that request also
 explicitly authorizes launch.
 
+If an application ended with an uncertain failure and operator observability
+provides its exact failed operation identity, a later
+`apply_integration_candidate` call may set `recoveryOperationId` to that identity
+while repeating every initiative, task, and head field exactly. Never use that
+field for a new application, infer an operation identity, or change the subject
+during recovery.
+
 ## What you never send
 
 Do not provide a path, command, executable, credential, run, lease, attachment,
-branch, terminal, or service identity in any argument. DevCrew derives and
-re-proves that authority server-side, and a refused call must leave the task
-unchanged. If required catalog or base authority is unavailable, say what is
-missing and ask the user to choose — do not substitute a plausible value.
+branch, terminal, or service identity in any argument. Do not provide an
+operation identity except the exact `recoveryOperationId` procedure above.
+DevCrew derives and re-proves authority server-side, and a refused call must
+leave the task unchanged. If required catalog or base authority is unavailable,
+say what is missing and ask the user to choose — do not substitute a plausible
+value.

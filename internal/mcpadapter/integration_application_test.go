@@ -127,6 +127,14 @@ func TestFacadeCandidateApplicationCanResumeExactFailedOperation(t *testing.T) {
 	if client.operationID != "failed-integration-operation" {
 		t.Fatalf("recovered operation = %q, want failed-integration-operation", client.operationID)
 	}
+	arguments["recoveryOperationId"] = "bad operation"
+	refused, err := connectFacade(t, facade).CallTool(context.Background(), &mcp.CallToolParams{
+		Meta: callMeta("another-integration-operation", "service-instance-0001"),
+		Name: ToolApplyIntegration, Arguments: arguments,
+	})
+	if err != nil || !refused.IsError || client.calls != 1 {
+		t.Fatalf("CallTool(invalid recovery operation) = %#v, %v, calls=%d", refused, err, client.calls)
+	}
 }
 
 func TestFacadeIntegrationApplicationRetriesOnlyUncertainExactCallAndValidatesResult(t *testing.T) {

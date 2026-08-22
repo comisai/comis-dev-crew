@@ -20,6 +20,7 @@ type ApplyIntegrationCandidateInput struct {
 	CandidateTaskHandle     string `json:"candidateTaskHandle" jsonschema:"opaque handle of one accepted component task"`
 	CandidateHead           string `json:"candidateHead" jsonschema:"exact accepted 40-character lowercase hexadecimal candidate revision"`
 	ExpectedIntegrationHead string `json:"expectedIntegrationHead" jsonschema:"exact current 40-character lowercase hexadecimal integration revision"`
+	RecoveryOperationID     string `json:"recoveryOperationId,omitempty" jsonschema:"exact failed integration operation identity to resume; omit for a new application"`
 }
 
 func (input ApplyIntegrationCandidateInput) local() localapi.ApplyIntegrationCandidateInput {
@@ -40,6 +41,12 @@ func (facade *Facade) applyIntegrationCandidate(
 		return nil, localapi.ApplyIntegrationCandidateResult{}, err
 	}
 	operationID := string(callContext.OperationID)
+	if input.RecoveryOperationID != "" {
+		if domain.ValidateOperationID(input.RecoveryOperationID) != nil {
+			return nil, localapi.ApplyIntegrationCandidateResult{}, invalidOperationFailure()
+		}
+		operationID = input.RecoveryOperationID
+	}
 	localInput := input.local()
 	result, err := facade.client.ApplyIntegrationCandidate(ctx, operationID, localInput)
 	if err != nil && uncertainMutation(ctx, err) {
