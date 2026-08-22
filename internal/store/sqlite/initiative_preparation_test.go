@@ -114,6 +114,47 @@ func TestPreparedInitiativeReplayDoesNotReopenAbandonedMemberAuthority(t *testin
 	}
 }
 
+func TestInitiativePreparationProjectionRejectsCorruptReplayRecords(t *testing.T) {
+	prepared := sqlitePreparedInitiativeMutation()
+	operation := completedMutationOperation(
+		prepared.OperationID, commandPrepareInitiative, prepared.SubjectDigest,
+		prepared.Initiative.Handle, 1, prepared.At,
+	)
+	tests := []struct {
+		name      string
+		operation domain.OperationRecord
+		tasks     []domain.Task
+	}{
+		{
+			name: "wrong operation command",
+			operation: func() domain.OperationRecord {
+				corrupt := operation
+				corrupt.Command = commandPrepareTask
+				return corrupt
+			}(),
+			tasks: []domain.Task{prepared.Members[0].Task},
+		},
+		{
+			name:      "member creation differs from operation",
+			operation: operation,
+			tasks: func() []domain.Task {
+				corrupt := prepared.Members[0].Task
+				corrupt.CreatedAt = corrupt.CreatedAt.Add(-time.Second)
+				return []domain.Task{corrupt}
+			}(),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, _, err := restoreInitiativePreparationProjection(
+				prepared.Initiative, test.tasks, test.operation,
+			); err == nil {
+				t.Fatal("restoreInitiativePreparationProjection(corrupt record) error = nil")
+			}
+		})
+	}
+}
+
 func TestPreparedInitiativeCommitsFiveMemberFullStackGraph(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(ctx, filepath.Join(canonicalTempDir(t), "devcrew.db"))
