@@ -139,7 +139,7 @@ func nextTaskState(current TaskState, transition TaskTransition) (TaskState, boo
 	case TransitionValidationAccepted:
 		return requiredTaskState(current, TaskValidating, TaskCandidateComplete)
 	case TransitionEvidenceInvalidated:
-		return requiredTaskState(current, TaskCandidateComplete, TaskValidating)
+		return oneOfTaskStates(current, TaskValidating, TaskCandidateComplete, TaskDelivered)
 	case TransitionDeliveryStarted:
 		return requiredTaskState(current, TaskCandidateComplete, TaskDelivering)
 	case TransitionDeliveryAccepted:

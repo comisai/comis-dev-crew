@@ -681,7 +681,10 @@ candidate base path.
 Candidate head or cleanliness drift completes as the third closed outcome,
 `invalidated`. The Git adapter performs no mutation, and SQLite atomically
 records that outcome with the affected candidate's transition back to
-`validating`; sibling candidates and the integration owner are untouched.
+`validating`, whether the accepted evidence was still sealed as
+`candidate_complete` or had already reached `delivered`; sibling candidates and
+the integration owner are untouched. Delivering, cleaned, and every other task
+state remain outside that invalidation authority.
 Exact replay returns the durable invalidation without re-entering Git.
 The official MCP facade exposes the same operation as
 `apply_integration_candidate`, marks it idempotent and mutating, and keeps policy,
