@@ -49,15 +49,16 @@ const (
 type BoundaryFailureCause string
 
 const (
-	BoundaryFailureDurableTaskContractInvalid   BoundaryFailureCause = "durable_task_contract_invalid"
-	BoundaryFailureControlHandshakePrecondition BoundaryFailureCause = "control_handshake_precondition_failed"
-	BoundaryFailureControlConnectionUnavailable BoundaryFailureCause = "control_connection_unavailable"
+	BoundaryFailureDurableTaskContractInvalid       BoundaryFailureCause = "durable_task_contract_invalid"
+	BoundaryFailureControlHandshakePrecondition     BoundaryFailureCause = "control_handshake_precondition_failed"
+	BoundaryFailureControlConnectionUnavailable     BoundaryFailureCause = "control_connection_unavailable"
+	BoundaryFailureInitiativeHostProjectionMismatch BoundaryFailureCause = "initiative_host_projection_mismatch"
 )
 
 func (cause BoundaryFailureCause) valid() bool {
 	switch cause {
 	case "", BoundaryFailureDurableTaskContractInvalid, BoundaryFailureControlHandshakePrecondition,
-		BoundaryFailureControlConnectionUnavailable:
+		BoundaryFailureControlConnectionUnavailable, BoundaryFailureInitiativeHostProjectionMismatch:
 		return true
 	default:
 		return false
