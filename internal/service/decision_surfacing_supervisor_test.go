@@ -18,6 +18,8 @@ type surfacingSpy struct {
 	dueErr    error
 	raised    []string
 	raiseErr  error
+	raiseErrs []error
+	raiseDone chan struct{}
 	recorded  []string
 	recordErr error
 }
@@ -47,6 +49,14 @@ func (spy *surfacingSpy) RaiseOpenDecision(_ context.Context, decision applicati
 	spy.mu.Lock()
 	defer spy.mu.Unlock()
 	spy.raised = append(spy.raised, decision.TaskHandle+":"+decision.ExternalKey)
+	if spy.raiseDone != nil {
+		spy.raiseDone <- struct{}{}
+	}
+	if len(spy.raiseErrs) != 0 {
+		err := spy.raiseErrs[0]
+		spy.raiseErrs = spy.raiseErrs[1:]
+		return err
+	}
 	return spy.raiseErr
 }
 
@@ -96,6 +106,39 @@ func TestDecisionSurfacingSupervisor_DoesNotRecordAFailedRaising(t *testing.T) {
 	}
 	if len(spy.recorded) != 0 {
 		t.Fatalf("a failed raising was recorded: %v", spy.recorded)
+	}
+}
+
+// An uncertain control send keeps the durable decision due. The supervisor
+// must retry that same decision without taking the operator API, workers, and
+// every other control component down with the temporary transport failure.
+func TestDecisionSurfacingSupervisor_RetriesAnUncertainRaisingWithoutStopping(t *testing.T) {
+	decision := application.OpenDecision{TaskHandle: "task-0001", ExternalKey: "schema-choice"}
+	spy := &surfacingSpy{
+		due:       [][]application.OpenDecision{{decision}, {decision}},
+		raiseErrs: []error{errors.New("attention path temporarily unavailable"), nil},
+		raiseDone: make(chan struct{}, 2),
+	}
+	supervisor := newSurfacingSupervisor(t, spy)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- supervisor.run(ctx) }()
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		select {
+		case <-spy.raiseDone:
+		case err := <-done:
+			t.Fatalf("run() stopped after raising attempt %d: %v", attempt, err)
+		case <-time.After(2 * time.Second):
+			t.Fatalf("raising attempt %d was not observed", attempt)
+		}
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("run() error = %v, want context.Canceled after retry", err)
+	}
+	if len(spy.raised) != 2 || len(spy.recorded) != 1 {
+		t.Fatalf("raising attempts = %v, recorded = %v", spy.raised, spy.recorded)
 	}
 }
 
