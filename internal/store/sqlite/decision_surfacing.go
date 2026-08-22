@@ -29,8 +29,8 @@ VALUES (29, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 `
 
 // OpenDecisionsAwaitingHuman lists every already-asked decision with no matching
-// resolution, together with how often it has been raised and when it was last
-// put in front of the liaison.
+// resolution on a task whose managed run is still active, together with how
+// often it has been raised and when it was last put in front of the liaison.
 //
 // Open is decided by the same predicate cleanup uses: a decision report with no
 // resolution carrying its key. Deriving it from one place is what stops cleanup
@@ -56,7 +56,8 @@ func (store *Store) OpenDecisionsAwaitingHuman(ctx context.Context) ([]applicati
             ON o.task_handle = d.task_handle AND o.local_report_id = d.local_report_id
         LEFT JOIN task_decision_surfacings s
             ON s.task_handle = d.task_handle AND s.external_key = d.external_key
-        WHERE d.kind = 'decision' AND o.delivered_at IS NOT NULL AND `+
+        WHERE d.kind = 'decision' AND o.delivered_at IS NOT NULL
+          AND t.state NOT IN ('delivered', 'failed', 'cancelled', 'cleanup_held', 'cleaned') AND `+
 		decisionAwaitingHumanClause("d")+`
         ORDER BY d.task_handle, d.external_key`)
 	if err != nil {
