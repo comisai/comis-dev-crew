@@ -186,20 +186,103 @@ func TestStore_DiscardReportsStorageFailuresInsteadOfSwallowingThem(t *testing.T
 	}
 }
 
-// Discarding a task that is already held for removal must not start a second
-// removal of the same worktree under a different operation.
-func TestStore_DiscardRefusesATaskAlreadyHeldForRemoval(t *testing.T) {
+// A fresh acknowledged request resumes the one durable removal instead of
+// starting a second removal or leaving a released run permanently held.
+func TestStore_DiscardResumesHeldRemovalUnderFreshAcknowledgedOperation(t *testing.T) {
 	store, task := settledTask(t, "task-discard-twice")
 	at := task.UpdatedAt.Add(time.Minute).UTC()
-	if _, err := store.BeginTaskDiscard(context.Background(),
-		discardMutation(task.Handle, "operation-discard-0001", at)); err != nil {
+	first, err := store.BeginTaskDiscard(context.Background(),
+		discardMutation(task.Handle, "operation-discard-0001", at))
+	if err != nil {
 		t.Fatalf("BeginTaskDiscard() error = %v", err)
 	}
+	retry := discardMutation(task.Handle, "operation-discard-0002", at.Add(time.Minute))
+	retry.SubjectDigest = strings.Repeat("9", 64)
+	resumed, err := store.BeginTaskDiscard(context.Background(), retry)
+	if err != nil {
+		t.Fatalf("BeginTaskDiscard(fresh operation) error = %v", err)
+	}
+	if resumed.OperationID != first.OperationID || resumed.TaskHandle != first.TaskHandle ||
+		resumed.Stage != application.CleanupPrepared || !resumed.Discard {
+		t.Fatalf("BeginTaskDiscard(fresh operation) = %#v, want original held discard", resumed)
+	}
+}
 
-	_, err := store.BeginTaskDiscard(context.Background(),
-		discardMutation(task.Handle, "operation-discard-0002", at.Add(time.Minute)))
+func TestStore_DiscardCompletesDirtyUnpinnedRemovalWithDiscardOperations(t *testing.T) {
+	store, task := settledTask(t, "task-discard-complete")
+	at := task.UpdatedAt.Add(time.Minute).UTC()
+	original := discardMutation(task.Handle, "operation-discard-original", at)
+	record, err := store.BeginTaskDiscard(context.Background(), original)
+	if err != nil {
+		t.Fatalf("BeginTaskDiscard() error = %v", err)
+	}
+	retry := discardMutation(task.Handle, "operation-discard-retry", at.Add(time.Minute))
+	retry.SubjectDigest = strings.Repeat("9", 64)
+	if _, err := store.BeginTaskDiscard(context.Background(), retry); err != nil {
+		t.Fatalf("BeginTaskDiscard(retry) error = %v", err)
+	}
+	snapshot := application.WorkspaceSnapshot{
+		TaskHandle: task.Handle, RepositoryID: task.RepositoryID,
+		WorktreePath: record.WorktreePath, Branch: "devcrew/task-discard-complete",
+		HeadRevision: strings.Repeat("a", 40), Cleanliness: application.WorkspaceDirty,
+	}
+	receipt := application.ManagedRunReleaseReceipt{
+		ManagedRunID: record.ManagedRunID, WorkspaceLeaseID: record.WorkspaceLeaseID,
+		Disposition: application.ManagedRunReleaseReapSafe, ReleasedAt: record.ReleasedAt,
+		State: application.ManagedRunReleased,
+	}
+	hostReleased, err := store.RecordTaskCleanupHostRelease(context.Background(), application.TaskCleanupHostReleaseMutation{
+		OperationID: record.OperationID, SubjectDigest: record.SubjectDigest,
+		Snapshot: snapshot, Receipt: receipt, At: at.Add(2 * time.Minute),
+	})
+	if err != nil || hostReleased.Stage != application.CleanupHostReleased {
+		t.Fatalf("RecordTaskCleanupHostRelease(discard) = %#v, %v", hostReleased, err)
+	}
+	authorized, err := store.AuthorizeTaskCleanupRemoval(context.Background(), application.TaskCleanupRemovalAuthorization{
+		OperationID: record.OperationID, SubjectDigest: record.SubjectDigest,
+		Snapshot: snapshot, At: at.Add(3 * time.Minute),
+	})
+	if err != nil || authorized.Stage != application.CleanupRemovalAuthorized {
+		t.Fatalf("AuthorizeTaskCleanupRemoval(discard) = %#v, %v", authorized, err)
+	}
+	completed, err := store.CompleteTaskCleanup(context.Background(), application.TaskCleanupCompletion{
+		OperationID: record.OperationID, SubjectDigest: record.SubjectDigest,
+		RequestOperationID: retry.OperationID, RequestSubjectDigest: retry.SubjectDigest,
+		At: at.Add(4 * time.Minute),
+	})
+	if err != nil || completed.Task.State != domain.TaskCleaned ||
+		completed.Operation.ID != retry.OperationID || completed.Operation.Command != "DiscardTask" {
+		t.Fatalf("CompleteTaskCleanup(discard retry) = %#v, %v", completed, err)
+	}
+	originalOperation, err := store.GetOperation(context.Background(), original.OperationID)
+	if err != nil || originalOperation.Command != "DiscardTask" {
+		t.Fatalf("GetOperation(original discard) = %#v, %v", originalOperation, err)
+	}
+}
 
-	if err == nil {
-		t.Fatal("a second discard of the same task error = nil, want a refusal")
+func TestStore_DiscardProofStillRefusesForeignWorkspaceIdentity(t *testing.T) {
+	store, task := settledTask(t, "task-discard-foreign-proof")
+	at := task.UpdatedAt.Add(time.Minute).UTC()
+	mutation := discardMutation(task.Handle, "operation-discard-foreign", at)
+	record, err := store.BeginTaskDiscard(context.Background(), mutation)
+	if err != nil {
+		t.Fatalf("BeginTaskDiscard() error = %v", err)
+	}
+	snapshot := application.WorkspaceSnapshot{
+		TaskHandle: task.Handle, RepositoryID: task.RepositoryID,
+		WorktreePath: record.WorktreePath + "-other", Branch: "devcrew/task-discard-foreign-proof",
+		HeadRevision: strings.Repeat("a", 40), Cleanliness: application.WorkspaceDirty,
+	}
+	receipt := application.ManagedRunReleaseReceipt{
+		ManagedRunID: record.ManagedRunID, WorkspaceLeaseID: record.WorkspaceLeaseID,
+		Disposition: application.ManagedRunReleaseReapSafe, ReleasedAt: record.ReleasedAt,
+		State: application.ManagedRunReleased,
+	}
+
+	if _, err := store.RecordTaskCleanupHostRelease(context.Background(), application.TaskCleanupHostReleaseMutation{
+		OperationID: record.OperationID, SubjectDigest: record.SubjectDigest,
+		Snapshot: snapshot, Receipt: receipt, At: at.Add(time.Minute),
+	}); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("RecordTaskCleanupHostRelease(foreign discard proof) error = %v, want precondition", err)
 	}
 }
