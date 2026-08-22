@@ -1040,6 +1040,14 @@ Subcommands:
   Pending delivery stays silent and cancellation exits without inventing an
   answer.
 
+Every non-decision report writes its accepted report ID and state version. When
+the receipt carries worker control, it appends the exact single-line fields
+`PauseRequested=true` and `Instruction=<plain text>`. The instruction is
+validated again before rendering, so malformed or control-character content
+fails closed without reaching stdout. A decision report leaves any steering
+instruction queued because that command reserves stdout for the private answer;
+the next non-decision report receives and renders the instruction.
+
 A candidate report remains non-terminal until service validation.
 
 This boundary treats all three environment values as untrusted inputs: the path

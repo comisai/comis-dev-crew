@@ -123,6 +123,10 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 		writeRuntimeFailure(stderr)
 		return 1
 	}
+	if receipt.Instruction != "" && domain.ValidateSteeringInstruction(receipt.Instruction) != nil {
+		writeRuntimeFailure(stderr)
+		return 1
+	}
 	if parsed.kind == domain.ReportDecision {
 		response, err := config.Capability.AwaitDecision(ctx, parsed.key)
 		if err != nil {
@@ -132,8 +136,18 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 		fmt.Fprintln(stdout, response)
 		return 0
 	}
-	fmt.Fprintf(stdout, "accepted %s at state %d\n", receipt.LocalReportID, receipt.StateVersion)
+	writeReportReceipt(stdout, receipt)
 	return 0
+}
+
+func writeReportReceipt(output io.Writer, receipt domain.ReportReceipt) {
+	fmt.Fprintf(output, "accepted %s at state %d\n", receipt.LocalReportID, receipt.StateVersion)
+	if receipt.PauseRequested {
+		fmt.Fprintln(output, "PauseRequested=true")
+	}
+	if receipt.Instruction != "" {
+		fmt.Fprintf(output, "Instruction=%s\n", receipt.Instruction)
+	}
 }
 
 type parsedReportCommand struct {

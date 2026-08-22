@@ -787,6 +787,12 @@ The authenticated Comis control connection starts only after this attachment
 recovery finishes, so host reconciliation observes the reconstructed socket
 identity rather than an inode that the same startup is about to replace.
 
+Non-decision report commands render the durable acceptance line followed by
+`PauseRequested=true` and `Instruction=<plain text>` only when those control
+fields are present. Instructions are bounded and revalidated before stdout. A
+decision report keeps stdout private-response-only and therefore does not
+consume a queued instruction; the next ordinary report delivers it exactly once.
+
 After a decision report is locally accepted, the reporter blocks on that same
 protected socket until Comis returns the exact keyed owner response. The service
 derives managed-run authority from the activation binding, uses a fresh operation
