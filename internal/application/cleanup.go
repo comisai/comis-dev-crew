@@ -22,26 +22,19 @@ const (
 )
 
 const (
-	// CleanupOpenHoldMessage is the content-free operator-visible blocker
-	// consumed by the protected campaign oracle.
+	// CleanupOpenHoldMessage is the content-free operator-visible blocker.
 	CleanupOpenHoldMessage = "cleanup is blocked by an open task hold"
-	// CleanupOpenDecisionMessage is the content-free operator-visible blocker
-	// consumed by the protected campaign oracle.
+	// CleanupOpenDecisionMessage is the content-free operator-visible blocker.
 	CleanupOpenDecisionMessage = "cleanup is blocked by an unresolved task decision"
-	// CleanupUnattestedScoutMessage is the content-free operator-visible blocker
-	// for a scout whose decision inventory is missing or still unresolved.
+	// CleanupUnattestedScoutMessage covers a missing or unresolved scout inventory.
 	CleanupUnattestedScoutMessage = "cleanup is blocked by a missing or unresolved scout decision inventory"
-	// CleanupActiveExecutionMessage is the content-free operator-visible blocker
-	// consumed by the protected campaign oracle.
+	// CleanupActiveExecutionMessage is the content-free operator-visible blocker.
 	CleanupActiveExecutionMessage = "cleanup is blocked by active task execution"
-	// CleanupUnknownExecutionMessage is the content-free operator-visible blocker
-	// consumed by the protected campaign oracle.
+	// CleanupUnknownExecutionMessage is the content-free operator-visible blocker.
 	CleanupUnknownExecutionMessage = "cleanup requires settled task execution evidence"
-	// CleanupDirtyWorkspaceMessage is the content-free operator-visible blocker
-	// consumed by the protected campaign oracle.
+	// CleanupDirtyWorkspaceMessage is the content-free operator-visible blocker.
 	CleanupDirtyWorkspaceMessage = "cleanup requires a clean task worktree"
-	// CleanupStaleForgeTruthMessage is the content-free operator-visible blocker
-	// consumed by the protected campaign oracle.
+	// CleanupStaleForgeTruthMessage is the content-free operator-visible blocker.
 	CleanupStaleForgeTruthMessage = "cleanup requires current matching pull request truth"
 )
 
@@ -200,8 +193,7 @@ type RuntimeAttachmentReleaser interface {
 	ReleaseRuntimeAttachment(context.Context, string) error
 }
 
-// DeliveredWorkspaceRemover removes one previously authorized exact workspace.
-// Delivered cleanup preserves dirty work; explicit discard removes it.
+// DeliveredWorkspaceRemover preserves dirty cleanup work but removes acknowledged discards.
 type DeliveredWorkspaceRemover interface {
 	RemoveDeliveredWorkspace(context.Context, DeliveredWorkspaceRemoval) error
 	RemoveDiscardedWorkspace(context.Context, DeliveredWorkspaceRemoval) error
