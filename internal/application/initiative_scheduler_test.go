@@ -92,6 +92,33 @@ func TestInitiativeSchedulerUsesClosedDependencyAndContractReasons(t *testing.T)
 	}
 }
 
+func TestInitiativeAggregateRemainsActiveWhileAReadySiblingCanProgress(t *testing.T) {
+	edges := []domain.InitiativeEdge{
+		{FromTaskHandle: "task-backend", ToTaskHandle: "task-integration", Kind: domain.EdgeIntegratesAfter},
+		{FromTaskHandle: "task-frontend", ToTaskHandle: "task-integration", Kind: domain.EdgeIntegratesAfter},
+	}
+	initiative := schedulingInitiative(
+		"initiative-independent-ready-sibling",
+		time.Unix(1_800_000_000, 0).UTC(),
+		[]string{"task-backend", "task-frontend", "task-integration"},
+		edges,
+		"task-integration",
+	)
+	tasks := []domain.Task{
+		schedulingTask(t, "task-backend", domain.TaskCandidateComplete, "repo-primary", "codex-reviewed"),
+		schedulingTask(t, "task-frontend", domain.TaskReady, "repo-primary", "claude-reviewed"),
+		schedulingTask(t, "task-integration", domain.TaskReady, "repo-primary", "codex-reviewed"),
+	}
+
+	state, err := DeriveInitiativeState(initiative, tasks)
+	if err != nil {
+		t.Fatalf("DeriveInitiativeState() error = %v", err)
+	}
+	if state != domain.InitiativeActive {
+		t.Fatalf("DeriveInitiativeState() = %q, want %q while a dependency-ready sibling can progress", state, domain.InitiativeActive)
+	}
+}
+
 func TestInitiativeSchedulerCountsExistingWorkersAgainstEveryCeiling(t *testing.T) {
 	initiative := schedulingInitiative("initiative-queued", time.Unix(1_800_000_000, 0).UTC(),
 		[]string{"task-queued"}, nil, "")
