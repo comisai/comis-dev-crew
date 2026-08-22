@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
 
-func TestControlConnectionReadsGroupRollupOnTheAuthenticatedSession(t *testing.T) {
+func newPublishedGroupRollupConnection(t *testing.T) (*ControlConnection, net.Conn) {
+	t.Helper()
 	connection := &ControlConnection{
 		config:  ControlConnectionConfig{Credential: controlTestBearer, RequestTimeout: time.Second},
 		changed: make(chan struct{}),
@@ -24,6 +26,11 @@ func TestControlConnectionReadsGroupRollupOnTheAuthenticatedSession(t *testing.T
 		_ = host.Close()
 		<-done
 	})
+	return connection, host
+}
+
+func TestControlConnectionReadsGroupRollupOnTheAuthenticatedSession(t *testing.T) {
+	connection, host := newPublishedGroupRollupConnection(t)
 	hostDone := make(chan error, 1)
 	go func() {
 		active, succeeded := int64(2), int64(1)
@@ -51,7 +58,7 @@ func TestControlConnectionReadsGroupRollupOnTheAuthenticatedSession(t *testing.T
 	}()
 
 	result, err := connection.GroupHostRollup(context.Background(), GroupGetHostRollupRequestParams{
-		OperationID:      "operation_group_rollup_ok",
+		OperationID:       "operation_group_rollup_ok",
 		ManagedRunGroupID: "managed-run-group_ok",
 	})
 
@@ -62,6 +69,83 @@ func TestControlConnectionReadsGroupRollupOnTheAuthenticatedSession(t *testing.T
 		result.StateCounts.Active == nil || *result.StateCounts.Active != 2 ||
 		result.StateCounts.Succeeded == nil || *result.StateCounts.Succeeded != 1 {
 		t.Fatalf("GroupHostRollup() = %#v", result)
+	}
+	if err := <-hostDone; err != nil {
+		t.Fatalf("host exchange: %v", err)
+	}
+}
+
+func TestControlConnectionRejectsInvalidGroupRollupInputsBeforeTransport(t *testing.T) {
+	connection := &ControlConnection{changed: make(chan struct{})}
+
+	if _, err := connection.GroupHostRollup(nil, GroupGetHostRollupRequestParams{}); err == nil ||
+		!strings.Contains(err.Error(), "context is required") {
+		t.Fatalf("GroupHostRollup(nil) error = %v", err)
+	}
+	if _, err := connection.GroupHostRollup(context.Background(), GroupGetHostRollupRequestParams{}); err == nil ||
+		!strings.Contains(err.Error(), "invalid request") {
+		t.Fatalf("GroupHostRollup(invalid request) error = %v", err)
+	}
+}
+
+func TestControlConnectionRejectsMismatchedGroupRollupIdentity(t *testing.T) {
+	connection, host := newPublishedGroupRollupConnection(t)
+	hostDone := make(chan error, 1)
+	go func() {
+		var request authenticatedGroupGetHostRollupRequest
+		if err := readControlFrame(host, &request); err != nil {
+			hostDone <- err
+			return
+		}
+		hostDone <- writeControlFrame(host, GroupGetHostRollupResponse{
+			JSONRPC: JSONRPCVersion,
+			ID:      request.ID,
+			Result: GroupGetHostRollupResponseResult{
+				ManagedRunGroupID:   "managed-run-group_other",
+				MemberManagedRunIds: []string{"managed-run_backend"},
+				UpdatedAtMs:         1_800_000_000_005,
+			},
+		})
+	}()
+
+	_, err := connection.GroupHostRollup(context.Background(), GroupGetHostRollupRequestParams{
+		OperationID: "operation_group_rollup_mismatch", ManagedRunGroupID: "managed-run-group_expected",
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "acknowledgement identity differs") {
+		t.Fatalf("GroupHostRollup(mismatched identity) error = %v", err)
+	}
+	if err := <-hostDone; err != nil {
+		t.Fatalf("host exchange: %v", err)
+	}
+}
+
+func TestControlConnectionRejectsSchemaInvalidGroupRollupResponse(t *testing.T) {
+	connection, host := newPublishedGroupRollupConnection(t)
+	hostDone := make(chan error, 1)
+	go func() {
+		var request authenticatedGroupGetHostRollupRequest
+		if err := readControlFrame(host, &request); err != nil {
+			hostDone <- err
+			return
+		}
+		hostDone <- writeControlFrame(host, GroupGetHostRollupResponse{
+			JSONRPC: JSONRPCVersion,
+			ID:      request.ID,
+			Result: GroupGetHostRollupResponseResult{
+				ManagedRunGroupID:   request.Params.ManagedRunGroupID,
+				MemberManagedRunIds: []string{},
+				UpdatedAtMs:         1_800_000_000_005,
+			},
+		})
+	}()
+
+	_, err := connection.GroupHostRollup(context.Background(), GroupGetHostRollupRequestParams{
+		OperationID: "operation_group_rollup_invalid", ManagedRunGroupID: "managed-run-group_expected",
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "invalid response") {
+		t.Fatalf("GroupHostRollup(invalid response) error = %v", err)
 	}
 	if err := <-hostDone; err != nil {
 		t.Fatalf("host exchange: %v", err)

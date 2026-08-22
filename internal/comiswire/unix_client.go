@@ -50,6 +50,11 @@ type authenticatedHeartbeatRequest struct {
 	Bearer string `json:"bearer"`
 }
 
+type authenticatedGroupGetHostRollupRequest struct {
+	GroupGetHostRollupRequest
+	Bearer string `json:"bearer"`
+}
+
 type authenticatedPutEvidenceRequest struct {
 	PutEvidenceRequest
 	Bearer string `json:"bearer"`
