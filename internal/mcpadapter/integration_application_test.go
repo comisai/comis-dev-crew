@@ -101,6 +101,34 @@ func TestFacadeAppliesExactCandidateAndKeepsPolicyAndPathsPrivate(t *testing.T) 
 	}
 }
 
+func TestFacadeCandidateApplicationCanResumeExactFailedOperation(t *testing.T) {
+	client := &integrationMCPClient{fakeClient: &fakeClient{}, result: integrationMCPResult()}
+	facade, err := New(Config{
+		Client: client, ServiceInstanceID: "service-instance-0001", Version: "test",
+		NewOperationID: func() (string, error) { return "generated-integration-operation", nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := integrationMCPInput()
+	arguments := map[string]any{
+		"initiativeHandle": input.InitiativeHandle, "integrationTaskHandle": input.IntegrationTaskHandle,
+		"candidateTaskHandle": input.CandidateTaskHandle, "candidateHead": input.CandidateHead,
+		"expectedIntegrationHead": input.ExpectedIntegrationHead,
+		"recoveryOperationId":     "failed-integration-operation",
+	}
+	called, err := connectFacade(t, facade).CallTool(context.Background(), &mcp.CallToolParams{
+		Meta: callMeta("new-integration-operation", "service-instance-0001"),
+		Name: ToolApplyIntegration, Arguments: arguments,
+	})
+	if err != nil || called.IsError {
+		t.Fatalf("CallTool(recover integration) = %#v, %v", called, err)
+	}
+	if client.operationID != "failed-integration-operation" {
+		t.Fatalf("recovered operation = %q, want failed-integration-operation", client.operationID)
+	}
+}
+
 func TestFacadeIntegrationApplicationRetriesOnlyUncertainExactCallAndValidatesResult(t *testing.T) {
 	failure, err := domain.NewFailure(
 		domain.ErrorUnavailable, true, "integration result is uncertain", "retry the exact operation", errors.New("transport closed"),
