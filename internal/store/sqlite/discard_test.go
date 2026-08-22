@@ -225,6 +225,34 @@ func TestStore_DiscardResumeRefusesAnOperationOwnedByAnotherCommand(t *testing.T
 	}
 }
 
+func TestStore_DiscardResumeRefusesADeliveryBackedCleanupHold(t *testing.T) {
+	store, task, _ := deliveredCleanupFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	cleanup := cleanupTestMutation(task, "cleanup-before-discard")
+	if _, err := store.BeginTaskCleanup(context.Background(), cleanup); err != nil {
+		t.Fatalf("BeginTaskCleanup() error = %v", err)
+	}
+	discard := discardMutation(task.Handle, "discard-after-cleanup", cleanup.At.Add(time.Minute))
+	if _, err := store.BeginTaskDiscard(context.Background(), discard); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("BeginTaskDiscard(cleanup hold) error = %v, want ErrPrecondition", err)
+	}
+}
+
+func TestStore_DiscardProofRefusesDeliveryAuthority(t *testing.T) {
+	record := application.TaskCleanupRecord{
+		TaskHandle: "task-discard-proof-authority", RepositoryID: "repo-discard-proof-authority",
+		WorktreePath: "/approved/worktrees/task-discard-proof-authority",
+		HeadRevision: strings.Repeat("a", 40), Discard: true,
+	}
+	snapshot := application.WorkspaceSnapshot{
+		TaskHandle: record.TaskHandle, RepositoryID: record.RepositoryID, WorktreePath: record.WorktreePath,
+		Branch: "devcrew/task-discard-proof-authority", HeadRevision: strings.Repeat("b", 40),
+		Cleanliness: application.WorkspaceDirty,
+	}
+	if err := validateCleanupProof(record, snapshot, application.PullRequestDeliveryTruth{}); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("validateCleanupProof(discard delivery authority) error = %v, want ErrPrecondition", err)
+	}
+}
+
 func TestStore_DiscardCompletesDirtyUnpinnedRemovalWithDiscardOperations(t *testing.T) {
 	store, task := settledTask(t, "task-discard-complete")
 	at := task.UpdatedAt.Add(time.Minute).UTC()
