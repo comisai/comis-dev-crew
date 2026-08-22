@@ -110,7 +110,10 @@ host-wide and repository-wide scheduler ceilings. Each reviewed worker
 profile's own `--*-concurrency` limit is enforced at the same time. Initiative
 launch authorization is recomputed under the SQLite write transaction, so a
 stale graph read cannot consume capacity or bypass a newly unsatisfied
-dependency.
+dependency. A member that has already started retains its initiative's place in
+the fair round when that transaction recomputes the schedule; a later initiative
+therefore receives its first eligible slot before the older initiative receives
+a second.
 
 `--decision-resurface-initial` and `--decision-resurface-maximum` set how often an
 unanswered decision is put back in front of the liaison. The wait doubles from the

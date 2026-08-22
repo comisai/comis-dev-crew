@@ -572,6 +572,10 @@ the initiative remains non-launchable and `unknown`.
 Initiative scheduling is a deterministic fleet-wide decision. Existing workers
 consume host, repository, and reviewed worker-profile capacity first; remaining
 slots are offered one member per initiative per round in stable creation order.
+Members that have already left the prepared or ready state retain their
+initiative's durable round position when the schedule is recomputed, so an
+older initiative cannot reset to round zero and take a second slot before a
+later initiative receives its first.
 Only `ready` members of an `active` initiative can be selected. Every held ready
 member carries one closed reason: `dependency_blocked`, `resource_queued`,
 `contract_stale`, or `integration_held`. Contract consumers must still pin a

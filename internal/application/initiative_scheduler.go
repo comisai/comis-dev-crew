@@ -319,18 +319,21 @@ func allocateInitiativeCandidates(
 	limits InitiativeSchedulingLimits,
 	usage *schedulingUsage,
 ) {
-	maximumMembers := 0
-	for _, initiativeCandidates := range candidates {
-		if len(initiativeCandidates) > maximumMembers {
-			maximumMembers = len(initiativeCandidates)
+	roundOffsets := make([]int, len(schedules))
+	maximumRound := 0
+	for initiativeIndex, initiativeCandidates := range candidates {
+		roundOffsets[initiativeIndex] = initiativeRoundOffset(schedules[initiativeIndex].Tasks)
+		if end := roundOffsets[initiativeIndex] + len(initiativeCandidates); end > maximumRound {
+			maximumRound = end
 		}
 	}
-	for round := 0; round < maximumMembers; round++ {
+	for round := 0; round < maximumRound; round++ {
 		for initiativeIndex := range candidates {
-			if round >= len(candidates[initiativeIndex]) {
+			candidateIndex := round - roundOffsets[initiativeIndex]
+			if candidateIndex < 0 || candidateIndex >= len(candidates[initiativeIndex]) {
 				continue
 			}
-			candidate := candidates[initiativeIndex][round]
+			candidate := candidates[initiativeIndex][candidateIndex]
 			decision := &schedules[candidate.scheduleIndex].Tasks[candidate.decisionIndex]
 			if schedulingCapacityAvailable(candidate.task, limits, *usage) {
 				decision.Launchable = true
@@ -342,6 +345,20 @@ func allocateInitiativeCandidates(
 			decision.Reason = ScheduleResourceQueued
 		}
 	}
+}
+
+// A member that left the prepared/ready states already consumed its
+// initiative's turn. Keeping that durable progress as the next candidate's
+// round offset prevents an older initiative from returning to round zero on
+// every scheduling transaction and starving a later initiative.
+func initiativeRoundOffset(tasks []InitiativeTaskSchedule) int {
+	offset := 0
+	for _, task := range tasks {
+		if task.State != domain.TaskPrepared && task.State != domain.TaskReady {
+			offset++
+		}
+	}
+	return offset
 }
 
 func schedulingCapacityAvailable(
