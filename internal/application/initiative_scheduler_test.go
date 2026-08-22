@@ -45,6 +45,32 @@ func TestInitiativeSchedulerAllocatesCapacityInFairInitiativeRounds(t *testing.T
 	}
 }
 
+func TestInitiativeSchedulerPreservesFairRoundAfterOneMemberStarts(t *testing.T) {
+	first := schedulingInitiative("initiative-first", time.Unix(1_800_000_000, 0).UTC(),
+		[]string{"task-first-a", "task-first-b"}, nil, "")
+	second := schedulingInitiative("initiative-second", time.Unix(1_800_000_001, 0).UTC(),
+		[]string{"task-second-a"}, nil, "")
+	tasks := []domain.Task{
+		schedulingTask(t, "task-first-a", domain.TaskWorking, "repo-primary", "codex-reviewed"),
+		schedulingTask(t, "task-first-b", domain.TaskReady, "repo-primary", "codex-reviewed"),
+		schedulingTask(t, "task-second-a", domain.TaskReady, "repo-primary", "codex-reviewed"),
+	}
+
+	schedules, err := ScheduleInitiatives([]domain.DevelopmentInitiative{second, first}, tasks, InitiativeSchedulingLimits{
+		MaxConcurrentTasks: 2, MaxConcurrentTasksPerRepository: 2,
+		WorkerProfileLimits: map[string]int{"codex-reviewed": 2},
+	})
+	if err != nil {
+		t.Fatalf("ScheduleInitiatives() error = %v", err)
+	}
+	if decision := schedulingDecision(t, schedules, "task-second-a"); !decision.Launchable || decision.Reason != "" {
+		t.Fatalf("second initiative decision = %#v, want its first-round member launchable", decision)
+	}
+	if decision := schedulingDecision(t, schedules, "task-first-b"); decision.Launchable || decision.Reason != ScheduleResourceQueued {
+		t.Fatalf("first initiative second decision = %#v, want resource queued until the second round", decision)
+	}
+}
+
 func TestInitiativeSchedulerUsesClosedDependencyAndContractReasons(t *testing.T) {
 	edges := []domain.InitiativeEdge{
 		{FromTaskHandle: "task-contract", ToTaskHandle: "task-consumer", Kind: domain.EdgeConsumesArtifact, RequiredArtifactKind: domain.ArtifactAPISchema},
