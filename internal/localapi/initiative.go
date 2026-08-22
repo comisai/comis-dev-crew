@@ -207,7 +207,8 @@ func initiativeMembersMatch(
 	seen := make(map[string]struct{}, len(tasks))
 	for index, task := range tasks {
 		if task.Handle == "" || task.State != domain.TaskPrepared || task.StateVersion != stateVersion ||
-			preparations[index].ExternalRunRef != task.Handle {
+			preparations[index].ExternalRunRef != task.Handle ||
+			preparations[index].State != application.PreparationOpen {
 			return false
 		}
 		if _, exists := seen[task.Handle]; exists {
