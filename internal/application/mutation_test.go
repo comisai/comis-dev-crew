@@ -531,6 +531,7 @@ type mutationStore struct {
 	launchAck       WorkerLaunchAcknowledgementMutation
 	pauseRequest    TaskPauseRequestMutation
 	cancelTask      TaskCancelMutation
+	cancelTaskErr   error
 	verifyTask      TaskVerifyMutation
 	steerTask       TaskSteerMutation
 	cancelDecision  DecisionCancellationMutation
@@ -682,6 +683,9 @@ func (store *mutationStore) CommitTaskCancel(
 	mutation TaskCancelMutation,
 ) (MutationResult, error) {
 	store.cancelTask = mutation
+	if store.cancelTaskErr != nil {
+		return MutationResult{}, store.cancelTaskErr
+	}
 	return MutationResult{
 		Task:      domain.Task{Handle: mutation.TaskHandle, State: domain.TaskCancelled},
 		Operation: domain.OperationRecord{ID: mutation.OperationID},

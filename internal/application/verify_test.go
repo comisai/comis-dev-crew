@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -94,6 +95,20 @@ func TestMutations_CancelTask_UsesItsOwnCommandIdentity(t *testing.T) {
 	// share a destination.
 	if store.pauseRequest.OperationID != "" {
 		t.Error("a cancel must not commit a pause request")
+	}
+}
+
+func TestMutations_CancelTask_ProjectsDurablePreconditionWithoutLeakingPrivateCause(t *testing.T) {
+	store := &mutationStore{cancelTaskErr: domain.ErrInvalidTransition}
+	mutations := newTestMutations(t, store)
+
+	_, err := mutations.CancelTask(context.Background(), CancelTaskCommand{
+		OperationID: "operation-cancel-0001", TaskHandle: "task-0001",
+	})
+	var failure *domain.Failure
+	if !errors.As(err, &failure) || failure.Code != domain.ErrorPrecondition ||
+		!errors.Is(err, domain.ErrInvalidTransition) {
+		t.Fatalf("CancelTask(invalid transition) error = %v, want safe precondition failure", err)
 	}
 }
 
