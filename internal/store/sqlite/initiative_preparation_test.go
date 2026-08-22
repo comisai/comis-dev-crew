@@ -70,6 +70,29 @@ func TestPreparedInitiativeCommitsAndReplaysAllMembersInOneTransaction(t *testin
 	}
 }
 
+func TestPreparedInitiativeReplayPreservesOriginalProjectionAfterActivation(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	mutation := sqlitePreparedInitiativeMutation()
+	recordInitiativeMemberIntents(t, store, mutation)
+	prepared, err := store.CommitPreparedInitiative(ctx, mutation)
+	if err != nil {
+		t.Fatalf("CommitPreparedInitiative() error = %v", err)
+	}
+	if _, err := store.CommitInitiativeActivation(ctx, preparedInitiativeActivationMutation(mutation)); err != nil {
+		t.Fatalf("CommitInitiativeActivation() error = %v", err)
+	}
+
+	replayed, found, err := store.ReplayInitiativePreparation(ctx, mutation.OperationID, mutation.SubjectDigest)
+	if err != nil || !found || !reflect.DeepEqual(replayed, prepared) {
+		t.Fatalf("ReplayInitiativePreparation(after activation) = %#v, %t, %v, want %#v", replayed, found, err, prepared)
+	}
+}
+
 func TestPreparedInitiativeCommitsFiveMemberFullStackGraph(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(ctx, filepath.Join(canonicalTempDir(t), "devcrew.db"))
