@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -53,6 +54,16 @@ func (store *Store) BeginTaskDiscard(
 		}
 		return existing, nil
 	}
+	callerReplay := false
+	if replay, found, err := mutationReplay(
+		ctx, transaction, mutation.OperationID, commandDiscardTask, mutation.SubjectDigest,
+	); err != nil {
+		return application.TaskCleanupRecord{}, commitReplayConflict(transaction, err)
+	} else if found && replay.ResultRef != mutation.TaskHandle {
+		return application.TaskCleanupRecord{}, fmt.Errorf("task discard replay target differs: %w", application.ErrConflict)
+	} else {
+		callerReplay = found
+	}
 	if existing, found, err := findTaskCleanupRecordByTask(ctx, transaction, mutation.TaskHandle); err != nil {
 		return application.TaskCleanupRecord{}, err
 	} else if found {
@@ -62,6 +73,9 @@ func (store *Store) BeginTaskDiscard(
 			)
 		}
 		return existing, nil
+	}
+	if callerReplay {
+		return application.TaskCleanupRecord{}, errors.New("task discard replay record is unavailable")
 	}
 	task, err := getTask(ctx, transaction, mutation.TaskHandle)
 	if err != nil {

@@ -713,7 +713,8 @@ independently acknowledged discard retry resumes the one durable discard hold
 after a staged failure, while exact task, repository, and worktree identity
 remain mandatory. Dirty or unpinned contents carry no delivery authority, an
 ordinary cleanup hold cannot be converted into a discard, and original and retry
-receipts are both classified as `DiscardTask`.
+receipts are both classified as `DiscardTask`. A retry operation ID owned by a
+different command is refused before resuming any host stage.
 Threat posture: every retry must pass the external acknowledgement gate again;
 resumption cannot change the task, repository, worktree, or release authority,
 and it cannot turn discarded contents into delivery evidence.

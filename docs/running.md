@@ -746,7 +746,9 @@ evidence because discard grants no delivery authority. If a failure interrupts
 the stages after the durable hold is created, a fresh independently acknowledged
 discard resumes that one removal instead of opening a second one. An ordinary
 delivery-backed cleanup cannot be resumed as a discard, and both the original
-and retry operation receipts remain classified as `DiscardTask`.
+and retry operation receipts remain classified as `DiscardTask`. A retry
+operation ID already owned by another command is refused before the resumed
+host stages run.
 
 `task steer` sends one bounded instruction to a task's current worker. The
 instruction arrives as a JSON contract (`{"schemaVersion": 1, "instruction": "…"}`)
