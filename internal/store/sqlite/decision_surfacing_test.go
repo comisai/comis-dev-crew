@@ -147,3 +147,33 @@ func TestOpenDecisionsAwaitingHuman_MeasuresFromTheMostRecentAiring(t *testing.T
 		t.Errorf("last surfaced = %s, want the repeat at %s", open[0].LastSurfacedAt, repeated)
 	}
 }
+
+// Once a task is cancelled, its managed run is no longer a valid place to ask
+// the question again. The decision remains in history, but re-surfacing it
+// would send attention to host authority the cancellation path has settled.
+func TestOpenDecisionsAwaitingHuman_ExcludesCancelledTaskQuestions(t *testing.T) {
+	store, task := attestationFixture(t, domain.ShapeShip)
+	at := task.UpdatedAt.Add(time.Minute)
+	reportDecision(t, store, task, "schema-choice", at)
+	askTheHuman(t, store, at.Add(time.Second))
+
+	result, err := store.CommitTaskCancel(context.Background(), cancelTaskMutation(
+		task.Handle,
+		"operation-cancel-decision-task",
+		at.Add(2*time.Second),
+	))
+	if err != nil {
+		t.Fatalf("CommitTaskCancel() error = %v", err)
+	}
+	if result.Task.State != domain.TaskCancelled {
+		t.Fatalf("cancelled task state = %q", result.Task.State)
+	}
+
+	open, err := store.OpenDecisionsAwaitingHuman(context.Background())
+	if err != nil {
+		t.Fatalf("OpenDecisionsAwaitingHuman() error = %v", err)
+	}
+	if len(open) != 0 {
+		t.Fatalf("cancelled task decisions still eligible for re-surfacing: %+v", open)
+	}
+}
