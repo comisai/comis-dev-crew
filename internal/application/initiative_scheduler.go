@@ -132,12 +132,18 @@ func DeriveInitiativeState(
 		}
 		indexed[task.Handle] = task
 	}
-	schedule, _, err := scheduleOneInitiative(0, initiative, indexed, make(map[string]string))
+	schedule, ready, err := scheduleOneInitiative(0, initiative, indexed, make(map[string]string))
 	if err != nil {
 		return "", err
 	}
 	if len(schedule.Tasks) != len(indexed) {
 		return "", errors.New("derive initiative state: member set contains a task outside the initiative")
+	}
+	// Capacity is deliberately absent from aggregate derivation. Mark only the
+	// dependency-ready candidates selected by the scheduler so an independent
+	// ready lane remains progress while a sibling is held.
+	for _, candidate := range ready {
+		schedule.Tasks[candidate.decisionIndex].Launchable = true
 	}
 	return deriveInitiativeState(initiative, schedule.Tasks), nil
 }

@@ -578,11 +578,19 @@ member carries one closed reason: `dependency_blocked`, `resource_queued`,
 handle listed by the initiative as current, integration waits for exact candidate
 states, and a failed predecessor blocks only its dependent descendants. The same
 decision derives the initiative aggregate state without treating a missing or
-reconciling member as healthy. Member state mutations update that aggregate in
-the same SQLite transaction and at the same global state version; an aggregate
-write failure rolls back the task, operation, and event with it. A durable
-`unknown` initiative is never reactivated by derivation after restart — only the
-explicit host reconciliation path may restore its authority.
+reconciling member as healthy. Aggregate derivation treats a dependency-ready
+member as progress before capacity allocation, so one completed component cannot
+trap an unstarted independent sibling behind the integration owner's expected
+hold. Member state mutations update that aggregate in the same SQLite transaction
+and at the same global state version; an aggregate write failure rolls back the
+task, operation, and event with it. A durable `unknown` initiative is never
+reactivated by derivation after restart — only the explicit host reconciliation
+path may restore its authority.
+
+Threat posture: aggregate progress comes only from the scheduler's validated
+dependency and contract decision. It does not bypass the transactional capacity
+recheck, reactivate an unknown initiative, or make a held integration owner
+launchable.
 
 The canonical fleet projection publishes the same reviewed concurrency limits
 alongside exact durable usage. Host, observed-repository, and configured-profile
