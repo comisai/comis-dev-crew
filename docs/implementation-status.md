@@ -613,12 +613,28 @@ service advertises readiness. Delivered, failed, cancelled, and already-unknown
 initiatives remain stable, and replay is idempotent. A corrupt initiative aborts
 the whole reconciliation transaction, so no subset can be presented as recovered.
 
+After the authenticated Comis control session is available, startup attempts a
+second, narrower reconciliation for bound `unknown` initiatives whose complete
+member set belongs to the current service instance. The service reads the host's
+content-free managed-run group rollup on that persistent session and compares the
+exact managed-run identities plus all nine host state counts with current durable
+task rows. Only an exact match may atomically restore the aggregate state derived
+from those rows. A foreign service instance, missing or duplicate member, changed
+state count, stale local snapshot, unavailable host read, or aggregate that still
+derives to `unknown` leaves the initiative unchanged. Readiness waits for each
+eligible group attempt, with a bounded per-group deadline, but a preserved
+`unknown` group does not prevent unrelated work from being inspected.
+
 Threat posture: nested initiative graphs and backlog dependencies are encoded as
 data, never executable input, and are revalidated after decoding. Only the
 single-writer service process opens the mutable store. Restart cannot silently
 resume initiative authority: ambiguous nonterminal coordination is downgraded to
 `unknown`, and corrupted durable state prevents readiness rather than broadening
-run or scheduling authority.
+run or scheduling authority. The host rollup cannot mint local authority by
+itself: its service scope is fixed by the authenticated session, and the final
+SQLite transaction rechecks group identity, complete membership, current service
+ownership, local state counts, snapshot version, and monotonic time before the
+initiative can leave `unknown`.
 
 ## Integration candidate application
 

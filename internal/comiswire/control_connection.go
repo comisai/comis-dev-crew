@@ -59,6 +59,8 @@ type ControlConnection struct {
 	changed chan struct{}
 }
 
+var _ application.InitiativeHostRollupSource = (*ControlConnection)(nil)
+
 // Connected reports whether the current session completed the pinned
 // authenticated handshake and remains published for control traffic.
 func (connection *ControlConnection) Connected() bool {
@@ -158,43 +160,6 @@ func (connection *ControlConnection) Heartbeat(
 	}
 	if response.Result.ManagedRunID != params.ManagedRunID {
 		return HeartbeatResponseResult{}, errors.New("heartbeat to Comis: acknowledgement identity differs")
-	}
-	return response.Result, nil
-}
-
-// GroupHostRollup reads one content-free host projection over the current
-// authenticated connection. The caller must compare its exact member identity
-// and state counts before restoring any local initiative authority.
-func (connection *ControlConnection) GroupHostRollup(
-	ctx context.Context,
-	params GroupGetHostRollupRequestParams,
-) (GroupGetHostRollupResponseResult, error) {
-	if ctx == nil {
-		return GroupGetHostRollupResponseResult{}, errors.New("read group rollup from Comis: context is required")
-	}
-	request := GroupGetHostRollupRequest{
-		JSONRPC: JSONRPCVersion, ID: params.OperationID,
-		Method: MethodManagedRunGroupsGetHostRollup, Params: params,
-	}
-	if err := validateGeneratedDocument(schemaGroupGetHostRollupRequest, request); err != nil {
-		return GroupGetHostRollupResponseResult{}, fmt.Errorf("read group rollup from Comis: invalid request: %w", err)
-	}
-	session, err := connection.awaitSession(ctx)
-	if err != nil {
-		return GroupGetHostRollupResponseResult{}, err
-	}
-	var response GroupGetHostRollupResponse
-	authenticated := authenticatedGroupGetHostRollupRequest{
-		GroupGetHostRollupRequest: request, Bearer: connection.config.Credential,
-	}
-	if err := connection.invoke(ctx, session, request.Method, authenticated, params.OperationID, &response); err != nil {
-		return GroupGetHostRollupResponseResult{}, fmt.Errorf("read group rollup from Comis: outcome uncertain: %w", err)
-	}
-	if err := validateGeneratedDocument(schemaGroupGetHostRollupResponse, response); err != nil {
-		return GroupGetHostRollupResponseResult{}, fmt.Errorf("read group rollup from Comis: invalid response: %w", err)
-	}
-	if response.Result.ManagedRunGroupID != params.ManagedRunGroupID {
-		return GroupGetHostRollupResponseResult{}, errors.New("read group rollup from Comis: acknowledgement identity differs")
 	}
 	return response.Result, nil
 }

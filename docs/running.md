@@ -41,6 +41,14 @@ Prerequisites, all of which fail closed if unmet:
 - The primary checkout and the worktree parent are separate canonical
   directories under the approved root.
 
+On restart, every ambiguous nonterminal initiative is first persisted as
+`unknown`. Before the service signals readiness, it then uses the authenticated
+persistent control session to read each current-service group's content-free host
+rollup. An initiative resumes only when the complete managed-run identity set and
+every host state count exactly match its durable task rows. A mismatch or bounded
+host-read failure keeps that initiative `unknown`; inspect the group and task
+states rather than repeatedly restarting or manually changing the database.
+
 Task preparation first resolves the requested worker and validation profiles for
 the exact task shape. An unavailable, incompatible, or incomplete profile is
 rejected before any worktree or runtime attachment is allocated. Preparation

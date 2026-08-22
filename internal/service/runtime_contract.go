@@ -28,6 +28,7 @@ type ComisControl interface {
 	comiswire.EvidenceSender
 	comiswire.HeartbeatSender
 	comiswire.AttentionResponseReceiver
+	application.InitiativeHostRollupSource
 	application.ManagedRunReleaser
 	application.HostIntegrationStatus
 	Run(context.Context) error

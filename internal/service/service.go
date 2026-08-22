@@ -160,6 +160,17 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if err != nil {
 		return err
 	}
+	var initiativeHostReconciler *application.InitiativeHostReconciler
+	if control != nil && config.ServiceInstanceID != "" {
+		initiativeHostReconciler, err = application.NewInitiativeHostReconciler(application.InitiativeHostReconcilerConfig{
+			Store: store, Host: control, ServiceInstanceID: config.ServiceInstanceID,
+			NewOperationID: func() (string, error) { return randomIdentity("group-rollup", 16) },
+			Clock:          clock, AttemptTimeout: comisRequestTimeout + comisMaximumBackoff, Logger: config.Logger,
+		})
+		if err != nil {
+			return fmt.Errorf("run service initiative host reconciler: %w", err)
+		}
+	}
 	merges, err := composeTaskMerges(config, store, control, clock)
 	if err != nil {
 		return err
@@ -341,10 +352,17 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if candidate != nil {
 		components = append(components, candidate.Run)
 	}
-	var beforeReady func(context.Context) error
+	readinessSteps := make([]func(context.Context) error, 0, 2)
 	if attachmentSupervisor != nil {
-		beforeReady = attachmentSupervisor.waitForRecovery
+		readinessSteps = append(readinessSteps, attachmentSupervisor.waitForRecovery)
 	}
+	if initiativeHostReconciler != nil {
+		readinessSteps = append(readinessSteps, func(readinessContext context.Context) error {
+			_, reconcileErr := initiativeHostReconciler.Reconcile(readinessContext)
+			return reconcileErr
+		})
+	}
+	beforeReady := runReadinessSteps(readinessSteps...)
 	return serveServiceComponents(ctx, servers, components, beforeReady, config.Ready)
 }
 

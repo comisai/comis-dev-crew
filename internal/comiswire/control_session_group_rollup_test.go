@@ -79,8 +79,9 @@ func TestControlConnectionReadsGroupRollupOnTheAuthenticatedSession(t *testing.T
 
 func TestControlConnectionRejectsInvalidGroupRollupInputsBeforeTransport(t *testing.T) {
 	connection := &ControlConnection{changed: make(chan struct{})}
+	var nilContext context.Context
 
-	if _, err := connection.GroupHostRollup(nil, GroupGetHostRollupRequestParams{}); err == nil ||
+	if _, err := connection.GroupHostRollup(nilContext, GroupGetHostRollupRequestParams{}); err == nil ||
 		!strings.Contains(err.Error(), "context is required") {
 		t.Fatalf("GroupHostRollup(nil) error = %v", err)
 	}

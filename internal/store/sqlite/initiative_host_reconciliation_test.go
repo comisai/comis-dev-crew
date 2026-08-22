@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -91,4 +92,128 @@ func TestInitiativeHostRecoveryMismatchPreservesDurableUnknownState(t *testing.T
 			}
 		})
 	}
+}
+
+func TestInitiativeHostRecoveryRefusesInvalidUnavailableAndUnresolvedAuthority(t *testing.T) {
+	if _, err := (&Store{}).CommitInitiativeHostRecovery(
+		context.Background(), application.InitiativeHostRecoveryMutation{},
+	); !errors.Is(err, application.ErrInvalidInput) {
+		t.Fatalf("CommitInitiativeHostRecovery(invalid) error = %v, want ErrInvalidInput", err)
+	}
+
+	ctx := context.Background()
+	store, initiativeHandle, activation := preparedInitiativeActivationStore(t)
+	if _, err := store.CommitInitiativeActivation(ctx, activation); err != nil {
+		t.Fatalf("CommitInitiativeActivation() error = %v", err)
+	}
+	reconcileAt := activation.At.Add(time.Minute)
+	if _, err := store.ReconcileStartup(ctx, reconcileAt); err != nil {
+		t.Fatalf("ReconcileStartup() error = %v", err)
+	}
+	initiative, tasks, _, err := store.InitiativeObservation(ctx, initiativeHandle)
+	if err != nil {
+		t.Fatalf("InitiativeObservation() error = %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, "UPDATE tasks SET state = 'unknown' WHERE handle = ?", tasks[0].Handle); err != nil {
+		t.Fatalf("seed unresolved member state: %v", err)
+	}
+	mutation := application.InitiativeHostRecoveryMutation{
+		InitiativeHandle: initiative.Handle, ServiceInstanceID: activation.ServiceInstanceID,
+		ManagedRunGroupID:    initiative.ManagedRunGroupID,
+		MemberManagedRunIDs:  []string{tasks[0].ManagedRunID, tasks[1].ManagedRunID},
+		StateCounts:          application.InitiativeHostStateCounts{Active: 1, Unknown: 1},
+		ExpectedStateVersion: initiative.StateVersion, At: reconcileAt.Add(time.Minute),
+	}
+	if _, err := store.CommitInitiativeHostRecovery(ctx, mutation); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("CommitInitiativeHostRecovery(unresolved member) error = %v, want ErrPrecondition", err)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if _, err := store.CommitInitiativeHostRecovery(ctx, mutation); err == nil {
+		t.Fatal("CommitInitiativeHostRecovery(closed store) error = nil")
+	}
+}
+
+func TestInitiativeHostRecoveryMemberSetComparisonRejectsEveryInexactShape(t *testing.T) {
+	tests := []struct {
+		left  []string
+		right []string
+		want  bool
+	}{
+		{left: []string{"a"}, right: []string{"a"}, want: true},
+		{left: []string{"a"}, right: []string{"a", "b"}},
+		{left: []string{""}, right: []string{""}},
+		{left: []string{"a", "a"}, right: []string{"a", "a"}},
+		{left: []string{"a", "b"}, right: []string{"a", "c"}},
+	}
+	for _, test := range tests {
+		if got := sameStringSet(test.left, test.right); got != test.want {
+			t.Fatalf("sameStringSet(%#v, %#v) = %t, want %t", test.left, test.right, got, test.want)
+		}
+	}
+}
+
+func TestInitiativeHostRecoveryStorageFailuresNeverPublishRecoveredState(t *testing.T) {
+	newFixture := func(t *testing.T) (*Store, application.InitiativeHostRecoveryMutation) {
+		t.Helper()
+		ctx := context.Background()
+		store, initiativeHandle, activation := preparedInitiativeActivationStore(t)
+		if _, err := store.CommitInitiativeActivation(ctx, activation); err != nil {
+			t.Fatalf("CommitInitiativeActivation() error = %v", err)
+		}
+		reconcileAt := activation.At.Add(time.Minute)
+		if _, err := store.ReconcileStartup(ctx, reconcileAt); err != nil {
+			t.Fatalf("ReconcileStartup() error = %v", err)
+		}
+		initiative, tasks, _, err := store.InitiativeObservation(ctx, initiativeHandle)
+		if err != nil {
+			t.Fatalf("InitiativeObservation() error = %v", err)
+		}
+		return store, application.InitiativeHostRecoveryMutation{
+			InitiativeHandle: initiative.Handle, ServiceInstanceID: activation.ServiceInstanceID,
+			ManagedRunGroupID:    initiative.ManagedRunGroupID,
+			MemberManagedRunIDs:  []string{tasks[0].ManagedRunID, tasks[1].ManagedRunID},
+			StateCounts:          application.InitiativeHostStateCounts{Active: 2},
+			ExpectedStateVersion: initiative.StateVersion, At: reconcileAt.Add(time.Minute),
+		}
+	}
+
+	t.Run("missing initiative", func(t *testing.T) {
+		store, mutation := newFixture(t)
+		mutation.InitiativeHandle = "initiative-host-recovery-missing"
+		if _, err := store.CommitInitiativeHostRecovery(context.Background(), mutation); !errors.Is(err, application.ErrNotFound) {
+			t.Fatalf("CommitInitiativeHostRecovery(missing) error = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("aggregate write failure", func(t *testing.T) {
+		store, mutation := newFixture(t)
+		if _, err := store.db.ExecContext(context.Background(), `CREATE TRIGGER refuse_host_recovery
+			BEFORE UPDATE ON initiatives BEGIN SELECT RAISE(ABORT, 'injected host recovery failure'); END`); err != nil {
+			t.Fatalf("install host recovery failure: %v", err)
+		}
+		if _, err := store.CommitInitiativeHostRecovery(context.Background(), mutation); err == nil {
+			t.Fatal("CommitInitiativeHostRecovery(injected write failure) error = nil")
+		}
+		preserved, err := store.GetInitiative(context.Background(), mutation.InitiativeHandle)
+		if err != nil || preserved.State != domain.InitiativeUnknown ||
+			preserved.StateVersion != mutation.ExpectedStateVersion {
+			t.Fatalf("preserved initiative = %#v, %v", preserved, err)
+		}
+	})
+
+	t.Run("state version exhausted", func(t *testing.T) {
+		store, mutation := newFixture(t)
+		if _, err := store.db.ExecContext(context.Background(),
+			"UPDATE tasks SET state_version = ? WHERE handle = (SELECT handle FROM tasks ORDER BY handle LIMIT 1)",
+			int64(math.MaxInt64),
+		); err != nil {
+			t.Fatalf("exhaust state version: %v", err)
+		}
+		if _, err := store.CommitInitiativeHostRecovery(context.Background(), mutation); err == nil {
+			t.Fatal("CommitInitiativeHostRecovery(exhausted version) error = nil")
+		}
+	})
 }

@@ -9,6 +9,20 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/localapi"
 )
 
+func runReadinessSteps(steps ...func(context.Context) error) func(context.Context) error {
+	if len(steps) == 0 {
+		return nil
+	}
+	return func(ctx context.Context) error {
+		for _, step := range steps {
+			if err := step(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
 // runAfterRuntimeAttachmentRecovery prevents a dependent boundary from
 // observing socket identities that the recovery pass is about to replace.
 func runAfterRuntimeAttachmentRecovery(
