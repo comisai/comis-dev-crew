@@ -638,13 +638,23 @@ func (release *cleanupReleaseFixture) ReleaseManagedRun(_ context.Context, reque
 }
 
 type cleanupRemovalFixture struct {
-	request DeliveredWorkspaceRemoval
-	calls   int
-	err     error
+	request        DeliveredWorkspaceRemoval
+	calls          int
+	deliveredCalls int
+	discardedCalls int
+	err            error
 }
 
 func (removal *cleanupRemovalFixture) RemoveDeliveredWorkspace(_ context.Context, request DeliveredWorkspaceRemoval) error {
 	removal.calls++
+	removal.deliveredCalls++
+	removal.request = request
+	return removal.err
+}
+
+func (removal *cleanupRemovalFixture) RemoveDiscardedWorkspace(_ context.Context, request DeliveredWorkspaceRemoval) error {
+	removal.calls++
+	removal.discardedCalls++
 	removal.request = request
 	return removal.err
 }

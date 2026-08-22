@@ -59,6 +59,19 @@ func (registry *Registry) RemoveDeliveredWorkspace(
 	})
 }
 
+// RemoveDiscardedWorkspace implements the acknowledged discard path while
+// preserving the same exact task, operation, worktree, branch and head proof.
+func (registry *Registry) RemoveDiscardedWorkspace(
+	ctx context.Context,
+	request application.DeliveredWorkspaceRemoval,
+) error {
+	return registry.RemoveDiscardedWorktree(ctx, DeliveredWorktreeCleanupRequest{
+		PreparationOperationID: request.PreparationOperationID, TaskHandle: request.TaskHandle,
+		RepositoryID: request.RepositoryID, WorktreePath: request.WorktreePath,
+		Branch: request.Branch, HeadRevision: request.HeadRevision,
+	})
+}
+
 // SynchronizePrimary implements the application synchronization port. The
 // adapter's own closed vocabularies are mapped rather than shared, so the
 // application never depends on this adapter's types and an unmapped outcome

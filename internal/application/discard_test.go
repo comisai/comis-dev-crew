@@ -106,6 +106,9 @@ func TestCleanupCoordinator_DiscardRemovesADirtyWorktreeItWasAskedTo(t *testing.
 	if store.beginDiscardCalls != 1 || remover.calls != 1 {
 		t.Fatalf("discard flow: begin=%d remove=%d", store.beginDiscardCalls, remover.calls)
 	}
+	if remover.discardedCalls != 1 || remover.deliveredCalls != 0 {
+		t.Fatalf("discard removal route: discarded=%d delivered=%d", remover.discardedCalls, remover.deliveredCalls)
+	}
 	if result.Task.State != domain.TaskCleaned {
 		t.Errorf("discarded task state = %q", result.Task.State)
 	}

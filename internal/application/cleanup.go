@@ -201,8 +201,10 @@ type RuntimeAttachmentReleaser interface {
 }
 
 // DeliveredWorkspaceRemover removes one previously authorized exact workspace.
+// Delivered cleanup preserves dirty work; explicit discard removes it.
 type DeliveredWorkspaceRemover interface {
 	RemoveDeliveredWorkspace(context.Context, DeliveredWorkspaceRemoval) error
+	RemoveDiscardedWorkspace(context.Context, DeliveredWorkspaceRemoval) error
 }
 
 // CleanupCoordinatorConfig supplies the complete E0 cleanup authority set.
@@ -327,13 +329,20 @@ func (coordinator *CleanupCoordinator) runRemovalStages(
 				DeliveryTruth: truth, At: coordinator.config.Clock(),
 			})
 		case CleanupRemovalAuthorized:
-			if err := coordinator.config.Remover.RemoveDeliveredWorkspace(ctx, DeliveredWorkspaceRemoval{
+			removal := DeliveredWorkspaceRemoval{
 				PreparationOperationID: record.PreparationOperationID, TaskHandle: record.TaskHandle,
 				RepositoryID: record.RepositoryID, WorktreePath: record.Snapshot.WorktreePath,
 				Branch: record.Snapshot.Branch, HeadRevision: record.Snapshot.HeadRevision,
-			}); err != nil {
+			}
+			remove := coordinator.config.Remover.RemoveDeliveredWorkspace
+			failureMessage := "delivered workspace removal failed"
+			if record.Discard {
+				remove = coordinator.config.Remover.RemoveDiscardedWorkspace
+				failureMessage = "discarded workspace removal failed"
+			}
+			if err := remove(ctx, removal); err != nil {
 				return MutationResult{}, cleanupDependencyFailure(
-					"delivered workspace removal failed",
+					failureMessage,
 					"inspect the operation-bound worktree and Git repository before retrying",
 					err,
 				)

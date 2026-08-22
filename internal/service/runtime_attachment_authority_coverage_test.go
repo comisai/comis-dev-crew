@@ -164,6 +164,12 @@ func (boundaryDeliveredWorkspaceRemover) RemoveDeliveredWorkspace(
 	return nil
 }
 
+func (boundaryDeliveredWorkspaceRemover) RemoveDiscardedWorkspace(
+	context.Context, application.DeliveredWorkspaceRemoval,
+) error {
+	return nil
+}
+
 type runtimeRelayBoundaryStore struct {
 	runtimeAttachmentRecoveryStore
 	refusals    []application.RuntimeRelayIdentityRefusal

@@ -593,6 +593,14 @@ func TestRegistry_RemoveDiscardedWorktreeRemovesAcknowledgedDirtyWorkspace(t *te
 		Branch:                 prepared.Branch,
 		HeadRevision:           prepared.HeadRevision,
 	}
+	wrongHead := request
+	wrongHead.HeadRevision = strings.Repeat("f", 40)
+	if err := registry.RemoveDiscardedWorktree(context.Background(), wrongHead); err == nil {
+		t.Fatal("RemoveDiscardedWorktree(wrong head) error = nil")
+	}
+	if _, err := os.Lstat(filepath.Join(prepared.CanonicalPath, "uncommitted.txt")); err != nil {
+		t.Fatalf("discard with wrong authority changed the worktree: %v", err)
+	}
 
 	if err := registry.RemoveDiscardedWorktree(context.Background(), request); err != nil {
 		t.Fatalf("RemoveDiscardedWorktree() error = %v", err)
