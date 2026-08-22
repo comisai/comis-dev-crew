@@ -572,6 +572,13 @@ leave the view claiming a state the service is not in — the snapshot is the tr
 and the stream only says when to look again. `--passes` bounds the run so the
 command always terminates, and `--interval` paces it.
 
+The same status snapshot reports exact current usage and configured limits for
+the host, every observed repository, and every reviewed worker profile. A
+saturated row names the scope and shows `used`, `limit`, and remaining
+`available` slots, so a refused admission can be diagnosed without reading the
+database or inferring capacity from task counts. Deployments without a reviewed
+scheduler configuration report capacity as unavailable rather than zero.
+
 `repair reconcile` answers "what is stuck, and what would fix it". It surveys the
 tasks in the unknown state — the only state the reconcile command accepts — and
 classifies each against the same evidence that command requires: whether the

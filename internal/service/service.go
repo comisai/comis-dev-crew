@@ -169,12 +169,16 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 			return fmt.Errorf("run service runtime attention responses: %w", err)
 		}
 	}
+	querySchedulingLimits, err := schedulingLimitsForConfig(config)
+	if err != nil {
+		return fmt.Errorf("run service fleet capacity: %w", err)
+	}
 	queries, err := application.NewQueries(application.QueryConfig{
 		Repository: store, Harnesses: config.WorkerHarnesses, Host: control,
 		ReconciliationWorkspaces: config.reconciliationInspector,
 		WorkerProfiles:           config.WorkerProfileCatalog, Decisions: store,
 		TaskDiffs: config.taskDiffs, Repairs: store, Events: store, Audit: store, TaskLogs: store,
-		DecisionSurfacing: config.DecisionSurfacing, Clock: clock,
+		DecisionSurfacing: config.DecisionSurfacing, SchedulingLimits: querySchedulingLimits, Clock: clock,
 	})
 	if err != nil {
 		return fmt.Errorf("run service queries: %w", err)

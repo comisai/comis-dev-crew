@@ -567,6 +567,11 @@ write failure rolls back the task, operation, and event with it. A durable
 `unknown` initiative is never reactivated by derivation after restart — only the
 explicit host reconciliation path may restore its authority.
 
+The canonical fleet projection publishes the same reviewed concurrency limits
+alongside exact durable usage. Host, observed-repository, and configured-profile
+dimensions are sorted and independently marked saturated, so normal status JSON
+and table output identify the actual limiting scopes without a database read.
+
 The launch boundary does not trust that projection as a reservation. For an
 initiative member, the `ready` to `launching` transaction rereads every durable
 initiative and task, recomputes fair allocation under the reviewed host,

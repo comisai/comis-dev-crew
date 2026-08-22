@@ -97,6 +97,27 @@ func renderDoctor(destination io.Writer, report application.DiagnosticReport) er
 
 func renderFleet(destination io.Writer, snapshot application.FleetSnapshot) error {
 	return writeTable(destination, func(table *tabwriter.Writer) error {
+		if _, err := fmt.Fprintln(table, "CAPACITY\tUSED\tLIMIT\tAVAILABLE\tSATURATED"); err != nil {
+			return err
+		}
+		if !snapshot.Capacity.Known {
+			if _, err := fmt.Fprintln(table, "unavailable\t-\t-\t-\t-"); err != nil {
+				return err
+			}
+		}
+		for _, dimension := range snapshot.Capacity.Dimensions {
+			name := string(dimension.Kind)
+			if dimension.ID != "" {
+				name += ":" + dimension.ID
+			}
+			if _, err := fmt.Fprintf(table, "%s\t%d\t%d\t%d\t%t\n",
+				name, dimension.Used, dimension.Limit, dimension.Available, dimension.Saturated); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(table); err != nil {
+			return err
+		}
 		if _, err := fmt.Fprintln(table, "TASK\tINIT/COMPONENT\tSTATE\tCUSTODY\tWORKER\tHEAD\tACTIVITY\tPROCESSES\tVALIDATION\tBLOCKED BY\tATTENTION\tNEXT"); err != nil {
 			return err
 		}
