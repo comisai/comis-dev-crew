@@ -11,14 +11,20 @@ import (
 )
 
 type initiativeHostRecoveryStoreStub struct {
-	initiatives  []domain.DevelopmentInitiative
-	observations map[string][]domain.Task
-	commits      []InitiativeHostRecoveryMutation
+	initiatives    []domain.DevelopmentInitiative
+	observations   map[string][]domain.Task
+	commits        []InitiativeHostRecoveryMutation
+	listErr        error
+	observationErr error
+	commitErr      error
 }
 
 func (store *initiativeHostRecoveryStoreStub) ListInitiatives(
 	_ context.Context,
 ) ([]domain.DevelopmentInitiative, error) {
+	if store.listErr != nil {
+		return nil, store.listErr
+	}
 	return append([]domain.DevelopmentInitiative(nil), store.initiatives...), nil
 }
 
@@ -26,6 +32,9 @@ func (store *initiativeHostRecoveryStoreStub) InitiativeObservation(
 	_ context.Context,
 	handle string,
 ) (domain.DevelopmentInitiative, []domain.Task, int64, error) {
+	if store.observationErr != nil {
+		return domain.DevelopmentInitiative{}, nil, 0, store.observationErr
+	}
 	for _, initiative := range store.initiatives {
 		if initiative.Handle == handle {
 			return initiative, append([]domain.Task(nil), store.observations[handle]...), initiative.StateVersion, nil
@@ -39,6 +48,9 @@ func (store *initiativeHostRecoveryStoreStub) CommitInitiativeHostRecovery(
 	mutation InitiativeHostRecoveryMutation,
 ) (domain.DevelopmentInitiative, error) {
 	store.commits = append(store.commits, mutation)
+	if store.commitErr != nil {
+		return domain.DevelopmentInitiative{}, store.commitErr
+	}
 	for _, initiative := range store.initiatives {
 		if initiative.Handle == mutation.InitiativeHandle {
 			initiative.State = domain.InitiativeActive
@@ -207,6 +219,83 @@ func TestInitiativeHostStateCountsCoverEveryDurableTaskState(t *testing.T) {
 	}
 	if _, err := InitiativeHostStateCountsForTasks([]domain.Task{{State: "invented"}}); err == nil {
 		t.Fatal("InitiativeHostStateCountsForTasks(unknown state) error = nil")
+	}
+}
+
+func TestInitiativeHostReconcilerRejectsInvalidConfigurationAndDurableFailures(t *testing.T) {
+	if _, err := NewInitiativeHostReconciler(InitiativeHostReconcilerConfig{}); err == nil {
+		t.Fatal("NewInitiativeHostReconciler(empty) error = nil")
+	}
+	now := time.Date(2026, time.August, 22, 14, 0, 0, 0, time.UTC)
+	fixture := hostRecoveryInitiative(t, "initiative-errors", "service-instance-current", now)
+	exactRollup := InitiativeHostRollup{
+		ManagedRunGroupID: fixture.initiative.ManagedRunGroupID,
+		MemberManagedRunIDs: []string{
+			fixture.tasks[0].ManagedRunID, fixture.tasks[1].ManagedRunID,
+		},
+		StateCounts: InitiativeHostStateCounts{Active: 2}, UpdatedAtMs: now.UnixMilli(),
+	}
+	newReconciler := func(store *initiativeHostRecoveryStoreStub, operationErr error) *InitiativeHostReconciler {
+		t.Helper()
+		reconciler, err := NewInitiativeHostReconciler(InitiativeHostReconcilerConfig{
+			Store: store,
+			Host: &initiativeHostRollupSourceStub{results: map[string]InitiativeHostRollup{
+				fixture.initiative.ManagedRunGroupID: exactRollup,
+			}},
+			ServiceInstanceID: "service-instance-current",
+			NewOperationID: func() (string, error) {
+				return "operation-host-rollup-errors", operationErr
+			},
+			Clock: func() time.Time { return now.Add(time.Minute) }, AttemptTimeout: time.Second,
+		})
+		if err != nil {
+			t.Fatalf("NewInitiativeHostReconciler() error = %v", err)
+		}
+		return reconciler
+	}
+	baseStore := func() *initiativeHostRecoveryStoreStub {
+		return &initiativeHostRecoveryStoreStub{
+			initiatives:  []domain.DevelopmentInitiative{fixture.initiative},
+			observations: map[string][]domain.Task{fixture.initiative.Handle: fixture.tasks},
+		}
+	}
+
+	var nilContext context.Context
+	if _, err := newReconciler(baseStore(), nil).Reconcile(nilContext); err == nil {
+		t.Fatal("Reconcile(nil) error = nil")
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := newReconciler(baseStore(), nil).Reconcile(cancelled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Reconcile(cancelled) error = %v", err)
+	}
+
+	listFailure := baseStore()
+	listFailure.listErr = errors.New("list unavailable")
+	if _, err := newReconciler(listFailure, nil).Reconcile(context.Background()); err == nil {
+		t.Fatal("Reconcile(list failure) error = nil")
+	}
+	observationFailure := baseStore()
+	observationFailure.observationErr = errors.New("observation unavailable")
+	if _, err := newReconciler(observationFailure, nil).Reconcile(context.Background()); err == nil {
+		t.Fatal("Reconcile(observation failure) error = nil")
+	}
+
+	operationFailure := baseStore()
+	result, err := newReconciler(operationFailure, errors.New("entropy unavailable")).Reconcile(context.Background())
+	if err != nil || result.PreservedUnknown != 1 || len(operationFailure.commits) != 0 {
+		t.Fatalf("Reconcile(operation identity failure) = %#v, %v", result, err)
+	}
+	preconditionFailure := baseStore()
+	preconditionFailure.commitErr = ErrPrecondition
+	result, err = newReconciler(preconditionFailure, nil).Reconcile(context.Background())
+	if err != nil || result.PreservedUnknown != 1 || len(preconditionFailure.commits) != 1 {
+		t.Fatalf("Reconcile(commit precondition) = %#v, %v", result, err)
+	}
+	durableFailure := baseStore()
+	durableFailure.commitErr = errors.New("write unavailable")
+	if _, err := newReconciler(durableFailure, nil).Reconcile(context.Background()); err == nil {
+		t.Fatal("Reconcile(commit failure) error = nil")
 	}
 }
 
