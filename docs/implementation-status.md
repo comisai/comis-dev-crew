@@ -708,7 +708,15 @@ The typed local client and strict handler expose the canonical task mutations:
 preparation, reconciliation, handback, and cleanup, alongside the on-request
 lifecycle and intervention set — pause, resume, cancel, verify, promote, replace,
 steer, and the operator-only discard. Each is idempotent under its stable
-operation ID and reconciles rather than re-sends an uncertain outcome.
+operation ID and reconciles rather than re-sends an uncertain outcome. An
+independently acknowledged discard retry resumes the one durable discard hold
+after a staged failure, while exact task, repository, and worktree identity
+remain mandatory. Dirty or unpinned contents carry no delivery authority, an
+ordinary cleanup hold cannot be converted into a discard, and original and retry
+receipts are both classified as `DiscardTask`.
+Threat posture: every retry must pass the external acknowledgement gate again;
+resumption cannot change the task, repository, worktree, or release authority,
+and it cannot turn discarded contents into delivery evidence.
 Preparation contains only task-contract fields: the
 stable operation ID comes from the request envelope and the configured service
 instance comes from endpoint composition. The result classifies the operation as

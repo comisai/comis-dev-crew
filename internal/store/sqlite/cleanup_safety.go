@@ -292,8 +292,18 @@ func validateCleanupProof(
 	truth application.PullRequestDeliveryTruth,
 ) error {
 	if snapshot.TaskHandle != record.TaskHandle || snapshot.RepositoryID != record.RepositoryID ||
-		snapshot.WorktreePath != record.WorktreePath || snapshot.HeadRevision != record.HeadRevision ||
-		snapshot.Cleanliness != application.WorkspaceClean {
+		snapshot.WorktreePath != record.WorktreePath {
+		return fmt.Errorf("task cleanup workspace proof differs: %w", application.ErrPrecondition)
+	}
+	if record.Discard {
+		if record.HeadRevision != "" || record.EvidenceDigest != "" || record.PullRequestID != "" ||
+			record.ReportArtifactHash != "" || len(record.RequiredForgeChecks) != 0 ||
+			!reflect.DeepEqual(truth, application.PullRequestDeliveryTruth{}) {
+			return fmt.Errorf("task discard proof differs: %w", application.ErrPrecondition)
+		}
+		return nil
+	}
+	if snapshot.HeadRevision != record.HeadRevision || snapshot.Cleanliness != application.WorkspaceClean {
 		return fmt.Errorf("task cleanup workspace proof differs: %w", application.ErrPrecondition)
 	}
 	if record.PullRequestID == "" {

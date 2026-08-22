@@ -9,6 +9,8 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
+const commandDiscardTask = "DiscardTask"
+
 // The discard flag rides the cleanup operation record because a discard is a
 // cleanup whose safety was proven a different way. Recording which proof was
 // used is what lets an auditor tell a removal backed by delivered work from one
@@ -48,6 +50,16 @@ func (store *Store) BeginTaskDiscard(
 	} else if found {
 		if existing.SubjectDigest != mutation.SubjectDigest || existing.TaskHandle != mutation.TaskHandle {
 			return application.TaskCleanupRecord{}, fmt.Errorf("task discard altered replay: %w", application.ErrConflict)
+		}
+		return existing, nil
+	}
+	if existing, found, err := findTaskCleanupRecordByTask(ctx, transaction, mutation.TaskHandle); err != nil {
+		return application.TaskCleanupRecord{}, err
+	} else if found {
+		if !existing.Discard {
+			return application.TaskCleanupRecord{}, fmt.Errorf(
+				"task discard conflicts with cleanup: %w", application.ErrPrecondition,
+			)
 		}
 		return existing, nil
 	}

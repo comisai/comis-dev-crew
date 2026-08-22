@@ -740,7 +740,13 @@ a cancelled or failed task can be discarded, nothing is removed while a terminal
 or validation process is still running, and host authority is released before
 removal exactly as cleanup does. The durable record says which proof authorised
 the removal, so an audit can tell delivered-work removal from acknowledged
-removal.
+removal. The proof still binds the exact task, repository, and worktree identity;
+it permits dirty contents and does not require the worktree head to match delivery
+evidence because discard grants no delivery authority. If a failure interrupts
+the stages after the durable hold is created, a fresh independently acknowledged
+discard resumes that one removal instead of opening a second one. An ordinary
+delivery-backed cleanup cannot be resumed as a discard, and both the original
+and retry operation receipts remain classified as `DiscardTask`.
 
 `task steer` sends one bounded instruction to a task's current worker. The
 instruction arrives as a JSON contract (`{"schemaVersion": 1, "instruction": "…"}`)

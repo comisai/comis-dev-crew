@@ -354,11 +354,6 @@ func (store *Store) CompleteTaskCleanup(
 		return application.MutationResult{}, fmt.Errorf("begin task cleanup completion: %w", err)
 	}
 	defer func() { _ = transaction.Rollback() }()
-	if replay, found, err := mutationReplay(ctx, transaction, requestOperationID, commandCleanupTask, requestSubjectDigest); err != nil {
-		return application.MutationResult{}, commitReplayConflict(transaction, err)
-	} else if found {
-		return replayResult(ctx, transaction, replay)
-	}
 	record, found, err := findTaskCleanupRecord(ctx, transaction, completion.OperationID)
 	if err != nil {
 		return application.MutationResult{}, err
@@ -369,6 +364,15 @@ func (store *Store) CompleteTaskCleanup(
 	if record.SubjectDigest != completion.SubjectDigest {
 		return application.MutationResult{}, fmt.Errorf("complete task cleanup altered replay: %w", application.ErrConflict)
 	}
+	command := commandCleanupTask
+	if record.Discard {
+		command = commandDiscardTask
+	}
+	if replay, found, err := mutationReplay(ctx, transaction, requestOperationID, command, requestSubjectDigest); err != nil {
+		return application.MutationResult{}, commitReplayConflict(transaction, err)
+	} else if found {
+		return replayResult(ctx, transaction, replay)
+	}
 	if record.Stage == application.CleanupCompleted {
 		task, err := getTask(ctx, transaction, record.TaskHandle)
 		if err != nil {
@@ -378,7 +382,7 @@ func (store *Store) CompleteTaskCleanup(
 			return application.MutationResult{}, fmt.Errorf("complete task cleanup replay: %w", application.ErrPrecondition)
 		}
 		operation := completedMutationOperation(
-			requestOperationID, commandCleanupTask, requestSubjectDigest,
+			requestOperationID, command, requestSubjectDigest,
 			task.Handle, task.StateVersion, completion.At,
 		)
 		if err := insertOperation(ctx, transaction, operation); err != nil {
@@ -418,14 +422,14 @@ func (store *Store) CompleteTaskCleanup(
 	if err := updateTaskState(ctx, transaction, cleaned); err != nil {
 		return application.MutationResult{}, err
 	}
-	originalOperation := completedMutationOperation(completion.OperationID, commandCleanupTask,
+	originalOperation := completedMutationOperation(completion.OperationID, command,
 		completion.SubjectDigest, cleaned.Handle, stateVersion, completion.At)
 	if err := insertOperation(ctx, transaction, originalOperation); err != nil {
 		return application.MutationResult{}, fmt.Errorf("insert task cleanup operation: %w", err)
 	}
 	operation := originalOperation
 	if requestOperationID != completion.OperationID {
-		operation = completedMutationOperation(requestOperationID, commandCleanupTask,
+		operation = completedMutationOperation(requestOperationID, command,
 			requestSubjectDigest, cleaned.Handle, stateVersion, completion.At)
 		if err := insertOperation(ctx, transaction, operation); err != nil {
 			return application.MutationResult{}, fmt.Errorf("insert task cleanup retry operation: %w", err)
