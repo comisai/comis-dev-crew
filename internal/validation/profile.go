@@ -172,9 +172,11 @@ func NewCatalog(config CatalogConfig) (*Catalog, error) {
 }
 
 func validateProfile(profile Profile, programs map[string]Program) error {
+	if len(profile.PathRules) == 0 {
+		return errors.New("create validation catalog: profile path rules are required")
+	}
 	if !identifierPattern.MatchString(profile.ID) || len(profile.LocalChecks) == 0 ||
-		len(profile.LocalChecks) > maximumLocalChecks || len(profile.PathRules) == 0 ||
-		len(profile.PathRules) > maximumPathRules ||
+		len(profile.LocalChecks) > maximumLocalChecks || len(profile.PathRules) > maximumPathRules ||
 		profile.EvidenceTTL <= 0 || profile.EvidenceTTL > maximumEvidenceTTL {
 		return errors.New("create validation catalog: profile is invalid")
 	}

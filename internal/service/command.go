@@ -419,6 +419,9 @@ func serviceFailureClass(err error) string {
 }
 
 func serviceFailureHint(err error) string {
+	if strings.Contains(err.Error(), "profile path rules are required") {
+		return "add one to 64 valid profiles[*].pathRules entries to the owner-private candidate configuration"
+	}
 	if strings.Contains(err.Error(), "integration policies are invalid") {
 		return "add one to 64 valid integrationPolicies entries to the owner-private candidate configuration"
 	}

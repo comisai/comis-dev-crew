@@ -152,7 +152,9 @@ candidate path rules, evidence lifetimes, output and polling bounds, one or more
 integration policies, and one GitHub route. Every profile declares between one
 and 63 `localChecks` and between one and 64 `pathRules`; each path rule has the
 closed kind `exact` or `prefix` and a canonical repository-relative `path`. A
-prefix ends in `/`. Each integration policy has a unique opaque `id` and one
+prefix ends in `/`. If a profile omits this policy, the startup diagnostic names
+`profiles[*].pathRules` and its accepted one-to-64 bound. Each integration policy
+has a unique opaque `id` and one
 closed `strategy`: `merge`, `rebase`, or `cherry_pick`. An initiative names only
 the policy ID; the installed service resolves the Git strategy from this immutable
 document and refuses missing, duplicate, or unknown policy entries. The route
