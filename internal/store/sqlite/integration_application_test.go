@@ -170,6 +170,25 @@ func TestIntegrationReservationAcceptsReadyOwnerBeforeTerminalLaunch(t *testing.
 	}
 }
 
+func TestIntegrationReservationAcceptsReadyOwnerAfterCandidateRevalidation(t *testing.T) {
+	fixture := newStoredIntegrationFixture(t)
+	if _, err := fixture.store.db.Exec(`UPDATE tasks SET state = CASE handle
+		WHEN 'task-integration' THEN 'ready'
+		WHEN 'task-component-a' THEN 'candidate_complete'
+		ELSE state END`); err != nil {
+		t.Fatal(err)
+	}
+	request := fixture.reservationRequest("integration-ready-revalidated-owner", application.IntegrationMerge)
+
+	reserved, err := fixture.store.ReserveIntegrationApplication(context.Background(), request)
+	if err != nil {
+		t.Fatalf("ReserveIntegrationApplication(revalidated candidate) error = %v", err)
+	}
+	if reserved.Target.TaskHandle != "task-integration" || reserved.Candidate.TaskHandle != "task-component-a" {
+		t.Fatalf("ReserveIntegrationApplication(revalidated candidate) = %#v", reserved)
+	}
+}
+
 func TestIntegrationReservationRejectsMissingAuthorityOrCurrentEvidence(t *testing.T) {
 	tests := []struct {
 		name   string

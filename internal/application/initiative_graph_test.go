@@ -101,6 +101,18 @@ func TestInitiativeGraphMarksDependencyReadyMembers(t *testing.T) {
 	}
 }
 
+func TestInitiativeGraphMarksOwnerReadyAfterAcceptedCandidateEvidence(t *testing.T) {
+	view := ProjectInitiativeGraph(graphInitiative(), map[string]domain.TaskState{
+		"task-backend": domain.TaskCandidateComplete, "task-frontend": domain.TaskCandidateComplete,
+		"task-integration": domain.TaskReady,
+	}, time.Unix(1_800_000_000, 0).UTC())
+	for _, node := range view.Nodes {
+		if node.TaskHandle == "task-integration" && !node.DependencyReady {
+			t.Fatalf("integration owner = %#v, want dependency ready", node)
+		}
+	}
+}
+
 func TestInitiativeGraphSerializesToStableJSON(t *testing.T) {
 	view := ProjectInitiativeGraph(graphInitiative(), map[string]domain.TaskState{
 		"task-backend": domain.TaskWorking, "task-frontend": domain.TaskReady,
