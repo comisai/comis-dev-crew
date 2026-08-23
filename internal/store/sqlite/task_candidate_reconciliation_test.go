@@ -148,13 +148,8 @@ func TestTaskCandidateReconciliation_BindsEvidenceAndRefusesDuplicateRecovery(t 
 	if err != nil || recovery.Kind != application.RecoveryRestartEvidenceUnresolved {
 		t.Fatalf("ReadTaskRecoveryEvidence(existing reconciliation) = %#v, %v", recovery, err)
 	}
-	secondAuthority, err := store.ReadTaskReconciliationAuthority(context.Background(), task.Handle)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second := candidateReconciliationMutation(secondAuthority, now.Add(time.Minute), "operation-reconcile-duplicate")
-	if _, err := store.CommitTaskCandidateReconciliation(context.Background(), second); !errors.Is(err, application.ErrPrecondition) {
-		t.Fatalf("CommitTaskCandidateReconciliation(duplicate) error = %v, want precondition", err)
+	if _, err := store.ReadTaskReconciliationAuthority(context.Background(), task.Handle); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("ReadTaskReconciliationAuthority(duplicate) error = %v, want precondition", err)
 	}
 }
 
