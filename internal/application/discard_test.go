@@ -23,7 +23,11 @@ func (store *discardStoreFixture) BeginTaskDiscard(
 	record := store.record
 	record.OperationID = mutation.OperationID
 	record.SubjectDigest = mutation.SubjectDigest
-	record.Stage = CleanupPrepared
+	if record.ManagedRunID == "" && record.WorkspaceLeaseID == "" {
+		record.Stage = TaskCleanupStage("host_authority_absent")
+	} else {
+		record.Stage = CleanupPrepared
+	}
 	record.ReleaseOperationID = mutation.ReleaseOperationID
 	record.ReleasedAt = mutation.ReleasedAt
 	record.Discard = true
@@ -118,6 +122,47 @@ func TestCleanupCoordinator_DiscardRemovesADirtyWorktreeItWasAskedTo(t *testing.
 	if store.releaseCalls != 1 || store.authorizeCalls != 1 {
 		t.Errorf("discard skipped a release stage: release=%d authorize=%d",
 			store.releaseCalls, store.authorizeCalls)
+	}
+}
+
+func TestCleanupCoordinator_DiscardSkipsReleaseWhenHostAuthorityWasNeverAcquired(t *testing.T) {
+	now := time.Date(2026, time.August, 12, 8, 0, 0, 0, time.UTC)
+	record := cleanupFixtureRecord(strings.Repeat("b", 40))
+	record.ManagedRunID = ""
+	record.WorkspaceLeaseID = ""
+	record.HeadRevision = ""
+	record.EvidenceDigest = ""
+	record.PullRequestID = ""
+	record.RequiredForgeChecks = nil
+	record.Discard = true
+	snapshot := cleanupFixtureSnapshot(record, strings.Repeat("c", 40))
+	snapshot.Cleanliness = WorkspaceDirty
+	store := &discardStoreFixture{cleanupStoreFixture: &cleanupStoreFixture{record: record}}
+	releaser := &cleanupReleaseFixture{}
+	attachments := &cleanupAttachmentReleaseFixture{}
+	remover := &cleanupRemovalFixture{}
+	coordinator, err := NewCleanupCoordinator(CleanupCoordinatorConfig{
+		Store: store, Workspaces: &cleanupWorkspaceFixture{snapshot: snapshot},
+		Forge: &cleanupForgeFixture{}, Releaser: releaser,
+		Attachments: attachments, Remover: remover, Clock: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewCleanupCoordinator() error = %v", err)
+	}
+
+	result, err := coordinator.DiscardTask(context.Background(), DiscardTaskCommand{
+		OperationID: "operation-discard-unactivated", TaskHandle: record.TaskHandle, Acknowledged: true,
+	})
+
+	if err != nil {
+		t.Fatalf("DiscardTask(unactivated) error = %v", err)
+	}
+	if result.Task.State != domain.TaskCleaned || store.authorizeCalls != 1 || remover.discardedCalls != 1 {
+		t.Fatalf("unactivated discard result = %#v, store = %#v, remover = %#v", result, store, remover)
+	}
+	if releaser.calls != 0 || attachments.calls != 0 || store.releaseCalls != 0 {
+		t.Fatalf("unactivated discard contacted absent host authority: run=%d attachment=%d recorded=%d",
+			releaser.calls, attachments.calls, store.releaseCalls)
 	}
 }
 

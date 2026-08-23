@@ -38,6 +38,66 @@ func settledTask(t *testing.T, handle string) (*Store, domain.Task) {
 	return store, result.Task
 }
 
+// A task may be cancelled before Comis consumes its preparation metadata. The
+// preparation still owns a worktree, but no managed run, lease, attachment, or
+// terminal ever existed for the service to release.
+func unactivatedCancelledTask(t *testing.T, handle string) (*Store, domain.Task) {
+	t.Helper()
+	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Date(2026, time.August, 12, 8, 0, 0, 0, time.UTC)
+	command := sqlitePrepareCommand()
+	command.OperationID = "operation-prepare-" + handle
+	prepared, err := sqliteMutations(t, store, &sequenceIDs{ids: []string{handle}}, now).
+		PrepareTask(context.Background(), command)
+	if err != nil {
+		t.Fatalf("PrepareTask() error = %v", err)
+	}
+	result, err := store.CommitTaskCancel(context.Background(),
+		cancelTaskMutation(prepared.Task.Handle, "operation-cancel-"+handle, now.Add(time.Minute)))
+	if err != nil {
+		t.Fatalf("CommitTaskCancel() error = %v", err)
+	}
+	return store, result.Task
+}
+
+func TestStore_DiscardAcceptsACancelledPreparationThatNeverAcquiredHostAuthority(t *testing.T) {
+	store, task := unactivatedCancelledTask(t, "task-discard-unactivated")
+	at := task.UpdatedAt.Add(time.Minute).UTC()
+
+	record, err := store.BeginTaskDiscard(context.Background(),
+		discardMutation(task.Handle, "operation-discard-unactivated", at))
+
+	if err != nil {
+		t.Fatalf("BeginTaskDiscard() error = %v", err)
+	}
+	if record.Stage != application.TaskCleanupStage("host_authority_absent") {
+		t.Fatalf("unactivated discard stage = %q, want host_authority_absent", record.Stage)
+	}
+	if record.ManagedRunID != "" || record.WorkspaceLeaseID != "" || !record.Discard {
+		t.Fatalf("unactivated discard authority = %#v", record)
+	}
+}
+
+func TestStore_DiscardRefusesPartialHostAuthorityOnACancelledPreparation(t *testing.T) {
+	store, task := unactivatedCancelledTask(t, "task-discard-partial-authority")
+	if _, err := store.db.ExecContext(context.Background(),
+		"UPDATE tasks SET managed_run_id = 'managed-run-partial' WHERE handle = ?", task.Handle); err != nil {
+		t.Fatalf("corrupt task authority fixture: %v", err)
+	}
+
+	_, err := store.BeginTaskDiscard(context.Background(), discardMutation(
+		task.Handle, "operation-discard-partial-authority", task.UpdatedAt.Add(time.Minute).UTC(),
+	))
+
+	if err == nil {
+		t.Fatal("BeginTaskDiscard(partial host authority) error = nil, want a refusal")
+	}
+}
+
 // Cancellation preserves work on purpose, and cleanup requires delivery evidence
 // a cancelled task will never have. Without discard the worktree, lease and run
 // binding of every cancelled task stay held with nothing able to release them.
