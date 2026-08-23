@@ -137,6 +137,7 @@ func (registry *Registry) InspectTaskDiff(
 		return application.TaskDiffView{}, err
 	}
 	return application.TaskDiffView{
+		TaskHandle: request.TaskHandle, RepositoryID: request.RepositoryID,
 		BaseRevision: diff.BaseRevision, HeadRevision: diff.HeadRevision,
 		Committed: portFileChanges(diff.Committed), Uncommitted: portFileChanges(diff.Uncommitted),
 		CommittedTotals:   portDiffTotals(diff.CommittedTotals),

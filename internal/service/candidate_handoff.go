@@ -11,6 +11,7 @@ import (
 
 type candidateGitInspector interface {
 	InspectCandidate(context.Context, devgit.CandidateSnapshotRequest) (devgit.CandidateSnapshot, error)
+	InspectTaskDiff(context.Context, application.TaskDiffRequest) (application.TaskDiffView, error)
 	PromoteReconciliationCandidate(context.Context, application.ReconciliationWorkspaceRequest) (application.WorkspaceSnapshot, error)
 }
 

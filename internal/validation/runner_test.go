@@ -322,9 +322,10 @@ func runnerCatalog(t *testing.T, executable string, arguments []string) *Catalog
 	}
 	catalog, err := NewCatalog(CatalogConfig{
 		Programs: []Program{{ID: "fixture-program", Executable: executable}},
-		Profiles: []Profile{{ID: "fixture-default", EvidenceTTL: time.Minute, LocalChecks: []LocalCheck{{
-			ID: "unit", ProgramID: "fixture-program", Arguments: templates, Timeout: 10 * time.Second, Required: true,
-		}}}},
+		Profiles: []Profile{{ID: "fixture-default", EvidenceTTL: time.Minute,
+			PathRules: []PathRule{{Kind: PathRuleExact, Path: "report.md"}}, LocalChecks: []LocalCheck{{
+				ID: "unit", ProgramID: "fixture-program", Arguments: templates, Timeout: 10 * time.Second, Required: true,
+			}}}},
 	})
 	if err != nil {
 		t.Fatalf("NewCatalog() error = %v", err)

@@ -212,10 +212,22 @@ func (supervisor *candidateSupervisor) ValidateTask(
 			ctx, task, profile, snapshot, openDecisions, domain.CandidateReconciliationMismatch,
 		)
 	}
+	pathReceipt, pathOutcome, err := supervisor.inspectCandidatePathPolicy(ctx, task, profile, snapshot, latestEvidence, latestJudgment)
+	if err != nil {
+		return domain.Task{}, domain.CandidateJudgment{}, err
+	}
+	if pathOutcome == candidatePathPolicyUnchanged {
+		return task, latestJudgment, nil
+	}
+	if pathOutcome != candidatePathPolicyPassed {
+		return supervisor.commitCandidatePathPolicyEvidence(ctx, task, profile, snapshot, openDecisions, pathReceipt)
+	}
 	receipts, requiredLocal, err := supervisor.runLocalChecks(ctx, task, profile, snapshot)
 	if err != nil {
 		return domain.Task{}, domain.CandidateJudgment{}, err
 	}
+	receipts = append([]domain.ValidationEvidenceReceipt{pathReceipt}, receipts...)
+	requiredLocal = append([]string{validation.CandidatePathPolicyCheckID}, requiredLocal...)
 	afterChecks, err := supervisor.config.Git.InspectCandidate(ctx, devgit.CandidateSnapshotRequest{
 		TaskHandle: taskHandle, RepositoryID: task.RepositoryID, WorktreePath: preparation.RequestedWorkspaceRoot,
 	})

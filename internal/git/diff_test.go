@@ -304,7 +304,8 @@ func TestRegistry_InspectTaskDiffPortsEveryChangeRecordIntact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InspectTaskDiff() error = %v", err)
 	}
-	if view.BaseRevision != request.BaseRevision || view.HeadRevision == request.BaseRevision {
+	if view.TaskHandle != request.TaskHandle || view.RepositoryID != request.RepositoryID ||
+		view.BaseRevision != request.BaseRevision || view.HeadRevision == request.BaseRevision {
 		t.Fatalf("ported revisions = %#v", view)
 	}
 	var binary, renamed bool

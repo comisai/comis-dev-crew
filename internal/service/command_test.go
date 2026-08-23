@@ -211,7 +211,7 @@ func TestRunCommand_ComposesInstalledLaneWithExplicitDeterministicFixture(t *tes
 	candidateConfigPath := root + "/candidate.json"
 	writeCandidateConfig(t, candidateConfigPath, `{
   "programs":[{"id":"repo-check","executable":"/usr/bin/true"}],
-  "profiles":[{"id":"required","localChecks":[{"id":"unit","programId":"repo-check","arguments":[{"kind":"literal","value":"--version"}],"timeout":"2m","required":true}],"forgeChecks":[{"name":"ci/unit","required":true}],"evidenceTtl":"24h"}],
+  "profiles":[{"id":"required","localChecks":[{"id":"unit","programId":"repo-check","arguments":[{"kind":"literal","value":"--version"}],"timeout":"2m","required":true}],"forgeChecks":[{"name":"ci/unit","required":true}],"pathRules":[{"kind":"exact","path":"report.md"}],"evidenceTtl":"24h"}],
   "integrationPolicies":[{"id":"integration-default","strategy":"merge"}],
   "maxOutputBytes":65536,"pollInterval":"250ms",
   "forge":{"apiBaseUrl":"https://api.github.com","owner":"comisai","repository":"product-api","remoteUrl":"https://github.com/comisai/product-api.git","readCredentialFile":"/private/config/forge-read.credential","pushCredentialFile":"/private/config/forge-push.credential","credentialDirectory":"/private/run/forge-credentials"}

@@ -35,6 +35,7 @@ type candidateProfileDocument struct {
 	ID            string                        `json:"id"`
 	LocalChecks   []candidateLocalCheckDocument `json:"localChecks"`
 	ForgeChecks   []validation.ForgeCheck       `json:"forgeChecks"`
+	PathRules     []validation.PathRule         `json:"pathRules"`
 	ArtifactRules []validation.ArtifactRule     `json:"artifactRules"`
 	EvidenceTTL   string                        `json:"evidenceTtl"`
 }
@@ -100,7 +101,7 @@ func readCandidateComposition(path string) (*ValidationComposition, *ForgeCompos
 		}
 		profiles = append(profiles, validation.Profile{
 			ID: configured.ID, LocalChecks: checks, ForgeChecks: configured.ForgeChecks,
-			ArtifactRules: configured.ArtifactRules, EvidenceTTL: evidenceTTL,
+			PathRules: configured.PathRules, ArtifactRules: configured.ArtifactRules, EvidenceTTL: evidenceTTL,
 		})
 	}
 	if len(document.IntegrationPolicies) == 0 || len(document.IntegrationPolicies) > 64 {

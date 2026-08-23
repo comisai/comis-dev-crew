@@ -543,6 +543,7 @@ func installedServiceConfig(t *testing.T, root string) Config {
 			IntegrationPolicies: map[string]application.IntegrationStrategy{"integration-default": application.IntegrationMerge},
 			Profiles: []validation.Profile{{
 				ID: "required", EvidenceTTL: 10 * time.Minute,
+				PathRules: []validation.PathRule{{Kind: validation.PathRuleExact, Path: "report.md"}},
 				LocalChecks: []validation.LocalCheck{{
 					ID: "unit", ProgramID: "repo-check", Required: true, Timeout: time.Minute,
 					Arguments: []validation.ArgumentTemplate{{Kind: validation.ArgumentLiteral, Value: "--version"}},

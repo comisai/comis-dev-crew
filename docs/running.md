@@ -140,8 +140,11 @@ provides a trustworthy task-settle signal.
 
 The candidate configuration is a strict owner-private JSON document. It fixes
 absolute validation programs, typed argument templates, local and forge checks,
-evidence lifetimes, output and polling bounds, one or more integration policies,
-and one GitHub route. Each integration policy has a unique opaque `id` and one
+candidate path rules, evidence lifetimes, output and polling bounds, one or more
+integration policies, and one GitHub route. Every profile declares between one
+and 63 `localChecks` and between one and 64 `pathRules`; each path rule has the
+closed kind `exact` or `prefix` and a canonical repository-relative `path`. A
+prefix ends in `/`. Each integration policy has a unique opaque `id` and one
 closed `strategy`: `merge`, `rebase`, or `cherry_pick`. An initiative names only
 the policy ID; the installed service resolves the Git strategy from this immutable
 document and refuses missing, duplicate, or unknown policy entries. The route
@@ -180,11 +183,23 @@ local checks, it seals that drift afterward. While the observed head and
 cleanliness are unchanged, later polls reuse the sealed unknown judgment instead
 of rerunning validation processes.
 
-Threat posture: the repository-wide worktree inventory has a dedicated 1 MiB
-machine-output ceiling because its valid size grows with retained task worktrees.
-Individual Git fact reads remain capped at 8 KiB. This keeps a legitimate larger
-inventory from disabling candidate supervision while still refusing unbounded or
-malformed Git output before it can influence task authority.
+Before any local validation command runs, the supervisor reads the bounded Git
+diff from the task's durable base through the exact candidate head. Every
+committed path must match the profile's reviewed path rules; a rename must match
+on both its previous and current path. A disallowed path records a conclusive
+failed validation receipt and fails only that task. A truncated file inventory,
+inconsistent totals or identity, or unexpected uncommitted work records an
+unknown receipt and leaves the task validating. Neither outcome inspects a scout
+artifact, calls the forge, or publishes candidate evidence for delivery.
+
+Threat posture: worker prompt instructions are not path authority. The immutable
+profile is the only candidate-path allowlist, and the service fails closed before
+side effects when bounded Git evidence cannot prove the complete changed-path
+set. The repository-wide worktree inventory has a dedicated 1 MiB machine-output
+ceiling because its valid size grows with retained task worktrees. Individual Git
+fact reads remain capped at 8 KiB. This keeps a legitimate larger inventory from
+disabling candidate supervision while still refusing unbounded or malformed Git
+output before it can influence task authority.
 
 Diagnostic reads report validation as `unknown` when a task is already
 `validating` but no durable judgment or active validation process can be found;

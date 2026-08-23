@@ -4,6 +4,7 @@ package validation
 
 import (
 	"errors"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -15,6 +16,11 @@ import (
 const (
 	maximumCheckTimeout = 2 * time.Hour
 	maximumEvidenceTTL  = 30 * 24 * time.Hour
+	maximumLocalChecks  = 63
+	maximumPathRules    = 64
+
+	// CandidatePathPolicyCheckID is reserved for the service-owned Git path check.
+	CandidatePathPolicyCheckID = "candidate-path-policy"
 )
 
 var (
@@ -46,6 +52,20 @@ const (
 type ArtifactKind string
 
 const ArtifactRegularFile ArtifactKind = "regular_file"
+
+// PathRuleKind is the closed candidate-path policy vocabulary.
+type PathRuleKind string
+
+const (
+	PathRuleExact  PathRuleKind = "exact"
+	PathRulePrefix PathRuleKind = "prefix"
+)
+
+// PathRule allows either one exact repository-relative path or one directory prefix.
+type PathRule struct {
+	Kind PathRuleKind `json:"kind"`
+	Path string       `json:"path"`
+}
 
 // Program maps one opaque reviewed identity to an absolute executable.
 type Program struct {
@@ -87,6 +107,7 @@ type Profile struct {
 	ID            string
 	LocalChecks   []LocalCheck
 	ForgeChecks   []ForgeCheck
+	PathRules     []PathRule
 	ArtifactRules []ArtifactRule
 	EvidenceTTL   time.Duration
 }
@@ -152,12 +173,15 @@ func NewCatalog(config CatalogConfig) (*Catalog, error) {
 
 func validateProfile(profile Profile, programs map[string]Program) error {
 	if !identifierPattern.MatchString(profile.ID) || len(profile.LocalChecks) == 0 ||
+		len(profile.LocalChecks) > maximumLocalChecks || len(profile.PathRules) == 0 ||
+		len(profile.PathRules) > maximumPathRules ||
 		profile.EvidenceTTL <= 0 || profile.EvidenceTTL > maximumEvidenceTTL {
 		return errors.New("create validation catalog: profile is invalid")
 	}
 	checks := make(map[string]struct{}, len(profile.LocalChecks))
 	for _, check := range profile.LocalChecks {
-		if !identifierPattern.MatchString(check.ID) || check.Timeout <= 0 || check.Timeout > maximumCheckTimeout ||
+		if !identifierPattern.MatchString(check.ID) || check.ID == CandidatePathPolicyCheckID ||
+			check.Timeout <= 0 || check.Timeout > maximumCheckTimeout ||
 			len(check.Arguments) == 0 {
 			return errors.New("create validation catalog: local check is invalid")
 		}
@@ -173,6 +197,17 @@ func validateProfile(profile Profile, programs map[string]Program) error {
 				return errors.New("create validation catalog: argument template is invalid")
 			}
 		}
+	}
+	pathRules := make(map[string]struct{}, len(profile.PathRules))
+	for _, rule := range profile.PathRules {
+		if !validPathRule(rule) {
+			return errors.New("create validation catalog: candidate path rule is invalid")
+		}
+		identity := string(rule.Kind) + "\x00" + rule.Path
+		if _, exists := pathRules[identity]; exists {
+			return errors.New("create validation catalog: candidate path rule is duplicated")
+		}
+		pathRules[identity] = struct{}{}
 	}
 	forgeNames := make(map[string]struct{}, len(profile.ForgeChecks))
 	for _, check := range profile.ForgeChecks {
@@ -194,6 +229,58 @@ func validateProfile(profile Profile, programs map[string]Program) error {
 		}
 	}
 	return nil
+}
+
+func validPathRule(rule PathRule) bool {
+	switch rule.Kind {
+	case PathRuleExact:
+		return validRepositoryPath(rule.Path) && !strings.HasSuffix(rule.Path, "/")
+	case PathRulePrefix:
+		return len(rule.Path) <= 256 && strings.HasSuffix(rule.Path, "/") &&
+			validRepositoryPath(strings.TrimSuffix(rule.Path, "/"))
+	default:
+		return false
+	}
+}
+
+func validRepositoryPath(candidate string) bool {
+	if candidate == "" || len(candidate) > 256 || strings.HasPrefix(candidate, "/") ||
+		path.Clean(candidate) != candidate || candidate == "." || strings.Contains(candidate, "\\") {
+		return false
+	}
+	for _, character := range candidate {
+		if character < 0x20 || character == 0x7f {
+			return false
+		}
+	}
+	for _, component := range strings.Split(candidate, "/") {
+		if component == "" || component == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+// AllowsPath reports whether an exact repository-relative file path is reviewed.
+func (profile Profile) AllowsPath(candidate string) bool {
+	if !validRepositoryPath(candidate) || strings.HasSuffix(candidate, "/") {
+		return false
+	}
+	for _, rule := range profile.PathRules {
+		switch rule.Kind {
+		case PathRuleExact:
+			if candidate == rule.Path {
+				return true
+			}
+		case PathRulePrefix:
+			if strings.HasPrefix(candidate, rule.Path) {
+				return true
+			}
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 func validArtifactPath(path string) bool {
@@ -345,6 +432,7 @@ func cloneProfile(profile Profile) Profile {
 		cloned.LocalChecks[index].Arguments = append([]ArgumentTemplate(nil), profile.LocalChecks[index].Arguments...)
 	}
 	cloned.ForgeChecks = append([]ForgeCheck(nil), profile.ForgeChecks...)
+	cloned.PathRules = append([]PathRule(nil), profile.PathRules...)
 	cloned.ArtifactRules = append([]ArtifactRule(nil), profile.ArtifactRules...)
 	return cloned
 }

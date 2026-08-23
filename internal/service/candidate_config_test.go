@@ -23,6 +23,7 @@ func TestReadCandidateComposition_ParsesStrictReviewedPolicyAndForgeRoute(t *tes
     "id":"required",
     "localChecks":[{"id":"unit","programId":"repo-check","arguments":[{"kind":"literal","value":"--version"}],"timeout":"2m","required":true}],
     "forgeChecks":[{"name":"ci/unit","required":true}],
+	"pathRules":[{"kind":"exact","path":"report.md"}],
     "artifactRules":[{"kind":"regular_file","relativePath":"report.md","mediaType":"text/markdown","maxBytes":16384}],
     "evidenceTtl":"24h"
   }],
@@ -51,6 +52,7 @@ func TestReadCandidateComposition_ParsesStrictReviewedPolicyAndForgeRoute(t *tes
 	}
 	profile := validationConfig.Profiles[0]
 	if profile.EvidenceTTL != 24*time.Hour || profile.LocalChecks[0].Timeout != 2*time.Minute ||
+		len(profile.PathRules) != 1 || !profile.AllowsPath("report.md") ||
 		profile.ArtifactRules[0].Kind != validation.ArtifactRegularFile {
 		t.Fatalf("reviewed profile = %#v", profile)
 	}

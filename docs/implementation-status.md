@@ -306,6 +306,8 @@ body is unbounded worker-authored content and no surface asks for one. A binary
 change is marked rather than counted as zero, a rename keeps both paths, a change
 set larger than the read bounds reports its listing as truncated, and a path
 carrying control characters or invalid encoding is refused rather than escaped.
+The candidate supervisor consumes this same port as machine evidence rather than
+trusting a worker's prose description of which files changed.
 
 ## Comis adapter
 
@@ -393,6 +395,11 @@ precondition; terminal evidence remains mandatory for unknown-task recovery and
 cannot be weakened by normal validation. The supervisor derives every Git identity
 from the durable preparation, requires the promoted snapshot to match a fresh host
 inspection, and runs no validation or forge operation when those authorities differ.
+It then compares the complete bounded base-to-head diff with the immutable exact
+and prefix path rules in the resolved validation profile. Both sides of a rename
+must be allowed. A disallowed path fails only that task before local commands,
+artifact inspection, forge activity, or evidence publication; truncated or
+internally inconsistent diff evidence remains unknown and cannot authorize delivery.
 A task without an accepted candidate report still requires the explicit unknown-task
 recovery flow.
 

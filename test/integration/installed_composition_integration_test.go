@@ -492,6 +492,7 @@ func installedCandidateConfig(t *testing.T, root string) string {
 				"arguments": []map[string]any{{"kind": "literal", "value": "--version"}},
 			}},
 			"forgeChecks": []map[string]any{{"name": "ci/unit", "required": true}},
+			"pathRules":   []map[string]any{{"kind": "exact", "path": "report.md"}},
 			"artifactRules": []map[string]any{{
 				"kind": "regular_file", "relativePath": "report.md", "mediaType": "text/markdown", "maxBytes": 16384,
 			}},

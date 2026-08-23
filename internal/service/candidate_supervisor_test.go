@@ -41,7 +41,8 @@ func TestCandidateSupervisor_BuildsShipEvidenceFromChecksAndRereadForgeTruth(t *
 	bundle := fixture.store.evidence.Bundle()
 	if bundle.TaskHandle != fixture.task.Handle || bundle.RepositoryIdentity != fixture.task.RepositoryID ||
 		bundle.HeadRevision != fixture.snapshot.HeadRevision || bundle.ForgeEvidence == nil || bundle.ReportArtifact != nil ||
-		len(bundle.ValidationReceipts) != 1 || bundle.ValidationReceipts[0].Conclusion != domain.CheckPassed {
+		len(bundle.ValidationReceipts) != 2 || bundle.ValidationReceipts[0].CheckID != validation.CandidatePathPolicyCheckID ||
+		bundle.ValidationReceipts[1].CheckID != "unit" {
 		t.Fatalf("sealed ship evidence = %#v", bundle)
 	}
 	if fixture.pullRequests.request.HeadRevision != fixture.snapshot.HeadRevision ||
@@ -505,7 +506,7 @@ func newCandidateSupervisorFixture(t *testing.T, shape domain.TaskShape) *candid
 	worktree := "/approved/worktrees/task-candidate"
 	head := strings.Repeat("b", 40)
 	profile := validation.Profile{
-		ID: task.ValidationProfile,
+		ID: task.ValidationProfile, PathRules: []validation.PathRule{{Kind: validation.PathRuleExact, Path: "report.md"}},
 		LocalChecks: []validation.LocalCheck{{
 			ID: "unit", ProgramID: "go-test", Required: true, Timeout: time.Minute,
 			Arguments: []validation.ArgumentTemplate{{Kind: validation.ArgumentLiteral, Value: "test"}},
