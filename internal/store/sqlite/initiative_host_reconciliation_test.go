@@ -69,6 +69,15 @@ func TestInitiativeHostRecoveryDetectsOnlyUndeliveredMemberEgress(t *testing.T) 
 	if pending, err := store.InitiativeHasPendingComisEgress(ctx, initiative.Handle); err != nil || !pending {
 		t.Fatalf("InitiativeHasPendingComisEgress(pending) = %t, %v", pending, err)
 	}
+	if _, err := store.db.ExecContext(ctx, "UPDATE tasks SET state = 'cancelled' WHERE handle = ?", tasks[0].Handle); err != nil {
+		t.Fatalf("cancel member with preserved egress: %v", err)
+	}
+	if pending, err := store.InitiativeHasPendingComisEgress(ctx, initiative.Handle); err != nil || pending {
+		t.Fatalf("InitiativeHasPendingComisEgress(non-forwardable) = %t, %v", pending, err)
+	}
+	if _, err := store.db.ExecContext(ctx, "UPDATE tasks SET state = 'ready' WHERE handle = ?", tasks[0].Handle); err != nil {
+		t.Fatalf("restore member state: %v", err)
+	}
 	if _, err := store.db.ExecContext(ctx,
 		"UPDATE comis_evidence_outbox SET delivered_at = ? WHERE operation_id = ?",
 		formatTime(now.Add(time.Second)), "put-evidence-host-recovery",
