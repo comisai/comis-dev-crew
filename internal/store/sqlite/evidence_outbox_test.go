@@ -141,6 +141,66 @@ func TestComisEvidenceOutbox_CancelledCandidateDoesNotBlockLaterPublications(t *
 	}
 }
 
+func TestComisEvidenceOutbox_UnresolvedCandidateDoesNotBlockLaterPublications(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "unresolved-candidate.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	first := candidateEvidenceTask(t, "task-evidence-unresolved")
+	second := candidateEvidenceTask(t, "task-evidence-after-unresolved")
+	for _, task := range []domain.Task{first, second} {
+		if err := store.CreateTask(context.Background(), task); err != nil {
+			t.Fatalf("CreateTask(%s) error = %v", task.Handle, err)
+		}
+	}
+
+	firstEvidence := candidateEvidence(t, first, strings.Repeat("b", 40))
+	firstPublications := candidateEvidencePublications(t, first, firstEvidence)
+	firstJudgedAt := first.UpdatedAt.Add(5 * time.Minute)
+	if _, judgment, err := store.CommitCandidateEvidence(
+		context.Background(), first.Handle, firstEvidence, []string{"unit"}, []string{"ci/unit"},
+		firstJudgedAt, firstPublications,
+	); err != nil || judgment.Outcome != domain.CandidateAccepted {
+		t.Fatalf("CommitCandidateEvidence(first) = %#v, %v", judgment, err)
+	}
+
+	secondEvidence := candidateEvidence(t, second, strings.Repeat("c", 40))
+	secondPublications := candidateEvidencePublications(t, second, secondEvidence)
+	for index := range secondPublications {
+		secondPublications[index].OperationID += "-after-unresolved"
+		secondPublications[index].EvidenceRef += "-after-unresolved"
+	}
+	if _, judgment, err := store.CommitCandidateEvidence(
+		context.Background(), second.Handle, secondEvidence, []string{"unit"}, []string{"ci/unit"},
+		firstJudgedAt.Add(time.Minute), secondPublications,
+	); err != nil || judgment.Outcome != domain.CandidateAccepted {
+		t.Fatalf("CommitCandidateEvidence(second) = %#v, %v", judgment, err)
+	}
+
+	if _, err := store.db.Exec(`UPDATE tasks SET state = 'unknown' WHERE handle = ?`, first.Handle); err != nil {
+		t.Fatalf("mark first candidate unresolved: %v", err)
+	}
+
+	next, found, err := store.NextComisEvidence(context.Background())
+	if err != nil || !found {
+		t.Fatalf("NextComisEvidence() = %#v, %t, %v", next, found, err)
+	}
+	if next.TaskHandle != second.Handle || next.OperationID != secondPublications[0].OperationID {
+		t.Fatalf("NextComisEvidence() = %#v, want later task %q", next, second.Handle)
+	}
+
+	var retained int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM comis_evidence_outbox
+		WHERE task_handle = ? AND delivered_at IS NULL`, first.Handle).Scan(&retained); err != nil {
+		t.Fatalf("count retained unresolved publications: %v", err)
+	}
+	if retained != len(firstPublications) {
+		t.Fatalf("retained unresolved publications = %d, want %d", retained, len(firstPublications))
+	}
+}
+
 func TestComisEvidenceOutbox_CompletesReconciledCandidateWithoutWorkerReport(t *testing.T) {
 	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "reconciled.db"))
 	if err != nil {
