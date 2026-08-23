@@ -151,6 +151,28 @@ func TestIntegrationReservationPreservesDurablePreconditionFailure(t *testing.T)
 	}
 }
 
+func TestIntegrationPolicyLookupClassifiesAMissingInitiativeAsAPrecondition(t *testing.T) {
+	store := &integrationStore{policyErr: fmt.Errorf("read policy: %w", ErrNotFound)}
+	adapter := &integrationAdapter{}
+	integrations, err := NewIntegrations(IntegrationConfig{
+		Store: store, Adapter: adapter,
+		Policies: func(string) (IntegrationStrategy, error) { return IntegrationMerge, nil },
+		Clock:    func() time.Time { return time.Unix(1_800_000_000, 0).UTC() },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = integrations.ApplyCandidate(context.Background(), integrationCommand())
+	var failure *domain.Failure
+	if !errors.As(err, &failure) || failure.Code != domain.ErrorPrecondition || failure.Retryable {
+		t.Fatalf("ApplyCandidate(missing initiative) error = %#v, want non-retryable precondition", err)
+	}
+	if len(adapter.requests) != 0 || store.sequence != "policy" {
+		t.Fatalf("missing initiative crossed integration boundary: requests=%d sequence=%q", len(adapter.requests), store.sequence)
+	}
+}
+
 func TestIntegrationDuplicateReservationNamesTheExistingOperation(t *testing.T) {
 	at := time.Unix(1_800_000_000, 0).UTC()
 	store := &integrationStore{
