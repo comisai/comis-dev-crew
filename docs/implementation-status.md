@@ -892,6 +892,21 @@ binding are reconstructed after a service restart only when the recorded runtime
 directory, socket, and relay identities still match. Ambiguous ownership preserves
 the filesystem objects, moves an affected live task to `unknown`, and exposes a
 closed recovery explanation instead of granting cleanup or relaunch authority.
+Successful attachment retirement first moves the exact recorded inode into a
+fresh owner-only isolation directory, verifies the pinned identity again, removes
+only the authorized socket, single-link record, generation hard link, or empty
+task directory, and synchronizes both namespaces. A completed restart therefore
+does not accumulate successful `.devcrew-remove-*` namespaces. Interrupted or
+ambiguous retirement remains isolated and is reconciled by exact identity on the
+next attempt.
+
+Threat posture: cleanup never recursively walks or removes a task directory and
+never follows a link. Generation-link removal requires the durable generation
+directory, anchor inode, task link, link count, mode, and owner-private namespace
+to agree. An unexpected child, special node, replacement, unsafe mode, identity
+change, or synchronization failure preserves the isolated object and refuses
+cleanup. This bounds restart resource use without widening worker or model
+authority and without converting an ownership ambiguity into deletion authority.
 The authenticated Comis control connection starts only after this attachment
 recovery finishes, so host reconciliation observes the reconstructed socket
 identity rather than an inode that the same startup is about to replace.

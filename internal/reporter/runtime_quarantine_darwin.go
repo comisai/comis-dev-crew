@@ -106,6 +106,38 @@ func preserveRuntimeRemovalPin(pin *runtimeRemovalPin, kind RuntimePathKind) err
 	return unix.Close(pin.descriptor)
 }
 
+func removeStrandedRuntimeRemovalPin(
+	directoryDescriptor int,
+	name string,
+	expected RuntimeSocketIdentity,
+	kind RuntimePathKind,
+	permissions os.FileMode,
+) error {
+	if kind != RuntimePathSocket {
+		return nil
+	}
+	anchor := runtimeRemovalAnchorName(name, expected)
+	var stat unix.Stat_t
+	if err := unix.Fstatat(directoryDescriptor, anchor, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return nil
+		}
+		return errors.New("runtime path removal pin is unavailable")
+	}
+	identity, err := runtimeSocketStatIdentity(stat)
+	if err != nil || !runtimeSocketIdentityMatches(identity, expected) ||
+		!runtimePathModeMatches(uint32(stat.Mode), kind, permissions) || stat.Nlink < 1 {
+		return ErrRuntimePathIdentity
+	}
+	if err := unix.Unlinkat(directoryDescriptor, anchor, 0); err != nil {
+		return errors.New("runtime path removal pin cannot be retired")
+	}
+	if err := unix.Fsync(directoryDescriptor); err != nil {
+		return errors.New("runtime path removal pin retirement cannot be synchronized")
+	}
+	return nil
+}
+
 func runtimeRemovalAnchorName(name string, expected RuntimeSocketIdentity) string {
 	encoded := runtimePathQuarantineName(name, expected, RuntimePathSocket, 0o600)
 	digest := sha256.Sum256([]byte(encoded))

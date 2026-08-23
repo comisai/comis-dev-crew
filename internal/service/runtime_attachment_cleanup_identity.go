@@ -126,6 +126,12 @@ func openRecordedTaskRuntimeDirectory(
 			return nil, false, emptyErr
 		}
 		directoryBound := record.Stage == runtimeAttachmentDirectoryBound && (directoryEmpty || generationMatches)
+		generationAvailable := generationMatches || directoryEmpty && runtimeAttachmentGenerationAvailable(
+			runtimeRootDescriptor, record.Generation, record.GenerationID,
+		)
+		retirementEmpty := directoryEmpty && generationAvailable &&
+			(record.Stage == runtimeAttachmentCreating && !record.Socket.Valid() ||
+				record.Stage == runtimeAttachmentReleasing)
 		canonicalSocketRequired := name == taskHandle &&
 			(record.Stage == runtimeAttachmentActive || record.Stage == runtimeAttachmentReleaseIntent)
 		isolatedSocketRequired := name == runtimeAttachmentReleaseName(taskHandle) &&
@@ -136,7 +142,7 @@ func openRecordedTaskRuntimeDirectory(
 			return nil, false, socketErr
 		}
 		if !runtimeAttachmentTransitionDirectoryMatches(identity, record.Task) ||
-			!directoryBound && !generationMatches ||
+			!directoryBound && !retirementEmpty && !generationMatches ||
 			(canonicalSocketRequired || isolatedSocketRequired) &&
 				!socketMatches {
 			_ = unix.Close(descriptor)
@@ -197,6 +203,11 @@ func removePinnedTaskRuntimeDirectory(
 		if !directoryEmpty && !generationMatches {
 			return runtimeAttachmentOwnershipUnproven("task runtime creation directory is ambiguous; path preserved")
 		}
+		if generationMatches {
+			if err := retirePinnedRuntimeAttachmentGenerationLink(pinned, record); err != nil {
+				return err
+			}
+		}
 		current, err := runtimeAttachmentDescriptorIdentity(pinned.taskDescriptor)
 		if err != nil {
 			return err
@@ -216,8 +227,40 @@ func removePinnedTaskRuntimeDirectory(
 		if err != nil && !errors.Is(err, errRuntimeAttachmentGenerationDiffers) {
 			return err
 		}
-		if !generationMatches {
+		linkAbsent, absentErr := inspectRuntimeAttachmentPathAbsent(
+			pinned.taskDescriptor, runtimeAttachmentGenerationLink,
+		)
+		if absentErr != nil {
+			return absentErr
+		}
+		if !generationMatches && !linkAbsent {
 			return runtimeAttachmentOwnershipUnproven("task runtime creation directory is ambiguous; path preserved")
+		}
+		if !generationMatches {
+			if !runtimeAttachmentGenerationAvailable(
+				pinned.runtimeRootDescriptor, record.Generation, record.GenerationID,
+			) {
+				return runtimeAttachmentOwnershipUnproven(
+					"task runtime creation generation is unavailable; path preserved",
+				)
+			}
+			current, err := runtimeAttachmentDescriptorIdentity(pinned.taskDescriptor)
+			if err != nil {
+				return err
+			}
+			if !runtimeAttachmentTransitionDirectoryMatches(current, record.Task) {
+				return runtimeAttachmentOwnershipUnproven(
+					"task runtime creation directory identity differs; path preserved",
+				)
+			}
+		}
+		if err := retireUncommittedRuntimeAttachmentSocket(pinned); err != nil {
+			return err
+		}
+		if generationMatches {
+			if err := retirePinnedRuntimeAttachmentGenerationLink(pinned, record); err != nil {
+				return err
+			}
 		}
 		current, err := runtimeAttachmentDescriptorIdentity(pinned.taskDescriptor)
 		if err != nil {
@@ -257,6 +300,9 @@ func removePinnedTaskRuntimeDirectory(
 	if !socketAbsent {
 		return runtimeAttachmentOwnershipUnproven("task runtime attachment replacement was preserved")
 	}
+	if err := retirePinnedRuntimeAttachmentGenerationLink(pinned, record); err != nil {
+		return err
+	}
 	current, err := stagePinnedRuntimeAttachmentDirectory(pinned, record)
 	if err != nil {
 		return err
@@ -272,6 +318,76 @@ func removePinnedTaskRuntimeDirectory(
 	}
 	if !directoryAbsent {
 		return runtimeAttachmentOwnershipUnproven("task runtime directory replacement was preserved")
+	}
+	return nil
+}
+
+func retireUncommittedRuntimeAttachmentSocket(pinned *pinnedTaskRuntimeDirectory) error {
+	identity, mode, found, err := readPinnedRuntimeSocketIdentity(pinned.taskDescriptor)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	if mode&unix.S_IFMT != unix.S_IFSOCK || mode&0o777 != 0o600 {
+		return runtimeAttachmentOwnershipUnproven(
+			"uncommitted runtime attachment is unsafe; path preserved",
+		)
+	}
+	if err := reporter.QuarantineRuntimePath(
+		pinned.taskDescriptor, "attachment.sock", identity, reporter.RuntimePathSocket, 0o600,
+	); err != nil {
+		return classifyRuntimeAttachmentCleanupPathError("uncommitted runtime attachment cannot be removed", err)
+	}
+	return nil
+}
+
+func retirePinnedRuntimeAttachmentGenerationLink(
+	pinned *pinnedTaskRuntimeDirectory,
+	record runtimeAttachmentIdentityRecord,
+) error {
+	absent, err := inspectRuntimeAttachmentPathAbsent(pinned.taskDescriptor, runtimeAttachmentGenerationLink)
+	if err != nil {
+		return err
+	}
+	if absent {
+		return nil
+	}
+	generationDescriptor, anchorDescriptor, anchorStat, err := pinRuntimeAttachmentGeneration(
+		pinned.runtimeRootDescriptor, record.Generation, record.GenerationID,
+	)
+	if err != nil {
+		return err
+	}
+	var linkStat unix.Stat_t
+	linkErr := unix.Fstatat(
+		pinned.taskDescriptor, runtimeAttachmentGenerationLink, &linkStat, unix.AT_SYMLINK_NOFOLLOW,
+	)
+	linkIdentity, identityErr := runtimeAttachmentStatIdentity(linkStat)
+	if identityErr == nil {
+		birthSec, birthNsec := runtimeAttachmentChildBirthTime(
+			pinned.taskDescriptor, runtimeAttachmentGenerationLink,
+		)
+		if birthSec != 0 || birthNsec != 0 {
+			linkIdentity.BirthSec = birthSec
+			linkIdentity.BirthNsec = birthNsec
+		}
+	}
+	closeErr := errors.Join(unix.Close(anchorDescriptor), unix.Close(generationDescriptor))
+	if linkErr != nil || identityErr != nil || closeErr != nil {
+		return errors.New("runtime attachment generation link is unavailable")
+	}
+	if !runtimeAttachmentStatsSameNode(anchorStat, linkStat) ||
+		linkStat.Mode&unix.S_IFMT != unix.S_IFREG || linkStat.Mode&0o777 != 0o600 ||
+		anchorStat.Nlink < 2 || linkStat.Nlink < 2 {
+		return runtimeAttachmentOwnershipUnproven("runtime attachment generation link differs; path preserved")
+	}
+	if err := reporter.QuarantineRuntimePath(
+		pinned.taskDescriptor, runtimeAttachmentGenerationLink, linkIdentity,
+		reporter.RuntimePathLinkedRegular, 0o600,
+	); err != nil {
+		return classifyRuntimeAttachmentCleanupPathError("runtime attachment generation link cannot be removed", err)
 	}
 	return nil
 }

@@ -58,7 +58,7 @@ func TestQuarantineRuntimePathPreservesConcurrentReplacement(t *testing.T) {
 	}
 }
 
-func TestQuarantineRuntimePathKeepsPinnedTargetOutOfMutableUnlink(t *testing.T) {
+func TestQuarantineRuntimePathRetiresPinnedTargetAfterIdentityVerification(t *testing.T) {
 	root := boundaryRuntimeDirectory(t)
 	socketPath := filepath.Join(root, "attachment.sock")
 	original := listenRuntimeQuarantineSocket(t, socketPath)
@@ -71,10 +71,8 @@ func TestQuarantineRuntimePathKeepsPinnedTargetOutOfMutableUnlink(t *testing.T) 
 		t.Fatalf("QuarantineRuntimePath(preserved target) error = %v", err)
 	}
 	isolationName := runtimePathQuarantineName(filepath.Base(socketPath), expected, RuntimePathSocket, 0o600)
-	isolated := filepath.Join(root, isolationName, runtimePathIsolationTarget)
-	current, statErr := os.Lstat(isolated)
-	if statErr != nil || current.Mode()&os.ModeSocket == 0 {
-		t.Fatalf("pinned target was not preserved in quarantine: %#v, %v", current, statErr)
+	if _, statErr := os.Lstat(filepath.Join(root, isolationName)); !os.IsNotExist(statErr) {
+		t.Fatalf("retired socket isolation error = %v, want absent", statErr)
 	}
 	if _, statErr := os.Lstat(socketPath); !os.IsNotExist(statErr) {
 		t.Fatalf("authoritative socket path error = %v, want absent", statErr)
@@ -99,6 +97,157 @@ func TestQuarantineRuntimePathRetiresSuccessfulIsolationNamespace(t *testing.T) 
 	}
 	if _, err := os.Lstat(filepath.Join(root, isolationName)); !os.IsNotExist(err) {
 		t.Fatalf("successful isolation namespace error = %v, want absent", err)
+	}
+}
+
+func TestQuarantineRuntimePathDoesNotRetainIsolationForMissingTarget(t *testing.T) {
+	root := boundaryRuntimeDirectory(t)
+	target := filepath.Join(root, "record")
+	if err := os.WriteFile(target, []byte("removed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expected := runtimePathTestIdentity(t, target)
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	directory := runtimePathTestDirectoryDescriptor(t, root)
+	defer unix.Close(directory)
+	isolationName := runtimePathQuarantineName("record", expected, RuntimePathRegular, 0o600)
+	err := QuarantineRuntimePath(directory, "record", expected, RuntimePathRegular, 0o600)
+	if !errors.Is(err, ErrRuntimePathMissing) {
+		t.Fatalf("QuarantineRuntimePath(missing target) error = %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, isolationName)); !os.IsNotExist(err) {
+		t.Fatalf("missing-target isolation error = %v, want absent", err)
+	}
+}
+
+func TestQuarantineRuntimePathUsesPrecreatedEmptyIsolation(t *testing.T) {
+	root := boundaryRuntimeDirectory(t)
+	target := filepath.Join(root, "record")
+	if err := os.WriteFile(target, []byte("retire"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expected := runtimePathTestIdentity(t, target)
+	isolationName := runtimePathQuarantineName("record", expected, RuntimePathRegular, 0o600)
+	if err := os.Mkdir(filepath.Join(root, isolationName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	directory := runtimePathTestDirectoryDescriptor(t, root)
+	defer unix.Close(directory)
+	if err := QuarantineRuntimePath(directory, "record", expected, RuntimePathRegular, 0o600); err != nil {
+		t.Fatalf("QuarantineRuntimePath(precreated isolation) error = %v", err)
+	}
+	if _, err := os.Lstat(target); !os.IsNotExist(err) {
+		t.Fatalf("precreated-isolation target error = %v, want absent", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, isolationName)); !os.IsNotExist(err) {
+		t.Fatalf("precreated isolation error = %v, want absent", err)
+	}
+}
+
+func TestReconcileIsolatedRuntimePathPreservesUnexpectedEntryWithoutTarget(t *testing.T) {
+	root := boundaryRuntimeDirectory(t)
+	original := filepath.Join(root, "record")
+	if err := os.WriteFile(original, []byte("removed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expected := runtimePathTestIdentity(t, original)
+	if err := os.Remove(original); err != nil {
+		t.Fatal(err)
+	}
+	isolationName := "isolation-unexpected"
+	isolationRoot := filepath.Join(root, isolationName)
+	if err := os.Mkdir(isolationRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	unexpected := filepath.Join(isolationRoot, "unexpected")
+	if err := os.WriteFile(unexpected, []byte("preserve"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	directory := runtimePathTestDirectoryDescriptor(t, root)
+	defer unix.Close(directory)
+	isolation := runtimePathTestDirectoryDescriptor(t, isolationRoot)
+	reconciled, err := reconcileIsolatedRuntimePath(
+		directory, isolation, isolationName, filepath.Base(original), expected, RuntimePathRegular, 0o600,
+	)
+	if !reconciled || !errors.Is(err, ErrRuntimePathIdentity) {
+		t.Fatalf("reconcileIsolatedRuntimePath(unexpected entry) = %t, %v", reconciled, err)
+	}
+	if contents, err := os.ReadFile(unexpected); err != nil || string(contents) != "preserve" {
+		t.Fatalf("unexpected isolation entry = %q, %v", contents, err)
+	}
+}
+
+func TestQuarantineRuntimePathRetiresOnlyAuthorizedRegularLink(t *testing.T) {
+	root := boundaryRuntimeDirectory(t)
+	anchor := filepath.Join(root, "generation-anchor")
+	linked := filepath.Join(root, "generation-link")
+	if err := os.WriteFile(anchor, []byte("generation"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(anchor, linked); err != nil {
+		t.Fatal(err)
+	}
+	expected := runtimePathTestIdentity(t, linked)
+	directory := runtimePathTestDirectoryDescriptor(t, root)
+	defer unix.Close(directory)
+	if err := QuarantineRuntimePath(
+		directory, filepath.Base(linked), expected, RuntimePathLinkedRegular, 0o600,
+	); err != nil {
+		t.Fatalf("QuarantineRuntimePath(linked retirement) error = %v", err)
+	}
+	if _, err := os.Lstat(linked); !os.IsNotExist(err) {
+		t.Fatalf("retired regular link error = %v, want absent", err)
+	}
+	if contents, err := os.ReadFile(anchor); err != nil || string(contents) != "generation" {
+		t.Fatalf("generation anchor = %q, %v", contents, err)
+	}
+}
+
+func TestQuarantineRuntimePathRejectsSingleLinkAsLinkedAuthority(t *testing.T) {
+	root := boundaryRuntimeDirectory(t)
+	target := filepath.Join(root, "generation-link")
+	if err := os.WriteFile(target, []byte("preserve"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expected := runtimePathTestIdentity(t, target)
+	directory := runtimePathTestDirectoryDescriptor(t, root)
+	defer unix.Close(directory)
+	if err := QuarantineRuntimePath(
+		directory, filepath.Base(target), expected, RuntimePathLinkedRegular, 0o600,
+	); !errors.Is(err, ErrRuntimePathIdentity) {
+		t.Fatalf("QuarantineRuntimePath(single link authority) error = %v", err)
+	}
+	if contents, err := os.ReadFile(target); err != nil || string(contents) != "preserve" {
+		t.Fatalf("single-link target = %q, %v", contents, err)
+	}
+}
+
+func TestQuarantineRuntimeDirectoryPreservesUnexpectedContents(t *testing.T) {
+	root := boundaryRuntimeDirectory(t)
+	taskPath := filepath.Join(root, "task-runtime-unexpected")
+	if err := os.Mkdir(taskPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(taskPath, "unexpected"), []byte("preserve"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expected := runtimePathTestIdentity(t, taskPath)
+	directory := runtimePathTestDirectoryDescriptor(t, root)
+	defer unix.Close(directory)
+	isolationName := runtimePathQuarantineName(
+		filepath.Base(taskPath), expected, RuntimePathDirectory, 0o700,
+	)
+	err := QuarantineRuntimePath(
+		directory, filepath.Base(taskPath), expected, RuntimePathDirectory, 0o700,
+	)
+	if !errors.Is(err, ErrRuntimePathIdentity) {
+		t.Fatalf("QuarantineRuntimePath(non-empty directory) error = %v", err)
+	}
+	preserved := filepath.Join(root, isolationName, runtimePathIsolationTarget, "unexpected")
+	if contents, readErr := os.ReadFile(preserved); readErr != nil || string(contents) != "preserve" {
+		t.Fatalf("unexpected isolated content = %q, %v", contents, readErr)
 	}
 }
 
@@ -247,8 +396,8 @@ func TestQuarantineRuntimePathReconcilesStrandedExactIdentity(t *testing.T) {
 	if _, err := os.Lstat(socketPath); !os.IsNotExist(err) {
 		t.Fatalf("original path after reconciliation error = %v, want not exist", err)
 	}
-	if info, err := os.Lstat(filepath.Join(quarantinePath, runtimePathIsolationTarget)); err != nil || info.Mode()&os.ModeSocket == 0 {
-		t.Fatalf("quarantined identity after reconciliation = %#v, %v", info, err)
+	if _, err := os.Lstat(quarantinePath); !os.IsNotExist(err) {
+		t.Fatalf("reconciled isolation error = %v, want absent", err)
 	}
 }
 

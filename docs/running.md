@@ -417,6 +417,13 @@ removal. If attachment ownership cannot be proven, the service preserves the
 runtime path and directs the operator to inspect that exact task attachment before
 retrying cleanup.
 
+A successful attachment recovery retires its temporary `.devcrew-remove-*`
+namespace after exact-inode verification. A retained namespace therefore records
+an interrupted or refused cleanup, not disposable scratch space. Do not remove one
+manually while the service is running; inspect the affected task and use the
+deployment's scoped runtime-root teardown only with explicit destructive
+authority.
+
 Cleanup refuses before release when an operator cleanup hold remains open. The
 error names the closed `open task hold` category and directs the operator to close
 that exact hold; it never includes the operator-authored hold reason. Dirty-worktree
