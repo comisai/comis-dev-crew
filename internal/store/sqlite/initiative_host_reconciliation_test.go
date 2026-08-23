@@ -66,6 +66,9 @@ func TestInitiativeHostRecoveryDetectsOnlyUndeliveredMemberEgress(t *testing.T) 
 	); err != nil {
 		t.Fatalf("seed pending Comis egress: %v", err)
 	}
+	if _, err := store.db.ExecContext(ctx, "UPDATE tasks SET state = 'candidate_complete' WHERE handle = ?", tasks[0].Handle); err != nil {
+		t.Fatalf("make candidate evidence forwardable: %v", err)
+	}
 	if pending, err := store.InitiativeHasPendingComisEgress(ctx, initiative.Handle); err != nil || !pending {
 		t.Fatalf("InitiativeHasPendingComisEgress(pending) = %t, %v", pending, err)
 	}
@@ -75,7 +78,13 @@ func TestInitiativeHostRecoveryDetectsOnlyUndeliveredMemberEgress(t *testing.T) 
 	if pending, err := store.InitiativeHasPendingComisEgress(ctx, initiative.Handle); err != nil || pending {
 		t.Fatalf("InitiativeHasPendingComisEgress(non-forwardable) = %t, %v", pending, err)
 	}
-	if _, err := store.db.ExecContext(ctx, "UPDATE tasks SET state = 'ready' WHERE handle = ?", tasks[0].Handle); err != nil {
+	if _, err := store.db.ExecContext(ctx, "UPDATE tasks SET state = 'unknown' WHERE handle = ?", tasks[0].Handle); err != nil {
+		t.Fatalf("make member unresolved: %v", err)
+	}
+	if pending, err := store.InitiativeHasPendingComisEgress(ctx, initiative.Handle); err != nil || pending {
+		t.Fatalf("InitiativeHasPendingComisEgress(unresolved) = %t, %v", pending, err)
+	}
+	if _, err := store.db.ExecContext(ctx, "UPDATE tasks SET state = 'candidate_complete' WHERE handle = ?", tasks[0].Handle); err != nil {
 		t.Fatalf("restore member state: %v", err)
 	}
 	if _, err := store.db.ExecContext(ctx,

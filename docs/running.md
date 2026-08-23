@@ -48,8 +48,9 @@ rollup. An initiative resumes only when the complete managed-run identity set an
 every host state count exactly match its durable task rows. If a member still has
 a currently forwardable durable Comis report or evidence publication, startup
 gives that temporary host lag the bounded reconciliation window and refreshes
-both sides. Preserved cancelled evidence does not grant retry time, and the
-service does not retry an unexplained mismatch. A mismatch after that window or a
+both sides. Preserved cancelled or unresolved-task evidence does not grant retry
+time or enter the global evidence forwarder, and the service does not retry an
+unexplained mismatch. A mismatch after that window or a
 bounded host-read failure keeps the initiative `unknown`; inspect the group,
 task, and pending-egress states rather than repeatedly restarting or manually
 changing the database. The `startup_group_reconciliation` failure line carries

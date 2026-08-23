@@ -38,7 +38,8 @@ func (store *Store) InitiativeHasPendingComisEgress(ctx context.Context, handle 
 		UNION ALL
 		SELECT 1 FROM comis_evidence_outbox o
 		JOIN tasks t ON t.handle = o.task_handle
-		WHERE o.task_handle = ? AND o.delivered_at IS NULL AND t.state <> 'cancelled'
+		WHERE o.task_handle = ? AND o.delivered_at IS NULL
+		  AND t.state IN ('candidate_complete', 'delivering', 'delivered')
 	)`
 	for _, taskHandle := range initiativeTaskHandles(initiative) {
 		var pending bool

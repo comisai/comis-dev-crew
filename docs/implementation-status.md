@@ -641,9 +641,11 @@ task rows. When a member has a currently forwardable durable Comis report or
 evidence publication, an older host projection can be a temporary egress lag.
 Only in that case, startup refreshes both local rows and the host rollup at the
 normal report poll interval within the existing per-group deadline. Preserved
-cancelled evidence and a candidate report held behind ineligible evidence do not
-grant retry time. A group with no forwardable egress receives no projection
-retry. Only an exact settled match may atomically
+cancelled or unresolved-task evidence and a candidate report held behind
+ineligible evidence do not grant retry time. The global evidence forwarder admits
+only candidate-complete, delivering, or delivered tasks, so one unresolved task
+cannot block a later task's publication. A group with no forwardable egress
+receives no projection retry. Only an exact settled match may atomically
 restore the aggregate state derived from those rows. A foreign service instance,
 missing or duplicate member, unexplained changed state count, stale local
 snapshot, unavailable host read, or aggregate that still derives to `unknown`
