@@ -26,9 +26,11 @@ VALUES (27, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 //
 // Cancellation preserves work deliberately, and cleanup requires delivery
 // evidence a cancelled task will never have — so without this the worktree,
-// lease and run binding of every cancelled task stay held with nothing able to
-// release them. This is the way out, and it refuses anything that still has work
-// in flight: only a task the service has already settled can be discarded.
+// lease and run binding of every activated cancelled task stay held with nothing
+// able to release them. A preparation cancelled before activation still owns a
+// worktree but has no host authority to release. This is the way out for both,
+// and it refuses anything that still has work in flight or carries only a
+// partial authority cluster.
 func (store *Store) BeginTaskDiscard(
 	ctx context.Context,
 	mutation application.TaskDiscardMutation,
@@ -87,7 +89,11 @@ func (store *Store) BeginTaskDiscard(
 	if task.State != domain.TaskCancelled && task.State != domain.TaskFailed {
 		return application.TaskCleanupRecord{}, fmt.Errorf("task discard posture: %w", application.ErrPrecondition)
 	}
-	if task.ManagedRunID == "" || task.WorkspaceLeaseID == "" || mutation.At.Before(task.UpdatedAt) {
+	authorityAbsent := task.ManagedRunID == "" && task.WorkspaceLeaseID == "" &&
+		task.ExecutionAttachmentID == "" && task.AttachmentTargetName == ""
+	authorityComplete := task.ManagedRunID != "" && task.WorkspaceLeaseID != "" &&
+		task.ExecutionAttachmentID != "" && task.AttachmentTargetName != ""
+	if (!authorityAbsent && !authorityComplete) || mutation.At.Before(task.UpdatedAt) {
 		return application.TaskCleanupRecord{}, fmt.Errorf("task discard authority: %w", application.ErrPrecondition)
 	}
 	if err := proveNothingIsStillRunning(ctx, transaction, task, "task discard", false); err != nil {
@@ -109,12 +115,16 @@ func (store *Store) BeginTaskDiscard(
 	if err := updateTaskState(ctx, transaction, held); err != nil {
 		return application.TaskCleanupRecord{}, err
 	}
+	stage := application.CleanupPrepared
+	if authorityAbsent {
+		stage = application.CleanupManagedRunAbsent
+	}
 	record := application.TaskCleanupRecord{
 		OperationID: mutation.OperationID, SubjectDigest: mutation.SubjectDigest,
 		TaskHandle: task.Handle, PreparationOperationID: preparationOperationID,
 		ManagedRunID: task.ManagedRunID, WorkspaceLeaseID: task.WorkspaceLeaseID,
 		RepositoryID: task.RepositoryID, WorktreePath: worktreePath,
-		Stage: application.CleanupPrepared, ReleaseOperationID: mutation.ReleaseOperationID,
+		Stage: stage, ReleaseOperationID: mutation.ReleaseOperationID,
 		ReleasedAt: mutation.ReleasedAt, Discard: true,
 	}
 	const insert = `INSERT INTO task_cleanup_operations(

@@ -74,11 +74,31 @@ func TestStore_DiscardAcceptsACancelledPreparationThatNeverAcquiredHostAuthority
 	if err != nil {
 		t.Fatalf("BeginTaskDiscard() error = %v", err)
 	}
-	if record.Stage != application.TaskCleanupStage("host_authority_absent") {
-		t.Fatalf("unactivated discard stage = %q, want host_authority_absent", record.Stage)
+	if record.Stage != application.CleanupManagedRunAbsent {
+		t.Fatalf("unactivated discard stage = %q, want managed_run_absent", record.Stage)
 	}
 	if record.ManagedRunID != "" || record.WorkspaceLeaseID != "" || !record.Discard {
 		t.Fatalf("unactivated discard authority = %#v", record)
+	}
+	snapshot := application.WorkspaceSnapshot{
+		TaskHandle: task.Handle, RepositoryID: task.RepositoryID, WorktreePath: record.WorktreePath,
+		Branch: "devcrew/task-discard-unactivated", HeadRevision: strings.Repeat("a", 40),
+		Cleanliness: application.WorkspaceDirty,
+	}
+	authorized, err := store.AuthorizeTaskCleanupRemoval(context.Background(),
+		application.TaskCleanupRemovalAuthorization{
+			OperationID: record.OperationID, SubjectDigest: record.SubjectDigest,
+			Snapshot: snapshot, At: at.Add(time.Minute),
+		})
+	if err != nil || authorized.Stage != application.CleanupRemovalAuthorized {
+		t.Fatalf("AuthorizeTaskCleanupRemoval(unactivated) = %#v, %v", authorized, err)
+	}
+	completed, err := store.CompleteTaskCleanup(context.Background(), application.TaskCleanupCompletion{
+		OperationID: record.OperationID, SubjectDigest: record.SubjectDigest,
+		At: at.Add(2 * time.Minute),
+	})
+	if err != nil || completed.Task.State != domain.TaskCleaned {
+		t.Fatalf("CompleteTaskCleanup(unactivated) = %#v, %v", completed, err)
 	}
 }
 
@@ -95,6 +115,39 @@ func TestStore_DiscardRefusesPartialHostAuthorityOnACancelledPreparation(t *test
 
 	if err == nil {
 		t.Fatal("BeginTaskDiscard(partial host authority) error = nil, want a refusal")
+	}
+}
+
+func TestStore_DiscardRefusesAuthorityThatAppearsAfterAnAbsentAuthorityHold(t *testing.T) {
+	store, task := unactivatedCancelledTask(t, "task-discard-late-authority")
+	at := task.UpdatedAt.Add(time.Minute).UTC()
+	record, err := store.BeginTaskDiscard(context.Background(), discardMutation(
+		task.Handle, "operation-discard-late-authority", at,
+	))
+	if err != nil {
+		t.Fatalf("BeginTaskDiscard() error = %v", err)
+	}
+	if _, err := store.db.ExecContext(context.Background(), `UPDATE tasks SET
+		managed_run_id = 'managed-run-late', workspace_lease_id = 'workspace-lease-late',
+		execution_attachment_id = 'execution-attachment-late',
+		attachment_target_name = 'attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock'
+		WHERE handle = ?`, task.Handle); err != nil {
+		t.Fatalf("add late authority fixture: %v", err)
+	}
+	snapshot := application.WorkspaceSnapshot{
+		TaskHandle: task.Handle, RepositoryID: task.RepositoryID, WorktreePath: record.WorktreePath,
+		Branch: "devcrew/task-discard-late-authority", HeadRevision: strings.Repeat("a", 40),
+		Cleanliness: application.WorkspaceDirty,
+	}
+
+	_, err = store.AuthorizeTaskCleanupRemoval(context.Background(),
+		application.TaskCleanupRemovalAuthorization{
+			OperationID: record.OperationID, SubjectDigest: record.SubjectDigest,
+			Snapshot: snapshot, At: at.Add(time.Minute),
+		})
+
+	if !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("AuthorizeTaskCleanupRemoval(late authority) error = %v, want ErrPrecondition", err)
 	}
 }
 

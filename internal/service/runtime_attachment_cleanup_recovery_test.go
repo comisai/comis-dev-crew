@@ -75,6 +75,73 @@ func TestRuntimeAttachmentCoordinator_DoesNotRestoreDurablyReleasedAttachment(t 
 	}
 }
 
+func TestRuntimeAttachmentCoordinator_RestoresAttachmentForAManagedRunAbsentDiscard(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.August, 18, 9, 0, 0, 0, time.UTC)
+	task := runtimeAttachmentRecoverableTask(t, now, "task-runtime-discard-unactivated")
+	task.State = domain.TaskCleanupHeld
+	task.StateVersion++
+	if err := task.Validate(); err != nil {
+		t.Fatalf("cleanup-held unactivated task is invalid: %v", err)
+	}
+	attachment := application.PreparedRuntimeAttachment{
+		Kind:          application.RuntimeAttachmentUnixSocket,
+		SourcePath:    filepath.Join(runtimeRoot, task.Handle, "attachment.sock"),
+		RelayIdentity: runtimeTransitionRelayIdentity(),
+	}
+	store := &runtimeAttachmentRecoveryStore{
+		tasks: []domain.Task{task}, cleanupFound: true,
+		cleanupRecord: application.TaskCleanupRecord{
+			TaskHandle: task.Handle, Stage: application.CleanupManagedRunAbsent,
+		},
+		preparations: map[string]application.ManagedRunPreparation{
+			task.Handle: {
+				ExternalRunRef: task.Handle, RequestedWorkspaceRoot: workspace,
+				RequestedAttachment: attachment,
+			},
+		},
+	}
+	coordinator := runtimeTransitionCoordinator(t, runtimeRoot, store, now)
+	runContext, stop := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	joined := false
+	go func() { done <- coordinator.Run(runContext) }()
+	t.Cleanup(func() {
+		if !joined {
+			stop()
+			if err := <-done; err != nil {
+				t.Errorf("runtime coordinator cleanup error = %v", err)
+			}
+		}
+	})
+	if err := coordinator.waitForRecovery(context.Background()); err != nil {
+		t.Fatalf("waitForRecovery(managed run absent) error = %v", err)
+	}
+	if store.cleanupReads != 1 || store.preparationReads != 1 || coordinator.entries[task.Handle] == nil {
+		t.Fatalf("managed-run-absent recovery reads: cleanup=%d preparation=%d entries=%d",
+			store.cleanupReads, store.preparationReads, len(coordinator.entries))
+	}
+	if info, err := os.Lstat(attachment.SourcePath); err != nil || info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("recovered reporter attachment = %#v, %v", info, err)
+	}
+	if err := coordinator.ReleaseRuntimeAttachment(context.Background(), task.Handle); err != nil {
+		t.Fatalf("ReleaseRuntimeAttachment(recovered discard) error = %v", err)
+	}
+	stop()
+	if err := <-done; err != nil {
+		t.Fatalf("runtime coordinator stop error = %v", err)
+	}
+	joined = true
+	if _, err := os.Lstat(filepath.Dir(attachment.SourcePath)); !os.IsNotExist(err) {
+		t.Fatalf("released reporter root error = %v, want not exist", err)
+	}
+}
+
 func TestRuntimeAttachmentCoordinator_PreservesUnprovenCleanedTaskDirectory(t *testing.T) {
 	root := shortTempDir(t)
 	runtimeRoot := filepath.Join(root, "runtime")

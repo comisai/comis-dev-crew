@@ -13,6 +13,7 @@ import (
 type discardStoreFixture struct {
 	*cleanupStoreFixture
 	beginDiscardCalls int
+	beginStage        TaskCleanupStage
 }
 
 func (store *discardStoreFixture) BeginTaskDiscard(
@@ -23,8 +24,10 @@ func (store *discardStoreFixture) BeginTaskDiscard(
 	record := store.record
 	record.OperationID = mutation.OperationID
 	record.SubjectDigest = mutation.SubjectDigest
-	if record.ManagedRunID == "" && record.WorkspaceLeaseID == "" {
-		record.Stage = TaskCleanupStage("host_authority_absent")
+	if store.beginStage != "" {
+		record.Stage = store.beginStage
+	} else if record.ManagedRunID == "" && record.WorkspaceLeaseID == "" {
+		record.Stage = CleanupManagedRunAbsent
 	} else {
 		record.Stage = CleanupPrepared
 	}
@@ -125,7 +128,7 @@ func TestCleanupCoordinator_DiscardRemovesADirtyWorktreeItWasAskedTo(t *testing.
 	}
 }
 
-func TestCleanupCoordinator_DiscardSkipsReleaseWhenHostAuthorityWasNeverAcquired(t *testing.T) {
+func TestCleanupCoordinator_DiscardSkipsOnlyManagedRunReleaseWhenNeverActivated(t *testing.T) {
 	now := time.Date(2026, time.August, 12, 8, 0, 0, 0, time.UTC)
 	record := cleanupFixtureRecord(strings.Repeat("b", 40))
 	record.ManagedRunID = ""
@@ -160,9 +163,30 @@ func TestCleanupCoordinator_DiscardSkipsReleaseWhenHostAuthorityWasNeverAcquired
 	if result.Task.State != domain.TaskCleaned || store.authorizeCalls != 1 || remover.discardedCalls != 1 {
 		t.Fatalf("unactivated discard result = %#v, store = %#v, remover = %#v", result, store, remover)
 	}
-	if releaser.calls != 0 || attachments.calls != 0 || store.releaseCalls != 0 {
-		t.Fatalf("unactivated discard contacted absent host authority: run=%d attachment=%d recorded=%d",
+	if releaser.calls != 0 || attachments.calls != 1 || store.releaseCalls != 0 {
+		t.Fatalf("unactivated discard release path: run=%d attachment=%d recorded=%d",
 			releaser.calls, attachments.calls, store.releaseCalls)
+	}
+}
+
+func TestCleanupCoordinator_DiscardRefusesAnAbsentRunStageThatStillNamesAHostRun(t *testing.T) {
+	coordinator, store, remover, handle := discardCoordinator(t, true)
+	store.beginStage = CleanupManagedRunAbsent
+	releaser := &cleanupReleaseFixture{}
+	attachments := &cleanupAttachmentReleaseFixture{}
+	coordinator.config.Releaser = releaser
+	coordinator.config.Attachments = attachments
+
+	_, err := coordinator.DiscardTask(context.Background(), DiscardTaskCommand{
+		OperationID: "operation-discard-contradictory-authority", TaskHandle: handle, Acknowledged: true,
+	})
+
+	if err == nil {
+		t.Fatal("DiscardTask(contradictory absent run) error = nil, want a refusal")
+	}
+	if releaser.calls != 0 || attachments.calls != 0 || remover.calls != 0 || store.authorizeCalls != 0 {
+		t.Fatalf("contradictory absent run caused side effects: run=%d attachment=%d authorize=%d remove=%d",
+			releaser.calls, attachments.calls, store.authorizeCalls, remover.calls)
 	}
 }
 

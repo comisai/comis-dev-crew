@@ -278,7 +278,7 @@ func scanTaskCleanupRecord(row rowScanner) (application.TaskCleanupRecord, bool,
 		}
 	}
 	switch record.Stage {
-	case application.CleanupPrepared, application.CleanupHostReleased,
+	case application.CleanupPrepared, application.CleanupManagedRunAbsent, application.CleanupHostReleased,
 		application.CleanupRemovalAuthorized, application.CleanupCompleted:
 	default:
 		return application.TaskCleanupRecord{}, false, errors.New("read task cleanup record: stage is invalid")

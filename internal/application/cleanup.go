@@ -16,6 +16,7 @@ type TaskCleanupStage string
 
 const (
 	CleanupPrepared          TaskCleanupStage = "prepared"
+	CleanupManagedRunAbsent  TaskCleanupStage = "managed_run_absent"
 	CleanupHostReleased      TaskCleanupStage = "host_released"
 	CleanupRemovalAuthorized TaskCleanupStage = "removal_authorized"
 	CleanupCompleted         TaskCleanupStage = "completed"
@@ -257,13 +258,8 @@ func (coordinator *CleanupCoordinator) CleanupTask(ctx context.Context, command 
 }
 
 // runRemovalStages drives the release-before-remove sequence to completion.
-//
-// Cleanup and discard differ only in what they must prove before entering it —
-// delivery evidence for one, an operator's explicit acknowledgement for the
-// other. The sequence itself is identical and stays written once: releasing host
-// authority before removing a worktree, and recording each stage so a crash
-// resumes rather than repeats, is exactly the part that must not diverge
-// between two commands that both end in an irreversible deletion.
+// Cleanup and discard persist evidence or acknowledgement before entering here.
+// Both release the runtime attachment; only activated tasks release a managed run.
 func (coordinator *CleanupCoordinator) runRemovalStages(
 	ctx context.Context,
 	record TaskCleanupRecord,
@@ -304,7 +300,11 @@ func (coordinator *CleanupCoordinator) runRemovalStages(
 				OperationID: record.OperationID, SubjectDigest: record.SubjectDigest, Snapshot: snapshot,
 				DeliveryTruth: truth, Receipt: receipt, At: coordinator.config.Clock(),
 			})
-		case CleanupHostReleased:
+		case CleanupManagedRunAbsent, CleanupHostReleased:
+			if record.Stage == CleanupManagedRunAbsent &&
+				(!record.Discard || record.ManagedRunID != "" || record.WorkspaceLeaseID != "") {
+				return MutationResult{}, errors.New("cleanup task: absent managed-run authority is contradictory")
+			}
 			if releaseErr := coordinator.config.Attachments.ReleaseRuntimeAttachment(ctx, record.TaskHandle); releaseErr != nil {
 				return MutationResult{}, cleanupDependencyFailure(
 					"runtime attachment release failed",

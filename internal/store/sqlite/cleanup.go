@@ -229,7 +229,7 @@ func (store *Store) RecordTaskCleanupHostRelease(
 	mutation application.TaskCleanupHostReleaseMutation,
 ) (application.TaskCleanupRecord, error) {
 	return store.advanceTaskCleanup(ctx, mutation.OperationID, mutation.SubjectDigest,
-		application.CleanupPrepared, application.CleanupHostReleased,
+		[]application.TaskCleanupStage{application.CleanupPrepared}, application.CleanupHostReleased,
 		mutation.Snapshot, mutation.DeliveryTruth, &mutation.Receipt, mutation.At)
 }
 
@@ -240,14 +240,16 @@ func (store *Store) AuthorizeTaskCleanupRemoval(
 	mutation application.TaskCleanupRemovalAuthorization,
 ) (application.TaskCleanupRecord, error) {
 	return store.advanceTaskCleanup(ctx, mutation.OperationID, mutation.SubjectDigest,
-		application.CleanupHostReleased, application.CleanupRemovalAuthorized,
+		[]application.TaskCleanupStage{application.CleanupHostReleased, application.CleanupManagedRunAbsent},
+		application.CleanupRemovalAuthorized,
 		mutation.Snapshot, mutation.DeliveryTruth, nil, mutation.At)
 }
 
 func (store *Store) advanceTaskCleanup(
 	ctx context.Context,
 	operationID, subjectDigest string,
-	from, to application.TaskCleanupStage,
+	from []application.TaskCleanupStage,
+	to application.TaskCleanupStage,
 	snapshot application.WorkspaceSnapshot,
 	truth application.PullRequestDeliveryTruth,
 	receipt *application.ManagedRunReleaseReceipt,
@@ -272,10 +274,11 @@ func (store *Store) advanceTaskCleanup(
 	if record.SubjectDigest != subjectDigest {
 		return application.TaskCleanupRecord{}, fmt.Errorf("advance task cleanup altered replay: %w", application.ErrConflict)
 	}
-	if record.Stage != from {
-		if record.Stage == to && cleanupProofMatches(record, snapshot, truth) {
-			return record, nil
-		}
+	if record.Stage == to && cleanupProofMatches(record, snapshot, truth) {
+		return record, nil
+	}
+	fromStage := record.Stage
+	if !cleanupStageAllowed(fromStage, from) {
 		return application.TaskCleanupRecord{}, fmt.Errorf("advance task cleanup stage: %w", application.ErrPrecondition)
 	}
 	if err := validateCleanupProof(record, snapshot, truth); err != nil {
@@ -293,6 +296,14 @@ func (store *Store) advanceTaskCleanup(
 	}
 	if task.State != domain.TaskCleanupHeld || at.Before(task.UpdatedAt) {
 		return application.TaskCleanupRecord{}, fmt.Errorf("advance task cleanup posture: %w", application.ErrPrecondition)
+	}
+	if fromStage == application.CleanupManagedRunAbsent &&
+		(!record.Discard || record.ManagedRunID != "" || record.WorkspaceLeaseID != "" ||
+			task.ManagedRunID != "" || task.WorkspaceLeaseID != "" ||
+			task.ExecutionAttachmentID != "" || task.AttachmentTargetName != "") {
+		return application.TaskCleanupRecord{}, fmt.Errorf(
+			"advance task cleanup absent managed-run authority differs: %w", application.ErrPrecondition,
+		)
 	}
 	stateVersion, err := nextMutationStateVersion(ctx, transaction)
 	if err != nil {
@@ -316,7 +327,7 @@ func (store *Store) advanceTaskCleanup(
         delivery_truth_json = ?, ` + timeColumn + ` = ?, state_version = ?
         WHERE operation_id = ? AND stage = ?`
 	result, err := transaction.ExecContext(ctx, statement, to, snapshot.Branch, snapshot.HeadRevision,
-		snapshot.Cleanliness, string(encodedTruth), formatTime(at), stateVersion, operationID, from)
+		snapshot.Cleanliness, string(encodedTruth), formatTime(at), stateVersion, operationID, fromStage)
 	if err != nil {
 		return application.TaskCleanupRecord{}, fmt.Errorf("advance task cleanup: %w", err)
 	}
@@ -330,6 +341,15 @@ func (store *Store) advanceTaskCleanup(
 	record.Stage = to
 	record.Snapshot = snapshot
 	return record, nil
+}
+
+func cleanupStageAllowed(stage application.TaskCleanupStage, allowed []application.TaskCleanupStage) bool {
+	for _, candidate := range allowed {
+		if stage == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 // CompleteTaskCleanup marks cleaned only after the removal-authorized adapter

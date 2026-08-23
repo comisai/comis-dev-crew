@@ -802,9 +802,15 @@ defaulted: cleanup proves removal is safe by pointing at delivered work, and a
 discard has nothing to point at, so the operator typing it is the only gate the
 command has. A dirty worktree is expected rather than refused — uncommitted work
 is usually the thing being thrown away, and the acknowledgement covers it. Only
-a cancelled or failed task can be discarded, nothing is removed while a terminal
-or validation process is still running, and host authority is released before
-removal exactly as cleanup does. The durable record says which proof authorised
+a cancelled or failed task can be discarded, and nothing is removed while a
+terminal or validation process is still running. Acquired managed-run authority
+is released before removal exactly as cleanup does. A task cancelled before
+activation has no managed run, workspace lease, execution attachment, or terminal
+to release; its durable cleanup stage records that complete absence and skips
+the managed-run release call. The DevCrew reporter attachment created during
+preparation is still released before the worktree. A partial or contradictory
+authority cluster is refused rather than treated as absent. The durable record
+says which proof authorised
 the removal, so an audit can tell delivered-work removal from acknowledged
 removal. The proof still binds the exact task, repository, and worktree identity;
 it permits dirty contents and does not require the worktree head to match delivery
