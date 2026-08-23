@@ -215,6 +215,11 @@ publications. Incomplete recovery history becomes unresolved and cannot authoriz
 second reconciliation. Cleanup accepts exactly one origin and refuses missing or
 ambiguous evidence.
 
+Cancelling a task preserves its unacknowledged Comis evidence publications as
+durable history, but removes them from delivery eligibility. An older cancelled
+candidate therefore cannot monopolize the evidence forwarder or delay a later
+live candidate.
+
 `task explain` reads the latest durable candidate judgment for failed and
 validating tasks and names every verdict the judge can reach, not only the ones
 that reject. A candidate held because required local checks or forge checks have
