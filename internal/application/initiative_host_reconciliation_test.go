@@ -180,6 +180,7 @@ func TestInitiativeHostReconcilerPreservesUnknownWhenHostEvidenceDiffers(t *test
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			logger := &capturingBoundaryLogger{}
 			store := &initiativeHostRecoveryStoreStub{
 				initiatives:  []domain.DevelopmentInitiative{fixture.initiative},
 				observations: map[string][]domain.Task{fixture.initiative.Handle: fixture.tasks},
@@ -192,7 +193,7 @@ func TestInitiativeHostReconcilerPreservesUnknownWhenHostEvidenceDiffers(t *test
 				Store: store, Host: source, ServiceInstanceID: "service-instance-current",
 				NewOperationID: func() (string, error) { return "operation-host-rollup-0002", nil },
 				Clock:          func() time.Time { return now.Add(time.Minute) }, AttemptTimeout: time.Second,
-				RetryInterval: time.Millisecond,
+				RetryInterval: time.Millisecond, Logger: logger,
 			})
 			if err != nil {
 				t.Fatalf("NewInitiativeHostReconciler() error = %v", err)
@@ -205,6 +206,25 @@ func TestInitiativeHostReconcilerPreservesUnknownWhenHostEvidenceDiffers(t *test
 			}
 			if len(store.commits) != 0 {
 				t.Fatalf("mismatched host evidence committed recovery: %#v", store.commits)
+			}
+			if test.name == "state counts differ" {
+				if len(logger.records) != 1 {
+					t.Fatalf("boundary records = %#v, want one mismatch", logger.records)
+				}
+				record := reflect.ValueOf(logger.records[0])
+				for field, want := range map[string]any{
+					"InitiativeHandle":        fixture.initiative.Handle,
+					"ManagedRunGroupID":       fixture.initiative.ManagedRunGroupID,
+					"AttemptCount":            1,
+					"HostProjectionMismatch":  "state_counts",
+					"ExpectedHostStateCounts": InitiativeHostStateCounts{Active: 2},
+					"ObservedHostStateCounts": InitiativeHostStateCounts{Waiting: 2},
+				} {
+					got := record.FieldByName(field)
+					if !got.IsValid() || !reflect.DeepEqual(got.Interface(), want) {
+						t.Errorf("boundary record field %s = %v, want %#v", field, got, want)
+					}
+				}
 			}
 		})
 	}
