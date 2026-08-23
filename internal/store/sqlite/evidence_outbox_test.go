@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -202,7 +203,8 @@ func TestComisEvidenceOutbox_UnresolvedCandidateDoesNotBlockLaterPublications(t 
 }
 
 func TestComisEvidenceOutbox_CompletesReconciledCandidateWithoutWorkerReport(t *testing.T) {
-	store, err := Open(context.Background(), filepath.Join(canonicalTempDir(t), "reconciled.db"))
+	databasePath := filepath.Join(canonicalTempDir(t), "reconciled.db")
+	store, err := Open(context.Background(), databasePath)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -254,6 +256,41 @@ func TestComisEvidenceOutbox_CompletesReconciledCandidateWithoutWorkerReport(t *
 	}
 	if candidateReports != 0 {
 		t.Fatalf("candidate reports = %d, want no synthetic worker report", candidateReports)
+	}
+
+	serviceReport, found, err := store.NextComisReport(context.Background())
+	if err != nil || !found {
+		t.Fatalf("NextComisReport(reconciled candidate) = %#v, %t, %v", serviceReport, found, err)
+	}
+	if serviceReport.TaskHandle != task.Handle || serviceReport.ManagedRunID != task.ManagedRunID ||
+		serviceReport.Kind != domain.ReportCandidateComplete || serviceReport.StateVersion < 1 ||
+		len(serviceReport.ArtifactRefs) != len(publications) {
+		t.Fatalf("reconciled candidate service report = %#v", serviceReport)
+	}
+	replayed, found, err := store.NextComisReport(context.Background())
+	if err != nil || !found || !reflect.DeepEqual(replayed, serviceReport) {
+		t.Fatalf("NextComisReport(replay) = %#v, %t, %v, want %#v", replayed, found, err, serviceReport)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatalf("Open(restart) error = %v", err)
+	}
+	restarted, found, err := store.NextComisReport(context.Background())
+	if err != nil || !found || !reflect.DeepEqual(restarted, serviceReport) {
+		t.Fatalf("NextComisReport(restart) = %#v, %t, %v, want %#v", restarted, found, err, serviceReport)
+	}
+	reportDeliveredAt := judgedAt.Add(3 * time.Minute)
+	if err := store.MarkComisReportDelivered(context.Background(), serviceReport.OperationID, application.ComisReportAcknowledgement{
+		ManagedRunID: serviceReport.ManagedRunID, ServiceReportID: serviceReport.ServiceReportID,
+		AcceptedSequence: 1, RetainedUntil: reportDeliveredAt.Add(time.Hour),
+	}, reportDeliveredAt); err != nil {
+		t.Fatalf("MarkComisReportDelivered(reconciled candidate) error = %v", err)
+	}
+	if pending, found, err := store.NextComisReport(context.Background()); err != nil || found {
+		t.Fatalf("NextComisReport(delivered reconciled candidate) = %#v, %t, %v", pending, found, err)
 	}
 }
 
