@@ -208,12 +208,12 @@ they never turn that inconsistent posture into `not_started`.
 For a worker-reported candidate, the final authenticated candidate report closes
 delivery after both evidence publications are acknowledged. For a reconciled
 candidate, no worker report is invented: acknowledgement of both server-owned
-publications atomically closes the task as `delivered`. A restart preserves that
-candidate in `candidate_complete` only when the completed reconciliation, accepted
-sealed evidence, and exact pending outbox remain consistent, then resumes the same
-publications. Incomplete recovery history becomes unresolved and cannot authorize a
-second reconciliation. Cleanup accepts exactly one origin and refuses missing or
-ambiguous evidence.
+publications atomically closes the task as `delivered`. A restart preserves either
+candidate origin in `candidate_complete` only when exactly one worker report or one
+completed reconciliation, accepted sealed evidence, and the exact durable outbox
+remain consistent, then resumes the remaining host delivery. Incomplete recovery
+history becomes unresolved and cannot authorize a second reconciliation. Cleanup
+accepts exactly one origin and refuses missing or ambiguous evidence.
 
 Cancelling a task preserves its unacknowledged Comis evidence publications as
 durable history, but removes them from delivery eligibility. An older cancelled

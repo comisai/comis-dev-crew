@@ -352,10 +352,11 @@ Before opening its local socket or advertising readiness, the service reconciles
 durable startup state. Prepared and ready tasks remain known because no work-start
 evidence exists. Tasks whose runtime may have been active become `unknown`, as do
 operations left merely `accepted`. Stable terminal task evidence and completed or
-already-unknown operations are preserved. A reconciled `candidate_complete` task is
-also preserved when its accepted sealed evidence and exact pending publications are
-consistent, so host delivery resumes after restart. A repeated restart is
-idempotent.
+already-unknown operations are preserved. A `candidate_complete` task is also
+preserved when exactly one worker report or one completed reconciliation owns its
+accepted sealed evidence and exact durable publications. The service can therefore
+resume the remaining host evidence or report delivery after restart. A repeated
+restart is idempotent.
 
 ## Unknown-task candidate recovery
 

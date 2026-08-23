@@ -66,7 +66,7 @@ func (store *Store) ReconcileStartup(ctx context.Context, at time.Time) (applica
 			continue
 		}
 		if task.State == domain.TaskCandidateComplete {
-			resumable, resumeErr := resumableReconciledCandidateDelivery(ctx, transaction, task, at)
+			resumable, resumeErr := resumableCandidateDelivery(ctx, transaction, task, at)
 			if resumeErr != nil {
 				return result, resumeErr
 			}
