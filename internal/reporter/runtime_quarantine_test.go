@@ -81,6 +81,27 @@ func TestQuarantineRuntimePathKeepsPinnedTargetOutOfMutableUnlink(t *testing.T) 
 	}
 }
 
+func TestQuarantineRuntimePathRetiresSuccessfulIsolationNamespace(t *testing.T) {
+	root := boundaryRuntimeDirectory(t)
+	target := filepath.Join(root, "record")
+	if err := os.WriteFile(target, []byte("retire"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expected := runtimePathTestIdentity(t, target)
+	directory := runtimePathTestDirectoryDescriptor(t, root)
+	defer unix.Close(directory)
+	isolationName := runtimePathQuarantineName("record", expected, RuntimePathRegular, 0o600)
+	if err := QuarantineRuntimePath(directory, "record", expected, RuntimePathRegular, 0o600); err != nil {
+		t.Fatalf("QuarantineRuntimePath(successful retirement) error = %v", err)
+	}
+	if _, err := os.Lstat(target); !os.IsNotExist(err) {
+		t.Fatalf("retired target error = %v, want absent", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, isolationName)); !os.IsNotExist(err) {
+		t.Fatalf("successful isolation namespace error = %v, want absent", err)
+	}
+}
+
 func TestQuarantineRuntimePathRejectsSharedRemovalNamespace(t *testing.T) {
 	root := boundaryRuntimeDirectory(t)
 	socketPath := filepath.Join(root, "attachment.sock")
