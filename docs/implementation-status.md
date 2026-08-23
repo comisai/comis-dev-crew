@@ -637,12 +637,17 @@ second, narrower reconciliation for bound `unknown` initiatives whose complete
 member set belongs to the current service instance. The service reads the host's
 content-free managed-run group rollup on that persistent session and compares the
 exact managed-run identities plus all nine host state counts with current durable
-task rows. Only an exact match may atomically restore the aggregate state derived
-from those rows. A foreign service instance, missing or duplicate member, changed
-state count, stale local snapshot, unavailable host read, or aggregate that still
-derives to `unknown` leaves the initiative unchanged. Readiness waits for each
-eligible group attempt, with a bounded per-group deadline, but a preserved
-`unknown` group does not prevent unrelated work from being inspected.
+task rows. When a member has an undelivered durable Comis report or evidence
+publication, an older host projection can be a temporary egress lag. Only in that
+case, startup refreshes both local rows and the host rollup at the normal report
+poll interval within the existing per-group deadline. A group with no pending
+egress receives no projection retry. Only an exact settled match may atomically
+restore the aggregate state derived from those rows. A foreign service instance,
+missing or duplicate member, unexplained changed state count, stale local
+snapshot, unavailable host read, or aggregate that still derives to `unknown`
+leaves the initiative unchanged. Readiness waits for each eligible group attempt,
+with a bounded per-group deadline, but a preserved `unknown` group does not
+prevent unrelated work from being inspected.
 
 Threat posture: nested initiative graphs and backlog dependencies are encoded as
 data, never executable input, and are revalidated after decoding. Only the
@@ -653,7 +658,8 @@ run or scheduling authority. The host rollup cannot mint local authority by
 itself: its service scope is fixed by the authenticated session, and the final
 SQLite transaction rechecks group identity, complete membership, current service
 ownership, local state counts, snapshot version, and monotonic time before the
-initiative can leave `unknown`.
+initiative can leave `unknown`. Pending egress grants only bounded retry time; it
+does not relax any recovery comparison or transaction precondition.
 
 ## Integration candidate application
 

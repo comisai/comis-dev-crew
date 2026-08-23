@@ -165,7 +165,8 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		initiativeHostReconciler, err = application.NewInitiativeHostReconciler(application.InitiativeHostReconcilerConfig{
 			Store: store, Host: control, ServiceInstanceID: config.ServiceInstanceID,
 			NewOperationID: func() (string, error) { return randomIdentity("group-rollup", 16) },
-			Clock:          clock, AttemptTimeout: comisRequestTimeout + comisMaximumBackoff, Logger: config.Logger,
+			Clock:          clock, AttemptTimeout: comisRequestTimeout + comisMaximumBackoff,
+			RetryInterval: comisReportPollInterval, Logger: config.Logger,
 		})
 		if err != nil {
 			return fmt.Errorf("run service initiative host reconciler: %w", err)

@@ -41,6 +41,45 @@ func TestInitiativeHostRecoveryCommitsOnlyAnExactAtomicRollup(t *testing.T) {
 	}
 }
 
+func TestInitiativeHostRecoveryDetectsOnlyUndeliveredMemberEgress(t *testing.T) {
+	ctx := context.Background()
+	store, initiativeHandle, activation := preparedInitiativeActivationStore(t)
+	if _, err := store.CommitInitiativeActivation(ctx, activation); err != nil {
+		t.Fatalf("CommitInitiativeActivation() error = %v", err)
+	}
+	initiative, tasks, _, err := store.InitiativeObservation(ctx, initiativeHandle)
+	if err != nil || len(tasks) != 2 {
+		t.Fatalf("InitiativeObservation() = %#v, %#v, %v", initiative, tasks, err)
+	}
+	if pending, err := store.InitiativeHasPendingComisEgress(ctx, initiative.Handle); err != nil || pending {
+		t.Fatalf("InitiativeHasPendingComisEgress(empty) = %t, %v", pending, err)
+	}
+	now := activation.At.Add(time.Minute)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO comis_evidence_outbox (
+        operation_id, task_handle, evidence_ref, kind, subject_digest, observed_at,
+        content_hash, verification_level, body, delivery_kind, file_name, media_type, state_version
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"put-evidence-host-recovery", tasks[0].Handle, "evidence-host-recovery", "candidate_bundle",
+		"subject-digest-host-recovery", formatTime(now),
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"adapter_verified", []byte("{}"), "none", "", "application/json", tasks[0].StateVersion,
+	); err != nil {
+		t.Fatalf("seed pending Comis egress: %v", err)
+	}
+	if pending, err := store.InitiativeHasPendingComisEgress(ctx, initiative.Handle); err != nil || !pending {
+		t.Fatalf("InitiativeHasPendingComisEgress(pending) = %t, %v", pending, err)
+	}
+	if _, err := store.db.ExecContext(ctx,
+		"UPDATE comis_evidence_outbox SET delivered_at = ? WHERE operation_id = ?",
+		formatTime(now.Add(time.Second)), "put-evidence-host-recovery",
+	); err != nil {
+		t.Fatalf("settle pending Comis egress: %v", err)
+	}
+	if pending, err := store.InitiativeHasPendingComisEgress(ctx, initiative.Handle); err != nil || pending {
+		t.Fatalf("InitiativeHasPendingComisEgress(delivered) = %t, %v", pending, err)
+	}
+}
+
 func TestInitiativeHostRecoveryMismatchPreservesDurableUnknownState(t *testing.T) {
 	ctx := context.Background()
 	store, initiativeHandle, activation := preparedInitiativeActivationStore(t)

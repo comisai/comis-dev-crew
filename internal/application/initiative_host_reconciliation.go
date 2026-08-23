@@ -13,15 +13,15 @@ import (
 // InitiativeHostStateCounts is the complete content-free host vocabulary for
 // the member states in one managed-run group. Zero values are explicit zeros.
 type InitiativeHostStateCounts struct {
-	Preparing         int
-	Active            int
-	Waiting           int
-	Paused            int
-	CandidateComplete int
-	Succeeded         int
-	Failed            int
-	Cancelled         int
-	Unknown           int
+	Preparing         int `json:"preparing"`
+	Active            int `json:"active"`
+	Waiting           int `json:"waiting"`
+	Paused            int `json:"paused"`
+	CandidateComplete int `json:"candidateComplete"`
+	Succeeded         int `json:"succeeded"`
+	Failed            int `json:"failed"`
+	Cancelled         int `json:"cancelled"`
+	Unknown           int `json:"unknown"`
 }
 
 // InitiativeHostRollup is the bounded host projection used to reconcile one
@@ -78,6 +78,7 @@ func (mutation InitiativeHostRecoveryMutation) Validate() error {
 type InitiativeHostRecoveryStore interface {
 	ListInitiatives(context.Context) ([]domain.DevelopmentInitiative, error)
 	InitiativeObservation(context.Context, string) (domain.DevelopmentInitiative, []domain.Task, int64, error)
+	InitiativeHasPendingComisEgress(context.Context, string) (bool, error)
 	CommitInitiativeHostRecovery(context.Context, InitiativeHostRecoveryMutation) (domain.DevelopmentInitiative, error)
 }
 
@@ -98,6 +99,7 @@ type InitiativeHostReconcilerConfig struct {
 	NewOperationID    func() (string, error)
 	Clock             Clock
 	AttemptTimeout    time.Duration
+	RetryInterval     time.Duration
 	Logger            BoundaryLogger
 }
 
@@ -110,6 +112,7 @@ type InitiativeHostReconciler struct {
 	newOperationID    func() (string, error)
 	clock             Clock
 	attemptTimeout    time.Duration
+	retryInterval     time.Duration
 	logger            BoundaryLogger
 }
 
@@ -117,13 +120,14 @@ type InitiativeHostReconciler struct {
 func NewInitiativeHostReconciler(config InitiativeHostReconcilerConfig) (*InitiativeHostReconciler, error) {
 	if config.Store == nil || config.Host == nil || config.NewOperationID == nil || config.Clock == nil ||
 		domain.ValidateAuthorityReference("serviceInstanceId", config.ServiceInstanceID) != nil ||
-		config.AttemptTimeout <= 0 || config.AttemptTimeout > time.Minute {
+		config.AttemptTimeout <= 0 || config.AttemptTimeout > time.Minute ||
+		config.RetryInterval <= 0 || config.RetryInterval > config.AttemptTimeout {
 		return nil, errors.New("create initiative host reconciler: configuration is invalid")
 	}
 	return &InitiativeHostReconciler{
 		store: config.Store, host: config.Host, serviceInstanceID: config.ServiceInstanceID,
 		newOperationID: config.NewOperationID, clock: config.Clock,
-		attemptTimeout: config.AttemptTimeout, logger: config.Logger,
+		attemptTimeout: config.AttemptTimeout, retryInterval: config.RetryInterval, logger: config.Logger,
 	}, nil
 }
 
@@ -164,9 +168,43 @@ func (reconciler *InitiativeHostReconciler) Reconcile(
 			continue
 		}
 		attemptContext, cancel := context.WithTimeout(ctx, reconciler.attemptTimeout)
-		rollup, readErr := reconciler.host.ReadInitiativeHostRollup(attemptContext, InitiativeHostRollupRequest{
+		request := InitiativeHostRollupRequest{
 			OperationID: operationID, ManagedRunGroupID: initiative.ManagedRunGroupID,
-		})
+		}
+		rollup, readErr := reconciler.host.ReadInitiativeHostRollup(attemptContext, request)
+		if readErr == nil && !initiativeHostEvidenceMatches(initiative, tasks, rollup) {
+			pendingEgress, pendingErr := reconciler.store.InitiativeHasPendingComisEgress(ctx, initiative.Handle)
+			if pendingErr != nil {
+				cancel()
+				return result, fmt.Errorf("reconcile initiatives with host: read pending Comis egress: %w", pendingErr)
+			}
+			for pendingEgress && !initiativeHostEvidenceMatches(initiative, tasks, rollup) {
+				if waitErr := waitInitiativeHostRetry(attemptContext, reconciler.retryInterval); waitErr != nil {
+					if ctx.Err() != nil {
+						cancel()
+						return result, ctx.Err()
+					}
+					break
+				}
+				refreshed, refreshedTasks, _, refreshErr := reconciler.store.InitiativeObservation(
+					attemptContext, initiative.Handle,
+				)
+				if refreshErr != nil {
+					cancel()
+					return result, fmt.Errorf("reconcile initiatives with host: refresh initiative observation: %w", refreshErr)
+				}
+				if refreshed.State != domain.InitiativeUnknown ||
+					refreshed.ManagedRunGroupID != request.ManagedRunGroupID ||
+					!tasksBelongToService(refreshedTasks, reconciler.serviceInstanceID) {
+					break
+				}
+				initiative, tasks = refreshed, refreshedTasks
+				rollup, readErr = reconciler.host.ReadInitiativeHostRollup(attemptContext, request)
+				if readErr != nil {
+					continue
+				}
+			}
+		}
 		cancel()
 		if readErr != nil || !initiativeHostEvidenceMatches(initiative, tasks, rollup) {
 			result.PreservedUnknown++
@@ -192,6 +230,17 @@ func (reconciler *InitiativeHostReconciler) Reconcile(
 		reconciler.record(operationID, BoundaryCompleted)
 	}
 	return result, nil
+}
+
+func waitInitiativeHostRetry(ctx context.Context, interval time.Duration) error {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (reconciler *InitiativeHostReconciler) record(operationID string, outcome BoundaryOutcome) {

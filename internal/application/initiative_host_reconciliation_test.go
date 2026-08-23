@@ -126,6 +126,7 @@ func TestInitiativeHostReconcilerRecoversOnlyExactCurrentServiceGroups(t *testin
 		Store: store, Host: source, ServiceInstanceID: "service-instance-current",
 		NewOperationID: func() (string, error) { return "operation-host-rollup-0001", nil },
 		Clock:          func() time.Time { return now.Add(time.Minute) }, AttemptTimeout: time.Second,
+		RetryInterval: time.Millisecond,
 	})
 	if err != nil {
 		t.Fatalf("NewInitiativeHostReconciler() error = %v", err)
@@ -191,6 +192,7 @@ func TestInitiativeHostReconcilerPreservesUnknownWhenHostEvidenceDiffers(t *test
 				Store: store, Host: source, ServiceInstanceID: "service-instance-current",
 				NewOperationID: func() (string, error) { return "operation-host-rollup-0002", nil },
 				Clock:          func() time.Time { return now.Add(time.Minute) }, AttemptTimeout: time.Second,
+				RetryInterval: time.Millisecond,
 			})
 			if err != nil {
 				t.Fatalf("NewInitiativeHostReconciler() error = %v", err)
@@ -241,6 +243,7 @@ func TestInitiativeHostReconcilerWaitsForPendingEgressToSettle(t *testing.T) {
 		Store: store, Host: source, ServiceInstanceID: "service-instance-current",
 		NewOperationID: func() (string, error) { return "operation-host-rollup-pending", nil },
 		Clock:          func() time.Time { return now.Add(2 * time.Second) }, AttemptTimeout: time.Second,
+		RetryInterval: time.Millisecond,
 	})
 	if err != nil {
 		t.Fatalf("NewInitiativeHostReconciler() error = %v", err)
@@ -314,6 +317,7 @@ func TestInitiativeHostReconcilerRejectsInvalidConfigurationAndDurableFailures(t
 				return "operation-host-rollup-errors", operationErr
 			},
 			Clock: func() time.Time { return now.Add(time.Minute) }, AttemptTimeout: time.Second,
+			RetryInterval: time.Millisecond,
 		})
 		if err != nil {
 			t.Fatalf("NewInitiativeHostReconciler() error = %v", err)

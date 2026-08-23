@@ -45,9 +45,13 @@ On restart, every ambiguous nonterminal initiative is first persisted as
 `unknown`. Before the service signals readiness, it then uses the authenticated
 persistent control session to read each current-service group's content-free host
 rollup. An initiative resumes only when the complete managed-run identity set and
-every host state count exactly match its durable task rows. A mismatch or bounded
-host-read failure keeps that initiative `unknown`; inspect the group and task
-states rather than repeatedly restarting or manually changing the database.
+every host state count exactly match its durable task rows. If a member still has
+an undelivered durable Comis report or evidence publication, startup gives that
+temporary host lag the bounded reconciliation window and refreshes both sides;
+it does not retry an unexplained mismatch. A mismatch after that window or a
+bounded host-read failure keeps the initiative `unknown`; inspect the group,
+task, and pending-egress states rather than repeatedly restarting or manually
+changing the database.
 
 Task preparation first resolves the requested worker and validation profiles for
 the exact task shape. An unavailable, incompatible, or incomplete profile is

@@ -10,6 +10,37 @@ import (
 
 var _ application.InitiativeHostRecoveryStore = (*Store)(nil)
 
+// InitiativeHasPendingComisEgress reports whether any member still has a
+// durable report or evidence publication that can explain a temporarily older
+// host rollup. It grants retry time only; the exact recovery transaction still
+// rechecks every member and state count.
+func (store *Store) InitiativeHasPendingComisEgress(ctx context.Context, handle string) (bool, error) {
+	if domain.ValidateAuthorityReference("initiativeHandle", handle) != nil {
+		return false, application.ErrInvalidInput
+	}
+	initiative, err := getInitiative(ctx, store.db, handle)
+	if err != nil {
+		return false, err
+	}
+	const query = `SELECT EXISTS(
+        SELECT 1 FROM comis_report_outbox
+        WHERE task_handle = ? AND delivered_at IS NULL
+        UNION ALL
+        SELECT 1 FROM comis_evidence_outbox
+        WHERE task_handle = ? AND delivered_at IS NULL
+    )`
+	for _, taskHandle := range initiativeTaskHandles(initiative) {
+		var pending bool
+		if err := store.db.QueryRowContext(ctx, query, taskHandle, taskHandle).Scan(&pending); err != nil {
+			return false, fmt.Errorf("read initiative pending Comis egress: %w", err)
+		}
+		if pending {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // CommitInitiativeHostRecovery restores one initiative only when the host's
 // complete member projection still equals the current durable task rows.
 func (store *Store) CommitInitiativeHostRecovery(
