@@ -190,6 +190,23 @@ func TestProfileCatalog_RejectsUnreviewedProgramsAndAmbiguousProfiles(t *testing
 	}
 }
 
+func TestProfileCatalog_NamesMissingCandidatePathRules(t *testing.T) {
+	_, err := NewCatalog(CatalogConfig{
+		Programs: []Program{{ID: "go-test", Executable: "/usr/bin/go"}},
+		Profiles: []Profile{{
+			ID: "fixture-default",
+			LocalChecks: []LocalCheck{{
+				ID: "unit", ProgramID: "go-test", Timeout: time.Minute, Required: true,
+				Arguments: []ArgumentTemplate{{Kind: ArgumentLiteral, Value: "test"}},
+			}},
+			EvidenceTTL: time.Minute,
+		}},
+	})
+	if err == nil || err.Error() != "create validation catalog: profile path rules are required" {
+		t.Fatalf("NewCatalog() error = %v, want missing path-rules diagnostic", err)
+	}
+}
+
 func TestProfileCatalog_RejectsUnknownProfilesChecksAndTaskFacts(t *testing.T) {
 	if _, err := (*Catalog)(nil).ResolveProfile("fixture-default"); err == nil {
 		t.Fatal("ResolveProfile(nil) error = nil")

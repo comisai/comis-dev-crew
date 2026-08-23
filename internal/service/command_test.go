@@ -203,6 +203,14 @@ func TestServiceFailureClassUsesSafeStableCategories(t *testing.T) {
 	}
 }
 
+func TestServiceFailureHintNamesMissingProfilePathRulesKnob(t *testing.T) {
+	err := errors.New("run service validation composition: create validation catalog: profile path rules are required")
+	want := "add one to 64 valid profiles[*].pathRules entries to the owner-private candidate configuration"
+	if got := serviceFailureHint(err); got != want {
+		t.Fatalf("serviceFailureHint() = %q, want %q", got, want)
+	}
+}
+
 func TestRunCommand_ComposesInstalledLaneWithExplicitDeterministicFixture(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
