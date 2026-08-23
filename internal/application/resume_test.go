@@ -92,8 +92,37 @@ func TestInterventions_ResumeReturnsACleanPausedTaskToItsWorker(t *testing.T) {
 	if store.resume.ObservedHeadRevision != strings.Repeat("b", 40) {
 		t.Errorf("recorded head = %q, want the inspected head", store.resume.ObservedHeadRevision)
 	}
-	if result.Task.State != domain.TaskWorking {
+	if result.Task.State != domain.TaskReady {
 		t.Errorf("resumed state = %q", result.Task.State)
+	}
+}
+
+// A worker commits through lease-private Git administration so its branch
+// update cannot escape the task lease. Until the service promotes that exact
+// verified commit, ordinary shared Git sees the committed files as dirty. That
+// is the worker's own clean handoff, not a developer edit.
+func TestInterventions_ResumePromotesAWorkersCleanPrivateCommitBeforeRelaunch(t *testing.T) {
+	interventions, store := resumeFixture(t, domain.TaskPaused, WorkspaceDirty)
+	inspector := &promotingInterventionInspector{
+		interventionInspector: *(interventions.workspaces.(*interventionInspector)),
+	}
+	inspector.promoted = inspector.snapshot
+	inspector.promoted.HeadRevision = strings.Repeat("c", 40)
+	inspector.promoted.Cleanliness = WorkspaceClean
+	interventions.workspaces = inspector
+	store.preparationOperationID = "operation-prepare-resume-private"
+
+	result, err := interventions.ResumeTask(context.Background(), ResumeTaskCommand{
+		OperationID: "operation-resume-private", TaskHandle: store.task.Handle,
+	})
+	if err != nil {
+		t.Fatalf("ResumeTask(private clean commit) error = %v", err)
+	}
+	if inspector.promoteCalls != 1 {
+		t.Fatalf("private candidate promotions = %d, want 1", inspector.promoteCalls)
+	}
+	if store.resume.ObservedHeadRevision != inspector.promoted.HeadRevision || result.Task.State != domain.TaskReady {
+		t.Fatalf("resumed private candidate = %#v, mutation %#v", result.Task, store.resume)
 	}
 }
 
@@ -116,7 +145,7 @@ func TestInterventions_ResumeRefusesATaskThatIsNotPaused(t *testing.T) {
 func TestInterventions_ResumeReplaysARepeatedRequest(t *testing.T) {
 	interventions, store := resumeFixture(t, domain.TaskPaused, WorkspaceClean)
 	store.replayFound = true
-	store.replay = MutationResult{Task: domain.Task{Handle: "task-resume-application", State: domain.TaskWorking}}
+	store.replay = MutationResult{Task: domain.Task{Handle: "task-resume-application", State: domain.TaskReady}}
 
 	result, err := interventions.ResumeTask(context.Background(), ResumeTaskCommand{
 		OperationID: "operation-resume-application", TaskHandle: "task-resume-application",
@@ -127,9 +156,23 @@ func TestInterventions_ResumeReplaysARepeatedRequest(t *testing.T) {
 	if store.resumeCalls != 0 {
 		t.Error("a replayed resume must not commit a second time")
 	}
-	if result.Task.State != domain.TaskWorking {
+	if result.Task.State != domain.TaskReady {
 		t.Errorf("replayed state = %q", result.Task.State)
 	}
+}
+
+type promotingInterventionInspector struct {
+	interventionInspector
+	promoted     WorkspaceSnapshot
+	promoteCalls int
+}
+
+func (inspector *promotingInterventionInspector) PromoteReconciliationCandidate(
+	_ context.Context,
+	_ ReconciliationWorkspaceRequest,
+) (WorkspaceSnapshot, error) {
+	inspector.promoteCalls++
+	return inspector.promoted, nil
 }
 
 func TestInterventions_ResumeRefusesForgedIdentityAndDeadContexts(t *testing.T) {

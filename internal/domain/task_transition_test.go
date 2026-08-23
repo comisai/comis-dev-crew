@@ -59,9 +59,10 @@ func TestTaskApplyTransition_ModelsDecisionBlockAndPauseWithoutWideningState(t *
 		{kind: TransitionDecisionRequested, want: TaskAwaitingDecision},
 		{kind: TransitionDecisionAnswered, want: TaskWorking},
 		{kind: TransitionBlocked, want: TaskBlocked},
-		{kind: TransitionResumed, want: TaskWorking},
 		{kind: TransitionPaused, want: TaskPaused},
-		{kind: TransitionResumed, want: TaskWorking},
+		{kind: TransitionResumed, want: TaskReady},
+		{kind: TransitionLaunchRequested, want: TaskLaunching},
+		{kind: TransitionWorkerAcknowledged, want: TaskWorking},
 		{kind: TransitionFailureObserved, want: TaskFailed},
 		{kind: TransitionCleanupStarted, want: TaskCleanupHeld},
 	}

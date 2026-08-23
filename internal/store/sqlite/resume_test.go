@@ -22,16 +22,11 @@ func resumeMutation(taskHandle, operationID string, at time.Time) application.Ta
 
 func pausedTaskFixture(t *testing.T) (*Store, domain.Task, time.Time) {
 	t.Helper()
-	store, task := openReportFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
-	at := time.Date(2026, time.August, 9, 16, 0, 0, 0, time.UTC)
-	if _, err := store.CommitReport(context.Background(),
-		directReportMutation(task, sqliteWorkerReport(task, "report-paused-0001", domain.ReportPaused), at)); err != nil {
-		t.Fatalf("CommitReport(paused) error = %v", err)
-	}
-	return store, task, at
+	store, task, _, _ := openPausedHandbackFixture(t, "task-resume-store-0001")
+	return store, task, task.UpdatedAt
 }
 
-func TestStore_ResumeReturnsAPausedTaskToWorking(t *testing.T) {
+func TestStore_ResumeReadiesAPausedTaskForAnAuthenticatedRelaunch(t *testing.T) {
 	store, task, at := pausedTaskFixture(t)
 
 	result, err := store.CommitTaskResume(context.Background(),
@@ -39,8 +34,8 @@ func TestStore_ResumeReturnsAPausedTaskToWorking(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CommitTaskResume() error = %v", err)
 	}
-	if result.Task.State != domain.TaskWorking {
-		t.Errorf("resumed state = %q, want working", result.Task.State)
+	if result.Task.State != domain.TaskReady {
+		t.Errorf("resumed state = %q, want ready", result.Task.State)
 	}
 }
 
