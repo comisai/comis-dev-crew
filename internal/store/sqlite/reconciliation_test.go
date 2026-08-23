@@ -194,6 +194,88 @@ func TestStartupReconciliationResumesReconciledCandidateDelivery(t *testing.T) {
 	}
 }
 
+func TestStartupReconciliationResumesWorkerReportedCandidateDelivery(t *testing.T) {
+	databasePath := filepath.Join(canonicalTempDir(t), "worker-candidate-restart.db")
+	store, task := openReportFixture(t, databasePath)
+	report := sqliteWorkerReport(task, "report-worker-candidate-restart", domain.ReportCandidateComplete)
+	if _, err := store.CommitReport(
+		context.Background(), directReportMutation(task, report, task.UpdatedAt.Add(time.Minute)),
+	); err != nil {
+		t.Fatalf("CommitReport(candidate) error = %v", err)
+	}
+	validating, err := store.GetTask(context.Background(), task.Handle)
+	if err != nil || validating.State != domain.TaskValidating {
+		t.Fatalf("validating candidate = %#v, %v", validating, err)
+	}
+	sealed := candidateEvidence(t, validating, strings.Repeat("b", 40))
+	publications := candidateEvidencePublications(t, validating, sealed)
+	accepted, judgment, err := store.CommitCandidateEvidence(
+		context.Background(), validating.Handle, sealed, []string{"unit"}, []string{"ci/unit"},
+		sealed.Bundle().ProducedAt, publications,
+	)
+	if err != nil || judgment.Outcome != domain.CandidateAccepted || accepted.State != domain.TaskCandidateComplete {
+		t.Fatalf("CommitCandidateEvidence() = %#v, %#v, %v", accepted, judgment, err)
+	}
+	first, found, err := store.NextComisEvidence(context.Background())
+	if err != nil || !found {
+		t.Fatalf("NextComisEvidence() = %#v, %t, %v", first, found, err)
+	}
+	firstDeliveredAt := sealed.Bundle().ProducedAt.Add(time.Minute)
+	firstRetainedUntil := firstDeliveredAt.Add(time.Hour)
+	if err := store.MarkComisEvidenceDelivered(context.Background(), first.OperationID, application.ComisEvidenceAcknowledgement{
+		ManagedRunID: first.ManagedRunID, EvidenceRef: first.EvidenceRef,
+		ContentHash: first.ContentHash, VerificationLevel: first.VerificationLevel,
+		RetainedUntil: &firstRetainedUntil,
+	}, firstDeliveredAt); err != nil {
+		t.Fatalf("MarkComisEvidenceDelivered(first) error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatalf("Open(restart) error = %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	result, err := reopened.ReconcileStartup(context.Background(), firstDeliveredAt.Add(time.Minute))
+	if err != nil || result.TasksMarkedUnknown != 0 {
+		t.Fatalf("ReconcileStartup() = %#v, %v", result, err)
+	}
+	restarted, err := reopened.GetTask(context.Background(), task.Handle)
+	if err != nil || restarted.State != domain.TaskCandidateComplete || restarted.StateVersion != accepted.StateVersion {
+		t.Fatalf("restarted worker candidate = %#v, %v", restarted, err)
+	}
+	second, found, err := reopened.NextComisEvidence(context.Background())
+	if err != nil || !found || second.OperationID != publications[1].OperationID {
+		t.Fatalf("NextComisEvidence(restart) = %#v, %t, %v", second, found, err)
+	}
+	secondDeliveredAt := firstDeliveredAt.Add(2 * time.Minute)
+	secondRetainedUntil := secondDeliveredAt.Add(time.Hour)
+	if err := reopened.MarkComisEvidenceDelivered(context.Background(), second.OperationID, application.ComisEvidenceAcknowledgement{
+		ManagedRunID: second.ManagedRunID, EvidenceRef: second.EvidenceRef,
+		ContentHash: second.ContentHash, VerificationLevel: second.VerificationLevel,
+		RetainedUntil: &secondRetainedUntil,
+	}, secondDeliveredAt); err != nil {
+		t.Fatalf("MarkComisEvidenceDelivered(second) error = %v", err)
+	}
+	pending, found, err := reopened.NextComisReport(context.Background())
+	if err != nil || !found || pending.TaskHandle != task.Handle {
+		t.Fatalf("NextComisReport(restart) = %#v, %t, %v", pending, found, err)
+	}
+	reportDeliveredAt := secondDeliveredAt.Add(time.Minute)
+	if err := reopened.MarkComisReportDelivered(context.Background(), pending.OperationID, application.ComisReportAcknowledgement{
+		ManagedRunID: pending.ManagedRunID, ServiceReportID: pending.ServiceReportID,
+		AcceptedSequence: 7, RetainedUntil: reportDeliveredAt.Add(time.Hour),
+	}, reportDeliveredAt); err != nil {
+		t.Fatalf("MarkComisReportDelivered() error = %v", err)
+	}
+	delivered, err := reopened.GetTask(context.Background(), task.Handle)
+	if err != nil || delivered.State != domain.TaskDelivered {
+		t.Fatalf("delivered worker candidate after restart = %#v, %v", delivered, err)
+	}
+}
+
 func TestStartupReconciliationRepairsHistoricalLossAfterSettledExit(t *testing.T) {
 	store, task, workspace, now := openTerminalLifecycleFixture(t, "task-reconcile-settled-terminal", true)
 	t.Cleanup(func() { _ = store.Close() })
