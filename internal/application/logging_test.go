@@ -23,12 +23,18 @@ func TestRecordBoundary_StripsFailureFieldsFromEverythingElse(t *testing.T) {
 		RecordBoundary(logger, BoundaryRecord{
 			Boundary: BoundaryLocalAPI, Operation: "ListTasks", Outcome: outcome,
 			ErrorKind: domain.ErrorInternal, Hint: "left over from a previous call",
-			FailureCause: BoundaryFailureDurableTaskContractInvalid,
+			FailureCause:            BoundaryFailureDurableTaskContractInvalid,
+			HostProjectionMismatch:  InitiativeHostMismatchStateCounts,
+			ExpectedHostStateCounts: InitiativeHostStateCounts{Active: 1},
+			ObservedHostStateCounts: InitiativeHostStateCounts{Waiting: 1},
 		})
 		if len(logger.records) != 1 {
 			t.Fatalf("recorded %d, want 1", len(logger.records))
 		}
-		if logger.records[0].ErrorKind != "" || logger.records[0].Hint != "" || logger.records[0].FailureCause != "" {
+		if logger.records[0].ErrorKind != "" || logger.records[0].Hint != "" || logger.records[0].FailureCause != "" ||
+			logger.records[0].HostProjectionMismatch != "" ||
+			logger.records[0].ExpectedHostStateCounts != (InitiativeHostStateCounts{}) ||
+			logger.records[0].ObservedHostStateCounts != (InitiativeHostStateCounts{}) {
 			t.Errorf("outcome %q kept failure fields: %#v", outcome, logger.records[0])
 		}
 	}

@@ -51,7 +51,9 @@ temporary host lag the bounded reconciliation window and refreshes both sides;
 it does not retry an unexplained mismatch. A mismatch after that window or a
 bounded host-read failure keeps the initiative `unknown`; inspect the group,
 task, and pending-egress states rather than repeatedly restarting or manually
-changing the database.
+changing the database. The `startup_group_reconciliation` failure line carries
+the opaque initiative and group identities, attempt count, mismatch class, and
+both state-count projections needed for that inspection.
 
 Task preparation first resolves the requested worker and validation profiles for
 the exact task shape. An unavailable, incompatible, or incomplete profile is

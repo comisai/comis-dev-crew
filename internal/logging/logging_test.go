@@ -68,8 +68,12 @@ func TestLogger_SeparatesStepsFailuresAndCompletions(t *testing.T) {
 	logger.Record(application.BoundaryRecord{
 		Boundary: application.BoundaryControl, Operation: "handshake",
 		Outcome: application.BoundaryFailed, ErrorKind: domain.ErrorUnavailable,
-		Hint:         "inspect the control connection",
-		FailureCause: application.BoundaryFailureDurableTaskContractInvalid,
+		Hint:             "inspect the control connection",
+		FailureCause:     application.BoundaryFailureDurableTaskContractInvalid,
+		InitiativeHandle: "initiative-log", ManagedRunGroupID: "managed-run-group-log",
+		AttemptCount: 2, HostProjectionMismatch: application.InitiativeHostMismatchStateCounts,
+		ExpectedHostStateCounts: application.InitiativeHostStateCounts{Active: 1},
+		ObservedHostStateCounts: application.InitiativeHostStateCounts{Waiting: 1},
 	})
 	lines := decodeLines(t, destination.String())
 	if len(lines) != 2 {
@@ -86,6 +90,17 @@ func TestLogger_SeparatesStepsFailuresAndCompletions(t *testing.T) {
 	}
 	if lines[1]["failureCause"] != "durable_task_contract_invalid" {
 		t.Errorf("failure line lost its content-free cause: %v", lines[1])
+	}
+	if lines[1]["initiativeHandle"] != "initiative-log" ||
+		lines[1]["managedRunGroupId"] != "managed-run-group-log" ||
+		lines[1]["attemptCount"] != float64(2) ||
+		lines[1]["hostProjectionMismatch"] != "state_counts" {
+		t.Errorf("failure line lost its host-recovery diagnosis: %v", lines[1])
+	}
+	expected, expectedOK := lines[1]["expectedHostStateCounts"].(map[string]any)
+	observed, observedOK := lines[1]["observedHostStateCounts"].(map[string]any)
+	if !expectedOK || !observedOK || expected["active"] != float64(1) || observed["waiting"] != float64(1) {
+		t.Errorf("failure line lost its exact state counts: %v", lines[1])
 	}
 	if _, present := lines[0]["errorKind"]; present {
 		t.Error("a step carried an error kind")

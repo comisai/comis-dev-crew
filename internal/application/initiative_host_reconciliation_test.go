@@ -216,7 +216,7 @@ func TestInitiativeHostReconcilerPreservesUnknownWhenHostEvidenceDiffers(t *test
 					"InitiativeHandle":        fixture.initiative.Handle,
 					"ManagedRunGroupID":       fixture.initiative.ManagedRunGroupID,
 					"AttemptCount":            1,
-					"HostProjectionMismatch":  "state_counts",
+					"HostProjectionMismatch":  InitiativeHostMismatchStateCounts,
 					"ExpectedHostStateCounts": InitiativeHostStateCounts{Active: 2},
 					"ObservedHostStateCounts": InitiativeHostStateCounts{Waiting: 2},
 				} {

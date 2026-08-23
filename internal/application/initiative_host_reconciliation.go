@@ -24,6 +24,33 @@ type InitiativeHostStateCounts struct {
 	Unknown           int `json:"unknown"`
 }
 
+// InitiativeHostProjectionMismatch is the closed, content-free reason an
+// exact host recovery comparison could not authorize the initiative.
+type InitiativeHostProjectionMismatch string
+
+const (
+	InitiativeHostMismatchOperationIdentity InitiativeHostProjectionMismatch = "operation_identity"
+	InitiativeHostMismatchHostRead          InitiativeHostProjectionMismatch = "host_read"
+	InitiativeHostMismatchGroupIdentity     InitiativeHostProjectionMismatch = "group_identity"
+	InitiativeHostMismatchInvalidRollup     InitiativeHostProjectionMismatch = "invalid_rollup"
+	InitiativeHostMismatchMemberIdentity    InitiativeHostProjectionMismatch = "member_identity"
+	InitiativeHostMismatchStateCounts       InitiativeHostProjectionMismatch = "state_counts"
+	InitiativeHostMismatchLocalState        InitiativeHostProjectionMismatch = "local_state"
+	InitiativeHostMismatchDurableAuthority  InitiativeHostProjectionMismatch = "durable_authority"
+)
+
+func (mismatch InitiativeHostProjectionMismatch) valid() bool {
+	switch mismatch {
+	case "", InitiativeHostMismatchOperationIdentity, InitiativeHostMismatchHostRead,
+		InitiativeHostMismatchGroupIdentity, InitiativeHostMismatchInvalidRollup,
+		InitiativeHostMismatchMemberIdentity, InitiativeHostMismatchStateCounts,
+		InitiativeHostMismatchLocalState, InitiativeHostMismatchDurableAuthority:
+		return true
+	default:
+		return false
+	}
+}
+
 // InitiativeHostRollup is the bounded host projection used to reconcile one
 // local initiative. It deliberately carries no task text, paths, or evidence.
 type InitiativeHostRollup struct {
@@ -164,14 +191,19 @@ func (reconciler *InitiativeHostReconciler) Reconcile(
 		operationID, operationErr := reconciler.newOperationID()
 		if operationErr != nil || domain.ValidateOperationID(operationID) != nil {
 			result.PreservedUnknown++
-			reconciler.record(operationID, BoundaryFailed)
+			reconciler.record(
+				operationID, BoundaryFailed, initiative, tasks, InitiativeHostRollup{}, 0,
+				InitiativeHostMismatchOperationIdentity,
+			)
 			continue
 		}
 		attemptContext, cancel := context.WithTimeout(ctx, reconciler.attemptTimeout)
 		request := InitiativeHostRollupRequest{
 			OperationID: operationID, ManagedRunGroupID: initiative.ManagedRunGroupID,
 		}
+		attemptCount := 1
 		rollup, readErr := reconciler.host.ReadInitiativeHostRollup(attemptContext, request)
+		durableAuthorityChanged := false
 		if readErr == nil && !initiativeHostEvidenceMatches(initiative, tasks, rollup) {
 			pendingEgress, pendingErr := reconciler.store.InitiativeHasPendingComisEgress(ctx, initiative.Handle)
 			if pendingErr != nil {
@@ -196,9 +228,11 @@ func (reconciler *InitiativeHostReconciler) Reconcile(
 				if refreshed.State != domain.InitiativeUnknown ||
 					refreshed.ManagedRunGroupID != request.ManagedRunGroupID ||
 					!tasksBelongToService(refreshedTasks, reconciler.serviceInstanceID) {
+					durableAuthorityChanged = true
 					break
 				}
 				initiative, tasks = refreshed, refreshedTasks
+				attemptCount++
 				rollup, readErr = reconciler.host.ReadInitiativeHostRollup(attemptContext, request)
 				if readErr != nil {
 					continue
@@ -208,7 +242,13 @@ func (reconciler *InitiativeHostReconciler) Reconcile(
 		cancel()
 		if readErr != nil || !initiativeHostEvidenceMatches(initiative, tasks, rollup) {
 			result.PreservedUnknown++
-			reconciler.record(operationID, BoundaryFailed)
+			mismatch := initiativeHostEvidenceMismatch(initiative, tasks, rollup)
+			if readErr != nil {
+				mismatch = InitiativeHostMismatchHostRead
+			} else if durableAuthorityChanged {
+				mismatch = InitiativeHostMismatchDurableAuthority
+			}
+			reconciler.record(operationID, BoundaryFailed, initiative, tasks, rollup, attemptCount, mismatch)
 			continue
 		}
 		_, commitErr := reconciler.store.CommitInitiativeHostRecovery(ctx, InitiativeHostRecoveryMutation{
@@ -220,14 +260,17 @@ func (reconciler *InitiativeHostReconciler) Reconcile(
 		})
 		if errors.Is(commitErr, ErrPrecondition) {
 			result.PreservedUnknown++
-			reconciler.record(operationID, BoundaryFailed)
+			reconciler.record(
+				operationID, BoundaryFailed, initiative, tasks, rollup, attemptCount,
+				InitiativeHostMismatchDurableAuthority,
+			)
 			continue
 		}
 		if commitErr != nil {
 			return result, fmt.Errorf("reconcile initiatives with host: commit exact recovery: %w", commitErr)
 		}
 		result.Recovered++
-		reconciler.record(operationID, BoundaryCompleted)
+		reconciler.record(operationID, BoundaryCompleted, initiative, tasks, rollup, attemptCount, "")
 	}
 	return result, nil
 }
@@ -243,10 +286,22 @@ func waitInitiativeHostRetry(ctx context.Context, interval time.Duration) error 
 	}
 }
 
-func (reconciler *InitiativeHostReconciler) record(operationID string, outcome BoundaryOutcome) {
+func (reconciler *InitiativeHostReconciler) record(
+	operationID string,
+	outcome BoundaryOutcome,
+	initiative domain.DevelopmentInitiative,
+	tasks []domain.Task,
+	rollup InitiativeHostRollup,
+	attemptCount int,
+	mismatch InitiativeHostProjectionMismatch,
+) {
+	expectedCounts, _ := InitiativeHostStateCountsForTasks(tasks)
 	record := BoundaryRecord{
 		Boundary: BoundaryControl, Operation: "startup_group_reconciliation",
-		OperationID: operationID, Outcome: outcome,
+		OperationID: operationID, Outcome: outcome, InitiativeHandle: initiative.Handle,
+		ManagedRunGroupID: initiative.ManagedRunGroupID, AttemptCount: attemptCount,
+		HostProjectionMismatch: mismatch, ExpectedHostStateCounts: expectedCounts,
+		ObservedHostStateCounts: rollup.StateCounts,
 	}
 	if outcome == BoundaryFailed {
 		record.ErrorKind = domain.ErrorPrecondition
@@ -273,18 +328,35 @@ func initiativeHostEvidenceMatches(
 	tasks []domain.Task,
 	rollup InitiativeHostRollup,
 ) bool {
-	if initiative.ManagedRunGroupID != rollup.ManagedRunGroupID || rollup.Validate() != nil {
-		return false
+	return initiativeHostEvidenceMismatch(initiative, tasks, rollup) == ""
+}
+
+func initiativeHostEvidenceMismatch(
+	initiative domain.DevelopmentInitiative,
+	tasks []domain.Task,
+	rollup InitiativeHostRollup,
+) InitiativeHostProjectionMismatch {
+	if initiative.ManagedRunGroupID != rollup.ManagedRunGroupID {
+		return InitiativeHostMismatchGroupIdentity
+	}
+	if rollup.Validate() != nil {
+		return InitiativeHostMismatchInvalidRollup
 	}
 	wantIDs := make([]string, 0, len(tasks))
 	for _, task := range tasks {
 		wantIDs = append(wantIDs, task.ManagedRunID)
 	}
 	if !sameManagedRunIdentities(wantIDs, rollup.MemberManagedRunIDs) {
-		return false
+		return InitiativeHostMismatchMemberIdentity
 	}
 	wantCounts, err := InitiativeHostStateCountsForTasks(tasks)
-	return err == nil && wantCounts == rollup.StateCounts
+	if err != nil {
+		return InitiativeHostMismatchLocalState
+	}
+	if wantCounts != rollup.StateCounts {
+		return InitiativeHostMismatchStateCounts
+	}
+	return ""
 }
 
 // Validate checks the host projection independently of local initiative facts.

@@ -647,7 +647,11 @@ missing or duplicate member, unexplained changed state count, stale local
 snapshot, unavailable host read, or aggregate that still derives to `unknown`
 leaves the initiative unchanged. Readiness waits for each eligible group attempt,
 with a bounded per-group deadline, but a preserved `unknown` group does not
-prevent unrelated work from being inspected.
+prevent unrelated work from being inspected. A failed recovery boundary record
+names the opaque initiative and group, attempt count, closed mismatch class, and
+both complete content-free state-count projections. The next occurrence can
+therefore be diagnosed from one structured log line without joining the two
+databases by hand.
 
 Threat posture: nested initiative graphs and backlog dependencies are encoded as
 data, never executable input, and are revalidated after decoding. Only the

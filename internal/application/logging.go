@@ -77,10 +77,18 @@ type BoundaryRecord struct {
 	// Operation is the closed method or fixed stage name, never caller text.
 	Operation string `json:"operation"`
 	// OperationID and TaskHandle are opaque service-owned identities.
-	OperationID string          `json:"operationId,omitempty"`
-	TaskHandle  string          `json:"taskHandle,omitempty"`
-	DurationMs  int64           `json:"durationMs"`
-	Outcome     BoundaryOutcome `json:"outcome"`
+	OperationID string `json:"operationId,omitempty"`
+	TaskHandle  string `json:"taskHandle,omitempty"`
+	// Initiative and group identities are opaque durable handles. Host state
+	// counts are content-free and appear only for startup projection diagnosis.
+	InitiativeHandle        string                           `json:"initiativeHandle,omitempty"`
+	ManagedRunGroupID       string                           `json:"managedRunGroupId,omitempty"`
+	AttemptCount            int                              `json:"attemptCount,omitempty"`
+	HostProjectionMismatch  InitiativeHostProjectionMismatch `json:"hostProjectionMismatch,omitempty"`
+	ExpectedHostStateCounts InitiativeHostStateCounts        `json:"expectedHostStateCounts,omitempty"`
+	ObservedHostStateCounts InitiativeHostStateCounts        `json:"observedHostStateCounts,omitempty"`
+	DurationMs              int64                            `json:"durationMs"`
+	Outcome                 BoundaryOutcome                  `json:"outcome"`
 	// ErrorKind and Hint are present only on a failure. Both come from the
 	// closed domain failure vocabulary, so neither can carry untrusted text.
 	ErrorKind    domain.ErrorCode     `json:"errorKind,omitempty"`
@@ -108,11 +116,20 @@ func RecordBoundary(logger BoundaryLogger, record BoundaryRecord) {
 	}
 	if record.Outcome != BoundaryFailed {
 		record.ErrorKind, record.Hint, record.FailureCause = "", "", ""
+		record.HostProjectionMismatch = ""
+		record.ExpectedHostStateCounts = InitiativeHostStateCounts{}
+		record.ObservedHostStateCounts = InitiativeHostStateCounts{}
 	} else if !record.FailureCause.valid() {
 		record.FailureCause = ""
 	}
 	if record.DurationMs < 0 {
 		record.DurationMs = 0
+	}
+	if record.AttemptCount < 0 {
+		record.AttemptCount = 0
+	}
+	if record.Outcome == BoundaryFailed && !record.HostProjectionMismatch.valid() {
+		record.HostProjectionMismatch = ""
 	}
 	logger.Record(record)
 }

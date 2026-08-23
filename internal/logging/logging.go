@@ -95,6 +95,15 @@ func (logger *Logger) Record(record application.BoundaryRecord) {
 	if record.TaskHandle != "" {
 		attributes = append(attributes, slog.String("taskHandle", record.TaskHandle))
 	}
+	if record.InitiativeHandle != "" {
+		attributes = append(attributes, slog.String("initiativeHandle", record.InitiativeHandle))
+	}
+	if record.ManagedRunGroupID != "" {
+		attributes = append(attributes, slog.String("managedRunGroupId", record.ManagedRunGroupID))
+	}
+	if record.AttemptCount > 0 {
+		attributes = append(attributes, slog.Int("attemptCount", record.AttemptCount))
+	}
 	switch record.Outcome {
 	case application.BoundaryStep:
 		logger.log.Debug("boundary step", attributes...)
@@ -105,6 +114,13 @@ func (logger *Logger) Record(record application.BoundaryRecord) {
 		)
 		if record.FailureCause != "" {
 			attributes = append(attributes, slog.String("failureCause", string(record.FailureCause)))
+		}
+		if record.HostProjectionMismatch != "" {
+			attributes = append(attributes,
+				slog.String("hostProjectionMismatch", string(record.HostProjectionMismatch)),
+				slog.Any("expectedHostStateCounts", record.ExpectedHostStateCounts),
+				slog.Any("observedHostStateCounts", record.ObservedHostStateCounts),
+			)
 		}
 		logger.log.Error("boundary failed", attributes...)
 	default:
