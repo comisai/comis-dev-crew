@@ -387,8 +387,15 @@ worker candidate report or one exact completed reconciliation record matching th
 sealed head.
 After successful recovery validation, the two exact server-owned evidence
 publications drive the task to `delivered`; the service does not create a worker
-report merely to close the state machine. Incomplete recovery history remains
-unresolved after restart and refuses a second reconciliation record.
+report merely to close the state machine. Instead, a separate durable outbox emits
+one service-owned `candidate_complete` projection after both evidence publications
+are acknowledged, so Comis can reduce the same verified terminal outcome. Its
+identities and acknowledgement are exact-replay safe across restart. Startup
+backfill accepts only one completed reconciliation with accepted evidence and two
+matching publications; incomplete or ambiguous authority stops startup rather than
+claiming success. The terminal projection remains retryable after cleanup because
+cleanup cannot revoke a previously accepted outcome. Incomplete recovery history
+remains unresolved after restart and refuses a second reconciliation record.
 
 The normal candidate supervisor uses the same server-owned handoff before it
 validates a task that already has an accepted worker candidate report. That report

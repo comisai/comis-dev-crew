@@ -222,6 +222,49 @@ func TestComisEvidenceOutbox_CompletesReconciledCandidateWithoutWorkerReport(t *
 	); err != nil || judgment.Outcome != domain.CandidateAccepted {
 		t.Fatalf("CommitCandidateEvidence() = %#v, %v", judgment, err)
 	}
+	invalidTask, err := store.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("BeginTx(invalid task) error = %v", err)
+	}
+	if _, err := invalidTask.Exec("UPDATE tasks SET state = 'invalid' WHERE handle = ?", task.Handle); err != nil {
+		t.Fatalf("alter candidate task: %v", err)
+	}
+	if err := completeReconciledCandidateDelivery(context.Background(), invalidTask,
+		publications[0].OperationID, judgedAt.Add(time.Minute)); err == nil {
+		t.Fatal("completeReconciledCandidateDelivery(invalid task) error = nil")
+	}
+	if err := invalidTask.Rollback(); err != nil {
+		t.Fatalf("Rollback(invalid task) error = %v", err)
+	}
+	missingEvidence, err := store.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("BeginTx(missing evidence) error = %v", err)
+	}
+	if _, err := missingEvidence.Exec("DELETE FROM candidate_evidence WHERE task_handle = ?", task.Handle); err != nil {
+		t.Fatalf("delete candidate evidence: %v", err)
+	}
+	if err := completeReconciledCandidateDelivery(context.Background(), missingEvidence,
+		publications[0].OperationID, judgedAt.Add(time.Minute)); !errors.Is(err, application.ErrNotFound) {
+		t.Fatalf("completeReconciledCandidateDelivery(missing evidence) error = %v, want not found", err)
+	}
+	if err := missingEvidence.Rollback(); err != nil {
+		t.Fatalf("Rollback(missing evidence) error = %v", err)
+	}
+	alteredJudgment, err := store.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("BeginTx(altered judgment) error = %v", err)
+	}
+	if _, err := alteredJudgment.Exec(`UPDATE candidate_evidence
+		SET outcome = 'rejected', reason = 'validation_failed' WHERE task_handle = ?`, task.Handle); err != nil {
+		t.Fatalf("alter candidate judgment: %v", err)
+	}
+	if err := completeReconciledCandidateDelivery(context.Background(), alteredJudgment,
+		publications[0].OperationID, judgedAt.Add(time.Minute)); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("completeReconciledCandidateDelivery(altered judgment) error = %v, want precondition", err)
+	}
+	if err := alteredJudgment.Rollback(); err != nil {
+		t.Fatalf("Rollback(altered judgment) error = %v", err)
+	}
 
 	for index := range publications {
 		delivery, found, err := store.NextComisEvidence(context.Background())
@@ -248,6 +291,21 @@ func TestComisEvidenceOutbox_CompletesReconciledCandidateWithoutWorkerReport(t *
 		if updated.State != want {
 			t.Fatalf("task state after evidence %d = %q, want %q", index, updated.State, want)
 		}
+	}
+	settledReplay, err := store.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("BeginTx(settled replay) error = %v", err)
+	}
+	if err := completeReconciledCandidateDelivery(context.Background(), settledReplay,
+		"evidence-operation-missing", judgedAt.Add(3*time.Minute)); err == nil {
+		t.Fatal("completeReconciledCandidateDelivery(missing operation) error = nil")
+	}
+	if err := completeReconciledCandidateDelivery(context.Background(), settledReplay,
+		publications[1].OperationID, judgedAt.Add(3*time.Minute)); err != nil {
+		t.Fatalf("completeReconciledCandidateDelivery(settled replay) error = %v", err)
+	}
+	if err := settledReplay.Rollback(); err != nil {
+		t.Fatalf("Rollback(settled replay) error = %v", err)
 	}
 	var candidateReports int
 	if err := store.db.QueryRow(`SELECT COUNT(*) FROM reports
@@ -288,6 +346,19 @@ func TestComisEvidenceOutbox_CompletesReconciledCandidateWithoutWorkerReport(t *
 		AcceptedSequence: 1, RetainedUntil: reportDeliveredAt.Add(time.Hour),
 	}, reportDeliveredAt); err != nil {
 		t.Fatalf("MarkComisReportDelivered(reconciled candidate) error = %v", err)
+	}
+	if err := store.MarkComisReportDelivered(context.Background(), serviceReport.OperationID, application.ComisReportAcknowledgement{
+		ManagedRunID: serviceReport.ManagedRunID, ServiceReportID: serviceReport.ServiceReportID,
+		AcceptedSequence: 1, RetainedUntil: reportDeliveredAt.Add(time.Hour),
+	}, reportDeliveredAt); err != nil {
+		t.Fatalf("MarkComisReportDelivered(reconciled candidate replay) error = %v", err)
+	}
+	altered := application.ComisReportAcknowledgement{
+		ManagedRunID: serviceReport.ManagedRunID, ServiceReportID: serviceReport.ServiceReportID,
+		AcceptedSequence: 2, RetainedUntil: reportDeliveredAt.Add(time.Hour),
+	}
+	if err := store.MarkComisReportDelivered(context.Background(), serviceReport.OperationID, altered, reportDeliveredAt); !errors.Is(err, application.ErrConflict) {
+		t.Fatalf("MarkComisReportDelivered(reconciled candidate altered replay) error = %v, want conflict", err)
 	}
 	if pending, found, err := store.NextComisReport(context.Background()); err != nil || found {
 		t.Fatalf("NextComisReport(delivered reconciled candidate) = %#v, %t, %v", pending, found, err)

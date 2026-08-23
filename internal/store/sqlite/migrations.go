@@ -70,7 +70,10 @@ func (store *Store) migrate(ctx context.Context) error {
 			return err
 		}
 	}
-	return nil
+	if err := store.applyVersionedMigration(ctx, 42, reconciledReportOutboxMigration); err != nil {
+		return err
+	}
+	return store.backfillReconciledComisReports(ctx)
 }
 
 func (store *Store) applyVersionedMigration(ctx context.Context, version int, migration string) error {

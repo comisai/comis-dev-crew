@@ -96,6 +96,52 @@ func TestInitiativeHostRecoveryDetectsOnlyUndeliveredMemberEgress(t *testing.T) 
 	if pending, err := store.InitiativeHasPendingComisEgress(ctx, initiative.Handle); err != nil || pending {
 		t.Fatalf("InitiativeHasPendingComisEgress(delivered) = %t, %v", pending, err)
 	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO comis_evidence_outbox (
+		operation_id, task_handle, evidence_ref, kind, subject_digest, observed_at,
+		content_hash, verification_level, body, delivery_kind, file_name, media_type,
+		delivered_at, state_version
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"put-evidence-host-recovery-second", tasks[0].Handle, "evidence-host-recovery-second",
+		"delivery_reference", "subject-digest-host-recovery", formatTime(now),
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"adapter_verified", []byte("https://example.com/pull/1"), "reference", "", "application/json",
+		formatTime(now.Add(time.Second)), tasks[0].StateVersion,
+	); err != nil {
+		t.Fatalf("seed cleaned reconciled report evidence: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO comis_reconciled_report_outbox (
+		operation_id, task_handle, local_report_id, service_report_id, summary, state_version
+	) VALUES (?, ?, ?, ?, ?, ?)`,
+		"reconciled-report-host-recovery", tasks[0].Handle, "reconciled-candidate-host-recovery",
+		"service-report-host-recovery", reconciledCandidateSummary, tasks[0].StateVersion,
+	); err != nil {
+		t.Fatalf("seed cleaned reconciled report: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, "UPDATE tasks SET state = 'cleaned' WHERE handle = ?", tasks[0].Handle); err != nil {
+		t.Fatalf("settle cleaned task state: %v", err)
+	}
+	var taskState string
+	var pendingEvidence, pendingWorkerReports int
+	if err := store.db.QueryRowContext(ctx, `SELECT t.state,
+		(SELECT COUNT(*) FROM comis_evidence_outbox e WHERE e.task_handle = t.handle AND e.delivered_at IS NULL),
+		(SELECT COUNT(*) FROM comis_report_outbox r WHERE r.task_handle = t.handle AND r.delivered_at IS NULL)
+		FROM tasks t WHERE t.handle = ?`, tasks[0].Handle).Scan(&taskState, &pendingEvidence, &pendingWorkerReports); err != nil {
+		t.Fatalf("inspect cleaned reconciled report fixture: %v", err)
+	}
+	if taskState != "cleaned" || pendingEvidence != 0 || pendingWorkerReports != 0 {
+		t.Fatalf("cleaned reconciled report fixture = state %q, evidence %d, worker reports %d",
+			taskState, pendingEvidence, pendingWorkerReports)
+	}
+	if pending, err := store.InitiativeHasPendingComisEgress(ctx, initiative.Handle); err != nil || !pending {
+		t.Fatalf("InitiativeHasPendingComisEgress(cleaned reconciled report) = %t, %v", pending, err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE comis_reconciled_report_outbox
+		SET delivered_at = ? WHERE task_handle = ?`, formatTime(now.Add(2*time.Second)), tasks[0].Handle); err != nil {
+		t.Fatalf("settle cleaned reconciled report egress: %v", err)
+	}
+	if pending, err := store.InitiativeHasPendingComisEgress(ctx, initiative.Handle); err != nil || pending {
+		t.Fatalf("InitiativeHasPendingComisEgress(settled reconciled report) = %t, %v", pending, err)
+	}
 }
 
 func TestInitiativeHostRecoveryMismatchPreservesDurableUnknownState(t *testing.T) {

@@ -40,10 +40,20 @@ func (store *Store) InitiativeHasPendingComisEgress(ctx context.Context, handle 
 		JOIN tasks t ON t.handle = o.task_handle
 		WHERE o.task_handle = ? AND o.delivered_at IS NULL
 		  AND t.state IN ('candidate_complete', 'delivering', 'delivered')
+		UNION ALL
+		SELECT 1 FROM comis_reconciled_report_outbox o
+		JOIN tasks t ON t.handle = o.task_handle
+		WHERE o.task_handle = ? AND o.delivered_at IS NULL
+		  AND t.state IN ('candidate_complete', 'delivering', 'delivered', 'cleanup_held', 'cleaned')
+		  AND (SELECT COUNT(*) FROM comis_evidence_outbox e WHERE e.task_handle = t.handle) = 2
+		  AND NOT EXISTS (
+			SELECT 1 FROM comis_evidence_outbox e
+			WHERE e.task_handle = t.handle AND e.delivered_at IS NULL
+		  )
 	)`
 	for _, taskHandle := range initiativeTaskHandles(initiative) {
 		var pending bool
-		if err := store.db.QueryRowContext(ctx, query, taskHandle, taskHandle).Scan(&pending); err != nil {
+		if err := store.db.QueryRowContext(ctx, query, taskHandle, taskHandle, taskHandle).Scan(&pending); err != nil {
 			return false, fmt.Errorf("read initiative pending Comis egress: %w", err)
 		}
 		if pending {

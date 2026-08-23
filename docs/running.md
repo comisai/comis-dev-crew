@@ -385,7 +385,11 @@ generated controls, and inert commit identity, import its objects, compare-and-s
 the prepared branch from the pinned base, and synchronize the worktree index without
 replacing files. Recovery records fresh evidence and enters the existing validation
 pipeline without creating a worker candidate report or
-advancing the report cursor. Validation and pull-request delivery must match the
+advancing the report cursor. After both exact evidence publications are retained,
+a separate service-owned outbox sends the reconciled `candidate_complete` outcome
+to Comis. This report cannot be supplied by the worker or caller, is replayed with
+stable identities after restart, and is acknowledged only when the host returns the
+exact run and service-report identities. Validation and pull-request delivery must match the
 persisted recovery branch and head; a changed worktree is refused before validation
 or forge mutation. Task detail and explanation keep that reconciliation operation
 beside the judged candidate after validation and delivery, allowing a content-free
