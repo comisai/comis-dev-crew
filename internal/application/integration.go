@@ -195,6 +195,9 @@ func (integrations *Integrations) ApplyCandidate(
 	}
 	policyID, err := integrations.store.IntegrationPolicy(ctx, command.InitiativeHandle)
 	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return IntegrationApplicationResult{}, mutationCommitFailure(err)
+		}
 		return IntegrationApplicationResult{}, &dependencyFailure{message: "integration policy is unavailable", cause: err}
 	}
 	strategy, err := integrations.policies(policyID)
