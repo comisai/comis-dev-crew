@@ -82,8 +82,11 @@ func TestIntegrationReservationRejectsUnavailableStateAndEvidenceRows(t *testing
 		{name: "owner not writable", mutate: func(fixture *storedIntegrationFixture) {
 			_, _ = fixture.store.db.Exec(`UPDATE tasks SET state = 'paused' WHERE handle = 'task-integration'`)
 		}},
-		{name: "ready owner dependencies not delivered", mutate: func(fixture *storedIntegrationFixture) {
-			_, _ = fixture.store.db.Exec(`UPDATE tasks SET state = 'ready' WHERE handle = 'task-integration'`)
+		{name: "ready owner dependency not accepted", mutate: func(fixture *storedIntegrationFixture) {
+			_, _ = fixture.store.db.Exec(`UPDATE tasks SET state = CASE handle
+				WHEN 'task-integration' THEN 'ready'
+				WHEN 'task-component-a' THEN 'validating'
+				ELSE state END`)
 		}},
 		{name: "task repository authority differs", mutate: func(fixture *storedIntegrationFixture) {
 			_, _ = fixture.store.db.Exec(`UPDATE tasks SET base_revision = ? WHERE handle = 'task-component-a'`, strings.Repeat("e", 40))

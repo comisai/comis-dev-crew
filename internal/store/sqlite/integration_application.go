@@ -256,7 +256,7 @@ func resolveIntegrationReservation(
 				return integrationApplicationRow{}, fmt.Errorf("integration worktree authority is unavailable: %w", application.ErrPrecondition)
 			}
 			worktrees[taskHandle] = preparation.RequestedWorkspaceRoot
-			deliverySatisfied[taskHandle] = task.State == domain.TaskDelivered || task.State == domain.TaskCleaned
+			deliverySatisfied[taskHandle] = task.State.SatisfiesInitiativeDependency()
 		}
 	}
 	ownerWritable := integrationTask.State == domain.TaskWorking ||

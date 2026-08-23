@@ -679,7 +679,10 @@ operation.
 
 The reservation resolves distinct task worktrees from durable preparations and
 requires current accepted candidate evidence whose repository, base, task, head,
-and expiry still agree. A dependency-ready integration owner may receive those
+and expiry still agree. Candidate-complete, delivering, delivered, cleanup-held,
+and cleaned predecessors satisfy the same dependency rule used by scheduling and
+the initiative graph; host report acknowledgement is not required after accepted
+candidate evidence. A dependency-ready integration owner may receive those
 server-owned applications while it is still `ready`; this keeps Git application
 and conflict materialization ahead of the confined worker launch. A launched owner
 remains writable only in its explicit working, decision, or blocked states. The Git

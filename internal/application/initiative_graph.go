@@ -74,7 +74,7 @@ func ProjectInitiativeGraph(
 	// member whose state is unknown cannot satisfy anything downstream.
 	satisfied := make(map[string]bool, len(states))
 	for handle, state := range states {
-		satisfied[handle] = state == domain.TaskDelivered || state == domain.TaskCleaned
+		satisfied[handle] = state.SatisfiesInitiativeDependency()
 	}
 	ready := make(map[string]bool)
 	for _, handle := range initiative.DependencyReadyTasks(satisfied) {

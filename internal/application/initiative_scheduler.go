@@ -294,13 +294,7 @@ func taskPinsCurrentContract(
 }
 
 func taskDependencySatisfied(state domain.TaskState) bool {
-	switch state {
-	case domain.TaskCandidateComplete, domain.TaskDelivering, domain.TaskDelivered,
-		domain.TaskCleanupHeld, domain.TaskCleaned:
-		return true
-	default:
-		return false
-	}
+	return state.SatisfiesInitiativeDependency()
 }
 
 func taskConsumesWorker(state domain.TaskState) bool {

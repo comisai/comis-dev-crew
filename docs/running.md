@@ -578,7 +578,7 @@ distributed outcome as one atomic success.
 the integration-owner task, candidate task, candidate head, and expected target
 head from one strict bounded JSON contract. The contract cannot select policy,
 strategy, repository, worktree, or argv, and the command emits JSON only.
-Apply delivered component candidates before launching a dependency-ready
+Apply component candidates with current accepted evidence before launching a dependency-ready
 integration owner. This lets the confined worker start from the exact applied or
 conflicted worktree instead of snapshotting an earlier Git state. Candidate
 handoff then accepts only a clean private commit that fast-forwards that exact
@@ -594,7 +594,10 @@ An `invalidated` outcome means the candidate head or cleanliness changed after
 its evidence was accepted. No integration write occurred: the same durable
 transaction returns that candidate to `validating`, while the integration owner
 and unrelated candidates keep their current state. Retry only after fresh
-validation produces evidence for the new exact head.
+validation produces evidence for the new exact head. Accepted
+`candidate_complete` evidence satisfies the initiative dependency immediately;
+host delivery acknowledgement settles independently and is not an integration
+precondition.
 
 The stream records transitions, not writes. A task that is still waiting is
 rewritten on every supervisor pass to refresh its liveness, and those rewrites

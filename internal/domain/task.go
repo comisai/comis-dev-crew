@@ -93,6 +93,18 @@ func (state TaskState) valid() bool {
 	}
 }
 
+// SatisfiesInitiativeDependency reports whether a task has accepted candidate
+// evidence or a later delivery posture. Initiative integration consumes the
+// accepted head; host acknowledgement may settle independently afterward.
+func (state TaskState) SatisfiesInitiativeDependency() bool {
+	switch state {
+	case TaskCandidateComplete, TaskDelivering, TaskDelivered, TaskCleanupHeld, TaskCleaned:
+		return true
+	default:
+		return false
+	}
+}
+
 // Task is the pure E0 durable domain record. Comis protocol DTOs do not appear
 // here; only exact opaque host-authority references cross the adapter boundary.
 type Task struct {
