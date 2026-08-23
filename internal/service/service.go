@@ -248,7 +248,10 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		scoutReviews = reviews
 	}
 	handlerConfig := localapi.HandlerConfig{
-		Queries: queries, InitiativeQueries: initiativeQueries, Merges: merges, Clock: clock, Logger: config.Logger,
+		Queries: queries, InitiativeQueries: initiativeQueries, Clock: clock, Logger: config.Logger,
+	}
+	if merges != nil {
+		handlerConfig.Merges = merges
 	}
 	if mutations != nil {
 		handlerConfig.Mutations = mutations
