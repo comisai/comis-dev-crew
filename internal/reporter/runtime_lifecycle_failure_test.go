@@ -2,6 +2,8 @@ package reporter
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net"
 	"os"
@@ -9,6 +11,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 func TestListenRuntimeRequiresRelayIdentitySeed(t *testing.T) {
@@ -54,6 +59,77 @@ func TestBindLaunchRejectsUnavailableServerAndBinding(t *testing.T) {
 	if err := server.BindLaunch(RuntimeLaunchConfig{OperationID: "not-an-operation"}); err == nil {
 		t.Fatal("server accepted an invalid launch binding")
 	}
+}
+
+func TestRebindLaunchRejectsUnavailableOrUnboundGenerations(t *testing.T) {
+	if err := (*RuntimeServer)(nil).RebindLaunch(RuntimeLaunchConfig{}); err == nil {
+		t.Fatal("nil server accepted a rebound launch")
+	}
+	if err := (*RuntimeServer)(nil).RebindGeneration(boundaryBrief("task-rebind-nil"), RuntimeLaunchConfig{}); err == nil {
+		t.Fatal("nil server accepted a rebound generation")
+	}
+	server := &RuntimeServer{}
+	if err := server.RebindLaunch(RuntimeLaunchConfig{}); err == nil {
+		t.Fatal("server without a reporter accepted a rebound launch")
+	}
+	server.reporter = &Client{}
+	if err := server.RebindLaunch(RuntimeLaunchConfig{}); err == nil {
+		t.Fatal("server accepted an invalid rebound launch")
+	}
+	if err := server.RebindGeneration(boundaryBrief("task-rebind-unbound"), RuntimeLaunchConfig{}); err == nil {
+		t.Fatal("server without a bound generation accepted a replacement")
+	}
+	brief, client := server.generationBinding()
+	if brief != (domain.WorkerBrief{}) || client != server.reporter {
+		t.Fatalf("generationBinding() = %#v/%#v", brief, client)
+	}
+}
+
+func TestRebindGenerationRejectsReporterReconstructionFailures(t *testing.T) {
+	const credential = "cred-0123456789abcdef0123456789abcdef"
+	taskHandle := "task-rebind-reporter-boundary"
+	priorBrief := boundaryBrief(taskHandle)
+	nextBrief := priorBrief
+	nextBrief.Revision++
+	nextBrief.Content += "constraints:\n- preserve the inherited work\n"
+	digest := sha256.Sum256([]byte(nextBrief.Content))
+	nextBrief.RevisionHash = hex.EncodeToString(digest[:])
+	expected := application.LaunchAcknowledgement{
+		TaskHandle: taskHandle, ManagedRunID: "managed-run-rebind-boundary",
+		WorkspaceLeaseID: "workspace-lease-rebind-boundary",
+		WorkingDirectory: "/missing/rebind/workspace",
+		BriefRevision:    nextBrief.Revision, BriefRevisionHash: nextBrief.RevisionHash,
+	}
+	launch := RuntimeLaunchConfig{
+		OperationID: "operation-rebind-reporter-boundary", Expected: expected,
+		Acknowledger: boundaryLaunchAcknowledger{},
+	}
+	server := &RuntimeServer{
+		brief: priorBrief,
+		reporter: &Client{endpoint: &Endpoint{
+			taskHandle: taskHandle, briefRevision: priorBrief.Revision,
+			briefRevisionHash: priorBrief.RevisionHash,
+		}, credential: credential},
+		launch: &RuntimeLaunchConfig{Expected: expected},
+	}
+	if err := server.RebindGeneration(nextBrief, launch); err == nil {
+		t.Fatal("generation rebind reconstructed a reporter without a sink")
+	}
+
+	server.reporter.endpoint.sink = boundaryReportSink{}
+	server.reporter.endpoint.auditor = boundaryAuditor{}
+	if err := server.RebindGeneration(nextBrief, launch); err == nil {
+		t.Fatal("generation rebind accepted an unreachable launch workspace")
+	}
+}
+
+type boundaryLaunchAcknowledger struct{}
+
+func (boundaryLaunchAcknowledger) AcknowledgeWorkerLaunch(
+	context.Context,
+	application.AcknowledgeWorkerLaunchCommand,
+) (application.MutationResult, error) {
+	return application.MutationResult{}, nil
 }
 
 func TestRuntimeClientCallsFailWhenAttachmentIsUnreachable(t *testing.T) {

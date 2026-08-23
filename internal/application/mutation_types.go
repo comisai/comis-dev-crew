@@ -359,6 +359,21 @@ type RuntimeAttachmentBindingRequest struct {
 	Acknowledger          WorkerLaunchAcknowledger
 }
 
+// RuntimeAttachmentLaunchRebindRequest selects a later launch generation for
+// an already-bound task socket without changing its host attachment authority.
+type RuntimeAttachmentLaunchRebindRequest struct {
+	TaskHandle        string
+	ReadyStateVersion int64
+	LaunchOperationID string
+	Brief             domain.WorkerBrief
+}
+
+// RuntimeAttachmentLaunchRebinder rotates only the acknowledgement generation
+// after a paused task has durably returned to ready.
+type RuntimeAttachmentLaunchRebinder interface {
+	RebindRuntimeAttachmentLaunch(context.Context, RuntimeAttachmentLaunchRebindRequest) error
+}
+
 // RuntimeAttachmentCoordinator owns per-task reporter listeners and binds the
 // activation identity to the same protected socket without replacing it.
 type RuntimeAttachmentCoordinator interface {

@@ -14,6 +14,7 @@ import (
 type productionLaunchStore interface {
 	ListTasks(context.Context) ([]domain.Task, error)
 	GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error)
+	application.TaskResumeLaunchReader
 }
 
 type productionLaunchMutations interface {
@@ -99,7 +100,9 @@ func (supervisor *productionLaunchSupervisor) RecordTerminalEvent(
 	if err != nil {
 		return application.MutationResult{}, fmt.Errorf("production launch supervisor read preparation: %w", err)
 	}
-	descriptor, err := application.BuildWorkerLaunchDescriptor(ctx, task, preparation, supervisor.harnesses)
+	descriptor, err := application.BuildWorkerTaskLaunchDescriptor(
+		ctx, task, preparation, supervisor.harnesses, supervisor.store,
+	)
 	if err != nil {
 		return application.MutationResult{}, fmt.Errorf("production launch supervisor verify descriptor: %w", err)
 	}
@@ -108,7 +111,7 @@ func (supervisor *productionLaunchSupervisor) RecordTerminalEvent(
 		acknowledgement.WorkspaceLeaseID != command.WorkspaceLeaseID {
 		return application.MutationResult{}, errors.New("production launch supervisor: terminal authority differs from descriptor")
 	}
-	operationID := productionStartOperationID(task.Handle)
+	operationID := productionStartOperationID(task.Handle, task.StateVersion)
 	started, err := supervisor.mutations.StartTask(ctx, application.StartTaskCommand{
 		OperationID: operationID, TaskHandle: task.Handle,
 	})
@@ -146,7 +149,9 @@ func (supervisor *productionLaunchSupervisor) readyTask(
 	return match, matches == 1 && match.State == domain.TaskReady, nil
 }
 
-func productionStartOperationID(taskHandle string) string {
-	digest := sha256.Sum256([]byte("production-terminal-created\x00" + taskHandle))
+func productionStartOperationID(taskHandle string, readyStateVersion int64) string {
+	digest := sha256.Sum256([]byte(fmt.Sprintf(
+		"production-terminal-created\x00%s\x00%d", taskHandle, readyStateVersion,
+	)))
 	return fmt.Sprintf("terminal-start-%x", digest[:16])
 }

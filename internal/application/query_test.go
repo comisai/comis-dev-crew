@@ -525,14 +525,6 @@ func TestQueries_FailureBranchesAndClosedStateExplanations(t *testing.T) {
 	}
 }
 
-func failureCode(err error) domain.ErrorCode {
-	var failure *domain.Failure
-	if !errors.As(err, &failure) {
-		return ""
-	}
-	return failure.Code
-}
-
 type queryRepository struct {
 	tasks                  []domain.Task
 	operation              domain.OperationRecord
@@ -558,6 +550,7 @@ type queryRepository struct {
 	taskEvidenceCalled     bool
 	observationCalled      bool
 	evidenceSnapshotCalled bool
+	resume                 queryResumeFixture
 }
 
 func (repository *queryRepository) ReadTaskObservation(ctx context.Context, handle string) (TaskObservation, error) {
@@ -625,6 +618,7 @@ func (harnesses *queryHarnesses) ResolveWorkerHarness(string) (WorkerHarnessAdap
 
 type queryHarnessAdapter struct {
 	request    WorkerLaunchRequest
+	resume     *WorkerResumeRequest
 	called     bool
 	err        error
 	descriptor *WorkerLaunchDescriptor

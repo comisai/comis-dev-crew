@@ -1,6 +1,7 @@
 package application
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -8,6 +9,22 @@ import (
 )
 
 var resumeHeadPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// TaskResumeLaunch is the durable head and state generation that distinguish a
+// resumed worker launch from a task's first launch or a replacement launch.
+type TaskResumeLaunch struct {
+	OperationID  string
+	TaskHandle   string
+	HeadRevision string
+	StateVersion int64
+}
+
+// TaskResumeLaunchReader returns the latest durable resume generation for one
+// task. A stale generation is ignored; a current one selects the resume
+// bootstrap for both ready launch and launching recovery reads.
+type TaskResumeLaunchReader interface {
+	TaskResumeLaunch(context.Context, string) (TaskResumeLaunch, bool, error)
+}
 
 // MaximumUsageEventBytes bounds one usage event before it is decoded.
 const MaximumUsageEventBytes = 8 * 1024

@@ -126,6 +126,79 @@ func TestInterventions_ResumePromotesAWorkersCleanPrivateCommitBeforeRelaunch(t 
 	}
 }
 
+func TestInterventions_ResumeRotatesTheProtectedAcknowledgementGeneration(t *testing.T) {
+	interventions, store := resumeFixture(t, domain.TaskPaused, WorkspaceClean)
+	runtimeLaunches := &interventionRuntimeLaunches{}
+	interventions.runtimeLaunches = runtimeLaunches
+
+	result, err := interventions.ResumeTask(context.Background(), ResumeTaskCommand{
+		OperationID: "operation-resume-runtime-generation", TaskHandle: store.task.Handle,
+	})
+	if err != nil {
+		t.Fatalf("ResumeTask(runtime generation) error = %v", err)
+	}
+	wantOperationID, err := RuntimeRelaunchAcknowledgementOperationID(
+		result.Task.Handle, result.Task.StateVersion,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtimeLaunches.calls != 1 || runtimeLaunches.request != (RuntimeAttachmentLaunchRebindRequest{
+		TaskHandle: result.Task.Handle, ReadyStateVersion: result.Task.StateVersion,
+		LaunchOperationID: wantOperationID, Brief: mustRenderResumeBrief(t, result.Task),
+	}) {
+		t.Fatalf("runtime launch rebind = %d/%#v", runtimeLaunches.calls, runtimeLaunches.request)
+	}
+}
+
+func TestInterventions_ResumeRelaunchFailsClosedOnIncompleteGenerationAuthority(t *testing.T) {
+	interventions, store := resumeFixture(t, domain.TaskPaused, WorkspaceClean)
+	ready := store.task
+	ready.State = domain.TaskReady
+	interventions.runtimeLaunches = &interventionRuntimeLaunches{err: errors.New("runtime unavailable")}
+	if err := interventions.rebindReadyWorkerLaunch(context.Background(), ready); err == nil {
+		t.Fatal("rebindReadyWorkerLaunch(runtime failure) error = nil")
+	}
+	ready.StateVersion = 0
+	if err := interventions.rebindReadyWorkerLaunch(context.Background(), ready); err == nil {
+		t.Fatal("rebindReadyWorkerLaunch(absent generation) error = nil")
+	}
+	ready.StateVersion = store.task.StateVersion
+	ready.BriefRevisionHash = strings.Repeat("f", 64)
+	if err := interventions.rebindReadyWorkerLaunch(context.Background(), ready); err == nil {
+		t.Fatal("rebindReadyWorkerLaunch(unpinned brief) error = nil")
+	}
+	ready.State = domain.TaskWorking
+	if err := interventions.rebindReadyWorkerLaunch(context.Background(), ready); err != nil {
+		t.Fatalf("rebindReadyWorkerLaunch(advanced replay) error = %v", err)
+	}
+}
+
+func TestInterventions_ResumePrivateHandoffRefusesIncompleteOrUnavailableAuthority(t *testing.T) {
+	interventions, store := resumeFixture(t, domain.TaskPaused, WorkspaceDirty)
+	inspector := &promotingInterventionInspector{
+		interventionInspector: *(interventions.workspaces.(*interventionInspector)),
+		promoteErr:            errors.New("private Git unavailable"),
+	}
+	interventions.workspaces = inspector
+	if _, found := interventions.promotePausedWorkerCandidate(context.Background(), store.task); found {
+		t.Fatal("private handoff accepted an absent preparation operation")
+	}
+	store.preparationOperationID = "operation-prepare-private-unavailable"
+	if _, found := interventions.promotePausedWorkerCandidate(context.Background(), store.task); found {
+		t.Fatal("private handoff accepted an unavailable Git promotion")
+	}
+}
+
+func mustRenderResumeBrief(t *testing.T, task domain.Task) domain.WorkerBrief {
+	t.Helper()
+	brief, err := task.RenderWorkerBrief()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return brief
+}
+
 // Only a paused task can be resumed, and the state is checked before the
 // workspace is inspected: inspecting a running task's worktree would race the
 // worker writing to it and could report a dirtiness that means nothing.
@@ -161,10 +234,101 @@ func TestInterventions_ResumeReplaysARepeatedRequest(t *testing.T) {
 	}
 }
 
+func TestInterventions_ResumeClassifiesEveryDependencyBoundaryFailure(t *testing.T) {
+	t.Run("replay read failure", func(t *testing.T) {
+		interventions, store := resumeFixture(t, domain.TaskPaused, WorkspaceClean)
+		store.replayErr = errors.New("replay unavailable")
+		if _, err := interventions.ResumeTask(context.Background(), ResumeTaskCommand{
+			OperationID: "operation-resume-replay-failure", TaskHandle: store.task.Handle,
+		}); err == nil {
+			t.Fatal("ResumeTask(replay failure) error = nil")
+		}
+	})
+
+	t.Run("task read failure", func(t *testing.T) {
+		interventions, store := resumeFixture(t, domain.TaskPaused, WorkspaceClean)
+		store.task = domain.Task{}
+		if _, err := interventions.ResumeTask(context.Background(), ResumeTaskCommand{
+			OperationID: "operation-resume-task-read-failure", TaskHandle: "task-resume-application",
+		}); err == nil {
+			t.Fatal("ResumeTask(task read failure) error = nil")
+		}
+	})
+
+	t.Run("preparation read failure", func(t *testing.T) {
+		interventions, store := resumeFixture(t, domain.TaskPaused, WorkspaceClean)
+		store.preparation.RequestedWorkspaceRoot = ""
+		if _, err := interventions.ResumeTask(context.Background(), ResumeTaskCommand{
+			OperationID: "operation-resume-preparation-failure", TaskHandle: store.task.Handle,
+		}); err == nil {
+			t.Fatal("ResumeTask(preparation failure) error = nil")
+		}
+	})
+
+	t.Run("workspace inspection failure", func(t *testing.T) {
+		interventions, store := resumeFixture(t, domain.TaskPaused, WorkspaceClean)
+		interventions.workspaces.(*interventionInspector).err = errors.New("Git unavailable")
+		if _, err := interventions.ResumeTask(context.Background(), ResumeTaskCommand{
+			OperationID: "operation-resume-inspection-failure", TaskHandle: store.task.Handle,
+		}); err == nil {
+			t.Fatal("ResumeTask(inspection failure) error = nil")
+		}
+	})
+
+	t.Run("workspace authority mismatch", func(t *testing.T) {
+		interventions, store := resumeFixture(t, domain.TaskPaused, WorkspaceClean)
+		interventions.workspaces.(*interventionInspector).snapshot.TaskHandle = "task-different-authority"
+		if _, err := interventions.ResumeTask(context.Background(), ResumeTaskCommand{
+			OperationID: "operation-resume-authority-failure", TaskHandle: store.task.Handle,
+		}); err == nil {
+			t.Fatal("ResumeTask(authority mismatch) error = nil")
+		}
+	})
+
+	t.Run("durable commit failure", func(t *testing.T) {
+		interventions, store := resumeFixture(t, domain.TaskPaused, WorkspaceClean)
+		store.commitErr = errors.New("store unavailable")
+		if _, err := interventions.ResumeTask(context.Background(), ResumeTaskCommand{
+			OperationID: "operation-resume-commit-failure", TaskHandle: store.task.Handle,
+		}); err == nil {
+			t.Fatal("ResumeTask(commit failure) error = nil")
+		}
+	})
+
+	t.Run("replayed generation rebind failure", func(t *testing.T) {
+		interventions, store := resumeFixture(t, domain.TaskPaused, WorkspaceClean)
+		store.replayFound = true
+		store.replay = MutationResult{Task: store.task}
+		store.replay.Task.State = domain.TaskReady
+		interventions.runtimeLaunches = &interventionRuntimeLaunches{err: errors.New("runtime unavailable")}
+		if _, err := interventions.ResumeTask(context.Background(), ResumeTaskCommand{
+			OperationID: "operation-resume-rebind-replay-failure", TaskHandle: store.task.Handle,
+		}); err == nil {
+			t.Fatal("ResumeTask(replayed rebind failure) error = nil")
+		}
+	})
+}
+
 type promotingInterventionInspector struct {
 	interventionInspector
 	promoted     WorkspaceSnapshot
 	promoteCalls int
+	promoteErr   error
+}
+
+type interventionRuntimeLaunches struct {
+	request RuntimeAttachmentLaunchRebindRequest
+	calls   int
+	err     error
+}
+
+func (launches *interventionRuntimeLaunches) RebindRuntimeAttachmentLaunch(
+	_ context.Context,
+	request RuntimeAttachmentLaunchRebindRequest,
+) error {
+	launches.calls++
+	launches.request = request
+	return launches.err
 }
 
 func (inspector *promotingInterventionInspector) PromoteReconciliationCandidate(
@@ -172,7 +336,7 @@ func (inspector *promotingInterventionInspector) PromoteReconciliationCandidate(
 	_ ReconciliationWorkspaceRequest,
 ) (WorkspaceSnapshot, error) {
 	inspector.promoteCalls++
-	return inspector.promoted, nil
+	return inspector.promoted, inspector.promoteErr
 }
 
 func TestInterventions_ResumeRefusesForgedIdentityAndDeadContexts(t *testing.T) {

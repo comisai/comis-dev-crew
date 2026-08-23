@@ -1054,7 +1054,21 @@ and resuming cannot become a second, less-examined way to start a worker. The
 resume bootstrap names the exact head the worker left and tells it the tree
 already holds its own unfinished work. Resume is refused without that head:
 E0 returns a worker through the worktree rather than a vendor session, so the
-head is what proves the tree did not move under it.
+head is what proves the tree did not move under it. Resume persists that head
+with the exact ready-state generation, and both launch-plan reads and terminal
+creation select the resume bootstrap only while that generation is current.
+The transition returns to `ready`, then follows the ordinary authenticated
+`launching` and worker-acknowledgement path; it never claims `working` while the
+paused terminal is already gone. A clean lease-private worker commit is verified
+and promoted through the same exact branch handoff used for candidate recovery
+before the resume generation is recorded. Actual developer edits remain dirty
+and route to handback. Every ready generation receives distinct durable start
+and wrapper-acknowledgement operations, and a settled terminal binding may rotate
+only when the next authenticated `created` event arrives for that launching
+generation. Earlier acknowledgements therefore cannot advance a resumed worker.
+Replacement rotates the protected socket's pinned brief, reporter scope, and
+acknowledgement operation together, while preserving its exact task, run, lease,
+workspace, and attachment authority.
 
 Neither family reports a lifecycle integration it cannot prove. An unverified
 settle signal yields no artifacts and a named reason rather than a best-effort

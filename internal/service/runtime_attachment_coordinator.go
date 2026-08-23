@@ -291,6 +291,61 @@ func bindRuntimeAttachmentEntry(entry *runtimeAttachmentEntry, request applicati
 	return nil
 }
 
+func (coordinator *runtimeAttachmentCoordinator) RebindRuntimeAttachmentLaunch(
+	ctx context.Context,
+	request application.RuntimeAttachmentLaunchRebindRequest,
+) error {
+	if ctx == nil {
+		return errors.New("rebind runtime attachment launch: context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	wantOperationID, err := application.RuntimeRelaunchAcknowledgementOperationID(
+		request.TaskHandle, request.ReadyStateVersion,
+	)
+	if err != nil || wantOperationID != request.LaunchOperationID || request.Brief.Validate() != nil {
+		return errors.New("rebind runtime attachment launch: generation identity is invalid")
+	}
+	select {
+	case <-coordinator.recoveryReady:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	coordinator.mu.Lock()
+	defer coordinator.mu.Unlock()
+	entry := coordinator.entries[request.TaskHandle]
+	if entry == nil || entry.state != runtimeAttachmentEntryReady || entry.binding == nil {
+		return errors.New("rebind runtime attachment launch: bound socket is unavailable")
+	}
+	binding := *entry.binding
+	expected := application.LaunchAcknowledgement{
+		TaskHandle: request.TaskHandle, ManagedRunID: binding.ManagedRunID,
+		WorkspaceLeaseID: binding.WorkspaceLeaseID, WorkingDirectory: entry.request.WorkingDirectory,
+		BriefRevision: request.Brief.Revision, BriefRevisionHash: request.Brief.RevisionHash,
+	}
+	launch := reporter.RuntimeLaunchConfig{
+		OperationID:  request.LaunchOperationID,
+		Expected:     expected,
+		Acknowledger: binding.Acknowledger,
+	}
+	if request.Brief.Revision == entry.request.BriefRevision &&
+		request.Brief.RevisionHash == entry.request.BriefRevisionHash {
+		err = entry.server.RebindLaunch(launch)
+	} else {
+		err = entry.server.RebindGeneration(request.Brief, launch)
+	}
+	if err != nil {
+		return err
+	}
+	entry.request.Brief = request.Brief
+	entry.request.BriefRevision = request.Brief.Revision
+	entry.request.BriefRevisionHash = request.Brief.RevisionHash
+	binding.LaunchOperationID = request.LaunchOperationID
+	entry.binding = &binding
+	return nil
+}
+
 func validateRuntimeAttachmentBinding(request application.RuntimeAttachmentBindingRequest) error {
 	if domain.ValidateTaskHandle(request.TaskHandle) != nil ||
 		domain.ValidateAuthorityReference("managedRunId", request.ManagedRunID) != nil ||

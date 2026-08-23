@@ -38,6 +38,9 @@ func (interventions *Interventions) ResumeTask(
 	); err != nil {
 		return MutationResult{}, mutationReplayFailure(err)
 	} else if found {
+		if err := interventions.rebindReadyWorkerLaunch(ctx, replay.Task); err != nil {
+			return MutationResult{}, err
+		}
 		return replay, nil
 	}
 	task, err := interventions.store.GetTask(ctx, command.TaskHandle)
@@ -50,6 +53,11 @@ func (interventions *Interventions) ResumeTask(
 	snapshot, err := interventions.inspectPausedWorkspace(ctx, task)
 	if err != nil {
 		return MutationResult{}, err
+	}
+	if snapshot.Cleanliness != WorkspaceClean {
+		if promoted, found := interventions.promotePausedWorkerCandidate(ctx, task); found {
+			snapshot = promoted
+		}
 	}
 	// Clean means the tree is what the worker left. A dirty tree carries a
 	// developer's edit that only handback's revalidation can safely absorb.
@@ -64,7 +72,80 @@ func (interventions *Interventions) ResumeTask(
 	if err != nil {
 		return MutationResult{}, mutationCommitFailure(err)
 	}
+	if err := interventions.rebindReadyWorkerLaunch(ctx, result.Task); err != nil {
+		return MutationResult{}, err
+	}
 	return result, nil
+}
+
+func (interventions *Interventions) rebindReadyWorkerLaunch(ctx context.Context, task domain.Task) error {
+	if interventions.runtimeLaunches == nil {
+		return nil
+	}
+	// A replay read returns the task's current state, not the historical ready
+	// projection. Once launch advanced, the first rebind already succeeded.
+	if task.State != domain.TaskReady {
+		return nil
+	}
+	if task.StateVersion < 1 {
+		return &dependencyFailure{message: "worker relaunch generation is unavailable"}
+	}
+	operationID, err := RuntimeRelaunchAcknowledgementOperationID(task.Handle, task.StateVersion)
+	if err != nil {
+		return &dependencyFailure{message: "worker relaunch identity is unavailable", cause: err}
+	}
+	brief, err := task.RenderWorkerBrief()
+	if err != nil {
+		return &dependencyFailure{message: "worker relaunch brief is unavailable", cause: err}
+	}
+	if err := interventions.runtimeLaunches.RebindRuntimeAttachmentLaunch(ctx, RuntimeAttachmentLaunchRebindRequest{
+		TaskHandle: task.Handle, ReadyStateVersion: task.StateVersion,
+		LaunchOperationID: operationID, Brief: brief,
+	}); err != nil {
+		return &dependencyFailure{message: "worker runtime attachment could not be rebound", cause: err}
+	}
+	return nil
+}
+
+type pausedCandidateAuthorityReader interface {
+	ReadCandidateHandoffAuthority(context.Context, string) (CandidateHandoffAuthority, error)
+}
+
+// promotePausedWorkerCandidate recognizes the clean commit a confined worker
+// left in lease-private Git administration and hands that exact commit to the
+// shared task branch. Ordinary Git reports those committed files as dirty until
+// this handoff, which must not be confused with a developer editing a pause.
+func (interventions *Interventions) promotePausedWorkerCandidate(
+	ctx context.Context,
+	task domain.Task,
+) (WorkspaceSnapshot, bool) {
+	authorities, authorityOK := interventions.store.(pausedCandidateAuthorityReader)
+	promoter, promoterOK := interventions.workspaces.(ReconciliationWorkspacePromoter)
+	if !authorityOK || !promoterOK {
+		return WorkspaceSnapshot{}, false
+	}
+	authority, err := authorities.ReadCandidateHandoffAuthority(ctx, task.Handle)
+	if err != nil || authority.Task.Handle != task.Handle || authority.Task.State != domain.TaskPaused ||
+		authority.Task.RepositoryID != task.RepositoryID ||
+		authority.Preparation.ExternalRunRef != task.Handle ||
+		authority.Preparation.RequestedWorkspaceRoot == "" ||
+		domain.ValidateOperationID(authority.PreparationOperationID) != nil {
+		return WorkspaceSnapshot{}, false
+	}
+	snapshot, err := promoter.PromoteReconciliationCandidate(ctx, ReconciliationWorkspaceRequest{
+		PreparationOperationID: authority.PreparationOperationID,
+		TaskHandle:             task.Handle,
+		RepositoryID:           task.RepositoryID,
+		WorktreePath:           authority.Preparation.RequestedWorkspaceRoot,
+		BaseRevision:           task.BaseRevision,
+	})
+	if err != nil || snapshot.Validate() != nil || snapshot.TaskHandle != task.Handle ||
+		snapshot.RepositoryID != task.RepositoryID ||
+		snapshot.WorktreePath != authority.Preparation.RequestedWorkspaceRoot ||
+		snapshot.Cleanliness != WorkspaceClean || snapshot.HeadRevision == task.BaseRevision {
+		return WorkspaceSnapshot{}, false
+	}
+	return snapshot, true
 }
 
 // inspectPausedWorkspace reads independent Git truth for one paused task. Both

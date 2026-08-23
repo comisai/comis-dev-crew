@@ -159,28 +159,6 @@ func listenRuntime(config RuntimeServerConfig, afterSocketInfo func()) (*Runtime
 	return server, nil
 }
 
-// BindLaunch attaches one exact activation identity without replacing the
-// socket Comis already validated. Altered replays fail closed.
-func (server *RuntimeServer) BindLaunch(config RuntimeLaunchConfig) error {
-	if server == nil || server.reporter == nil {
-		return errors.New("bind runtime launch: server is unavailable")
-	}
-	if err := validateRuntimeLaunchBinding(server.brief, server.reporter, config); err != nil {
-		return err
-	}
-	server.launchMu.Lock()
-	defer server.launchMu.Unlock()
-	if server.launch != nil {
-		if server.launch.OperationID != config.OperationID || server.launch.Expected != config.Expected {
-			return errors.New("bind runtime launch: activation binding conflicts")
-		}
-		return nil
-	}
-	binding := config
-	server.launch = &binding
-	return nil
-}
-
 // Serve accepts bounded one-request connections until cancellation or Close.
 func (server *RuntimeServer) Serve(ctx context.Context) (resultErr error) {
 	if ctx == nil {
@@ -265,13 +243,15 @@ func (server *RuntimeServer) serveConnection(ctx context.Context, connection *ne
 		if request.Report != nil || request.Acknowledgement != nil || request.ExternalKey != "" {
 			outcome = runtimeRejected("malformed_request")
 		} else {
-			brief := server.brief
+			brief, _ := server.generationBinding()
 			outcome = RuntimeOutcome{Version: runtimeProtocolVersion, Brief: &brief}
 		}
 	case "report":
 		if request.Report == nil || request.Acknowledgement != nil || request.ExternalKey != "" {
 			outcome = runtimeRejected("malformed_request")
-		} else if receipt, err := server.reporter.Report(ctx, *request.Report); err != nil {
+		} else if _, client := server.generationBinding(); client == nil {
+			outcome = runtimeRejected("report_rejected")
+		} else if receipt, err := client.Report(ctx, *request.Report); err != nil {
 			outcome = runtimeRejected("report_rejected")
 		} else {
 			outcome = RuntimeOutcome{Version: runtimeProtocolVersion, Receipt: &receipt}

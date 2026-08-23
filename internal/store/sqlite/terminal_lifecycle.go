@@ -48,9 +48,19 @@ func (store *Store) CommitTerminalEvent(ctx context.Context, mutation applicatio
 	if err != nil {
 		return application.MutationResult{}, err
 	}
-	if found && (binding.managedRunID != mutation.ManagedRunID || binding.workspaceLeaseID != mutation.WorkspaceLeaseID ||
-		binding.terminalSessionID != mutation.TerminalSessionID) {
+	previousTerminalSessionID := binding.terminalSessionID
+	rotated := false
+	if found && (binding.managedRunID != mutation.ManagedRunID || binding.workspaceLeaseID != mutation.WorkspaceLeaseID) {
 		return application.MutationResult{}, fmt.Errorf("terminal event binding differs: %w", application.ErrPrecondition)
+	}
+	if found && binding.terminalSessionID != mutation.TerminalSessionID {
+		if task.State != domain.TaskLaunching || mutation.Transition != application.TerminalCreated ||
+			(binding.latestTransition != application.TerminalExited && binding.latestTransition != application.TerminalReleased) {
+			return application.MutationResult{}, fmt.Errorf("terminal event binding differs: %w", application.ErrPrecondition)
+		}
+		binding.terminalSessionID = mutation.TerminalSessionID
+		binding.runningObserved = false
+		rotated = true
 	}
 	if !found {
 		binding = storedTerminalBinding{
@@ -114,7 +124,12 @@ func (store *Store) CommitTerminalEvent(ctx context.Context, mutation applicatio
 	if err := insertOperation(ctx, transaction, operation); err != nil {
 		return application.MutationResult{}, terminalConstraintFailure("insert terminal event operation", err)
 	}
-	if err := putTerminalBinding(ctx, transaction, binding, found); err != nil {
+	if rotated {
+		err = rotateTerminalBinding(ctx, transaction, binding, previousTerminalSessionID)
+	} else {
+		err = putTerminalBinding(ctx, transaction, binding, found)
+	}
+	if err != nil {
 		return application.MutationResult{}, err
 	}
 	const insertEvent = `INSERT INTO task_terminal_events (
@@ -174,6 +189,10 @@ func (store *Store) CommitWorkerLaunchAcknowledgement(ctx context.Context, mutat
 	// The deterministic fixture launches no terminal process; this explicit
 	// profile exception keeps it useful without weakening production profiles.
 	terminalReady = terminalReady || task.WorkerProfileID == "fixture-worker"
+	launchStateVersion, err := currentTaskLaunchStateVersion(ctx, transaction, task.Handle)
+	if err != nil {
+		return application.MutationResult{}, err
+	}
 	updated := task
 	if terminalReady {
 		updated, err = task.ApplyTransition(domain.TransitionWorkerAcknowledged, mutation.At)
@@ -200,12 +219,13 @@ func (store *Store) CommitWorkerLaunchAcknowledgement(ctx context.Context, mutat
 	}
 	const insert = `INSERT INTO task_launch_acknowledgements (
         operation_id, task_handle, managed_run_id, workspace_lease_id,
-        working_directory, brief_revision, brief_revision_hash, acknowledged_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        working_directory, brief_revision, brief_revision_hash,
+        launch_state_version, acknowledged_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	if _, err := transaction.ExecContext(ctx, insert, mutation.OperationID, task.Handle,
 		acknowledgement.ManagedRunID, acknowledgement.WorkspaceLeaseID,
 		acknowledgement.WorkingDirectory, acknowledgement.BriefRevision,
-		acknowledgement.BriefRevisionHash, formatTime(mutation.At)); err != nil {
+		acknowledgement.BriefRevisionHash, launchStateVersion, formatTime(mutation.At)); err != nil {
 		return application.MutationResult{}, terminalConstraintFailure("insert launch acknowledgement", err)
 	}
 	if err := transaction.Commit(); err != nil {
@@ -375,14 +395,57 @@ func putTerminalBinding(ctx context.Context, target execer, binding storedTermin
 	return nil
 }
 
-func hasLaunchAcknowledgement(ctx context.Context, source queryer, taskHandle string) (bool, error) {
+func rotateTerminalBinding(
+	ctx context.Context,
+	target execer,
+	binding storedTerminalBinding,
+	previousTerminalSessionID string,
+) error {
+	const update = `UPDATE task_terminal_bindings SET terminal_session_id = ?, latest_transition = ?,
+        running_observed = ?, updated_at = ? WHERE task_handle = ? AND terminal_session_id = ?`
+	result, err := target.ExecContext(ctx, update, binding.terminalSessionID, binding.latestTransition,
+		binding.runningObserved, formatTime(binding.updatedAt), binding.taskHandle, previousTerminalSessionID)
+	if err != nil {
+		return fmt.Errorf("rotate terminal binding: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return fmt.Errorf("rotate terminal binding: %w", application.ErrPrecondition)
+	}
+	return nil
+}
+
+func hasLaunchAcknowledgement(
+	ctx context.Context,
+	source queryer,
+	taskHandle string,
+) (bool, error) {
+	launchStateVersion, err := currentTaskLaunchStateVersion(ctx, source, taskHandle)
+	if err != nil {
+		return false, err
+	}
 	var count int
 	if err := source.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM task_launch_acknowledgements WHERE task_handle = ?", taskHandle,
+		"SELECT COUNT(*) FROM task_launch_acknowledgements WHERE task_handle = ? AND launch_state_version = ?",
+		taskHandle, launchStateVersion,
 	).Scan(&count); err != nil {
 		return false, fmt.Errorf("inspect launch acknowledgement: %w", err)
 	}
 	return count == 1, nil
+}
+
+func currentTaskLaunchStateVersion(ctx context.Context, source queryer, taskHandle string) (int64, error) {
+	const query = `SELECT state_version FROM operations
+        WHERE command = ? AND status = ? AND result_ref = ?
+        ORDER BY state_version DESC, id DESC LIMIT 1`
+	var stateVersion int64
+	if err := source.QueryRowContext(ctx, query, commandStartTask, domain.OperationCompleted, taskHandle).Scan(&stateVersion); err != nil {
+		return 0, fmt.Errorf("inspect task launch generation: %w", err)
+	}
+	if stateVersion < 1 {
+		return 0, fmt.Errorf("inspect task launch generation: %w", application.ErrPrecondition)
+	}
+	return stateVersion, nil
 }
 
 func terminalUnavailable(transition application.TerminalTransition) bool {

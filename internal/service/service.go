@@ -114,8 +114,12 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	}
 	var interventions *application.Interventions
 	if config.workspaceInspector != nil {
+		var runtimeLaunches application.RuntimeAttachmentLaunchRebinder
+		if candidate, ok := config.RuntimeAttachments.(application.RuntimeAttachmentLaunchRebinder); ok {
+			runtimeLaunches = candidate
+		}
 		interventions, err = application.NewInterventions(application.InterventionConfig{
-			Store: store, Workspaces: config.workspaceInspector,
+			Store: store, Workspaces: config.workspaceInspector, RuntimeLaunches: runtimeLaunches,
 			// Replacement launches a worker, so it must be able to prove the
 			// proposed profile is one an operator reviewed for this task's shape.
 			WorkerProfiles: config.WorkerProfiles,

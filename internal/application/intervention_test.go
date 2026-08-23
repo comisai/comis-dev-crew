@@ -151,6 +151,11 @@ func (store *interventionStore) CommitTaskReplace(_ context.Context, mutation Ta
 	replaced.State = domain.TaskReady
 	replaced.WorkerProfileID = mutation.WorkerProfileID
 	replaced.BriefRevision = store.task.BriefRevision + 1
+	var err error
+	replaced, err = replaced.PinBriefRevision()
+	if err != nil {
+		return MutationResult{}, err
+	}
 	return MutationResult{Task: replaced}, nil
 }
 
@@ -161,7 +166,7 @@ func (store *interventionStore) CommitTaskResume(_ context.Context, mutation Tas
 		return MutationResult{}, store.commitErr
 	}
 	resumed := store.task
-	resumed.State = domain.TaskWorking
+	resumed.State = domain.TaskReady
 	return MutationResult{Task: resumed}, nil
 }
 

@@ -300,6 +300,19 @@ func RuntimeLaunchAcknowledgementOperationID(taskHandle string) (string, error) 
 	return "launch-ack-" + operationDigest[:32], nil
 }
 
+// RuntimeRelaunchAcknowledgementOperationID derives one acknowledgement
+// operation for an exact ready generation. Reusing the task's initial operation
+// would replay old evidence while the new terminal was still launching.
+func RuntimeRelaunchAcknowledgementOperationID(taskHandle string, readyStateVersion int64) (string, error) {
+	if err := domain.ValidateTaskHandle(taskHandle); err != nil || readyStateVersion < 1 {
+		return "", errors.New("runtime resume launch identity is invalid")
+	}
+	operationDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf(
+		"runtime-relaunch-ack\x00%s\x00%d", taskHandle, readyStateVersion,
+	))))
+	return "launch-ack-" + operationDigest[:32], nil
+}
+
 // AbandonManagedRun durably closes one exact unbound preparation. Preserve
 // retains prepared task state; reap-safe enters the reversible cleanup path.
 func (mutations *Mutations) AbandonManagedRun(ctx context.Context, command AbandonManagedRunCommand) (MutationResult, error) {

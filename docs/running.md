@@ -901,14 +901,16 @@ against an easier bar than the one the task was accepted under. A task already
 validating is left alone rather than restarted, and an unverifiable worktree is
 judged `unknown` by the candidate inspection rather than blocked here.
 
-`task resume` returns one paused task to the worker already running it. It is
-refused when the worktree has uncommitted changes: the paused worker still holds
-a brief, a base revision and an evidence set describing the tree it stopped on,
-and none of them would notice a developer's edit, so resuming onto a changed
-tree would continue from a description of a tree that no longer exists. The
-refusal names the way out — `task handback --action validate-developer-work`,
-which captures the fresh head, invalidates the evidence the edit stales and
-revalidates. Resume selects no worker; choosing a different one is replacement.
+`task resume` readies one paused task for an authenticated relaunch of the same
+worker profile. The previous terminal must have settled. If the confined worker
+left a clean commit in lease-private Git administration, resume verifies and
+promotes that exact commit into the shared task branch before recording its head;
+the ordinary shared index appearing dirty in that case is not a developer edit.
+An actual uncommitted developer edit is still refused because the paused worker's
+brief and evidence describe a different tree. The refusal names the way out —
+`task handback --action validate-developer-work`, which captures the fresh head,
+invalidates the evidence the edit stales and revalidates. Resume selects no
+worker; choosing a different one is replacement.
 
 `task cancel` stops work on one task and preserves its worktree, artifacts, run
 binding and lease. It names no disposition: stopping and discarding are separate

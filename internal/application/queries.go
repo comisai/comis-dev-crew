@@ -236,7 +236,11 @@ func (queries *Queries) GetLaunchPlan(ctx context.Context, handle string) (Launc
 	if err != nil {
 		return LaunchPlan{}, translateReadError(err, "task launch preparation")
 	}
-	descriptor, err := BuildWorkerLaunchDescriptor(ctx, task, preparation, queries.harnesses)
+	var resumes TaskResumeLaunchReader
+	if reader, ok := queries.repository.(TaskResumeLaunchReader); ok {
+		resumes = reader
+	}
+	descriptor, err := BuildWorkerTaskLaunchDescriptor(ctx, task, preparation, queries.harnesses, resumes)
 	if err != nil {
 		if errors.Is(err, errLaunchAuthorityIncomplete) || errors.Is(err, errLaunchDescriptorInconsistent) {
 			return LaunchPlan{}, newSafeFailure(
