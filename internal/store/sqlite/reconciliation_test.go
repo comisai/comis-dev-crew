@@ -126,6 +126,42 @@ func TestStartupReconciliationPreservesValidatingTaskForEvidenceRecovery(t *test
 	}
 }
 
+func TestStartupReconciliationPreservesSettledPausedTaskForExplicitResume(t *testing.T) {
+	store, task, workspace, now := openTerminalLifecycleFixture(t, "task-paused-restart", true)
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+	if _, err := store.CommitTerminalEvent(ctx, terminalEventMutation(
+		task, "operation-paused-restart-running", application.TerminalRunning, now.Add(3*time.Minute),
+	)); err != nil {
+		t.Fatalf("CommitTerminalEvent(running) error = %v", err)
+	}
+	if _, err := store.CommitWorkerLaunchAcknowledgement(ctx, application.WorkerLaunchAcknowledgementMutation{
+		OperationID: "operation-paused-restart-ack", SubjectDigest: strings.Repeat("8", 64),
+		Acknowledgement: terminalLaunchAcknowledgement(task, workspace), At: now.Add(3 * time.Minute),
+	}); err != nil {
+		t.Fatalf("CommitWorkerLaunchAcknowledgement() error = %v", err)
+	}
+	client := reportClient(t, store, task, now.Add(4*time.Minute))
+	if _, err := client.Report(ctx, sqliteWorkerReport(task, "report-paused-restart", domain.ReportPaused)); err != nil {
+		t.Fatalf("Report(paused) error = %v", err)
+	}
+	settled, err := store.CommitTerminalEvent(ctx, terminalEventMutation(
+		task, "operation-paused-restart-exited", application.TerminalExited, now.Add(5*time.Minute),
+	))
+	if err != nil || settled.Task.State != domain.TaskPaused {
+		t.Fatalf("CommitTerminalEvent(exited) = %#v, %v", settled, err)
+	}
+
+	result, err := store.ReconcileStartup(ctx, now.Add(6*time.Minute))
+	if err != nil || result.TasksMarkedUnknown != 0 {
+		t.Fatalf("ReconcileStartup(paused) = %#v, %v", result, err)
+	}
+	restarted, err := store.GetTask(ctx, task.Handle)
+	if err != nil || restarted.State != domain.TaskPaused || restarted.StateVersion != settled.Task.StateVersion {
+		t.Fatalf("paused task after restart = %#v, %v, want version %d", restarted, err, settled.Task.StateVersion)
+	}
+}
+
 func TestStartupReconciliationResumesReconciledCandidateDelivery(t *testing.T) {
 	databasePath := filepath.Join(canonicalTempDir(t), "reconciled-candidate-restart.db")
 	store, err := Open(context.Background(), databasePath)
