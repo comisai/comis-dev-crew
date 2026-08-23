@@ -13,10 +13,20 @@ import (
 type initiativeHostRecoveryStoreStub struct {
 	initiatives    []domain.DevelopmentInitiative
 	observations   map[string][]domain.Task
+	pendingEgress  map[string]bool
+	pendingCalls   []string
 	commits        []InitiativeHostRecoveryMutation
 	listErr        error
 	observationErr error
 	commitErr      error
+}
+
+func (store *initiativeHostRecoveryStoreStub) InitiativeHasPendingComisEgress(
+	_ context.Context,
+	handle string,
+) (bool, error) {
+	store.pendingCalls = append(store.pendingCalls, handle)
+	return store.pendingEgress[handle], nil
 }
 
 func (store *initiativeHostRecoveryStoreStub) ListInitiatives(
@@ -61,9 +71,10 @@ func (store *initiativeHostRecoveryStoreStub) CommitInitiativeHostRecovery(
 }
 
 type initiativeHostRollupSourceStub struct {
-	results map[string]InitiativeHostRollup
-	errors  map[string]error
-	calls   []InitiativeHostRollupRequest
+	results   map[string]InitiativeHostRollup
+	sequences map[string][]InitiativeHostRollup
+	errors    map[string]error
+	calls     []InitiativeHostRollupRequest
 }
 
 func (source *initiativeHostRollupSourceStub) ReadInitiativeHostRollup(
@@ -73,6 +84,11 @@ func (source *initiativeHostRollupSourceStub) ReadInitiativeHostRollup(
 	source.calls = append(source.calls, request)
 	if err := source.errors[request.ManagedRunGroupID]; err != nil {
 		return InitiativeHostRollup{}, err
+	}
+	if sequence := source.sequences[request.ManagedRunGroupID]; len(sequence) > 0 {
+		result := sequence[0]
+		source.sequences[request.ManagedRunGroupID] = sequence[1:]
+		return result, nil
 	}
 	return source.results[request.ManagedRunGroupID], nil
 }
@@ -189,6 +205,57 @@ func TestInitiativeHostReconcilerPreservesUnknownWhenHostEvidenceDiffers(t *test
 				t.Fatalf("mismatched host evidence committed recovery: %#v", store.commits)
 			}
 		})
+	}
+}
+
+func TestInitiativeHostReconcilerWaitsForPendingEgressToSettle(t *testing.T) {
+	now := time.Date(2026, time.August, 23, 4, 0, 0, 0, time.UTC)
+	fixture := hostRecoveryInitiative(t, "initiative-pending-egress", "service-instance-current", now)
+	fixture.tasks[0].State = domain.TaskCandidateComplete
+	store := &initiativeHostRecoveryStoreStub{
+		initiatives:   []domain.DevelopmentInitiative{fixture.initiative},
+		observations:  map[string][]domain.Task{fixture.initiative.Handle: fixture.tasks},
+		pendingEgress: map[string]bool{fixture.initiative.Handle: true},
+	}
+	exact := InitiativeHostRollup{
+		ManagedRunGroupID: fixture.initiative.ManagedRunGroupID,
+		MemberManagedRunIDs: []string{
+			fixture.tasks[0].ManagedRunID, fixture.tasks[1].ManagedRunID,
+		},
+		StateCounts: InitiativeHostStateCounts{Active: 1, CandidateComplete: 1},
+		UpdatedAtMs: now.Add(time.Second).UnixMilli(),
+	}
+	source := &initiativeHostRollupSourceStub{sequences: map[string][]InitiativeHostRollup{
+		fixture.initiative.ManagedRunGroupID: {
+			{
+				ManagedRunGroupID: fixture.initiative.ManagedRunGroupID,
+				MemberManagedRunIDs: []string{
+					fixture.tasks[0].ManagedRunID, fixture.tasks[1].ManagedRunID,
+				},
+				StateCounts: InitiativeHostStateCounts{Active: 2}, UpdatedAtMs: now.UnixMilli(),
+			},
+			exact,
+		},
+	}}
+	reconciler, err := NewInitiativeHostReconciler(InitiativeHostReconcilerConfig{
+		Store: store, Host: source, ServiceInstanceID: "service-instance-current",
+		NewOperationID: func() (string, error) { return "operation-host-rollup-pending", nil },
+		Clock:          func() time.Time { return now.Add(2 * time.Second) }, AttemptTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewInitiativeHostReconciler() error = %v", err)
+	}
+
+	result, err := reconciler.Reconcile(context.Background())
+
+	if err != nil || result.Attempted != 1 || result.Recovered != 1 || result.PreservedUnknown != 0 {
+		t.Fatalf("Reconcile() = %#v, %v", result, err)
+	}
+	if len(source.calls) != 2 || len(store.pendingCalls) != 1 {
+		t.Fatalf("host calls = %d, pending-egress calls = %d, want 2 and 1", len(source.calls), len(store.pendingCalls))
+	}
+	if len(store.commits) != 1 || store.commits[0].StateCounts != exact.StateCounts {
+		t.Fatalf("recovery commits = %#v, want settled exact rollup", store.commits)
 	}
 }
 
