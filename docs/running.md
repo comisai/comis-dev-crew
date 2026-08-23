@@ -46,9 +46,10 @@ On restart, every ambiguous nonterminal initiative is first persisted as
 persistent control session to read each current-service group's content-free host
 rollup. An initiative resumes only when the complete managed-run identity set and
 every host state count exactly match its durable task rows. If a member still has
-an undelivered durable Comis report or evidence publication, startup gives that
-temporary host lag the bounded reconciliation window and refreshes both sides;
-it does not retry an unexplained mismatch. A mismatch after that window or a
+a currently forwardable durable Comis report or evidence publication, startup
+gives that temporary host lag the bounded reconciliation window and refreshes
+both sides. Preserved cancelled evidence does not grant retry time, and the
+service does not retry an unexplained mismatch. A mismatch after that window or a
 bounded host-read failure keeps the initiative `unknown`; inspect the group,
 task, and pending-egress states rather than repeatedly restarting or manually
 changing the database. The `startup_group_reconciliation` failure line carries

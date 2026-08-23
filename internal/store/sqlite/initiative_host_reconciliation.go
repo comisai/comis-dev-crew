@@ -23,12 +23,23 @@ func (store *Store) InitiativeHasPendingComisEgress(ctx context.Context, handle 
 		return false, err
 	}
 	const query = `SELECT EXISTS(
-        SELECT 1 FROM comis_report_outbox
-        WHERE task_handle = ? AND delivered_at IS NULL
-        UNION ALL
-        SELECT 1 FROM comis_evidence_outbox
-        WHERE task_handle = ? AND delivered_at IS NULL
-    )`
+		SELECT 1 FROM comis_report_outbox o
+		JOIN reports r ON r.task_handle = o.task_handle AND r.local_report_id = o.local_report_id
+		JOIN tasks t ON t.handle = r.task_handle
+		WHERE o.task_handle = ? AND o.delivered_at IS NULL
+		  AND (r.kind != 'candidate_complete' OR (
+			t.state IN ('candidate_complete', 'delivering', 'delivered')
+			AND (SELECT COUNT(*) FROM comis_evidence_outbox e WHERE e.task_handle = t.handle) = 2
+			AND NOT EXISTS (
+			  SELECT 1 FROM comis_evidence_outbox e
+			  WHERE e.task_handle = t.handle AND e.delivered_at IS NULL
+			)
+		  ))
+		UNION ALL
+		SELECT 1 FROM comis_evidence_outbox o
+		JOIN tasks t ON t.handle = o.task_handle
+		WHERE o.task_handle = ? AND o.delivered_at IS NULL AND t.state <> 'cancelled'
+	)`
 	for _, taskHandle := range initiativeTaskHandles(initiative) {
 		var pending bool
 		if err := store.db.QueryRowContext(ctx, query, taskHandle, taskHandle).Scan(&pending); err != nil {

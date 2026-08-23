@@ -637,11 +637,13 @@ second, narrower reconciliation for bound `unknown` initiatives whose complete
 member set belongs to the current service instance. The service reads the host's
 content-free managed-run group rollup on that persistent session and compares the
 exact managed-run identities plus all nine host state counts with current durable
-task rows. When a member has an undelivered durable Comis report or evidence
-publication, an older host projection can be a temporary egress lag. Only in that
-case, startup refreshes both local rows and the host rollup at the normal report
-poll interval within the existing per-group deadline. A group with no pending
-egress receives no projection retry. Only an exact settled match may atomically
+task rows. When a member has a currently forwardable durable Comis report or
+evidence publication, an older host projection can be a temporary egress lag.
+Only in that case, startup refreshes both local rows and the host rollup at the
+normal report poll interval within the existing per-group deadline. Preserved
+cancelled evidence and a candidate report held behind ineligible evidence do not
+grant retry time. A group with no forwardable egress receives no projection
+retry. Only an exact settled match may atomically
 restore the aggregate state derived from those rows. A foreign service instance,
 missing or duplicate member, unexplained changed state count, stale local
 snapshot, unavailable host read, or aggregate that still derives to `unknown`
