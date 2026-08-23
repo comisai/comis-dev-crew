@@ -280,9 +280,12 @@ content-free while still naming the ground it was refused on.
 
 Which unknown tasks a reconcile would accept is readable from the operator
 console. Each task is classified against the same evidence the reconcile command
-requires — durable authority, terminal settlement, worktree verification,
-cleanliness, and whether a commit exists ahead of the pinned base — using the
-read-only half of the reconciliation inspector.
+requires — durable authority, terminal settlement, absence of prior candidate
+recovery history, worktree verification, cleanliness, and whether a commit exists
+ahead of the pinned base — using the read-only half of the reconciliation
+inspector. Existing candidate or reconciliation history is classified as
+incomplete authority instead of offering an action the commit boundary will
+refuse.
 
 The survey reports and never acts, because choosing an action from evidence is
 the authority the explicit per-task command holds and a survey that reconciled on

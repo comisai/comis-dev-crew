@@ -60,6 +60,15 @@ func (store *Store) ReadTaskReconciliationAuthority(
 	if err != nil {
 		return application.TaskReconciliationAuthority{}, err
 	}
+	recoveryHistory, err := candidateRecoveryHistoryExists(ctx, transaction, taskHandle)
+	if err != nil {
+		return application.TaskReconciliationAuthority{}, err
+	}
+	if recoveryHistory {
+		return application.TaskReconciliationAuthority{}, fmt.Errorf(
+			"task reconciliation already has candidate history: %w", application.ErrPrecondition,
+		)
+	}
 	if err := transaction.Commit(); err != nil {
 		return application.TaskReconciliationAuthority{}, fmt.Errorf("commit task reconciliation authority read: %w", err)
 	}
