@@ -231,7 +231,7 @@ func reconcileSettledTerminalBindings(ctx context.Context, transaction *sql.Tx) 
 func runtimeSensitiveState(state domain.TaskState) bool {
 	switch state {
 	case domain.TaskLaunching, domain.TaskWorking, domain.TaskAwaitingDecision,
-		domain.TaskBlocked, domain.TaskPaused, domain.TaskReconciling,
+		domain.TaskBlocked, domain.TaskReconciling,
 		domain.TaskCandidateComplete, domain.TaskDelivering:
 		return true
 	default:
