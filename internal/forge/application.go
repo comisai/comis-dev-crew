@@ -47,9 +47,13 @@ func (adapter *GitHubAdapter) ReconcileApprovedPullRequest(
 	if adapter == nil || request.RepositoryID != adapter.config.RepositoryIdentity {
 		return application.PullRequestMergeReceipt{}, false, errors.New("reconcile approved pull request: repository identity differs")
 	}
+	intendedMethod, err := forgeMergeMethod(request.Method)
+	if err != nil {
+		return application.PullRequestMergeReceipt{}, false, err
+	}
 	forgeRequest := PullRequestMergeRequest{
 		OperationID: request.OperationID, PullRequestID: request.PullRequestID,
-		Branch: request.Branch, HeadRevision: request.HeadRevision,
+		Branch: request.Branch, HeadRevision: request.HeadRevision, Method: intendedMethod,
 		RequiredChecks: append([]string(nil), request.RequiredChecks...),
 	}
 	if err := validatePullRequestMergeRequest(forgeRequest); err != nil {
@@ -95,23 +99,40 @@ func (adapter *GitHubAdapter) MergeApprovedPullRequest(
 	if adapter == nil || request.RepositoryID != adapter.config.RepositoryIdentity {
 		return application.PullRequestMergeReceipt{}, errors.New("merge approved pull request: repository identity differs")
 	}
+	intendedMethod, err := forgeMergeMethod(request.Method)
+	if err != nil {
+		return application.PullRequestMergeReceipt{}, err
+	}
 	receipt, err := adapter.MergePullRequest(ctx, PullRequestMergeRequest{
 		OperationID: request.OperationID, PullRequestID: request.PullRequestID,
-		Branch: request.Branch, HeadRevision: request.HeadRevision,
+		Branch: request.Branch, HeadRevision: request.HeadRevision, Method: intendedMethod,
 		RequiredChecks: append([]string(nil), request.RequiredChecks...),
 	})
 	if err != nil {
 		return application.PullRequestMergeReceipt{}, err
 	}
-	method, err := applicationMergeMethod(receipt.Method)
+	completedMethod, err := applicationMergeMethod(receipt.Method)
 	if err != nil {
 		return application.PullRequestMergeReceipt{}, err
 	}
 	return application.PullRequestMergeReceipt{
 		RepositoryID: receipt.RepositoryID, PullRequestID: receipt.PullRequestID,
 		HeadRevision: receipt.HeadRevision, MergeCommitRevision: receipt.MergeCommitRevision,
-		Method: method,
+		Method: completedMethod,
 	}, nil
+}
+
+func forgeMergeMethod(method application.PullRequestMergeMethod) (MergeMethod, error) {
+	switch method {
+	case application.PullRequestMergeCommit:
+		return MergeCommit, nil
+	case application.PullRequestMergeSquash:
+		return MergeSquash, nil
+	case application.PullRequestMergeRebase:
+		return MergeRebase, nil
+	default:
+		return "", errors.New("merge approved pull request: intended method is invalid")
+	}
 }
 
 func applicationMergeMethod(method MergeMethod) (application.PullRequestMergeMethod, error) {

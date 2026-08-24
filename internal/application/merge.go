@@ -65,13 +65,14 @@ const (
 )
 
 // PullRequestMergeRequest carries only store-resolved, approval-bound forge
-// identity. The caller cannot choose a repository or merge method.
+// identity, including the immutable intended merge method.
 type PullRequestMergeRequest struct {
 	OperationID    string
 	RepositoryID   string
 	PullRequestID  string
 	Branch         string
 	HeadRevision   string
+	Method         PullRequestMergeMethod
 	RequiredChecks []string
 }
 
@@ -141,6 +142,7 @@ type TaskMergeRecord struct {
 type TaskMergeAuthorization struct {
 	OperationID string
 	Approval    domain.MergeApproval
+	Method      PullRequestMergeMethod
 	At          time.Time
 }
 
@@ -179,6 +181,7 @@ type MergeCoordinatorConfig struct {
 	Store           TaskMergeStore
 	Approvals       MergeApprovalConsumer
 	Forge           ApprovedPullRequestMerger
+	MergeMethod     PullRequestMergeMethod
 	Clock           Clock
 	OperatorEnabled bool
 }
@@ -190,8 +193,9 @@ type MergeCoordinator struct {
 
 // NewMergeCoordinator validates the complete merge composition.
 func NewMergeCoordinator(config MergeCoordinatorConfig) (*MergeCoordinator, error) {
-	if config.Store == nil || config.Approvals == nil || config.Forge == nil || config.Clock == nil {
-		return nil, errors.New("create merge coordinator: store, approval consumer, forge, and clock are required")
+	if config.Store == nil || config.Approvals == nil || config.Forge == nil || config.Clock == nil ||
+		(config.OperatorEnabled && !validPullRequestMergeMethod(config.MergeMethod)) {
+		return nil, errors.New("create merge coordinator: store, approval consumer, forge, method, and clock are required")
 	}
 	return &MergeCoordinator{config: config}, nil
 }
@@ -265,7 +269,7 @@ func (coordinator *MergeCoordinator) MergeTask(
 			)
 		}
 		record, err = coordinator.config.Store.AuthorizeTaskMerge(ctx, TaskMergeAuthorization{
-			OperationID: command.OperationID, Approval: approval, At: now,
+			OperationID: command.OperationID, Approval: approval, Method: coordinator.config.MergeMethod, At: now,
 		})
 		if err != nil {
 			return MergeTaskResult{}, mutationCommitFailure(err)
@@ -278,6 +282,7 @@ func (coordinator *MergeCoordinator) MergeTask(
 	forgeRequest := PullRequestMergeRequest{
 		OperationID: record.OperationID, RepositoryID: record.RepositoryID,
 		PullRequestID: record.PullRequestID, Branch: record.Branch, HeadRevision: record.HeadRevision,
+		Method:         record.Method,
 		RequiredChecks: append([]string(nil), record.RequiredChecks...),
 	}
 	reconciledReceipt, reconciled, reconcileErr := coordinator.config.Forge.ReconcileApprovedPullRequest(ctx, forgeRequest)
@@ -364,8 +369,8 @@ func validateTaskMergeRecord(record TaskMergeRecord, operationID, taskHandle, su
 			return errors.New("merge task: awaiting approval record carries later authority")
 		}
 	case TaskMergeExecutionAuthorized:
-		if record.MergeCommitRevision != "" || record.Method != "" || !record.CompletedAt.IsZero() {
-			return errors.New("merge task: authorized record carries a completion")
+		if record.MergeCommitRevision != "" || !validPullRequestMergeMethod(record.Method) || !record.CompletedAt.IsZero() {
+			return errors.New("merge task: authorized record is invalid")
 		}
 		if err := validateStoredMergeApproval(record); err != nil {
 			return err

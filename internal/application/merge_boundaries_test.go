@@ -14,7 +14,7 @@ func TestMergeCoordinatorRejectsInvalidCompositionContextIdentityAndClock(t *tes
 	now := time.Date(2026, time.August, 20, 12, 0, 0, 0, time.UTC)
 	valid := MergeCoordinatorConfig{
 		Store: mergeStoreFixture(), Approvals: &mergeApprovalConsumer{}, Forge: &mergeForge{},
-		Clock: func() time.Time { return now }, OperatorEnabled: true,
+		MergeMethod: PullRequestMergeSquash, Clock: func() time.Time { return now }, OperatorEnabled: true,
 	}
 	for _, test := range []struct {
 		name   string
@@ -23,6 +23,7 @@ func TestMergeCoordinatorRejectsInvalidCompositionContextIdentityAndClock(t *tes
 		{name: "missing store", mutate: func(config *MergeCoordinatorConfig) { config.Store = nil }},
 		{name: "missing approvals", mutate: func(config *MergeCoordinatorConfig) { config.Approvals = nil }},
 		{name: "missing forge", mutate: func(config *MergeCoordinatorConfig) { config.Forge = nil }},
+		{name: "missing merge method", mutate: func(config *MergeCoordinatorConfig) { config.MergeMethod = "" }},
 		{name: "missing clock", mutate: func(config *MergeCoordinatorConfig) { config.Clock = nil }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -79,7 +80,7 @@ func TestMergeCoordinatorFailsClosedAtEveryExternalBoundary(t *testing.T) {
 	newCoordinator := func(store *mergeStore, approvals *mergeApprovalConsumer, forge *mergeForge, enabled bool) *MergeCoordinator {
 		coordinator, err := NewMergeCoordinator(MergeCoordinatorConfig{
 			Store: store, Approvals: approvals, Forge: forge,
-			Clock: func() time.Time { return now }, OperatorEnabled: enabled,
+			MergeMethod: PullRequestMergeSquash, Clock: func() time.Time { return now }, OperatorEnabled: enabled,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -126,6 +127,7 @@ func TestMergeCoordinatorFailsClosedAtEveryExternalBoundary(t *testing.T) {
 	store = mergeStoreFixture()
 	store.record.State = TaskMergeExecutionAuthorized
 	store.record.Approval = mergeApprovalReceipt(now).domain(store.record.TaskHandle, store.record.HeadRevision, true)
+	store.record.Method = PullRequestMergeSquash
 	if _, err := newCoordinator(store, &mergeApprovalConsumer{}, &mergeForge{}, false).MergeTask(context.Background(), command); err == nil {
 		t.Fatal("MergeTask(disabled) error = nil")
 	}
@@ -133,6 +135,7 @@ func TestMergeCoordinatorFailsClosedAtEveryExternalBoundary(t *testing.T) {
 	store = mergeStoreFixture()
 	store.record.State = TaskMergeExecutionAuthorized
 	store.record.Approval = mergeApprovalReceipt(now).domain(store.record.TaskHandle, store.record.HeadRevision, true)
+	store.record.Method = PullRequestMergeSquash
 	if _, err := newCoordinator(store, &mergeApprovalConsumer{}, &mergeForge{err: errors.New("forge unavailable")}, true).
 		MergeTask(context.Background(), command); err == nil {
 		t.Fatal("MergeTask(forge failure) error = nil")
@@ -141,6 +144,7 @@ func TestMergeCoordinatorFailsClosedAtEveryExternalBoundary(t *testing.T) {
 	store = mergeStoreFixture()
 	store.record.State = TaskMergeExecutionAuthorized
 	store.record.Approval = mergeApprovalReceipt(now).domain(store.record.TaskHandle, store.record.HeadRevision, true)
+	store.record.Method = PullRequestMergeSquash
 	store.completeErr = errors.New("completion store unavailable")
 	forge := &mergeForge{receipt: PullRequestMergeReceipt{
 		RepositoryID: store.record.RepositoryID, PullRequestID: store.record.PullRequestID,
@@ -158,6 +162,7 @@ func TestTaskMergeRecordValidationRejectsEveryAuthorityShapeMismatch(t *testing.
 	approval := mergeApprovalReceipt(now)
 	valid.Approval = approval.domain(valid.TaskHandle, valid.HeadRevision, true)
 	valid.State = TaskMergeExecutionAuthorized
+	valid.Method = PullRequestMergeSquash
 	for _, test := range []struct {
 		name   string
 		mutate func(*TaskMergeRecord)
@@ -179,6 +184,7 @@ func TestTaskMergeRecordValidationRejectsEveryAuthorityShapeMismatch(t *testing.
 		{name: "unknown state", mutate: func(record *TaskMergeRecord) { record.State = TaskMergeState("unknown") }},
 		{name: "awaiting carries approval", mutate: func(record *TaskMergeRecord) { record.State = TaskMergeAwaitingApproval }},
 		{name: "authorized carries completion", mutate: func(record *TaskMergeRecord) { record.MergeCommitRevision = strings.Repeat("c", 40) }},
+		{name: "authorized missing method", mutate: func(record *TaskMergeRecord) { record.Method = "" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			record := valid

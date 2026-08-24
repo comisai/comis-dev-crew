@@ -44,6 +44,7 @@ func TestTaskMergeStorePersistsApprovalIntentAndExactCompletionAcrossRestarts(t 
 	authorized, err := store.AuthorizeTaskMerge(ctx, approval)
 	if err != nil || authorized.State != application.TaskMergeExecutionAuthorized ||
 		authorized.Approval.ApprovalID != approval.Approval.ApprovalID ||
+		authorized.Method != application.PullRequestMergeSquash ||
 		authorized.StateVersion <= pending.StateVersion {
 		t.Fatalf("AuthorizeTaskMerge() = %#v, %v", authorized, err)
 	}
@@ -295,7 +296,7 @@ func openTaskMergeFixture(
 	approvedAt := reservedAt.Add(30 * time.Second)
 	consumedAt := approvedAt.Add(time.Minute)
 	approval := application.TaskMergeAuthorization{
-		OperationID: operationID, At: consumedAt,
+		OperationID: operationID, Method: application.PullRequestMergeSquash, At: consumedAt,
 		Approval: domain.MergeApproval{
 			TaskHandle: taskHandle, ApprovalID: "approval-request-" + taskHandle,
 			ManagedRunID: task.ManagedRunID, MCPOperationID: operationID,

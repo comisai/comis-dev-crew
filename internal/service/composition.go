@@ -257,6 +257,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	config.cleanupForge = pullRequests
 	if mergeCredentials != nil {
 		config.mergePullRequests = pullRequests
+		config.mergeMethod = application.PullRequestMergeMethod(forgeConfig.MergeMethod)
 		config.mergeOperatorEnabled = true
 	}
 	// The same read-only adapter answers both. A deployment that can verify

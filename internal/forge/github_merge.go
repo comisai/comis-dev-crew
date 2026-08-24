@@ -69,7 +69,7 @@ func (adapter *GitHubAdapter) MergePullRequest(
 	body := struct {
 		SHA         string      `json:"sha"`
 		MergeMethod MergeMethod `json:"merge_method"`
-	}{SHA: request.HeadRevision, MergeMethod: adapter.config.MergeMethod}
+	}{SHA: request.HeadRevision, MergeMethod: request.Method}
 	var response githubMergeResponse
 	mutationErr := adapter.requestJSON(
 		ctx, mergeCredential.Secret, http.MethodPut,
@@ -113,7 +113,7 @@ func (adapter *GitHubAdapter) exactMergedReceipt(
 	return PullRequestMergeReceipt{
 		RepositoryID: adapter.config.RepositoryIdentity, PullRequestID: request.PullRequestID,
 		HeadRevision: request.HeadRevision, MergeCommitRevision: *pull.MergeCommitSHA,
-		Method: adapter.config.MergeMethod,
+		Method: request.Method,
 	}, true
 }
 

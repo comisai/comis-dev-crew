@@ -25,7 +25,7 @@ func composeTaskMerges(
 	}
 	coordinator, err := application.NewMergeCoordinator(application.MergeCoordinatorConfig{
 		Store: store, Approvals: approvals, Forge: config.mergePullRequests,
-		Clock: clock, OperatorEnabled: config.mergeOperatorEnabled,
+		MergeMethod: config.mergeMethod, Clock: clock, OperatorEnabled: config.mergeOperatorEnabled,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("run service merge coordinator: %w", err)

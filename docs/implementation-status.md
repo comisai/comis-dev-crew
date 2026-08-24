@@ -983,8 +983,9 @@ not read by installed composition. Only the merge adapter resolves it, after
 fresh exact-head, required-check, and matching branch-protection reads. The
 application coordinator consumes the exact authenticated Comis receipt and
 SQLite atomically reserves current accepted evidence, records the complete
-approval before forge mutation, and joins exact post-merge truth to the same
-operation. A recorded mutation intent first performs read-only outcome
+approval and immutable selected method before forge mutation, and joins exact
+post-merge truth to the same operation only when the receipt carries that
+method. A recorded mutation intent first performs read-only outcome
 reconciliation; when the pull request is still open, every retry revalidates
 the approval against a fresh UTC clock before the forge mutation, so an expired
 receipt cannot authorize a later merge. Pending approval and recorded mutation intent survive startup

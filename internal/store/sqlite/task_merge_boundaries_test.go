@@ -101,6 +101,11 @@ func TestTaskMergeStoreRefusesAlteredApprovalAndCompletionReplays(t *testing.T) 
 	if _, err := store.AuthorizeTaskMerge(ctx, alteredAuthorization); !errors.Is(err, application.ErrConflict) {
 		t.Fatalf("AuthorizeTaskMerge(altered replay) error = %v", err)
 	}
+	alteredAuthorization = authorization
+	alteredAuthorization.Method = application.PullRequestMergeRebase
+	if _, err := store.AuthorizeTaskMerge(ctx, alteredAuthorization); !errors.Is(err, application.ErrConflict) {
+		t.Fatalf("AuthorizeTaskMerge(altered method replay) error = %v", err)
+	}
 	tooEarly := completion
 	tooEarly.At = authorization.Approval.ConsumedAt.Add(-time.Second)
 	if _, err := store.CompleteTaskMerge(ctx, tooEarly); !errors.Is(err, application.ErrPrecondition) {
@@ -110,6 +115,9 @@ func TestTaskMergeStoreRefusesAlteredApprovalAndCompletionReplays(t *testing.T) 
 		func(request *application.TaskMergeCompletion) { request.Receipt.RepositoryID = "other-repository" },
 		func(request *application.TaskMergeCompletion) { request.Receipt.PullRequestID = "other-pull-request" },
 		func(request *application.TaskMergeCompletion) { request.Receipt.HeadRevision = strings.Repeat("e", 40) },
+		func(request *application.TaskMergeCompletion) {
+			request.Receipt.Method = application.PullRequestMergeRebase
+		},
 	} {
 		changed := completion
 		mutate(&changed)
@@ -244,7 +252,8 @@ func TestTaskMergeStorageHelpersCompareClosedAuthorityExactly(t *testing.T) {
 		approvalRequestID: approval.ApprovalID, mcpOperationID: approval.MCPOperationID,
 		resolvingPrincipalID: approval.ResolvingPrincipal, operationFingerprint: approval.OperationFingerprint,
 		approvedAt: approval.ApprovedAt, expiresAt: approval.ExpiresAt, consumedAt: approval.ConsumedAt,
-		reservedAt: now.Add(-2 * time.Minute), stateVersion: 2,
+		mergeMethod: application.PullRequestMergeRebase,
+		reservedAt:  now.Add(-2 * time.Minute), stateVersion: 2,
 	}
 	if !taskMergeApprovalMatches(row, approval) {
 		t.Fatal("taskMergeApprovalMatches() = false")

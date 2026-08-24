@@ -56,6 +56,7 @@ type Config struct {
 	cleanupForge             application.PullRequestDeliveryVerifier
 	cleanupLanded            application.LandedEvidenceGatherer
 	mergePullRequests        application.ApprovedPullRequestMerger
+	mergeMethod              application.PullRequestMergeMethod
 	mergeOperatorEnabled     bool
 	integrationAdapter       application.IntegrationAdapter
 	fixtureCandidatePreparer fixtureCandidatePreparer

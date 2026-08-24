@@ -69,7 +69,7 @@ func TestGitHubAdapter_MergesOnlyAfterFreshProtectedTruth(t *testing.T) {
 	}
 	receipt, err := adapter.MergePullRequest(context.Background(), PullRequestMergeRequest{
 		OperationID: "merge-task-0001", Branch: "devcrew/task-merge", HeadRevision: head,
-		PullRequestID: "github-pr-31", RequiredChecks: []string{"ci/unit"},
+		PullRequestID: "github-pr-31", Method: MergeSquash, RequiredChecks: []string{"ci/unit"},
 	})
 	if err != nil {
 		t.Fatalf("MergePullRequest() error = %v", err)
@@ -138,7 +138,7 @@ func TestGitHubAdapter_RefusesChangedOrUnprotectedMergeBeforeCredentialResolutio
 			}
 			_, err = adapter.MergePullRequest(context.Background(), PullRequestMergeRequest{
 				OperationID: "merge-task-0001", Branch: "devcrew/task-merge", HeadRevision: approvedHead,
-				PullRequestID: "github-pr-31", RequiredChecks: []string{"ci/unit"},
+				PullRequestID: "github-pr-31", Method: MergeSquash, RequiredChecks: []string{"ci/unit"},
 			})
 			if err == nil || errors.Is(err, ErrPullRequestTruthUnavailable) {
 				t.Fatalf("MergePullRequest() error = %v, want permanent refusal", err)
@@ -175,7 +175,7 @@ func TestGitHubAdapter_ReconcilesAnAlreadyMergedExactHeadWithoutAnotherMutation(
 	}
 	receipt, err := adapter.MergePullRequest(context.Background(), PullRequestMergeRequest{
 		OperationID: "merge-task-0001", Branch: "devcrew/task-merge", HeadRevision: head,
-		PullRequestID: "github-pr-31", RequiredChecks: []string{"ci/unit"},
+		PullRequestID: "github-pr-31", Method: MergeRebase, RequiredChecks: []string{"ci/unit"},
 	})
 	if err != nil || receipt.MergeCommitRevision != mergeCommit || receipt.Method != MergeRebase || mergeCalls != 0 {
 		t.Fatalf("MergePullRequest(replay) = %#v, calls=%d, error=%v", receipt, mergeCalls, err)
@@ -204,15 +204,16 @@ func TestGitHubAdapter_MapsExactMergedTruthOntoApplicationPort(t *testing.T) {
 	var port application.ApprovedPullRequestMerger = adapter
 	request := application.PullRequestMergeRequest{
 		OperationID: "merge-task-0001", RepositoryID: "fixture-repository", PullRequestID: "github-pr-31",
-		Branch: "devcrew/task-merge", HeadRevision: head, RequiredChecks: []string{"ci/unit"},
+		Branch: "devcrew/task-merge", HeadRevision: head, Method: application.PullRequestMergeRebase,
+		RequiredChecks: []string{"ci/unit"},
 	}
 	reconciled, found, err := port.ReconcileApprovedPullRequest(context.Background(), request)
-	if err != nil || !found || reconciled.Method != application.PullRequestMergeCommit ||
+	if err != nil || !found || reconciled.Method != application.PullRequestMergeRebase ||
 		reconciled.MergeCommitRevision != mergeCommit {
 		t.Fatalf("ReconcileApprovedPullRequest() = %#v, %t, %v", reconciled, found, err)
 	}
 	receipt, err := port.MergeApprovedPullRequest(context.Background(), request)
-	if err != nil || receipt.Method != application.PullRequestMergeCommit ||
+	if err != nil || receipt.Method != application.PullRequestMergeRebase ||
 		receipt.MergeCommitRevision != mergeCommit {
 		t.Fatalf("MergeApprovedPullRequest() = %#v, %v", receipt, err)
 	}

@@ -123,6 +123,7 @@ func TestRunComposesApprovalBoundMergeOnCanonicalOperatorEndpoint(t *testing.T) 
 		done <- Run(ctx, Config{
 			DatabasePath: filepath.Join(root, "state", "devcrew.db"), SocketPath: socketPath,
 			ComisControl: &serviceComisControl{}, mergePullRequests: serviceMergeForge{},
+			mergeMethod:          application.PullRequestMergeSquash,
 			mergeOperatorEnabled: true, Clock: serviceForwarderClock, Ready: func() { close(ready) },
 		})
 	}()

@@ -107,6 +107,7 @@ type PullRequestMergeRequest struct {
 	Branch         string
 	HeadRevision   string
 	PullRequestID  string
+	Method         MergeMethod
 	RequiredChecks []string
 }
 

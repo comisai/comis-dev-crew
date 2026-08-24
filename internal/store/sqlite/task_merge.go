@@ -90,7 +90,8 @@ func (store *Store) AuthorizeTaskMerge(
 	request application.TaskMergeAuthorization,
 ) (application.TaskMergeRecord, error) {
 	if store == nil || store.db == nil || ctx == nil ||
-		domain.ValidateOperationID(request.OperationID) != nil || request.At.IsZero() || request.At.Location() != time.UTC {
+		domain.ValidateOperationID(request.OperationID) != nil || !validStoredMergeMethod(request.Method) ||
+		request.At.IsZero() || request.At.Location() != time.UTC {
 		return application.TaskMergeRecord{}, errors.New("authorize task merge: input is invalid")
 	}
 	if err := ctx.Err(); err != nil {
@@ -115,7 +116,7 @@ func (store *Store) AuthorizeTaskMerge(
 		return application.TaskMergeRecord{}, fmt.Errorf("authorize task merge receipt differs: %w", application.ErrPrecondition)
 	}
 	if row.state != application.TaskMergeAwaitingApproval {
-		if !taskMergeApprovalMatches(row, request.Approval) {
+		if !taskMergeApprovalMatches(row, request.Approval) || row.mergeMethod != request.Method {
 			return application.TaskMergeRecord{}, fmt.Errorf("task merge authorization altered replay: %w", application.ErrConflict)
 		}
 		if err := transaction.Commit(); err != nil {
@@ -136,6 +137,7 @@ func (store *Store) AuthorizeTaskMerge(
 	row.resolvingPrincipalID = request.Approval.ResolvingPrincipal
 	row.operationFingerprint = request.Approval.OperationFingerprint
 	row.approvedAt, row.expiresAt, row.consumedAt = request.Approval.ApprovedAt, request.Approval.ExpiresAt, request.Approval.ConsumedAt
+	row.mergeMethod = request.Method
 	row.stateVersion = stateVersion
 	if err := updateTaskMerge(ctx, transaction, row); err != nil {
 		return application.TaskMergeRecord{}, err

@@ -250,7 +250,7 @@ func taskMergeApprovalMatches(row taskMergeRow, approval domain.MergeApproval) b
 func taskMergeReceiptMatches(row taskMergeRow, receipt application.PullRequestMergeReceipt) bool {
 	return row.repositoryID == receipt.RepositoryID && row.pullRequestID == receipt.PullRequestID &&
 		row.headRevision == receipt.HeadRevision && domain.ValidateGitRevision(receipt.MergeCommitRevision) == nil &&
-		validStoredMergeMethod(receipt.Method)
+		validStoredMergeMethod(receipt.Method) && row.mergeMethod == receipt.Method
 }
 
 func taskMergeCompletionMatches(row taskMergeRow, request application.TaskMergeCompletion) bool {

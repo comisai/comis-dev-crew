@@ -141,13 +141,16 @@ func TestInstalledRuntimeComposesMergeAuthorityWithoutReadingItsSecretAtStartup(
 	if err != nil {
 		t.Fatalf("composeInstalledRuntime() error = %v", err)
 	}
-	if configured.mergePullRequests == nil || !configured.mergeOperatorEnabled {
-		t.Fatalf("installed merge composition = %#v/%t", configured.mergePullRequests, configured.mergeOperatorEnabled)
+	if configured.mergePullRequests == nil || configured.mergeMethod != application.PullRequestMergeSquash ||
+		!configured.mergeOperatorEnabled {
+		t.Fatalf("installed merge composition = %#v/%q/%t", configured.mergePullRequests, configured.mergeMethod, configured.mergeOperatorEnabled)
 	}
 }
 
 func TestComposeTaskMergesRejectsEnabledAuthorityWithoutForgeAdapter(t *testing.T) {
-	if _, err := composeTaskMerges(Config{mergeOperatorEnabled: true}, nil, nil, nil); err == nil {
+	if _, err := composeTaskMerges(Config{
+		mergeMethod: application.PullRequestMergeSquash, mergeOperatorEnabled: true,
+	}, nil, nil, nil); err == nil {
 		t.Fatal("composeTaskMerges(enabled without forge adapter) error = nil")
 	}
 }
