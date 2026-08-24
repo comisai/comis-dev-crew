@@ -69,7 +69,7 @@ func (facade *Facade) registerTools() {
 	mcp.AddTool(facade.server, cancelTool(), facade.cancelTask)
 	mcp.AddTool(facade.server, tool(
 		ToolResumeTask,
-		"Return one paused task to the worker already running it. Refused when the worktree has uncommitted changes; hand the work back instead so the edit is revalidated.",
+		"Ready one paused task to relaunch the same worker profile after its previous terminal settles. A verified lease-private commit is promoted; actual uncommitted developer edits are refused—hand the work back for revalidation.",
 		false,
 	), facade.resumeTask)
 	mcp.AddTool(facade.server, tool(
