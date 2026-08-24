@@ -3,6 +3,8 @@ package git
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
@@ -108,27 +110,23 @@ func (registry *Registry) recordedIntegrationTargetRef(
 	request application.IntegrationAdapterRequest,
 ) (string, bool, error) {
 	receipt := integrationReceiptRef("target", request)
-	encoded, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-		"for-each-ref", "--format=%(symref)", receipt)
-	targetRef := strings.TrimSuffix(string(encoded), "\n")
-	if err != nil || strings.ContainsAny(targetRef, "\x00\r\n\t ") {
+	inspected, err := registry.inspectIntegrationReceipt(ctx, request.Target.WorktreePath, receipt)
+	if err != nil {
 		return "", false, errors.New("apply integration candidate: target branch receipt is invalid")
 	}
-	if targetRef == "" {
-		found, err := gitPredicate(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-			"show-ref", "--verify", "--quiet", receipt)
-		if err != nil {
-			return "", false, err
-		}
-		if found {
-			return "", false, errors.New("apply integration candidate: target branch receipt is ambiguous")
-		}
+	switch inspected.kind {
+	case integrationReceiptAbsent:
 		return "", false, nil
-	}
-	if !strings.HasPrefix(targetRef, "refs/heads/") {
+	case integrationReceiptDirect:
+		return "", false, errors.New("apply integration candidate: target branch receipt is ambiguous")
+	case integrationReceiptSymbolic:
+		if !strings.HasPrefix(inspected.value, "refs/heads/") {
+			return "", false, errors.New("apply integration candidate: target branch receipt is invalid")
+		}
+		return inspected.value, true, nil
+	default:
 		return "", false, errors.New("apply integration candidate: target branch receipt is invalid")
 	}
-	return targetRef, true, nil
 }
 
 func (registry *Registry) reconcileInterruptedRebase(
@@ -284,6 +282,9 @@ func (registry *Registry) validRecoveredRebaseHead(
 	ctx context.Context,
 	request application.IntegrationAdapterRequest,
 ) (string, error) {
+	if err := registry.ensureRebaseSequencerAbsent(ctx, request.Target.WorktreePath); err != nil {
+		return "", err
+	}
 	resultingHead, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
 		"rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil || !gitRevisionPattern.MatchString(resultingHead) || resultingHead == request.Target.ExpectedHead {
@@ -300,6 +301,24 @@ func (registry *Registry) validRecoveredRebaseHead(
 		return "", errors.New("apply integration candidate: recovered rebase omits target history")
 	}
 	return resultingHead, nil
+}
+
+func (registry *Registry) ensureRebaseSequencerAbsent(ctx context.Context, worktreePath string) error {
+	gitDir, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
+		"rev-parse", "--absolute-git-dir")
+	if err != nil || !filepath.IsAbs(gitDir) {
+		return errors.New("apply integration candidate: rebase sequencer is unavailable")
+	}
+	for _, name := range []string{"rebase-merge", "rebase-apply"} {
+		_, statErr := os.Lstat(filepath.Join(gitDir, name))
+		if statErr == nil {
+			return errors.New("apply integration candidate: rebase sequencer is still active")
+		}
+		if !errors.Is(statErr, os.ErrNotExist) {
+			return errors.New("apply integration candidate: rebase sequencer is unavailable")
+		}
+	}
+	return nil
 }
 
 func (registry *Registry) finalizeRecoveredRebase(

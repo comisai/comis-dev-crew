@@ -245,6 +245,58 @@ func (registry *Registry) createIntegrationReceipt(
 	return err
 }
 
+type integrationReceiptKind uint8
+
+const (
+	integrationReceiptAbsent integrationReceiptKind = iota
+	integrationReceiptDirect
+	integrationReceiptSymbolic
+)
+
+type inspectedIntegrationReceipt struct {
+	kind  integrationReceiptKind
+	value string
+}
+
+func (registry *Registry) inspectIntegrationReceipt(
+	ctx context.Context,
+	worktreePath string,
+	reference string,
+) (inspectedIntegrationReceipt, error) {
+	output, exitCode, err := executeGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
+		"symbolic-ref", "--quiet", reference)
+	if err != nil {
+		return inspectedIntegrationReceipt{}, err
+	}
+	if exitCode == 0 {
+		target := strings.TrimSuffix(string(output), "\n")
+		if target == "" || strings.ContainsAny(target, "\x00\r\n\t ") {
+			return inspectedIntegrationReceipt{}, errors.New("apply integration candidate: symbolic receipt is invalid")
+		}
+		return inspectedIntegrationReceipt{kind: integrationReceiptSymbolic, value: target}, nil
+	}
+	if exitCode != 1 {
+		return inspectedIntegrationReceipt{}, errors.New("apply integration candidate: symbolic receipt inspection failed")
+	}
+	_, exitCode, err = executeGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
+		"show-ref", "--verify", "--quiet", reference)
+	if err != nil {
+		return inspectedIntegrationReceipt{}, err
+	}
+	if exitCode == 1 {
+		return inspectedIntegrationReceipt{kind: integrationReceiptAbsent}, nil
+	}
+	if exitCode != 0 {
+		return inspectedIntegrationReceipt{}, errors.New("apply integration candidate: direct receipt inspection failed")
+	}
+	head, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
+		"show-ref", "--verify", "--hash", reference)
+	if err != nil || !gitRevisionPattern.MatchString(head) {
+		return inspectedIntegrationReceipt{}, errors.New("apply integration candidate: direct receipt is invalid")
+	}
+	return inspectedIntegrationReceipt{kind: integrationReceiptDirect, value: head}, nil
+}
+
 func (registry *Registry) replayAppliedIntegration(
 	ctx context.Context,
 	request application.IntegrationAdapterRequest,
@@ -346,17 +398,25 @@ func (registry *Registry) integrationReceiptHead(
 	repository Repository,
 	reference string,
 ) (string, bool, error) {
-	found, err := gitPredicate(ctx, registry.gitExecutable, "--no-optional-locks", "-C", repository.PrimaryCheckout,
-		"show-ref", "--verify", "--quiet", reference)
-	if err != nil || !found {
+	receipt, err := registry.inspectIntegrationReceipt(ctx, repository.PrimaryCheckout, reference)
+	if err != nil {
 		return "", false, err
 	}
-	head, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", repository.PrimaryCheckout,
-		"rev-parse", "--verify", reference+"^{commit}")
-	if err != nil || !gitRevisionPattern.MatchString(head) {
+	switch receipt.kind {
+	case integrationReceiptAbsent:
+		return "", false, nil
+	case integrationReceiptSymbolic:
+		return "", false, errors.New("apply integration candidate: receipt is symbolic")
+	case integrationReceiptDirect:
+		objectType, typeErr := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", repository.PrimaryCheckout,
+			"cat-file", "-t", receipt.value)
+		if typeErr != nil || objectType != "commit" {
+			return "", false, errors.New("apply integration candidate: receipt is invalid")
+		}
+		return receipt.value, true, nil
+	default:
 		return "", false, errors.New("apply integration candidate: receipt is invalid")
 	}
-	return head, true, nil
 }
 
 var _ application.IntegrationAdapter = (*Registry)(nil)
