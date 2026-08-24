@@ -3,7 +3,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
@@ -19,21 +18,11 @@ func requireIntegrationReportProvenance(
 	if reportKind != domain.ReportCandidateComplete {
 		return nil
 	}
-	initiatives, err := listInitiatives(ctx, transaction)
+	containing, found, err := initiativeForTask(ctx, transaction, task.Handle)
 	if err != nil {
 		return fmt.Errorf("verify integration report provenance: %w", err)
 	}
-	var containing *domain.DevelopmentInitiative
-	for index := range initiatives {
-		if !initiatives[index].ContainsTask(task.Handle) {
-			continue
-		}
-		if containing != nil {
-			return errors.New("verify integration report provenance: task belongs to multiple initiatives")
-		}
-		containing = &initiatives[index]
-	}
-	if containing == nil || containing.IntegrationOwnerTask != task.Handle {
+	if !found || containing.IntegrationOwnerTask != task.Handle {
 		return nil
 	}
 	for _, edge := range containing.Edges {

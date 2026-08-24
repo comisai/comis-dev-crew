@@ -18,27 +18,21 @@ func (shape TaskShape) valid() bool {
 type DeliveryMode string
 
 const (
-	DeliveryPullRequest DeliveryMode = "pull_request"
-	DeliveryLocalBranch DeliveryMode = "local_branch"
-	DeliveryReport      DeliveryMode = "report"
-	// DeliveryMergeAfterApproval is a separate ACTION, not a more permissive
-	// worker mode. The merge credential is resolved only inside the approved
-	// merge operation and is never held by a worker, and an operator may
-	// disable the mode outright.
+	DeliveryPullRequest        DeliveryMode = "pull_request"
+	DeliveryLocalBranch        DeliveryMode = "local_branch"
+	DeliveryReport             DeliveryMode = "report"
 	DeliveryMergeAfterApproval DeliveryMode = "merge_after_approval"
 )
 
 func (mode DeliveryMode) valid() bool {
 	switch mode {
-	case DeliveryPullRequest, DeliveryLocalBranch, DeliveryReport, DeliveryMergeAfterApproval:
+	case DeliveryPullRequest, DeliveryReport:
 		return true
 	}
 	return false
 }
 
-// ValidForShape reports whether one shape may deliver through this mode. Ship
-// produces changes and may hand them over any of the change-bearing routes;
-// scout produces a report and only ever delivers that.
+// ValidForShape reports whether one shape may deliver through this mode.
 func (mode DeliveryMode) ValidForShape(shape TaskShape) bool {
 	if !mode.valid() || !shape.valid() {
 		return false
@@ -46,15 +40,13 @@ func (mode DeliveryMode) ValidForShape(shape TaskShape) bool {
 	if shape == ShapeScout {
 		return mode == DeliveryReport
 	}
-	return mode != DeliveryReport
+	return mode == DeliveryPullRequest
 }
 
-// RequiresMergeAuthority reports whether delivering through this mode needs the
-// separate merge credential. Only one mode does, which is what keeps the
-// credential out of every worker; service-owned delivery resolves it only
-// after candidate validation.
+// RequiresMergeAuthority reports whether an accepted delivery mode needs the
+// separate merge credential. No E0 delivery mode does.
 func (mode DeliveryMode) RequiresMergeAuthority() bool {
-	return mode == DeliveryMergeAfterApproval
+	return false
 }
 
 // TaskState is the closed E0 lifecycle. Unknown is a durable state, not a

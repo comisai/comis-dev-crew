@@ -170,6 +170,28 @@ func TestReservedIntegrationBlocksCancellationOfEitherBoundTask(t *testing.T) {
 	}
 }
 
+func TestReservedIntegrationBlocksAuthorityInvalidatingWorkerReport(t *testing.T) {
+	fixture := newStoredIntegrationFixture(t)
+	request := fixture.reservationRequest("integration-report-order", application.IntegrationMerge)
+	if _, err := fixture.store.ReserveIntegrationApplication(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	before, err := fixture.store.GetTask(context.Background(), "task-integration")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := sqliteWorkerReport(before, "report-reserved-integration-paused", domain.ReportPaused)
+	if _, err := fixture.store.CommitReport(
+		context.Background(), directReportMutation(before, report, request.At.Add(time.Minute)),
+	); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("CommitReport(reserved integration pause) error = %v", err)
+	}
+	after, err := fixture.store.GetTask(context.Background(), before.Handle)
+	if err != nil || !reflect.DeepEqual(after, before) {
+		t.Fatalf("task after refused report = %#v, %v; want %#v", after, err, before)
+	}
+}
+
 func TestIntegrationRebaseConflictRecoveryIsASeparateDurableOperation(t *testing.T) {
 	fixture := newStoredIntegrationFixture(t)
 	initialRequest := fixture.reservationRequest("integration-rebase-conflict-store", application.IntegrationRebase)

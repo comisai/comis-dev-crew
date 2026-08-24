@@ -298,6 +298,15 @@ const (
 )
 
 func updateTaskState(ctx context.Context, transaction *sql.Tx, task domain.Task) error {
+	return updateTaskStateWithReservationGuard(ctx, transaction, task, true)
+}
+
+func updateTaskStateWithReservationGuard(
+	ctx context.Context,
+	transaction *sql.Tx,
+	task domain.Task,
+	guardReservation bool,
+) error {
 	if err := task.Validate(); err != nil {
 		return fmt.Errorf("validate task state update: %w", err)
 	}
@@ -309,6 +318,11 @@ func updateTaskState(ctx context.Context, transaction *sql.Tx, task domain.Task)
 		`SELECT state FROM tasks WHERE handle = ?`, task.Handle,
 	).Scan(&previous); err != nil {
 		return fmt.Errorf("read task state before update: %w", err)
+	}
+	if guardReservation {
+		if err := refuseReservedIntegrationTaskTransition(ctx, transaction, task.Handle, previous, task.State); err != nil {
+			return err
+		}
 	}
 	const update = `UPDATE tasks SET state = ?, state_version = ?, updated_at = ? WHERE handle = ?`
 	result, err := transaction.ExecContext(ctx, update, task.State, task.StateVersion, formatTime(task.UpdatedAt), task.Handle)

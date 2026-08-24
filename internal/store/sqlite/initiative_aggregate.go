@@ -21,25 +21,15 @@ func refreshInitiativeAggregate(
 	stateVersion int64,
 	at time.Time,
 ) error {
-	initiatives, err := listInitiatives(ctx, transaction)
+	containing, found, err := initiativeForTask(ctx, transaction, taskHandle)
 	if err != nil {
 		return fmt.Errorf("refresh initiative aggregate: %w", err)
 	}
-	var containing *domain.DevelopmentInitiative
-	for index := range initiatives {
-		if !initiatives[index].ContainsTask(taskHandle) {
-			continue
-		}
-		if containing != nil {
-			return errors.New("refresh initiative aggregate: task belongs to multiple initiatives")
-		}
-		containing = &initiatives[index]
-	}
-	if containing == nil {
+	if !found {
 		return nil
 	}
 	members := make([]domain.Task, 0)
-	for _, handle := range initiativeTaskHandles(*containing) {
+	for _, handle := range initiativeTaskHandles(containing) {
 		task, err := getTask(ctx, transaction, handle)
 		if err != nil {
 			return fmt.Errorf("refresh initiative aggregate member: %w", err)
@@ -50,7 +40,7 @@ func refreshInitiativeAggregate(
 	if err != nil {
 		return fmt.Errorf("refresh initiative aggregate artifacts: %w", err)
 	}
-	state, err := application.DeriveInitiativeState(*containing, members, artifacts)
+	state, err := application.DeriveInitiativeState(containing, members, artifacts)
 	if err != nil {
 		return fmt.Errorf("refresh initiative aggregate state: %w", err)
 	}
@@ -66,7 +56,7 @@ func refreshInitiativeAggregate(
 	if err := containing.Validate(); err != nil {
 		return fmt.Errorf("refresh initiative aggregate validation: %w", err)
 	}
-	if err := updateInitiativeRecord(ctx, transaction, *containing); err != nil {
+	if err := updateInitiativeRecord(ctx, transaction, containing); err != nil {
 		return fmt.Errorf("refresh initiative aggregate record: %w", err)
 	}
 	return nil

@@ -62,7 +62,7 @@ func (registry *Registry) resumeRebaseIntegration(
 	} else if found {
 		return registry.finalizeRecoveredRebase(ctx, request, repository, targetRef, resultingHead)
 	}
-	if resultingHead, completedErr := registry.completedRebaseContinuation(ctx, request, targetRef); completedErr == nil {
+	if resultingHead, completedErr := registry.completedRebaseContinuation(ctx, request, repository, targetRef); completedErr == nil {
 		return registry.finalizeRecoveredRebase(ctx, request, repository, targetRef, resultingHead)
 	}
 	conflicts, err := registry.validateRecoverableRebase(ctx, request, targetRef)
@@ -84,7 +84,7 @@ func (registry *Registry) resumeRebaseIntegration(
 		}
 		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: rebase continuation failed without attributable conflicts")
 	}
-	resultingHead, err := registry.validRecoveredRebaseHead(ctx, request)
+	resultingHead, err := registry.completeServiceRebase(ctx, repository, request)
 	if err != nil {
 		return application.IntegrationAdapterResult{}, err
 	}
@@ -227,7 +227,7 @@ func (registry *Registry) reconcileInterruptedRebase(
 		return application.IntegrationAdapterResult{}, true, err
 	}
 	proofRef := integrationRebaseProofRef(request)
-	resultingHead, err := registry.validRecoveredRebaseHead(ctx, request)
+	resultingHead, err := registry.validRecoveredRebaseHead(ctx, repository, request)
 	if err != nil {
 		return application.IntegrationAdapterResult{}, true, err
 	}
@@ -243,6 +243,7 @@ func (registry *Registry) reconcileInterruptedRebase(
 func (registry *Registry) completedRebaseContinuation(
 	ctx context.Context,
 	request application.IntegrationAdapterRequest,
+	repository Repository,
 	targetRef string,
 ) (string, error) {
 	if err := registry.validateRebaseOrigin(ctx, request); err != nil {
@@ -256,7 +257,7 @@ func (registry *Registry) completedRebaseContinuation(
 	if err != nil || branchHead != request.Target.ExpectedHead {
 		return "", errors.New("apply integration candidate: completed rebase continuation changed the target branch")
 	}
-	return registry.validRecoveredRebaseHead(ctx, request)
+	return registry.validRecoveredRebaseHead(ctx, repository, request)
 }
 
 func (registry *Registry) validateRebaseOrigin(
@@ -331,7 +332,7 @@ func (registry *Registry) validateRecoverableRebase(
 	return registry.integrationConflictPaths(ctx, request.Target.WorktreePath)
 }
 
-func (registry *Registry) validRecoveredRebaseHead(
+func (registry *Registry) inspectRecoveredRebaseHead(
 	ctx context.Context,
 	request application.IntegrationAdapterRequest,
 ) (string, error) {
@@ -352,9 +353,6 @@ func (registry *Registry) validRecoveredRebaseHead(
 		"merge-base", "--is-ancestor", request.Target.ExpectedHead, resultingHead)
 	if err != nil || !targetContains {
 		return "", errors.New("apply integration candidate: recovered rebase omits target history")
-	}
-	if err := registry.promoteCompletedRebaseProof(ctx, request, resultingHead); err != nil {
-		return "", err
 	}
 	return resultingHead, nil
 }
@@ -439,7 +437,7 @@ func (registry *Registry) finalizeRecoveredRebase(
 	targetRef string,
 	resultingHead string,
 ) (application.IntegrationAdapterResult, error) {
-	currentHead, err := registry.validRecoveredRebaseHead(ctx, request)
+	currentHead, err := registry.validRecoveredRebaseHead(ctx, repository, request)
 	if err != nil || currentHead != resultingHead {
 		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: rebased receipt differs from worktree")
 	}

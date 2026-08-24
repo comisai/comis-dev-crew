@@ -331,9 +331,20 @@ func updateInitiativeMemberTask(ctx context.Context, target execer, task domain.
 
 func updateInitiativeRecord(
 	ctx context.Context,
-	target execer,
+	target queryExecer,
 	initiative domain.DevelopmentInitiative,
 ) error {
+	var previous domain.InitiativeState
+	if err := target.QueryRowContext(ctx,
+		`SELECT state FROM initiatives WHERE handle = ?`, initiative.Handle,
+	).Scan(&previous); err != nil {
+		return fmt.Errorf("read initiative state before update: %w", err)
+	}
+	if err := refuseReservedIntegrationInitiativeTransition(
+		ctx, target, initiative.Handle, previous, initiative.State,
+	); err != nil {
+		return err
+	}
 	const update = `UPDATE initiatives SET
 		managed_run_group_id = ?, state = ?, state_version = ?, updated_at = ?
 		WHERE handle = ?`

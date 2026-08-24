@@ -8,18 +8,18 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
-func TestShipAcceptsEveryShipDeliveryModeAndRefusesReport(t *testing.T) {
+func TestShipAcceptsOnlyPullRequestDelivery(t *testing.T) {
+	if !domain.DeliveryPullRequest.ValidForShape(domain.ShapeShip) {
+		t.Fatal("ship refused pull request delivery")
+	}
 	for _, mode := range []domain.DeliveryMode{
-		domain.DeliveryPullRequest,
 		domain.DeliveryLocalBranch,
 		domain.DeliveryMergeAfterApproval,
+		domain.DeliveryReport,
 	} {
-		if !mode.ValidForShape(domain.ShapeShip) {
-			t.Fatalf("ship refused %q", mode)
+		if mode.ValidForShape(domain.ShapeShip) {
+			t.Fatalf("ship accepted deferred or incompatible delivery %q", mode)
 		}
-	}
-	if domain.DeliveryReport.ValidForShape(domain.ShapeShip) {
-		t.Fatal("ship accepted report")
 	}
 }
 
@@ -38,16 +38,12 @@ func TestScoutStillAcceptsOnlyReport(t *testing.T) {
 	}
 }
 
-func TestOnlyMergeAfterApprovalRequiresMergeAuthority(t *testing.T) {
-	// Merge authority is a separate action, not a more permissive worker mode.
-	// A worker delivering a pull request must never hold it.
-	if !domain.DeliveryMergeAfterApproval.RequiresMergeAuthority() {
-		t.Fatal("merge_after_approval does not require merge authority")
-	}
+func TestNoE0DeliveryModeRequiresMergeAuthority(t *testing.T) {
 	for _, mode := range []domain.DeliveryMode{
 		domain.DeliveryPullRequest,
 		domain.DeliveryLocalBranch,
 		domain.DeliveryReport,
+		domain.DeliveryMergeAfterApproval,
 	} {
 		if mode.RequiresMergeAuthority() {
 			t.Fatalf("%q requires merge authority", mode)

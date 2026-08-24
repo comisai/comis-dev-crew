@@ -168,6 +168,11 @@ type queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
+type queryExecer interface {
+	queryer
+	execer
+}
+
 func listTasks(ctx context.Context, source queryer) (tasks []domain.Task, resultErr error) {
 	const query = `SELECT
 		handle, schema_version, service_instance_id, managed_run_id,

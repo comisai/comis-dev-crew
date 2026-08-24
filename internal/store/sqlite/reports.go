@@ -165,6 +165,15 @@ func updateReportedTask(ctx context.Context, transaction *sql.Tx, task domain.Ta
 	if err := task.Validate(); err != nil {
 		return fmt.Errorf("validate reported task: %w", err)
 	}
+	var previous domain.TaskState
+	if err := transaction.QueryRowContext(ctx,
+		`SELECT state FROM tasks WHERE handle = ?`, task.Handle,
+	).Scan(&previous); err != nil {
+		return fmt.Errorf("read task state before report update: %w", err)
+	}
+	if err := refuseReservedIntegrationTaskTransition(ctx, transaction, task.Handle, previous, task.State); err != nil {
+		return err
+	}
 	const update = `UPDATE tasks SET state = ?, report_cursor = ?, state_version = ?, updated_at = ? WHERE handle = ?`
 	result, err := transaction.ExecContext(ctx, update, task.State, task.ReportCursor, task.StateVersion, formatTime(task.UpdatedAt), task.Handle)
 	if err != nil {

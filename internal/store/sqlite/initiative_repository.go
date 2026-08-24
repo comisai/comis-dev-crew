@@ -102,7 +102,10 @@ func insertInitiative(ctx context.Context, target execer, initiative domain.Deve
 	if isConstraintError(err) {
 		return application.ErrConflict
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return insertInitiativeMembership(ctx, target, initiative)
 }
 
 // GetInitiative returns one validated initiative by its opaque handle.

@@ -35,7 +35,7 @@ func (store *Store) CommitTaskCancel(
 		if err != nil {
 			return domain.Task{}, err
 		}
-		if err := refuseReservedIntegrationCancellation(ctx, transaction, task.Handle); err != nil {
+		if err := refuseAnyReservedIntegrationTaskMutation(ctx, transaction, task.Handle); err != nil {
 			return domain.Task{}, err
 		}
 		// Two operators can decide to stop the same work. The second reports the
@@ -56,20 +56,6 @@ func (store *Store) CommitTaskCancel(
 		}
 		return updated, nil
 	})
-}
-
-func refuseReservedIntegrationCancellation(ctx context.Context, source queryer, taskHandle string) error {
-	var reserved int
-	err := source.QueryRowContext(ctx, `SELECT COUNT(*) FROM integration_applications
-		WHERE status = 'reserved' AND (integration_task_handle = ? OR candidate_task_handle = ?)`,
-		taskHandle, taskHandle).Scan(&reserved)
-	if err != nil {
-		return fmt.Errorf("inspect task integration reservation: %w", err)
-	}
-	if reserved != 0 {
-		return fmt.Errorf("task has a reserved integration application: %w", application.ErrPrecondition)
-	}
-	return nil
 }
 
 // cancelTaskState resolves an unknown task only when durable execution evidence

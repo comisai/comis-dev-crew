@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,25 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
+
+func TestReportAggregateLoadsOnlyTheContainingInitiative(t *testing.T) {
+	ctx := context.Background()
+	store, task := openReportFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	t.Cleanup(func() { _ = store.Close() })
+	unrelated := persistenceInitiative("initiative-unrelated-report", domain.InitiativeActive, 2)
+	if err := store.CreateInitiative(ctx, unrelated); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx,
+		"UPDATE initiatives SET components_json = '{' WHERE handle = ?", unrelated.Handle,
+	); err != nil {
+		t.Fatal(err)
+	}
+	report := sqliteWorkerReport(task, "report-unrelated-initiative", domain.ReportProgress)
+	if _, err := store.CommitReport(ctx, directReportMutation(task, report, task.UpdatedAt.Add(time.Minute))); err != nil {
+		t.Fatalf("CommitReport(unrelated corrupt initiative) error = %v", err)
+	}
+}
 
 func TestInitiativeAggregateMovesAtomicallyWithMemberState(t *testing.T) {
 	ctx := context.Background()

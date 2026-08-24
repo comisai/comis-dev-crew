@@ -83,7 +83,7 @@ func (store *Store) ReconcileStartup(ctx context.Context, at time.Time) (applica
 			return result, err
 		}
 		unknown.StateVersion = version
-		if err := updateTaskState(ctx, transaction, unknown); err != nil {
+		if err := updateTaskStateWithReservationGuard(ctx, transaction, unknown, false); err != nil {
 			return result, err
 		}
 		result.TasksMarkedUnknown++

@@ -410,6 +410,37 @@ func TestStartupReconciliationRollsBackWhenStoredInitiativeIsCorrupt(t *testing.
 	}
 }
 
+func TestInitiativeMembershipMigrationBackfillsExistingGraphs(t *testing.T) {
+	ctx := context.Background()
+	databasePath := filepath.Join(canonicalTempDir(t), "devcrew.db")
+	store, err := Open(ctx, databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initiative := persistenceInitiative("initiative-membership-upgrade", domain.InitiativeActive, 1)
+	if err := store.CreateInitiative(ctx, initiative); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `DROP TABLE initiative_members;
+		DELETE FROM schema_migrations WHERE version = 47`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(ctx, databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	for _, taskHandle := range initiativeTaskHandles(initiative) {
+		got, found, err := initiativeForTask(ctx, reopened.db, taskHandle)
+		if err != nil || !found || got.Handle != initiative.Handle {
+			t.Fatalf("initiativeForTask(%q) = %#v, %t, %v", taskHandle, got, found, err)
+		}
+	}
+}
+
 func requireInitiativeBacklogRepository(t *testing.T, store *Store) initiativeBacklogRepository {
 	t.Helper()
 	repository, ok := any(store).(initiativeBacklogRepository)

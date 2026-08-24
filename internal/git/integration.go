@@ -75,7 +75,7 @@ func (registry *Registry) ApplyIntegrationCandidate(
 	if mutationAt.IsZero() || !mutationAt.Before(request.EvidenceExpiresAt) {
 		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: candidate evidence expired before mutation")
 	}
-	if err := registry.runIntegrationStrategy(ctx, request); err != nil {
+	if err := registry.runIntegrationStrategy(ctx, request, repository); err != nil {
 		conflicts, conflictErr := registry.integrationConflictPaths(ctx, request.Target.WorktreePath)
 		if conflictErr != nil || len(conflicts) == 0 {
 			if ctx.Err() != nil {
@@ -157,68 +157,6 @@ func (registry *Registry) inspectIntegrationInputs(
 		return CandidateSnapshot{}, CandidateSnapshot{}, errors.New("apply integration candidate: candidate worktree is unavailable")
 	}
 	return target, candidate, nil
-}
-
-func (registry *Registry) runIntegrationStrategy(ctx context.Context, request application.IntegrationAdapterRequest) error {
-	if request.Strategy == application.IntegrationRebase {
-		return registry.runRebaseIntegration(ctx, request)
-	}
-	arguments := []string{
-		"--no-optional-locks", "-C", request.Target.WorktreePath,
-		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
-		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
-	}
-	switch request.Strategy {
-	case application.IntegrationMerge:
-		arguments = append(arguments, "merge", "--no-ff", "--no-edit", "--no-verify", "--no-stat", request.Candidate.HeadRevision)
-	case application.IntegrationCherryPick:
-		arguments = append(arguments, "cherry-pick", request.Candidate.BaseRevision+".."+request.Candidate.HeadRevision)
-	default:
-		return errors.New("apply integration candidate: strategy is invalid")
-	}
-	_, err := runGitBytes(ctx, registry.gitExecutable, arguments...)
-	return err
-}
-
-func (registry *Registry) runRebaseIntegration(ctx context.Context, request application.IntegrationAdapterRequest) error {
-	targetRef, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-		"symbolic-ref", "--quiet", "HEAD")
-	if err != nil || targetRef != "refs/heads/"+expectedIntegrationTargetBranch(request) {
-		return errors.New("apply integration candidate: target branch identity is unavailable")
-	}
-	if err := registry.recordIntegrationTargetRef(ctx, request, targetRef); err != nil {
-		return err
-	}
-	if err := registry.recordIntegrationRebaseProof(ctx, request); err != nil {
-		return err
-	}
-	configuration := []string{
-		"--no-optional-locks", "-C", request.Target.WorktreePath,
-		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
-		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
-	}
-	if _, err := runGitBytes(ctx, registry.gitExecutable, append(configuration,
-		"rebase", "--no-autostash", "--no-stat", "--onto", request.Target.ExpectedHead,
-		request.Candidate.BaseRevision,
-		strings.TrimPrefix(integrationRebaseProofRef(request), "refs/heads/"))...); err != nil {
-		return err
-	}
-	resultingHead, err := registry.validRecoveredRebaseHead(ctx, request)
-	if err != nil {
-		return err
-	}
-	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-		"update-ref", targetRef, resultingHead, request.Target.ExpectedHead); err != nil {
-		return errors.New("apply integration candidate: target branch changed during rebase")
-	}
-	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-		"symbolic-ref", "HEAD", targetRef); err != nil {
-		return errors.New("apply integration candidate: rebased target could not be reattached")
-	}
-	if err := registry.retireIntegrationRebaseProof(ctx, request, resultingHead); err != nil {
-		return err
-	}
-	return nil
 }
 
 func expectedIntegrationTargetBranch(request application.IntegrationAdapterRequest) string {
@@ -372,6 +310,11 @@ func (registry *Registry) replayAppliedIntegration(
 	head, found, err := registry.integrationReceiptHead(ctx, repository, reference)
 	if err != nil || !found {
 		return application.IntegrationAdapterResult{}, false, err
+	}
+	if request.Strategy == application.IntegrationRebase {
+		if err := registry.requireServerRebaseProof(ctx, repository, request, head); err != nil {
+			return application.IntegrationAdapterResult{}, false, err
+		}
 	}
 	target, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
 		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,

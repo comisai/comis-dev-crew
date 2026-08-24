@@ -10,8 +10,8 @@ the behavior it describes.
 The service owns durable SQLite state and a strict owner-only local API. The
 operator CLI provides service, fleet, task, initiative, backlog, operation, and
 worker-profile views alongside task lifecycle commands, initiative controls and
-candidate integration, durable backlog intake and promotion, the operator half
-of approval-bound merge, and the acknowledged operator-only discard. The
+candidate integration, durable backlog intake and promotion, and the
+acknowledged operator-only discard. The
 protocol foundation pins the 43-artifact Comis capability-service contract at
 source commit `4deb33ed59b272d4a84046a20a7f51a615f06039` and bundle digest
 `dea251a955a4d68faf402aa6977db1b4544737e43aa1f624f39dc359008f6414`, and generates
@@ -20,7 +20,8 @@ a closed Go adapter that can consume an exact one-shot approval receipt.
 Installed composition supervises the Comis control lane, Codex and Claude Code
 launch descriptors, candidate validation, forge truth, delivery, unknown-task
 reconciliation, handback, safe cleanup, and approval-bound pull-request merge
-authority. Unattended worker settling is not claimed.
+components. E0 task validation keeps approval-bound merge unreachable until its
+platform gate is ratified. Unattended worker settling is not claimed.
 Tagged release builds inject the exact tag into all four executables, while
 untagged source builds identify themselves as `dev`.
 
@@ -1017,16 +1018,10 @@ canonical local API exposes one `MergeTask` mutation to both protected endpoint
 classes: operator calls can carry only the task handle, while MCP calls must
 bind the approval request and the identical operation ID; neither can choose
 forge coordinates or method.
-Installed composition now joins that mutation to the sole SQLite writer, the
-persistent authenticated Comis connection, and the separately credentialed
-forge adapter only when all three authorities exist. The operator CLI now
-reserves exact evidence through `task merge TASK` without accepting approval or
-forge fields. The destructive `merge_task` MCP tool accepts only the task handle
-and obtains the approval request, managed run, and matching operation from the
-private schema-validated Comis call context. It exposes success only after
-validating an exact durable completion and replays the same merge transaction
-after an uncertain transport outcome. Neither surface can submit forge
-coordinates or select a merge method.
+The approval-bound merge composition and its CLI and MCP surfaces remain staged
+but unreachable: E0 rejects `merge_after_approval` as a task delivery mode.
+Those surfaces cannot reserve an eligible task until the platform gate is
+ratified. Neither surface accepts forge coordinates or a merge method.
 
 Threat posture: the model can name only an opaque task. Public approval, forge,
 head, credential, and method arguments are rejected before the local service is
@@ -1174,15 +1169,14 @@ is removable when its recorded pull request is open at exactly the evidence head
 with every required check passed, or when a report artifact hash is recorded —
 plus a clean tree. That rule is unchanged.
 
-What changed is that work can now land. With `merge_after_approval` and a
-separate merge credential, the three reachability questions became answerable,
-so the proof they need is built and tested: authenticated reachability of the
-exact task branch on the configured forge repository, a merged pull request
-looked up BY HEAD BRANCH whose exact recorded head proves squash and rebase
-merges even when ancestry was rewritten, and exact commit containment in an
-up-to-date default branch. Unreadable forge truth refuses rather than
-letting a later route answer a question the earlier one never asked, and every
-refusal names the evidence gap.
+`local_branch` and `merge_after_approval` remain reserved discriminator names,
+not accepted E0 delivery modes. Ship tasks deliver a pull request and scout
+tasks deliver a report until the corresponding platform gates are ratified.
+The landed-proof boundary can establish authenticated reachability of an exact
+task branch, an exact merged pull request even when ancestry was rewritten, or
+exact commit containment in an up-to-date default branch. Unreadable forge
+truth refuses rather than letting a later route answer a question the earlier
+one never asked, and every refusal names the evidence gap.
 
 Cleanup consults the proof in exactly one place: where the delivery rule cannot
 answer at all, having found neither a recorded pull request nor a report
