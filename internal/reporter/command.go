@@ -21,6 +21,10 @@ type RuntimeCapability interface {
 	AwaitDecision(context.Context, string) (string, error)
 }
 
+type contractArtifactCapability interface {
+	ReadContractArtifact(context.Context, string) ([]byte, error)
+}
+
 // CommandConfig supplies composition-root dependencies without exposing them
 // as worker-controlled command-line arguments.
 type CommandConfig struct {
@@ -68,6 +72,29 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 			return 1
 		}
 		_, _ = io.WriteString(stdout, brief.Content)
+		return 0
+	}
+	if args[0] == "artifact" {
+		set := flag.NewFlagSet("artifact", flag.ContinueOnError)
+		set.SetOutput(io.Discard)
+		var artifactHandle string
+		set.StringVar(&artifactHandle, "handle", "", "")
+		capability, available := config.Capability.(contractArtifactCapability)
+		if set.Parse(args[1:]) != nil || set.NArg() != 0 ||
+			domain.ValidateContractArtifactHandle(artifactHandle) != nil {
+			writeInvalidCommand(stderr)
+			return 2
+		}
+		if !available {
+			writeRuntimeFailure(stderr)
+			return 1
+		}
+		content, err := capability.ReadContractArtifact(ctx, artifactHandle)
+		if err != nil {
+			writeRuntimeFailure(stderr)
+			return 1
+		}
+		_, _ = stdout.Write(content)
 		return 0
 	}
 	if args[0] == "acknowledge" {
@@ -225,6 +252,7 @@ func writeCommandUsage(output io.Writer) {
 	fmt.Fprintln(output, "Commands:")
 	fmt.Fprintln(output, "  acknowledge")
 	fmt.Fprintln(output, "  brief")
+	fmt.Fprintln(output, "  artifact --handle HANDLE")
 	fmt.Fprintln(output, "  progress --summary TEXT")
 	fmt.Fprintln(output, "  decision --key KEY --question TEXT")
 	fmt.Fprintln(output, "  blocked --summary TEXT")

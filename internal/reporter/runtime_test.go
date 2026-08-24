@@ -260,6 +260,7 @@ type runtimeHarness struct {
 	launchOperationID string
 	acknowledger      *recordingLaunchAcknowledger
 	attention         *recordingAttentionReceiver
+	artifacts         *recordingContractArtifactReader
 }
 
 func newRuntimeHarness(t *testing.T, taskHandle, localReportID string) runtimeHarness {
@@ -308,11 +309,13 @@ func newRuntimeHarnessWithLaunch(t *testing.T, taskHandle, localReportID string,
 	launchOperationID := "operation-launch-ack-" + taskHandle
 	acknowledger := &recordingLaunchAcknowledger{}
 	attention := &recordingAttentionReceiver{}
+	artifacts := newRecordingContractArtifactReader(taskHandle)
 	operationSequence := 0
 	socketPath := filepath.Join(root, "attachment.sock")
 	config := reporter.RuntimeServerConfig{
 		SocketPath: socketPath, Brief: brief, Reporter: reportClient, AttentionResponses: attention,
-		RelaySeed: []byte(strings.Repeat("r", ed25519.SeedSize)),
+		ContractArtifacts: artifacts,
+		RelaySeed:         []byte(strings.Repeat("r", ed25519.SeedSize)),
 		NewAttentionOperationID: func() (string, error) {
 			operationSequence++
 			return fmt.Sprintf("attention-response-runtime-%d", operationSequence), nil
@@ -345,6 +348,7 @@ func newRuntimeHarnessWithLaunch(t *testing.T, taskHandle, localReportID string,
 		server: server, client: client, sink: sink, brief: brief, socketPath: socketPath,
 		workspace: workspace, expectedLaunch: expectedLaunch,
 		launchOperationID: launchOperationID, acknowledger: acknowledger, attention: attention,
+		artifacts: artifacts,
 	}
 }
 

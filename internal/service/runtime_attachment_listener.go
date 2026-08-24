@@ -44,7 +44,8 @@ func (coordinator *runtimeAttachmentCoordinator) listenRuntimeAttachment(
 	server, err := reporter.ListenRuntime(reporter.RuntimeServerConfig{
 		SocketPath: temporaryAttachment.SourcePath, Brief: request.Brief, Reporter: client,
 		AttentionResponses: coordinator, NewAttentionOperationID: coordinator.newAttentionOperationID,
-		RelaySeed: relaySeed[:],
+		ContractArtifacts: taskContractArtifactReader{store: coordinator.store, taskHandle: request.TaskHandle},
+		RelaySeed:         relaySeed[:],
 	})
 	if err != nil {
 		return nil, errors.Join(err, pinned.close())

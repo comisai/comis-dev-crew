@@ -15,7 +15,8 @@ func resumeBootstrap(head string) string {
 		"You are resuming existing work in this worktree, not starting it. The tree is exactly as you "+
 			"left it at revision %s; do not reset, discard, or recreate it. Before continuing, acknowledge "+
 			"the exact protected launch binding with `devcrew-report acknowledge`, then re-read the pinned "+
-			"task brief with `devcrew-report brief`. If either command fails, stop without reading or "+
+			"task brief with `devcrew-report brief`. For every consumed contract named by that brief, read its "+
+			"exact content with `devcrew-report artifact --handle HANDLE`. If any required command fails, stop without reading or "+
 			"changing the workspace. Run `devcrew-report --help` before reporting and use only its exact "+
 			"flag syntax. Treat the protected runtime attachment as the only task/report authority.\n",
 		head,

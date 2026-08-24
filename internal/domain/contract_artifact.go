@@ -30,9 +30,14 @@ type ComponentContractArtifact struct {
 	SupersedesArtifactHandle string
 }
 
+// ValidateContractArtifactHandle rejects a malformed artifact selector.
+func ValidateContractArtifactHandle(value string) error {
+	return validateOpaqueID("artifactHandle", value)
+}
+
 // Validate enforces the immutable, bounded, digested contract record.
 func (artifact ComponentContractArtifact) Validate() error {
-	if err := validateOpaqueID("artifactHandle", artifact.ArtifactHandle); err != nil {
+	if err := ValidateContractArtifactHandle(artifact.ArtifactHandle); err != nil {
 		return err
 	}
 	if err := validateOpaqueID("initiativeHandle", artifact.InitiativeHandle); err != nil {

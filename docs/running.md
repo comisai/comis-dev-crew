@@ -1133,6 +1133,9 @@ task, run, lease, socket, or credential selector.
 Subcommands:
 
 - `brief` reads the exact pinned contract.
+- `artifact --handle HANDLE` reads exact verified content only when that handle
+  and digest are pinned in the socket-bound task brief. It accepts no task or
+  initiative selector.
 - `acknowledge` verifies and echoes the socket-bound task, run, and lease, the
   actual canonical working directory, and the brief revision, before task state
   may become `working`.

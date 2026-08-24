@@ -153,6 +153,7 @@ func TestRunCommand_BriefHelpAndVersionExposeNoAuthoritySelector(t *testing.T) {
 		t.Fatalf("RunCommand(help) = %d stdout=%q", exit, stdout.String())
 	}
 	for _, usage := range []string{
+		"artifact --handle HANDLE",
 		"progress --summary TEXT",
 		"decision --key KEY --question TEXT",
 		"blocked --summary TEXT",
@@ -188,6 +189,30 @@ func TestRunCommand_ReadsTaskScopedContractArtifact(t *testing.T) {
 	if exit != 0 || stderr.Len() != 0 || stdout.String() != string(capability.artifactContent) ||
 		capability.artifactCalls != 1 || capability.artifactHandle != "contract-payments-v1" {
 		t.Fatalf("RunCommand(artifact) = %d stdout=%q stderr=%q capability=%#v", exit, stdout.String(), stderr.String(), capability)
+	}
+	for _, args := range [][]string{
+		{"artifact"},
+		{"artifact", "--handle", "bad handle"},
+		{"artifact", "--handle", "contract-payments-v1", "--task", "task-other"},
+	} {
+		stdout.Reset()
+		stderr.Reset()
+		if got := reporter.RunCommand(context.Background(), args, &stdout, &stderr, reporter.CommandConfig{
+			Capability: capability,
+		}); got != 2 || capability.artifactCalls != 1 {
+			t.Fatalf("RunCommand(%q) = %d stdout=%q stderr=%q calls=%d", args, got, stdout.String(), stderr.String(), capability.artifactCalls)
+		}
+	}
+	privateFailure := errors.New("private artifact storage detail")
+	capability.artifactErr = privateFailure
+	stdout.Reset()
+	stderr.Reset()
+	if got := reporter.RunCommand(context.Background(), []string{
+		"artifact", "--handle", "contract-payments-v1",
+	}, &stdout, &stderr, reporter.CommandConfig{Capability: capability}); got != 1 ||
+		stdout.Len() != 0 || !strings.Contains(stderr.String(), "runtime attachment") ||
+		strings.Contains(stderr.String(), privateFailure.Error()) {
+		t.Fatalf("RunCommand(artifact failure) = %d stdout=%q stderr=%q", got, stdout.String(), stderr.String())
 	}
 }
 
