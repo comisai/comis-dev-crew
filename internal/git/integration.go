@@ -46,6 +46,9 @@ func (registry *Registry) ApplyIntegrationCandidate(
 	if replay, found, err := registry.replayConflictedIntegration(ctx, request, repository, conflictedRef); err != nil || found {
 		return replay, err
 	}
+	if replay, found, err := registry.reconcileInterruptedRebase(ctx, request, repository, conflictedRef); err != nil || found {
+		return replay, err
+	}
 	if request.RecoveryOperationID != "" {
 		return registry.resumeRebaseIntegration(ctx, request, repository)
 	}
@@ -301,10 +304,8 @@ func (registry *Registry) replayConflictedRebase(
 	request application.IntegrationAdapterRequest,
 	head string,
 ) (application.IntegrationAdapterResult, bool, error) {
-	originalHead, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-		"rev-parse", "--verify", "ORIG_HEAD^{commit}")
-	if err != nil || originalHead != request.Candidate.HeadRevision {
-		return application.IntegrationAdapterResult{}, false, errors.New("apply integration candidate: rebase origin differs from receipt")
+	if err := registry.validateRebaseOrigin(ctx, request); err != nil {
+		return application.IntegrationAdapterResult{}, false, err
 	}
 	rebaseHead, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
 		"rev-parse", "--verify", "REBASE_HEAD^{commit}")

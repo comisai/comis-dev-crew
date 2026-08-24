@@ -371,7 +371,8 @@ func TestIntegrationCompletionRollsBackWhenOperationLedgerFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := fixture.store.db.Exec(`CREATE TRIGGER refuse_integration_operation
-		BEFORE INSERT ON operations WHEN NEW.command = 'ApplyIntegrationCandidate'
+		BEFORE UPDATE OF status ON operations
+		WHEN OLD.command = 'ApplyIntegrationCandidate' AND NEW.status = 'completed'
 		BEGIN SELECT RAISE(ABORT, 'injected integration operation failure'); END`); err != nil {
 		t.Fatal(err)
 	}
@@ -391,8 +392,9 @@ func TestIntegrationCompletionRollsBackWhenOperationLedgerFails(t *testing.T) {
 		request.Command.OperationID).Scan(&status); err != nil || status != "reserved" {
 		t.Fatalf("status after rollback = %q, %v", status, err)
 	}
-	if _, err := fixture.store.GetOperation(context.Background(), request.Command.OperationID); !errors.Is(err, application.ErrNotFound) {
-		t.Fatalf("GetOperation(after rollback) error = %v", err)
+	operation, err := fixture.store.GetOperation(context.Background(), request.Command.OperationID)
+	if err != nil || operation.Status != domain.OperationAccepted {
+		t.Fatalf("GetOperation(after rollback) = %#v, %v", operation, err)
 	}
 }
 

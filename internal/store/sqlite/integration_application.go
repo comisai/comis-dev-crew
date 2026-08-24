@@ -92,8 +92,8 @@ func (store *Store) IntegrationPolicy(ctx context.Context, initiativeHandle stri
 	return initiative.IntegrationPolicyID, nil
 }
 
-// ReserveIntegrationApplication resolves every path and evidence identity
-// under one transaction before the Git adapter receives mutation authority.
+// ReserveIntegrationApplication resolves every path and evidence identity and
+// claims the operation ledger under one transaction before Git mutation.
 func (store *Store) ReserveIntegrationApplication(
 	ctx context.Context,
 	request application.IntegrationReservationRequest,
@@ -115,6 +115,9 @@ func (store *Store) ReserveIntegrationApplication(
 		if !integrationRowMatchesRequest(row, request) {
 			return application.ReservedIntegrationApplication{}, fmt.Errorf("integration reservation altered replay: %w", application.ErrConflict)
 		}
+		if err := verifyIntegrationOperation(ctx, transaction, row); err != nil {
+			return application.ReservedIntegrationApplication{}, err
+		}
 		if err := transaction.Commit(); err != nil {
 			return application.ReservedIntegrationApplication{}, fmt.Errorf("commit integration reservation replay: %w", err)
 		}
@@ -128,6 +131,19 @@ func (store *Store) ReserveIntegrationApplication(
 	row, err := resolveIntegrationReservation(ctx, transaction, request)
 	if err != nil {
 		return application.ReservedIntegrationApplication{}, err
+	}
+	stateVersion, err := nextMutationStateVersion(ctx, transaction)
+	if err != nil {
+		return application.ReservedIntegrationApplication{}, err
+	}
+	operation := domain.OperationRecord{
+		SchemaVersion: 1, ID: row.operationID, Command: commandApplyIntegrationCandidate,
+		SubjectDigest: row.subjectDigest, Status: domain.OperationAccepted,
+		ResultRef: row.integrationTaskHandle, StateVersion: stateVersion,
+		CreatedAt: row.reservedAt, UpdatedAt: row.reservedAt,
+	}
+	if err := insertOperation(ctx, transaction, operation); err != nil {
+		return application.ReservedIntegrationApplication{}, fmt.Errorf("insert accepted integration operation: %w", err)
 	}
 	if err := insertIntegrationApplication(ctx, transaction, row); err != nil {
 		return application.ReservedIntegrationApplication{}, err
@@ -161,6 +177,9 @@ func (store *Store) CompleteIntegrationApplication(
 	}
 	if !found || !integrationRowMatchesReservation(row, completion.Reservation) {
 		return application.IntegrationApplicationResult{}, fmt.Errorf("integration completion reservation differs: %w", application.ErrConflict)
+	}
+	if err := verifyIntegrationOperation(ctx, transaction, row); err != nil {
+		return application.IntegrationApplicationResult{}, err
 	}
 	if row.status != "reserved" {
 		result := integrationResultFromRow(row)
@@ -198,12 +217,8 @@ func (store *Store) CompleteIntegrationApplication(
 			return application.IntegrationApplicationResult{}, err
 		}
 	}
-	operation := completedMutationOperation(
-		row.operationID, commandApplyIntegrationCandidate, row.subjectDigest,
-		row.integrationTaskHandle, stateVersion, completion.At,
-	)
-	if err := insertOperation(ctx, transaction, operation); err != nil {
-		return application.IntegrationApplicationResult{}, fmt.Errorf("insert integration operation: %w", err)
+	if err := completeIntegrationOperation(ctx, transaction, row, completion.At); err != nil {
+		return application.IntegrationApplicationResult{}, err
 	}
 	if err := transaction.Commit(); err != nil {
 		return application.IntegrationApplicationResult{}, fmt.Errorf("commit integration completion: %w", err)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -49,6 +50,55 @@ func updateIntegrationApplication(ctx context.Context, target execer, row integr
 	changed, err := result.RowsAffected()
 	if err != nil || changed != 1 {
 		return fmt.Errorf("update integration application: %w", application.ErrConflict)
+	}
+	return nil
+}
+
+func verifyIntegrationOperation(ctx context.Context, source queryer, row integrationApplicationRow) error {
+	operation, err := getOperation(ctx, source, row.operationID)
+	if err != nil {
+		return fmt.Errorf("read integration operation: %w", err)
+	}
+	if operation.Command != commandApplyIntegrationCandidate || operation.SubjectDigest != row.subjectDigest ||
+		operation.ResultRef != row.integrationTaskHandle || !operation.CreatedAt.Equal(row.reservedAt) {
+		return errors.New("integration operation ledger differs")
+	}
+	if row.status == "reserved" {
+		if operation.Status != domain.OperationAccepted && operation.Status != domain.OperationUnknown {
+			return errors.New("reserved integration operation ledger differs")
+		}
+		if operation.Status == domain.OperationAccepted && !operation.UpdatedAt.Equal(row.reservedAt) {
+			return errors.New("accepted integration operation time differs")
+		}
+		return nil
+	}
+	if operation.Status != domain.OperationCompleted || operation.StateVersion != row.stateVersion ||
+		!operation.UpdatedAt.Equal(row.completedAt) {
+		return errors.New("completed integration operation ledger differs")
+	}
+	return nil
+}
+
+func completeIntegrationOperation(
+	ctx context.Context,
+	target execer,
+	row integrationApplicationRow,
+	at time.Time,
+) error {
+	const statement = `UPDATE operations SET status = ?, state_version = ?, updated_at = ?
+		WHERE id = ? AND command = ? AND subject_digest = ? AND result_ref = ?
+		  AND status IN (?, ?)`
+	result, err := target.ExecContext(ctx, statement,
+		domain.OperationCompleted, row.stateVersion, formatTime(at), row.operationID,
+		commandApplyIntegrationCandidate, row.subjectDigest, row.integrationTaskHandle,
+		domain.OperationAccepted, domain.OperationUnknown,
+	)
+	if err != nil {
+		return fmt.Errorf("complete integration operation: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return errors.New("complete integration operation: exact ledger row was not updated")
 	}
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -65,6 +66,67 @@ func TestRegistry_RecoversResolvedRebaseConflictAndReattachesExactTarget(t *test
 	replayed, err := restarted.ApplyIntegrationCandidate(context.Background(), recovery)
 	if err != nil || !reflect.DeepEqual(replayed, result) {
 		t.Fatalf("ApplyIntegrationCandidate(recovery replay) = %#v, %v", replayed, err)
+	}
+}
+
+func TestRegistry_ReconcilesInterruptedRebaseConflictBeforeReceipt(t *testing.T) {
+	fixture := newIntegrationFixture(t)
+	candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "fixture.txt", "candidate\n")
+	targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "fixture.txt", "integration\n")
+	request := fixture.request("integration-rebase-interrupted-conflict", application.IntegrationRebase, candidateHead, targetHead)
+	targetRef := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "symbolic-ref", "HEAD")
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"symbolic-ref", integrationReceiptRefForTest("target", request), targetRef)
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"checkout", "--detach", "--no-guess", candidateHead)
+	runIntegrationGitExpectFailure(t, fixture.repository.gitExecutable,
+		"--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
+		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
+		"rebase", "--no-autostash", "--no-stat", "--onto", targetHead, request.Candidate.BaseRevision)
+
+	restarted := newLifecycleRegistry(t, fixture.repository)
+	result, err := restarted.ApplyIntegrationCandidate(context.Background(), request)
+	if err != nil || result.Outcome != application.IntegrationConflicted ||
+		result.PreviousHead != targetHead || !reflect.DeepEqual(result.ConflictPaths, []string{"fixture.txt"}) {
+		t.Fatalf("ApplyIntegrationCandidate(interrupted conflict) = %#v, %v", result, err)
+	}
+	replayed, err := restarted.ApplyIntegrationCandidate(context.Background(), request)
+	if err != nil || !reflect.DeepEqual(replayed, result) {
+		t.Fatalf("ApplyIntegrationCandidate(interrupted conflict replay) = %#v, %v", replayed, err)
+	}
+}
+
+func TestRegistry_ReconcilesCompletedRecoveryBeforeRebasedReceipt(t *testing.T) {
+	fixture := newIntegrationFixture(t)
+	candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "fixture.txt", "candidate\n")
+	targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "fixture.txt", "integration\n")
+	request := fixture.request("integration-rebase-completed-conflict", application.IntegrationRebase, candidateHead, targetHead)
+	if result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request); err != nil || result.Outcome != application.IntegrationConflicted {
+		t.Fatalf("ApplyIntegrationCandidate(conflict) = %#v, %v", result, err)
+	}
+	if err := os.WriteFile(filepath.Join(fixture.target.CanonicalPath, "fixture.txt"), []byte("resolved\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"add", "--", "fixture.txt")
+	runGit(t, fixture.repository.gitExecutable,
+		"--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", "-c", "core.editor=true",
+		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
+		"rebase", "--continue")
+	recovery := request
+	recovery.OperationID = "integration-rebase-completed-recovery"
+	recovery.RecoveryOperationID = request.OperationID
+
+	restarted := newLifecycleRegistry(t, fixture.repository)
+	result, err := restarted.ApplyIntegrationCandidate(context.Background(), recovery)
+	if err != nil || result.Outcome != application.IntegrationApplied || result.PreviousHead != targetHead ||
+		result.ResultingHead == "" || result.ResultingHead == targetHead {
+		t.Fatalf("ApplyIntegrationCandidate(completed recovery) = %#v, %v", result, err)
+	}
+	if branch := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "symbolic-ref", "--short", "HEAD"); branch != fixture.target.Branch {
+		t.Fatalf("reconciled target branch = %q, want %q", branch, fixture.target.Branch)
 	}
 }
 
@@ -266,5 +328,14 @@ func lockIntegrationReceiptForTest(t *testing.T, fixture integrationFixture, rec
 	}
 	if err := os.WriteFile(lockPath, []byte("locked"), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func runIntegrationGitExpectFailure(t *testing.T, executable string, arguments ...string) {
+	t.Helper()
+	command := exec.Command(executable, arguments...)
+	command.Env = gitTestEnvironment(nil)
+	if output, err := command.CombinedOutput(); err == nil {
+		t.Fatalf("Git fixture command unexpectedly succeeded: %s", output)
 	}
 }
