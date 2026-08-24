@@ -56,10 +56,11 @@ type ApplyIntegrationCandidateCommand struct {
 
 // IntegrationTargetReference is the store-resolved dedicated writer target.
 type IntegrationTargetReference struct {
-	TaskHandle   string
-	RepositoryID string
-	WorktreePath string
-	ExpectedHead string
+	TaskHandle             string
+	PreparationOperationID string
+	RepositoryID           string
+	WorktreePath           string
+	ExpectedHead           string
 }
 
 // IntegrationCandidateReference is one immutable, evidence-backed task head.
@@ -79,6 +80,7 @@ type IntegrationAdapterRequest struct {
 	Strategy            IntegrationStrategy
 	Target              IntegrationTargetReference
 	Candidate           IntegrationCandidateReference
+	EvidenceExpiresAt   time.Time
 }
 
 // IntegrationAdapterResult reports either one exact new head or bounded
@@ -128,6 +130,7 @@ func (reserved ReservedIntegrationApplication) AdapterRequest() IntegrationAdapt
 		OperationID: reserved.OperationID, RecoveryOperationID: reserved.RecoveryOperationID,
 		Strategy: reserved.Strategy,
 		Target:   reserved.Target, Candidate: reserved.Candidate,
+		EvidenceExpiresAt: reserved.EvidenceExpiresAt,
 	}
 }
 
@@ -236,9 +239,6 @@ func (integrations *Integrations) ApplyCandidate(
 		}
 		return cloneIntegrationResult(*reserved.Result), nil
 	}
-	if reserved.RecoveryOperationID == "" && !at.Before(reserved.EvidenceExpiresAt) {
-		return IntegrationApplicationResult{}, mutationValidationFailure("integration candidate evidence expired")
-	}
 	adapterResult, err := integrations.adapter.ApplyIntegrationCandidate(ctx, reserved.AdapterRequest())
 	if err != nil {
 		return IntegrationApplicationResult{}, &dependencyFailure{message: "integration adapter failed", cause: err}
@@ -309,7 +309,8 @@ func validateIntegrationReservation(
 		reserved.InitiativeHandle != command.InitiativeHandle || reserved.IntegrationTaskHandle != command.IntegrationTaskHandle ||
 		reserved.PolicyID != policyID || reserved.Strategy != strategy || reserved.Candidate.TaskHandle != command.CandidateTaskHandle ||
 		reserved.Candidate.HeadRevision != command.CandidateHead || reserved.Target.ExpectedHead != command.ExpectedIntegrationHead ||
-		reserved.Target.TaskHandle != command.IntegrationTaskHandle || reserved.Target.RepositoryID == "" ||
+		reserved.Target.TaskHandle != command.IntegrationTaskHandle ||
+		domain.ValidateOperationID(reserved.Target.PreparationOperationID) != nil || reserved.Target.RepositoryID == "" ||
 		reserved.Target.RepositoryID != reserved.Candidate.RepositoryID ||
 		reserved.Target.WorktreePath == reserved.Candidate.WorktreePath || !canonicalAbsolutePath(reserved.Target.WorktreePath) ||
 		!canonicalAbsolutePath(reserved.Candidate.WorktreePath) || domain.ValidateGitRevision(reserved.Candidate.BaseRevision) != nil {

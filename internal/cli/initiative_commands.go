@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
@@ -148,18 +149,41 @@ func parseInitiativeControlCommand(
 }
 
 func parseInitiativeListCommand(command parsedCommand, args []string) (parsedCommand, error) {
-	if len(args) >= 2 && args[0] == "--state" {
-		state := domain.InitiativeState(args[1])
-		if err := domain.ValidateInitiativeState(state); err != nil {
-			return parsedCommand{}, err
+	command.kind, command.format = commandListInitiatives, "table"
+	seen := make(map[string]bool)
+	for len(args) > 0 {
+		if len(args) < 2 || seen[args[0]] {
+			return parsedCommand{}, errors.New("invalid initiative list arguments")
 		}
-		command.initiativeState = args[1]
+		name, value := args[0], args[1]
+		seen[name] = true
+		switch name {
+		case "--state":
+			state := domain.InitiativeState(value)
+			if err := domain.ValidateInitiativeState(state); err != nil {
+				return parsedCommand{}, err
+			}
+			command.initiativeState = value
+		case "--after":
+			if domain.ValidateTaskHandle(value) != nil {
+				return parsedCommand{}, errors.New("initiative list cursor is invalid")
+			}
+			command.initiativeCursor = value
+		case "--limit":
+			limit, err := strconv.Atoi(value)
+			if err != nil || limit < 1 || limit > application.MaximumInitiativePage {
+				return parsedCommand{}, errors.New("initiative list limit is invalid")
+			}
+			command.initiativeLimit = limit
+		case "--format":
+			if value != "table" && value != "json" {
+				return parsedCommand{}, errors.New("initiative list format is invalid")
+			}
+			command.format = value
+		default:
+			return parsedCommand{}, errors.New("unknown initiative list option")
+		}
 		args = args[2:]
 	}
-	format, err := parseFormat(args, "table", "table", "json")
-	if err != nil {
-		return parsedCommand{}, err
-	}
-	command.kind, command.format = commandListInitiatives, format
 	return command, nil
 }

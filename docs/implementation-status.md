@@ -525,9 +525,9 @@ that does not resolve to the exact handle, kind, producer, and digest.
 Initiative list, detail, dependency graph, and backlog list projections read
 their records and advertised state version from one read-only SQLite snapshot.
 State and backlog-readiness filters reject unknown vocabulary instead of
-returning an ambiguous empty list. Backlog reads apply their filters inside that
-snapshot and return at most sixteen handle-ordered records with an opaque
-after-handle cursor. Detail reads require every durable member,
+returning an ambiguous empty list. Initiative and backlog reads apply their
+filters inside that snapshot and return at most sixteen handle-ordered records
+with an opaque after-handle cursor. Detail reads require every durable member,
 carry the graph's source/confidence/completeness envelope, and return closed
 non-executable next-action identifiers. The running service publishes these
 through the strict local boundary as `ListInitiatives`, `GetInitiative`, and
@@ -1172,17 +1172,16 @@ What changed is that work can now land. With `merge_after_approval` and a
 separate merge credential, the three reachability questions became answerable,
 so the proof they need is built and tested: reachability from any
 remote-tracking branch including a fork remote, a merged pull request looked up
-BY HEAD BRANCH so a missing local record never refuses on its own, and
-containment in an up-to-date default branch for the
-squash-merge-then-delete-branch case. Unreadable forge truth refuses rather than
+BY HEAD BRANCH whose exact recorded head proves squash and rebase merges even
+when ancestry was rewritten, and exact commit containment in an up-to-date
+default branch. Unreadable forge truth refuses rather than
 letting a later route answer a question the earlier one never asked, and every
 refusal names the evidence gap.
 
 Cleanup consults the proof in exactly one place: where the delivery rule cannot
 answer at all, having found neither a recorded pull request nor a report
 artifact hash. That case used to refuse outright, and a missing record is not
-evidence that nothing landed — a squash merge that deleted the branch leaves
-precisely this state. The consultation can only turn that refusal into an
+evidence that nothing landed. The consultation can only turn that refusal into an
 acceptance, never the reverse, so every removal the delivery rule already
 refused is still refused.
 

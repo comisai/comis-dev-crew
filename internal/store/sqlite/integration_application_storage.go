@@ -18,13 +18,14 @@ func insertIntegrationApplication(ctx context.Context, target execer, row integr
 		return errors.New("insert integration application: conflicts cannot be encoded")
 	}
 	const statement = `INSERT INTO integration_applications (
-		operation_id, recovery_operation_id, subject_digest, initiative_handle, integration_task_handle, candidate_task_handle,
+		operation_id, recovery_operation_id, subject_digest, initiative_handle, integration_task_handle, target_preparation_operation_id, candidate_task_handle,
         repository_id, policy_id, strategy, target_worktree, expected_target_head,
         candidate_worktree, candidate_base, candidate_head, evidence_digest, evidence_expires_at,
         status, resulting_head, conflicts_json, reserved_at, completed_at, state_version
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, '', 0)`
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, '', 0)`
 	_, err = target.ExecContext(ctx, statement,
-		row.operationID, row.recoveryOperationID, row.subjectDigest, row.initiativeHandle, row.integrationTaskHandle, row.candidateTaskHandle,
+		row.operationID, row.recoveryOperationID, row.subjectDigest, row.initiativeHandle, row.integrationTaskHandle,
+		row.targetPreparationOperationID, row.candidateTaskHandle,
 		row.repositoryID, row.policyID, row.strategy, row.targetWorktree, row.expectedTargetHead,
 		row.candidateWorktree, row.candidateBase, row.candidateHead, row.evidenceDigest, formatTime(row.evidenceExpiresAt),
 		row.status, string(conflicts), formatTime(row.reservedAt),
@@ -104,7 +105,7 @@ func completeIntegrationOperation(
 }
 
 func findIntegrationApplication(ctx context.Context, source queryer, operationID string) (integrationApplicationRow, bool, error) {
-	const query = `SELECT operation_id, recovery_operation_id, subject_digest, initiative_handle, integration_task_handle,
+	const query = `SELECT operation_id, recovery_operation_id, subject_digest, initiative_handle, integration_task_handle, target_preparation_operation_id,
         candidate_task_handle, repository_id, policy_id, strategy, target_worktree, expected_target_head,
         candidate_worktree, candidate_base, candidate_head, evidence_digest, evidence_expires_at,
         status, resulting_head, conflicts_json, reserved_at, completed_at, state_version
@@ -127,7 +128,7 @@ func findCandidateIntegrationApplication(
 	candidateTaskHandle string,
 	candidateHead string,
 ) (integrationApplicationRow, bool, error) {
-	const query = `SELECT operation_id, recovery_operation_id, subject_digest, initiative_handle, integration_task_handle,
+	const query = `SELECT operation_id, recovery_operation_id, subject_digest, initiative_handle, integration_task_handle, target_preparation_operation_id,
         candidate_task_handle, repository_id, policy_id, strategy, target_worktree, expected_target_head,
         candidate_worktree, candidate_base, candidate_head, evidence_digest, evidence_expires_at,
         status, resulting_head, conflicts_json, reserved_at, completed_at, state_version
@@ -153,7 +154,7 @@ func findIntegrationRecoveryApplication(
 	source queryer,
 	recoveryOperationID string,
 ) (integrationApplicationRow, bool, error) {
-	const query = `SELECT operation_id, recovery_operation_id, subject_digest, initiative_handle, integration_task_handle,
+	const query = `SELECT operation_id, recovery_operation_id, subject_digest, initiative_handle, integration_task_handle, target_preparation_operation_id,
         candidate_task_handle, repository_id, policy_id, strategy, target_worktree, expected_target_head,
         candidate_worktree, candidate_base, candidate_head, evidence_digest, evidence_expires_at,
         status, resulting_head, conflicts_json, reserved_at, completed_at, state_version
@@ -173,7 +174,7 @@ func scanIntegrationApplication(scanner rowScanner) (integrationApplicationRow, 
 	var evidenceExpiresAt, conflicts, reservedAt, completedAt string
 	if err := scanner.Scan(
 		&row.operationID, &row.recoveryOperationID, &row.subjectDigest, &row.initiativeHandle, &row.integrationTaskHandle,
-		&row.candidateTaskHandle, &row.repositoryID, &row.policyID, &row.strategy,
+		&row.targetPreparationOperationID, &row.candidateTaskHandle, &row.repositoryID, &row.policyID, &row.strategy,
 		&row.targetWorktree, &row.expectedTargetHead, &row.candidateWorktree, &row.candidateBase,
 		&row.candidateHead, &row.evidenceDigest, &evidenceExpiresAt, &row.status,
 		&row.resultingHead, &conflicts, &reservedAt, &completedAt, &row.stateVersion,
@@ -206,6 +207,7 @@ func validIntegrationRow(row integrationApplicationRow) bool {
 		(row.recoveryOperationID != "" && (domain.ValidateOperationID(row.recoveryOperationID) != nil ||
 			row.recoveryOperationID == row.operationID)) || domain.ValidateBriefRevisionHash(row.subjectDigest) != nil ||
 		domain.ValidateTaskHandle(row.initiativeHandle) != nil || domain.ValidateTaskHandle(row.integrationTaskHandle) != nil ||
+		domain.ValidateOperationID(row.targetPreparationOperationID) != nil ||
 		domain.ValidateTaskHandle(row.candidateTaskHandle) != nil || domain.ValidateRepositoryID(row.repositoryID) != nil ||
 		domain.ValidateTaskHandle(row.policyID) != nil || domain.ValidateGitRevision(row.expectedTargetHead) != nil ||
 		domain.ValidateGitRevision(row.candidateBase) != nil || domain.ValidateGitRevision(row.candidateHead) != nil ||
@@ -234,7 +236,8 @@ func integrationReservationFromRow(row integrationApplicationRow) application.Re
 		InitiativeHandle: row.initiativeHandle, IntegrationTaskHandle: row.integrationTaskHandle,
 		PolicyID: row.policyID, Strategy: row.strategy,
 		Target: application.IntegrationTargetReference{
-			TaskHandle: row.integrationTaskHandle, RepositoryID: row.repositoryID,
+			TaskHandle: row.integrationTaskHandle, PreparationOperationID: row.targetPreparationOperationID,
+			RepositoryID: row.repositoryID,
 			WorktreePath: row.targetWorktree, ExpectedHead: row.expectedTargetHead,
 		},
 		Candidate: application.IntegrationCandidateReference{

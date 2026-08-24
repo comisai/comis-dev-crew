@@ -1,6 +1,7 @@
 package domain_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ func initiativeFixture() domain.DevelopmentInitiative {
 		SchemaVersion:     1,
 		Handle:            "initiative-alpha",
 		ManagedRunGroupID: "managed-run-group_a",
+		TitleRef:          "title-alpha",
 		State:             domain.InitiativePreparing,
 		BaseRevisionSet: []domain.InitiativeBaseRevision{
 			{RepositoryID: "repo-primary", Revision: "0123456789abcdef0123456789abcdef01234567"},
@@ -37,6 +39,16 @@ func initiativeFixture() domain.DevelopmentInitiative {
 func TestInitiativeAcceptsAcyclicSameInitiativeGraph(t *testing.T) {
 	if err := initiativeFixture().Validate(); err != nil {
 		t.Fatalf("valid initiative rejected: %v", err)
+	}
+}
+
+func TestInitiativeTitleReferenceIsBoundedSafeText(t *testing.T) {
+	for _, title := range []string{"", strings.Repeat("t", 257), "unsafe\ntitle"} {
+		initiative := initiativeFixture()
+		initiative.TitleRef = title
+		if err := initiative.Validate(); err == nil {
+			t.Fatalf("initiative title %q accepted", title)
+		}
 	}
 }
 

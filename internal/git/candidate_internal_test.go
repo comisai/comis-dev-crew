@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestInspectCandidateDistinguishesInfrastructureFromStructuralFailures(t *testing.T) {
@@ -159,6 +160,7 @@ func TestInspectCandidateTreatsCorruptIndexAsUnverifiedWorktree(t *testing.T) {
 	}
 	registry, err := NewRegistry(ctx, RegistryConfig{
 		GitExecutable: executable, ApprovedRoots: []string{root},
+		Clock: time.Now,
 		Repositories: []RepositoryConfig{{
 			ID: "product-api", PrimaryCheckout: primary, WorktreeRoot: worktreeRoot, DefaultBranch: "main",
 		}},

@@ -7,6 +7,9 @@ import (
 )
 
 const (
+	// MaximumInitiativePage bounds one durable initiative page.
+	MaximumInitiativePage = 16
+	defaultInitiativePage = MaximumInitiativePage
 	// MaximumBacklogPage bounds one durable backlog page.
 	MaximumBacklogPage = 16
 	defaultBacklogPage = MaximumBacklogPage
@@ -34,11 +37,19 @@ type InitiativeSummary struct {
 	UpdatedAt        time.Time              `json:"updatedAt"`
 }
 
+// InitiativeFilter scopes and pages durable initiative summaries.
+type InitiativeFilter struct {
+	State       domain.InitiativeState `json:"state,omitempty"`
+	AfterHandle string                 `json:"afterHandle,omitempty"`
+	Limit       int                    `json:"limit,omitempty"`
+}
+
 // InitiativeList is a versioned deterministic initiative projection.
 type InitiativeList struct {
 	SchemaVersion int                 `json:"schemaVersion"`
 	CapturedAtMs  int64               `json:"capturedAtMs"`
 	StateVersion  int64               `json:"stateVersion"`
+	NextCursor    string              `json:"nextCursor,omitempty"`
 	Initiatives   []InitiativeSummary `json:"initiatives"`
 }
 

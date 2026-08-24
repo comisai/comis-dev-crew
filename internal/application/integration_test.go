@@ -87,12 +87,12 @@ func TestIntegrationReplaysWithoutReapplyingCandidate(t *testing.T) {
 	}
 }
 
-func TestIntegrationEvidenceExpiryBlocksNewMutationButNotCompletedReplay(t *testing.T) {
+func TestIntegrationCarriesEvidenceDeadlineToMutationButNotCompletedReplay(t *testing.T) {
 	command := integrationCommand()
 	reserved := integrationReservation(command, IntegrationMerge)
 	expiredAt := reserved.EvidenceExpiresAt
 	store := &integrationStore{policyID: "integration-reviewed", reservation: reserved}
-	adapter := &integrationAdapter{}
+	adapter := &integrationAdapter{err: errors.New("evidence expired at adapter")}
 	integrations, err := NewIntegrations(IntegrationConfig{
 		Store: store, Adapter: adapter,
 		Policies: func(string) (IntegrationStrategy, error) { return IntegrationMerge, nil },
@@ -104,13 +104,14 @@ func TestIntegrationEvidenceExpiryBlocksNewMutationButNotCompletedReplay(t *test
 	if _, err := integrations.ApplyCandidate(context.Background(), command); err == nil {
 		t.Fatal("ApplyCandidate(expired evidence) error = nil")
 	}
-	if len(adapter.requests) != 0 || store.sequence != "policy,reserve" {
-		t.Fatalf("expired evidence crossed mutation boundary: requests=%d sequence=%q", len(adapter.requests), store.sequence)
+	if len(adapter.requests) != 1 || !adapter.requests[0].EvidenceExpiresAt.Equal(expiredAt) || store.sequence != "policy,reserve" {
+		t.Fatalf("deadline mutation request = %#v sequence=%q", adapter.requests, store.sequence)
 	}
 
 	replayed := integrationResult(reserved, IntegrationApplied, strings.Repeat("d", 40), nil, reserved.ReservedAt.Add(time.Minute))
 	reserved.Result = &replayed
 	store = &integrationStore{policyID: "integration-reviewed", reservation: reserved}
+	adapter = &integrationAdapter{}
 	integrations, err = NewIntegrations(IntegrationConfig{
 		Store: store, Adapter: adapter,
 		Policies: func(string) (IntegrationStrategy, error) { return IntegrationMerge, nil },
@@ -333,7 +334,8 @@ func integrationReservation(command ApplyIntegrationCandidateCommand, strategy I
 		InitiativeHandle: command.InitiativeHandle, IntegrationTaskHandle: command.IntegrationTaskHandle,
 		PolicyID: "integration-reviewed", Strategy: strategy,
 		Target: IntegrationTargetReference{
-			TaskHandle: "task-integration", RepositoryID: "product-api", WorktreePath: "/approved/worktrees/task-integration",
+			TaskHandle: "task-integration", PreparationOperationID: "prepare-integration-0001",
+			RepositoryID: "product-api", WorktreePath: "/approved/worktrees/task-integration",
 			ExpectedHead: command.ExpectedIntegrationHead,
 		},
 		Candidate: IntegrationCandidateReference{

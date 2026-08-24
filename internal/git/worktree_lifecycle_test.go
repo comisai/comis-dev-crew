@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	devgit "github.com/comisai/comis-dev-crew/internal/git"
@@ -709,9 +710,18 @@ func TestRegistry_RemoveDeliveredWorktreeRefusesAmbiguousAbsentAndChangedBranche
 }
 
 func newLifecycleRegistry(t *testing.T, fixture repositoryFixture) *devgit.Registry {
+	return newLifecycleRegistryWithClock(t, fixture, time.Now)
+}
+
+func newLifecycleRegistryWithClock(
+	t *testing.T,
+	fixture repositoryFixture,
+	clock func() time.Time,
+) *devgit.Registry {
 	t.Helper()
 	registry, err := devgit.NewRegistry(context.Background(), devgit.RegistryConfig{
 		GitExecutable: fixture.gitExecutable,
+		Clock:         clock,
 		ApprovedRoots: []string{fixture.approvedRoot},
 		Repositories: []devgit.RepositoryConfig{{
 			ID: fixture.repositoryID, PrimaryCheckout: fixture.primary,

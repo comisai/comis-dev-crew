@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -57,13 +58,18 @@ func (registry *Registry) ApplyIntegrationCandidate(
 	if err != nil {
 		return application.IntegrationAdapterResult{}, err
 	}
-	if target.Cleanliness != CandidateClean || target.HeadRevision != request.Target.ExpectedHead {
+	expectedBranch := expectedIntegrationTargetBranch(request)
+	if target.Cleanliness != CandidateClean || target.HeadRevision != request.Target.ExpectedHead || target.Branch != expectedBranch {
 		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: target head or cleanliness changed")
 	}
 	if candidate.Cleanliness != CandidateClean || candidate.HeadRevision != request.Candidate.HeadRevision {
 		return application.IntegrationAdapterResult{
 			Outcome: application.IntegrationInvalidated, PreviousHead: request.Target.ExpectedHead,
 		}, nil
+	}
+	mutationAt := registry.clock().UTC()
+	if mutationAt.IsZero() || !mutationAt.Before(request.EvidenceExpiresAt) {
+		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: candidate evidence expired before mutation")
 	}
 
 	if err := registry.runIntegrationStrategy(ctx, request); err != nil {
@@ -87,7 +93,8 @@ func (registry *Registry) ApplyIntegrationCandidate(
 		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
 		WorktreePath: request.Target.WorktreePath,
 	})
-	if err != nil || final.Cleanliness != CandidateClean || final.HeadRevision == request.Target.ExpectedHead {
+	if err != nil || final.Cleanliness != CandidateClean || final.HeadRevision == request.Target.ExpectedHead ||
+		final.Branch != expectedBranch {
 		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: resulting target is unverified")
 	}
 	if err := registry.createIntegrationReceipt(ctx, repository, appliedRef, final.HeadRevision); err != nil {
@@ -109,7 +116,9 @@ func validateIntegrationRequest(request application.IntegrationAdapterRequest) e
 		request.Target.TaskHandle == request.Candidate.TaskHandle || !repositoryIDPattern.MatchString(request.Target.RepositoryID) ||
 		request.Target.RepositoryID != request.Candidate.RepositoryID || request.Target.WorktreePath == request.Candidate.WorktreePath ||
 		!gitRevisionPattern.MatchString(request.Target.ExpectedHead) || !gitRevisionPattern.MatchString(request.Candidate.BaseRevision) ||
-		!gitRevisionPattern.MatchString(request.Candidate.HeadRevision) {
+		!gitRevisionPattern.MatchString(request.Candidate.HeadRevision) ||
+		domain.ValidateOperationID(request.Target.PreparationOperationID) != nil ||
+		request.EvidenceExpiresAt.IsZero() || request.EvidenceExpiresAt.Location() != time.UTC {
 		return errors.New("apply integration candidate: request is invalid")
 	}
 	return nil
@@ -171,7 +180,7 @@ func (registry *Registry) runIntegrationStrategy(ctx context.Context, request ap
 func (registry *Registry) runRebaseIntegration(ctx context.Context, request application.IntegrationAdapterRequest) error {
 	targetRef, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
 		"symbolic-ref", "--quiet", "HEAD")
-	if err != nil || !strings.HasPrefix(targetRef, "refs/heads/") || strings.ContainsAny(targetRef, "\x00\r\n\t ") {
+	if err != nil || targetRef != "refs/heads/"+expectedIntegrationTargetBranch(request) {
 		return errors.New("apply integration candidate: target branch identity is unavailable")
 	}
 	if err := registry.recordIntegrationTargetRef(ctx, request, targetRef); err != nil {
@@ -207,6 +216,13 @@ func (registry *Registry) runRebaseIntegration(ctx context.Context, request appl
 		return err
 	}
 	return nil
+}
+
+func expectedIntegrationTargetBranch(request application.IntegrationAdapterRequest) string {
+	branch, _ := preparedBranch(
+		request.Target.RepositoryID, request.Target.TaskHandle, request.Target.PreparationOperationID,
+	)
+	return branch
 }
 
 func (registry *Registry) restorePreparedRebaseTarget(
@@ -358,7 +374,8 @@ func (registry *Registry) replayAppliedIntegration(
 		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
 		WorktreePath: request.Target.WorktreePath,
 	})
-	if err != nil || target.Cleanliness != CandidateClean || target.HeadRevision != head {
+	if err != nil || target.Cleanliness != CandidateClean || target.HeadRevision != head ||
+		target.Branch != expectedIntegrationTargetBranch(request) {
 		return application.IntegrationAdapterResult{}, false, errors.New("apply integration candidate: applied receipt differs from target")
 	}
 	return application.IntegrationAdapterResult{
@@ -380,13 +397,16 @@ func (registry *Registry) replayConflictedIntegration(
 		return application.IntegrationAdapterResult{}, false, errors.New("apply integration candidate: conflict receipt head differs")
 	}
 	if request.Strategy == application.IntegrationRebase {
+		if _, err := registry.integrationTargetRef(ctx, request); err != nil {
+			return application.IntegrationAdapterResult{}, false, err
+		}
 		return registry.replayConflictedRebase(ctx, request, head)
 	}
 	target, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
 		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
 		WorktreePath: request.Target.WorktreePath,
 	})
-	if err != nil || target.HeadRevision != head {
+	if err != nil || target.HeadRevision != head || target.Branch != expectedIntegrationTargetBranch(request) {
 		return application.IntegrationAdapterResult{}, false, errors.New("apply integration candidate: conflict receipt differs from target")
 	}
 	conflicts, err := registry.integrationConflictPaths(ctx, request.Target.WorktreePath)

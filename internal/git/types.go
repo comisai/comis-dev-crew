@@ -2,7 +2,10 @@
 // worktrees without granting worker-launch or mutation authority.
 package git
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 // ErrRepositoryNotFound means an opaque repository ID is not configured.
 var ErrRepositoryNotFound = errors.New("repository is not configured")
@@ -16,6 +19,7 @@ type RegistryConfig struct {
 	GitExecutable string
 	ApprovedRoots []string
 	Repositories  []RepositoryConfig
+	Clock         func() time.Time
 }
 
 // RepositoryConfig maps one opaque ID to its primary checkout and dedicated

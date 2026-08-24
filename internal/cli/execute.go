@@ -26,7 +26,8 @@ func execute(ctx context.Context, client ReadClient, operationID string, command
 		return client.ListWorkerProfiles(ctx, operationID)
 	case commandListInitiatives:
 		return client.ListInitiatives(ctx, operationID, localapi.ListInitiativesInput{
-			State: domain.InitiativeState(command.initiativeState),
+			State: domain.InitiativeState(command.initiativeState), AfterHandle: command.initiativeCursor,
+			Limit: command.initiativeLimit,
 		})
 	case commandShowInitiative, commandExplainInitiative:
 		return client.GetInitiative(ctx, operationID, command.reference)

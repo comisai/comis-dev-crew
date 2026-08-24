@@ -15,7 +15,9 @@ func TestCLI_InitiativeReadsUseCanonicalClientAndHumanViews(t *testing.T) {
 		wantCall   string
 		wantOutput string
 	}{
-		{name: "list", args: []string{"initiative", "list", "--state", "active"}, wantCall: "list-initiatives:active", wantOutput: "INITIATIVE"},
+		{name: "list", args: []string{
+			"initiative", "list", "--state", "active", "--after", "initiative-before", "--limit", "7",
+		}, wantCall: "list-initiatives:active:initiative-before:7", wantOutput: "INITIATIVE"},
 		{name: "show", args: []string{"initiative", "show", "initiative-alpha"}, wantCall: "get-initiative:initiative-alpha", wantOutput: "initiative-alpha"},
 		{name: "explain", args: []string{"initiative", "explain", "initiative-alpha"}, wantCall: "get-initiative:initiative-alpha", wantOutput: "REASON"},
 		{name: "graph", args: []string{"initiative", "graph", "initiative-alpha"}, wantCall: "get-initiative:initiative-alpha", wantOutput: "DEPENDENCY READY"},
@@ -63,6 +65,8 @@ func TestCLI_RejectsInvalidInitiativeSyntaxBeforeConnecting(t *testing.T) {
 		{"initiative"},
 		{"initiative", "list", "--state", "invented"},
 		{"initiative", "list", "--format", "yaml"},
+		{"initiative", "list", "--after", "bad cursor"},
+		{"initiative", "list", "--limit", "0"},
 		{"initiative", "show", "../escape"},
 		{"initiative", "show", "initiative-alpha", "--format", "yaml"},
 		{"initiative", "graph", "initiative-alpha", "extra"},

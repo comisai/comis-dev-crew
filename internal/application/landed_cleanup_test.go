@@ -25,11 +25,11 @@ const gatherHead = "0123456789abcdef0123456789abcdef01234567"
 
 func TestLandedFallbackAcceptsWorkWithNoRecordedPullRequest(t *testing.T) {
 	// The E0 rule refuses here: no recorded pull request and no report hash. The
-	// work may still have landed — a squash-merge that deleted the branch leaves
-	// exactly this state — so the landed proof is consulted before refusing.
+	// work may still have landed even when the local delivery record is absent,
+	// so the landed proof is consulted before refusing.
 	gatherer := &stubGatherer{truth: LandedEvidenceTruth{
 		WorkHead: gatherHead, Available: true,
-		DefaultBranchHead: gatherHead, DefaultBranchUpToDate: true, DefaultBranchContainsContent: true,
+		DefaultBranchHead: gatherHead, DefaultBranchUpToDate: true, DefaultBranchContainsHead: true,
 	}}
 	proof, err := proveCleanupLanded(context.Background(), gatherer, TaskCleanupRecord{
 		RepositoryID: "repo-primary", HeadRevision: gatherHead,

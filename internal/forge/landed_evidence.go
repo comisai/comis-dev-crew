@@ -29,18 +29,19 @@ func requiredCredentialFor(application.LandedEvidenceRequest) CredentialKind {
 // answered.
 func toLandedEvidence(truth application.LandedEvidenceTruth) domain.LandedEvidence {
 	evidence := domain.LandedEvidence{
-		WorkHead:                     truth.WorkHead,
-		ForgeTruthAvailable:          truth.Available,
-		ReachableFromRemoteRefs:      truth.ReachableFromRemoteRefs,
-		DefaultBranchHead:            truth.DefaultBranchHead,
-		DefaultBranchUpToDate:        truth.DefaultBranchUpToDate,
-		DefaultBranchContainsContent: truth.DefaultBranchContainsContent,
+		WorkHead:                  truth.WorkHead,
+		ForgeTruthAvailable:       truth.Available,
+		ReachableFromRemoteRefs:   truth.ReachableFromRemoteRefs,
+		DefaultBranchHead:         truth.DefaultBranchHead,
+		DefaultBranchUpToDate:     truth.DefaultBranchUpToDate,
+		DefaultBranchContainsHead: truth.DefaultBranchContainsHead,
 	}
 	if merged := truth.MergedPullRequest; merged != nil {
 		evidence.MergedPullRequestByHeadBranch = &domain.MergedPullRequest{
 			Number:                  merged.Number,
 			Merged:                  merged.Merged,
 			MergeCommitContainsHead: merged.MergeCommitContainsHead,
+			HeadRevisionMatches:     merged.HeadRevisionMatches,
 		}
 	}
 	return evidence
@@ -55,13 +56,6 @@ func ProveLandedFromForge(truth application.LandedEvidenceTruth) domain.LandedPr
 // githubComparison is the subset of a commit comparison the proof needs.
 type githubComparison struct {
 	Status string `json:"status"`
-}
-
-// githubMergedPull adds the merge facts the delivery path never needed.
-type githubMergedPull struct {
-	Number         int    `json:"number"`
-	Merged         bool   `json:"merged"`
-	MergeCommitSHA string `json:"merge_commit_sha"`
 }
 
 // containedStatuses are the comparison results that mean "already contains".
@@ -108,34 +102,43 @@ func (adapter *GitHubAdapter) GatherLandedEvidence(
 		if summary.Number < 1 {
 			continue
 		}
-		var pull githubMergedPull
+		var pull githubPull
 		if err := adapter.requestJSON(ctx, credential.Secret, http.MethodGet,
 			adapter.repositoryPath("pulls", strconv.Itoa(summary.Number)), nil, nil, &pull); err != nil {
 			continue
 		}
-		if !pull.Merged || pull.MergeCommitSHA == "" {
+		if pull.Number != summary.Number || !pull.Merged {
 			continue
 		}
+		headMatches := pull.Head.SHA == request.HeadRevision
 		contains := false
-		var comparison githubComparison
-		if err := adapter.requestJSON(ctx, credential.Secret, http.MethodGet,
-			adapter.repositoryPath("compare", pull.MergeCommitSHA+"..."+request.HeadRevision),
-			nil, nil, &comparison); err == nil {
-			contains = comparisonContains(comparison.Status)
+		if pull.MergeCommitSHA != nil && revisionPattern.MatchString(*pull.MergeCommitSHA) {
+			var comparison githubComparison
+			if err := adapter.requestJSON(ctx, credential.Secret, http.MethodGet,
+				adapter.repositoryPath("compare", *pull.MergeCommitSHA+"..."+request.HeadRevision),
+				nil, nil, &comparison); err == nil {
+				contains = comparisonContains(comparison.Status)
+			}
 		}
-		truth.MergedPullRequest = &application.MergedPullRequestTruth{
+		observed := &application.MergedPullRequestTruth{
 			Number: pull.Number, Merged: true, MergeCommitContainsHead: contains,
+			HeadRevisionMatches: headMatches,
 		}
-		break
+		if truth.MergedPullRequest == nil || headMatches || contains {
+			truth.MergedPullRequest = observed
+		}
+		if headMatches || contains {
+			break
+		}
 	}
 
-	// Containment in the default branch is the squash-merge-then-delete case,
-	// where no branch and no matching head survive but the content is in.
+	// Exact commit containment in the default branch remains a separate proof
+	// when no matching merged pull request is available.
 	var containment githubComparison
 	if err := adapter.requestJSON(ctx, credential.Secret, http.MethodGet,
 		adapter.repositoryPath("compare", adapter.config.BaseBranch+"..."+request.HeadRevision),
 		nil, nil, &containment); err == nil {
-		truth.DefaultBranchContainsContent = comparisonContains(containment.Status)
+		truth.DefaultBranchContainsHead = comparisonContains(containment.Status)
 		// The comparison was answered by the forge just now, so the base it
 		// compared against is current by construction.
 		truth.DefaultBranchUpToDate = true

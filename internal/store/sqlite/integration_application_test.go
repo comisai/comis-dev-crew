@@ -28,6 +28,7 @@ func TestIntegrationApplicationPersistsEveryClosedOutcomeAcrossRestart(t *testin
 			}
 			if reserved.Result != nil || reserved.Candidate.EvidenceDigest != fixture.evidenceDigest ||
 				reserved.Target.TaskHandle != "task-integration" || reserved.Candidate.TaskHandle != "task-component-a" ||
+				domain.ValidateOperationID(reserved.Target.PreparationOperationID) != nil ||
 				!reserved.EvidenceExpiresAt.Equal(fixture.evidenceExpiresAt) {
 				t.Fatalf("reservation = %#v", reserved)
 			}
@@ -105,6 +106,59 @@ func TestIntegrationReservationSurvivesRestartBeforeGitCompletion(t *testing.T) 
 	altered.SubjectDigest = strings.Repeat("f", 64)
 	if _, err := reopened.ReserveIntegrationApplication(context.Background(), altered); !errors.Is(err, application.ErrConflict) {
 		t.Fatalf("ReserveIntegrationApplication(altered replay) error = %v", err)
+	}
+}
+
+func TestIntegrationPreparationIdentityMigrationBackfillsReservedRows(t *testing.T) {
+	fixture := newStoredIntegrationFixture(t)
+	request := fixture.reservationRequest("integration-preparation-upgrade", application.IntegrationMerge)
+	reserved, err := fixture.store.ReserveIntegrationApplication(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPreparation := reserved.Target.PreparationOperationID
+	if _, err := fixture.store.db.Exec(`ALTER TABLE integration_applications
+		DROP COLUMN target_preparation_operation_id;
+		DELETE FROM schema_migrations WHERE version = 46`); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(context.Background(), fixture.databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	replayed, err := reopened.ReserveIntegrationApplication(context.Background(), request)
+	if err != nil || replayed.Target.PreparationOperationID != wantPreparation {
+		t.Fatalf("ReserveIntegrationApplication(upgraded replay) = %#v, %v", replayed, err)
+	}
+}
+
+func TestReservedIntegrationBlocksCancellationOfEitherBoundTask(t *testing.T) {
+	for _, taskHandle := range []string{"task-integration", "task-component-a"} {
+		t.Run(taskHandle, func(t *testing.T) {
+			fixture := newStoredIntegrationFixture(t)
+			request := fixture.reservationRequest("integration-cancel-order-"+taskHandle, application.IntegrationMerge)
+			if _, err := fixture.store.ReserveIntegrationApplication(context.Background(), request); err != nil {
+				t.Fatalf("ReserveIntegrationApplication() error = %v", err)
+			}
+			before, err := fixture.store.GetTask(context.Background(), taskHandle)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = fixture.store.CommitTaskCancel(context.Background(), cancelTaskMutation(
+				taskHandle, "cancel-reserved-"+taskHandle, request.At.Add(time.Minute),
+			))
+			if !errors.Is(err, application.ErrPrecondition) {
+				t.Fatalf("CommitTaskCancel(reserved integration) error = %v", err)
+			}
+			after, err := fixture.store.GetTask(context.Background(), taskHandle)
+			if err != nil || !reflect.DeepEqual(after, before) {
+				t.Fatalf("task after refused cancel = %#v, %v; want %#v", after, err, before)
+			}
+		})
 	}
 }
 
@@ -206,6 +260,10 @@ func TestIntegrationRebaseConflictRecoveryRevalidatesEveryStoredAuthority(t *tes
 		}},
 		{name: "candidate workspace changed", mutate: func(t *testing.T, fixture *storedIntegrationFixture, _ *application.IntegrationReservationRequest) {
 			mustExecIntegrationTest(t, fixture, `UPDATE task_preparations SET requested_workspace_root = '/approved/workspaces/changed' WHERE task_handle = 'task-component-a'`)
+		}},
+		{name: "target preparation identity changed", mutate: func(t *testing.T, fixture *storedIntegrationFixture, request *application.IntegrationReservationRequest) {
+			mustExecIntegrationTest(t, fixture, `UPDATE integration_applications SET target_preparation_operation_id = 'prepare-other-0001' WHERE operation_id = ?`,
+				request.Command.RecoveryOperationID)
 		}},
 		{name: "candidate evidence missing", mutate: func(t *testing.T, fixture *storedIntegrationFixture, _ *application.IntegrationReservationRequest) {
 			mustExecIntegrationTest(t, fixture, `DELETE FROM candidate_evidence WHERE task_handle = 'task-component-a'`)

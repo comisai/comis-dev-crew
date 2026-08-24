@@ -23,7 +23,7 @@ type initiativeBacklogRepository interface {
 }
 
 type initiativeQuerySnapshotRepository interface {
-	InitiativeSnapshot(context.Context) ([]domain.DevelopmentInitiative, int64, error)
+	InitiativeSnapshot(context.Context, application.InitiativeFilter) ([]domain.DevelopmentInitiative, string, int64, error)
 	InitiativeObservation(context.Context, string) (domain.DevelopmentInitiative, []domain.Task, int64, error)
 	BacklogSnapshot(context.Context, application.BacklogFilter) ([]domain.BacklogItem, string, int64, error)
 }
@@ -116,9 +116,12 @@ func TestInitiativeAndBacklogQuerySnapshotsCarryOneDurableVersion(t *testing.T) 
 		t.Fatal("SQLite Store does not implement initiative query snapshots")
 	}
 
-	initiatives, version, err := repository.InitiativeSnapshot(ctx)
-	if err != nil || version != 12 || len(initiatives) != 1 || initiatives[0].Handle != initiative.Handle {
-		t.Fatalf("InitiativeSnapshot() = %#v, %d, %v", initiatives, version, err)
+	initiatives, cursor, version, err := repository.InitiativeSnapshot(ctx, application.InitiativeFilter{
+		Limit: application.MaximumInitiativePage,
+	})
+	if err != nil || version != 12 || cursor != initiative.Handle ||
+		len(initiatives) != 1 || initiatives[0].Handle != initiative.Handle {
+		t.Fatalf("InitiativeSnapshot() = %#v, %q, %d, %v", initiatives, cursor, version, err)
 	}
 	gotInitiative, tasks, version, err := repository.InitiativeObservation(ctx, initiative.Handle)
 	if err != nil || version != 12 || gotInitiative.Handle != initiative.Handle ||
@@ -135,7 +138,9 @@ func TestInitiativeAndBacklogQuerySnapshotsCarryOneDurableVersion(t *testing.T) 
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	if _, _, err := repository.InitiativeSnapshot(ctx); err == nil {
+	if _, _, _, err := repository.InitiativeSnapshot(ctx, application.InitiativeFilter{
+		Limit: application.MaximumInitiativePage,
+	}); err == nil {
 		t.Fatal("InitiativeSnapshot(closed) error = nil")
 	}
 	if _, _, _, err := repository.InitiativeObservation(ctx, initiative.Handle); err == nil {
@@ -145,6 +150,55 @@ func TestInitiativeAndBacklogQuerySnapshotsCarryOneDurableVersion(t *testing.T) 
 		Limit: application.MaximumBacklogPage,
 	}); err == nil {
 		t.Fatal("BacklogSnapshot(closed) error = nil")
+	}
+}
+
+func TestInitiativeSnapshotFiltersAndPaginatesBeforeMaterializing(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	expected := make([]string, 0, 17)
+	for index := 0; index < 25; index++ {
+		state := domain.InitiativeActive
+		if index%7 == 0 {
+			state = domain.InitiativeDelivered
+		} else {
+			expected = append(expected, fmt.Sprintf("initiative-page-%02d", index))
+		}
+		initiative := persistenceInitiative(fmt.Sprintf("initiative-page-%02d", index), state, int64(index+1))
+		if err := store.CreateInitiative(ctx, initiative); err != nil {
+			t.Fatalf("CreateInitiative(%q) error = %v", initiative.Handle, err)
+		}
+	}
+	filter := application.InitiativeFilter{
+		State: domain.InitiativeActive, Limit: application.MaximumInitiativePage,
+	}
+	first, cursor, _, err := store.InitiativeSnapshot(ctx, filter)
+	if err != nil || len(first) != application.MaximumInitiativePage || cursor != expected[15] {
+		t.Fatalf("InitiativeSnapshot(first) = %d initiatives, cursor %q, %v", len(first), cursor, err)
+	}
+	for index, initiative := range first {
+		if initiative.Handle != expected[index] || initiative.State != filter.State {
+			t.Fatalf("InitiativeSnapshot(first)[%d] = %#v", index, initiative)
+		}
+	}
+	filter.AfterHandle = cursor
+	second, cursor, _, err := store.InitiativeSnapshot(ctx, filter)
+	if err != nil || len(second) != len(expected)-application.MaximumInitiativePage ||
+		second[len(second)-1].Handle != expected[len(expected)-1] || cursor != expected[len(expected)-1] {
+		t.Fatalf("InitiativeSnapshot(second) = %#v, cursor %q, %v", second, cursor, err)
+	}
+	filter.AfterHandle = cursor
+	empty, cursor, _, err := store.InitiativeSnapshot(ctx, filter)
+	if err != nil || len(empty) != 0 || cursor != filter.AfterHandle {
+		t.Fatalf("InitiativeSnapshot(empty) = %#v, cursor %q, %v", empty, cursor, err)
+	}
+	filter.Limit = application.MaximumInitiativePage + 1
+	if _, _, _, err := store.InitiativeSnapshot(ctx, filter); err == nil {
+		t.Fatal("InitiativeSnapshot(oversized limit) error = nil")
 	}
 }
 

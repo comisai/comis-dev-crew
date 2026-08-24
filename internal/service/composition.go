@@ -63,6 +63,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	registry, err := devgit.NewRegistry(ctx, devgit.RegistryConfig{
 		GitExecutable: repositoryConfig.GitExecutable,
 		ApprovedRoots: []string{repositoryConfig.ApprovedRoot},
+		Clock:         config.Clock,
 		Repositories: []devgit.RepositoryConfig{{
 			ID: repositoryConfig.RepositoryID, PrimaryCheckout: repositoryConfig.PrimaryCheckout,
 			WorktreeRoot: repositoryConfig.WorktreeRoot, DefaultBranch: repositoryConfig.DefaultBranch,

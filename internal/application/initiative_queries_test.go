@@ -14,13 +14,9 @@ func TestInitiativeQueriesProjectFilteredListsAndDetailedGraph(t *testing.T) {
 	observedAt := time.Date(2026, time.August, 20, 15, 0, 0, 0, time.UTC)
 	active := graphInitiative()
 	active.StateVersion = 11
-	delivered := active
-	delivered.Handle = "initiative-delivered"
-	delivered.State = domain.InitiativeDelivered
-	delivered.StateVersion = 9
 	store := &initiativeQueryStoreFixture{
-		initiatives: []domain.DevelopmentInitiative{delivered, active},
-		initiative:  active,
+		initiatives: []domain.DevelopmentInitiative{active}, nextCursor: active.Handle,
+		initiative: active,
 		tasks: []domain.Task{
 			{Handle: "task-backend", State: domain.TaskWorking},
 			{Handle: "task-frontend", State: domain.TaskReady},
@@ -35,14 +31,26 @@ func TestInitiativeQueriesProjectFilteredListsAndDetailedGraph(t *testing.T) {
 		t.Fatalf("NewInitiativeQueries() error = %v", err)
 	}
 
-	list, err := queries.ListInitiatives(context.Background(), domain.InitiativeActive)
+	list, err := queries.ListInitiatives(context.Background(), InitiativeFilter{
+		State: domain.InitiativeActive, AfterHandle: "initiative-before",
+	})
 	if err != nil {
 		t.Fatalf("ListInitiatives() error = %v", err)
 	}
 	if list.SchemaVersion != 1 || list.StateVersion != 11 || list.CapturedAtMs != observedAt.UnixMilli() ||
-		len(list.Initiatives) != 1 || list.Initiatives[0].InitiativeHandle != active.Handle ||
+		list.NextCursor != active.Handle || len(list.Initiatives) != 1 || list.Initiatives[0].InitiativeHandle != active.Handle ||
 		list.Initiatives[0].TaskCount != 3 || list.Initiatives[0].ComponentCount != 3 {
 		t.Fatalf("ListInitiatives() = %#v", list)
+	}
+	if store.initiativeFilter != (InitiativeFilter{
+		State: domain.InitiativeActive, AfterHandle: "initiative-before", Limit: MaximumInitiativePage,
+	}) {
+		t.Fatalf("InitiativeSnapshot() filter = %#v", store.initiativeFilter)
+	}
+	if _, err := queries.ListInitiatives(context.Background(), InitiativeFilter{
+		State: domain.InitiativeActive, Limit: MaximumInitiativePage + 10,
+	}); err != nil || store.initiativeFilter.Limit != MaximumInitiativePage {
+		t.Fatalf("ListInitiatives(oversized limit) filter = %#v, %v", store.initiativeFilter, err)
 	}
 
 	detail, err := queries.GetInitiative(context.Background(), active.Handle)
@@ -109,7 +117,15 @@ func TestInitiativeQueriesRejectInvalidScopesAndTranslateStoreFailures(t *testin
 		t.Fatalf("NewInitiativeQueries() error = %v", err)
 	}
 	assertFailureCode(t, func() error {
-		_, err := queries.ListInitiatives(context.Background(), domain.InitiativeState("invented"))
+		_, err := queries.ListInitiatives(context.Background(), InitiativeFilter{State: domain.InitiativeState("invented")})
+		return err
+	}(), domain.ErrorInvalidArgument)
+	assertFailureCode(t, func() error {
+		_, err := queries.ListInitiatives(context.Background(), InitiativeFilter{AfterHandle: "bad cursor"})
+		return err
+	}(), domain.ErrorInvalidArgument)
+	assertFailureCode(t, func() error {
+		_, err := queries.ListInitiatives(context.Background(), InitiativeFilter{Limit: -1})
 		return err
 	}(), domain.ErrorInvalidArgument)
 	assertFailureCode(t, func() error {
@@ -171,22 +187,25 @@ func TestInitiativeStateExplanationCoversEveryClosedPosture(t *testing.T) {
 }
 
 type initiativeQueryStoreFixture struct {
-	initiatives   []domain.DevelopmentInitiative
-	initiative    domain.DevelopmentInitiative
-	tasks         []domain.Task
-	backlog       []domain.BacklogItem
-	nextCursor    string
-	backlogFilter BacklogFilter
-	stateVersion  int64
-	err           error
-	snapshotCalls int
+	initiatives      []domain.DevelopmentInitiative
+	initiative       domain.DevelopmentInitiative
+	tasks            []domain.Task
+	backlog          []domain.BacklogItem
+	nextCursor       string
+	initiativeFilter InitiativeFilter
+	backlogFilter    BacklogFilter
+	stateVersion     int64
+	err              error
+	snapshotCalls    int
 }
 
 func (store *initiativeQueryStoreFixture) InitiativeSnapshot(
-	context.Context,
-) ([]domain.DevelopmentInitiative, int64, error) {
+	_ context.Context,
+	filter InitiativeFilter,
+) ([]domain.DevelopmentInitiative, string, int64, error) {
 	store.snapshotCalls++
-	return append([]domain.DevelopmentInitiative(nil), store.initiatives...), store.stateVersion, store.err
+	store.initiativeFilter = filter
+	return append([]domain.DevelopmentInitiative(nil), store.initiatives...), store.nextCursor, store.stateVersion, store.err
 }
 
 func (store *initiativeQueryStoreFixture) InitiativeObservation(

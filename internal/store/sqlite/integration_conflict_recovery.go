@@ -150,6 +150,10 @@ func validateIntegrationRecoveryWorktrees(
 		candidate.RequestedWorkspaceRoot != previous.candidateWorktree {
 		return fmt.Errorf("integration recovery worktree authority differs: %w", application.ErrPrecondition)
 	}
+	targetPreparationOperationID, err := taskPreparationOperationID(ctx, source, integrationTask.Handle)
+	if err != nil || targetPreparationOperationID != previous.targetPreparationOperationID {
+		return fmt.Errorf("integration recovery preparation authority differs: %w", application.ErrPrecondition)
+	}
 	return nil
 }
 

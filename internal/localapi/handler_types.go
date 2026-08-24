@@ -56,7 +56,7 @@ type InitiativeControls interface {
 
 // InitiativeReadQueries is the narrow initiative and backlog read surface.
 type InitiativeReadQueries interface {
-	ListInitiatives(context.Context, domain.InitiativeState) (application.InitiativeList, error)
+	ListInitiatives(context.Context, application.InitiativeFilter) (application.InitiativeList, error)
 	GetInitiative(context.Context, string) (application.InitiativeDetail, error)
 	ListBacklog(context.Context, application.BacklogFilter) (application.BacklogList, error)
 }

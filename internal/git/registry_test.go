@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	devgit "github.com/comisai/comis-dev-crew/internal/git"
 )
@@ -16,6 +17,7 @@ func TestRegistry_ResolvesConfiguredPrimaryAndValidatesRealWorktreeIdentity(t *t
 	fixture := newRepositoryFixture(t, "product-api")
 	registry, err := devgit.NewRegistry(context.Background(), devgit.RegistryConfig{
 		GitExecutable: fixture.gitExecutable,
+		Clock:         time.Now,
 		ApprovedRoots: []string{fixture.approvedRoot},
 		Repositories: []devgit.RepositoryConfig{{
 			ID: fixture.repositoryID, PrimaryCheckout: fixture.primary, WorktreeRoot: fixture.worktreeRoot,
@@ -72,6 +74,7 @@ func TestRegistry_RejectsUnsafeConfiguredRootsAndPrimaryCheckouts(t *testing.T) 
 		config devgit.RegistryConfig
 	}{
 		{name: "relative git executable", config: fixture.config(func(config *devgit.RegistryConfig) { config.GitExecutable = "git" })},
+		{name: "missing clock", config: fixture.config(func(config *devgit.RegistryConfig) { config.Clock = nil })},
 		{name: "relative primary", config: fixture.config(func(config *devgit.RegistryConfig) { config.Repositories[0].PrimaryCheckout = "relative/repo" })},
 		{name: "noncanonical primary", config: fixture.config(func(config *devgit.RegistryConfig) {
 			separator := string(filepath.Separator)
@@ -246,6 +249,7 @@ func newRepositoryFixtureUnder(t *testing.T, approvedRoot, repositoryID, gitExec
 func (fixture repositoryFixture) config(mutate func(*devgit.RegistryConfig)) devgit.RegistryConfig {
 	config := devgit.RegistryConfig{
 		GitExecutable: fixture.gitExecutable,
+		Clock:         time.Now,
 		ApprovedRoots: []string{fixture.approvedRoot},
 		Repositories: []devgit.RepositoryConfig{{
 			ID: fixture.repositoryID, PrimaryCheckout: fixture.primary, WorktreeRoot: fixture.worktreeRoot,

@@ -42,7 +42,7 @@ func TestLandedByMergedPullRequestLookedUpByHeadBranch(t *testing.T) {
 		ForgeTruthAvailable: true,
 		RecordedPullRequest: 0,
 		MergedPullRequestByHeadBranch: &domain.MergedPullRequest{
-			Number: 12, Merged: true, MergeCommitContainsHead: true,
+			Number: 12, Merged: true, HeadRevisionMatches: true,
 		},
 	})
 	if !proof.Landed || proof.Route != domain.LandedByMergedPullRequest {
@@ -51,15 +51,14 @@ func TestLandedByMergedPullRequestLookedUpByHeadBranch(t *testing.T) {
 }
 
 func TestLandedByContainmentInAnUpToDateDefaultBranch(t *testing.T) {
-	// The squash-merge-then-delete-branch case: no branch survives and the PR
-	// merge commit does not contain the original head, but the CONTENT is in the
-	// default branch.
+	// Exact ancestry in the refreshed default branch is independent of whether
+	// the task's remote-tracking branch still exists.
 	proof := domain.ProveLanded(domain.LandedEvidence{
-		WorkHead:                     workHead,
-		ForgeTruthAvailable:          true,
-		DefaultBranchHead:            defaultHead,
-		DefaultBranchUpToDate:        true,
-		DefaultBranchContainsContent: true,
+		WorkHead:                  workHead,
+		ForgeTruthAvailable:       true,
+		DefaultBranchHead:         defaultHead,
+		DefaultBranchUpToDate:     true,
+		DefaultBranchContainsHead: true,
 	})
 	if !proof.Landed || proof.Route != domain.LandedByDefaultBranchContainment {
 		t.Fatalf("proof = %+v", proof)
@@ -70,11 +69,11 @@ func TestAStaleDefaultBranchProvesNothing(t *testing.T) {
 	// Containment in a default branch we have not refreshed is a claim about an
 	// old snapshot, not about the repository now.
 	proof := domain.ProveLanded(domain.LandedEvidence{
-		WorkHead:                     workHead,
-		ForgeTruthAvailable:          true,
-		DefaultBranchHead:            defaultHead,
-		DefaultBranchUpToDate:        false,
-		DefaultBranchContainsContent: true,
+		WorkHead:                  workHead,
+		ForgeTruthAvailable:       true,
+		DefaultBranchHead:         defaultHead,
+		DefaultBranchUpToDate:     false,
+		DefaultBranchContainsHead: true,
 	})
 	if proof.Landed {
 		t.Fatalf("stale default branch accepted: %+v", proof)

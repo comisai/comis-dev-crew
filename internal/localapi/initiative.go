@@ -19,9 +19,11 @@ type PrepareInitiativeInput struct {
 	IntegrationOwnerTask string                                          `json:"integrationOwnerTask,omitempty"`
 }
 
-// ListInitiativesInput optionally scopes initiatives by their closed state.
+// ListInitiativesInput scopes and pages initiative summaries.
 type ListInitiativesInput struct {
-	State domain.InitiativeState `json:"state,omitempty"`
+	State       domain.InitiativeState `json:"state,omitempty"`
+	AfterHandle string                 `json:"afterHandle,omitempty"`
+	Limit       int                    `json:"limit,omitempty"`
 }
 
 // ListBacklogInput scopes and pages bounded requests without carrying run authority.
@@ -108,7 +110,7 @@ func (handler *Handler) dispatchInitiative(ctx context.Context, request Request)
 		if handler.initiativeQueries == nil {
 			return initiativeReadUnavailable(request.OperationID), true
 		}
-		result, err := handler.initiativeQueries.ListInitiatives(ctx, input.State)
+		result, err := handler.initiativeQueries.ListInitiatives(ctx, application.InitiativeFilter(input))
 		return queryOutcome(request.OperationID, result.StateVersion, result, err), true
 	case MethodGetInitiative:
 		var input getInitiativeInput

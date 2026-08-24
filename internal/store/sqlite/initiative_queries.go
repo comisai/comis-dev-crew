@@ -15,23 +15,40 @@ var _ application.InitiativeQueryStore = (*Store)(nil)
 // InitiativeSnapshot reads the initiative list and advertised version from one snapshot.
 func (store *Store) InitiativeSnapshot(
 	ctx context.Context,
-) ([]domain.DevelopmentInitiative, int64, error) {
+	filter application.InitiativeFilter,
+) ([]domain.DevelopmentInitiative, string, int64, error) {
+	if err := validateInitiativeSnapshotFilter(filter); err != nil {
+		return nil, "", 0, err
+	}
 	transaction, err := store.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return nil, 0, fmt.Errorf("begin initiative snapshot: %w", err)
+		return nil, "", 0, fmt.Errorf("begin initiative snapshot: %w", err)
 	}
-	initiatives, err := listInitiatives(ctx, transaction)
+	initiatives, nextCursor, err := listInitiativePage(ctx, transaction, filter)
 	if err != nil {
-		return nil, 0, errors.Join(err, transaction.Rollback())
+		return nil, "", 0, errors.Join(err, transaction.Rollback())
 	}
 	stateVersion, err := currentStateVersion(ctx, transaction)
 	if err != nil {
-		return nil, 0, errors.Join(err, transaction.Rollback())
+		return nil, "", 0, errors.Join(err, transaction.Rollback())
 	}
 	if err := transaction.Commit(); err != nil {
-		return nil, 0, fmt.Errorf("commit initiative snapshot: %w", err)
+		return nil, "", 0, fmt.Errorf("commit initiative snapshot: %w", err)
 	}
-	return initiatives, stateVersion, nil
+	return initiatives, nextCursor, stateVersion, nil
+}
+
+func validateInitiativeSnapshotFilter(filter application.InitiativeFilter) error {
+	if filter.State != "" && domain.ValidateInitiativeState(filter.State) != nil {
+		return errors.New("validate initiative snapshot: state is invalid")
+	}
+	if filter.AfterHandle != "" && domain.ValidateTaskHandle(filter.AfterHandle) != nil {
+		return errors.New("validate initiative snapshot: cursor is invalid")
+	}
+	if filter.Limit < 1 || filter.Limit > application.MaximumInitiativePage {
+		return errors.New("validate initiative snapshot: limit is invalid")
+	}
+	return nil
 }
 
 // InitiativeObservation reads one initiative, every member task, and its version atomically.

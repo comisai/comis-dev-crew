@@ -47,11 +47,14 @@ func TestServerClient_InitiativeAndBacklogReadsUseCanonicalProjections(t *testin
 		t.Fatalf("NewClient() error = %v", err)
 	}
 
+	initiativeFilter := application.InitiativeFilter{
+		State: domain.InitiativeActive, AfterHandle: "initiative-before", Limit: 7,
+	}
 	list, err := client.ListInitiatives(context.Background(), "read-initiative-list", ListInitiativesInput{
-		State: domain.InitiativeActive,
+		State: initiativeFilter.State, AfterHandle: initiativeFilter.AfterHandle, Limit: initiativeFilter.Limit,
 	})
-	if err != nil || !reflect.DeepEqual(list, reads.list) || reads.state != domain.InitiativeActive {
-		t.Fatalf("ListInitiatives() = %#v, %v; state = %q", list, err, reads.state)
+	if err != nil || !reflect.DeepEqual(list, reads.list) || reads.initiativeFilter != initiativeFilter {
+		t.Fatalf("ListInitiatives() = %#v, %v; filter = %#v", list, err, reads.initiativeFilter)
 	}
 	detail, err := client.GetInitiative(context.Background(), "read-initiative-detail", "initiative-query")
 	if err != nil || !reflect.DeepEqual(detail, reads.detail) || reads.handle != "initiative-query" {
@@ -73,7 +76,7 @@ func TestServerClient_InitiativeAndBacklogReadsUseCanonicalProjections(t *testin
 	}
 }
 
-func TestServerClient_BacklogPageStaysWithinResponseLimit(t *testing.T) {
+func TestServerClient_InitiativeAndBacklogPagesStayWithinResponseLimit(t *testing.T) {
 	now := time.Date(2026, time.August, 20, 18, 0, 0, 0, time.UTC)
 	dependencies := make([]string, 64)
 	for index := range dependencies {
@@ -102,6 +105,17 @@ func TestServerClient_BacklogPageStaysWithinResponseLimit(t *testing.T) {
 		SchemaVersion: 1, CapturedAtMs: now.UnixMilli(), StateVersion: 22,
 		NextCursor: items[len(items)-1].Handle, Items: items,
 	}}
+	initiatives := make([]application.InitiativeSummary, application.MaximumInitiativePage)
+	for index := range initiatives {
+		initiatives[index] = application.InitiativeSummary{
+			InitiativeHandle: fmt.Sprintf("initiative-page-%02d", index), TitleRef: strings.Repeat("t", 256),
+			State: domain.InitiativeActive, StateVersion: int64(index + 1), UpdatedAt: now,
+		}
+	}
+	reads.list = application.InitiativeList{
+		SchemaVersion: 1, CapturedAtMs: now.UnixMilli(), StateVersion: 22,
+		NextCursor: initiatives[len(initiatives)-1].InitiativeHandle, Initiatives: initiatives,
+	}
 	handler, err := NewHandler(HandlerConfig{
 		Queries: &apiQueries{}, InitiativeQueries: reads, Clock: time.Now,
 	})
@@ -118,6 +132,14 @@ func TestServerClient_BacklogPageStaysWithinResponseLimit(t *testing.T) {
 	if err != nil || len(page.Items) != application.MaximumBacklogPage ||
 		page.NextCursor != items[len(items)-1].Handle {
 		t.Fatalf("ListBacklog(maximum page) = %d items, cursor %q, %v", len(page.Items), page.NextCursor, err)
+	}
+	initiativePage, err := client.ListInitiatives(context.Background(), "read-initiative-page", ListInitiativesInput{
+		Limit: application.MaximumInitiativePage,
+	})
+	if err != nil || len(initiativePage.Initiatives) != application.MaximumInitiativePage ||
+		initiativePage.NextCursor != initiatives[len(initiatives)-1].InitiativeHandle {
+		t.Fatalf("ListInitiatives(maximum page) = %d initiatives, cursor %q, %v",
+			len(initiativePage.Initiatives), initiativePage.NextCursor, err)
 	}
 }
 
@@ -153,19 +175,19 @@ func TestInitiativeReadBoundaryRefusesBroadenedAndUnavailableRequests(t *testing
 }
 
 type apiInitiativeQueries struct {
-	list    application.InitiativeList
-	detail  application.InitiativeDetail
-	backlog application.BacklogList
-	state   domain.InitiativeState
-	handle  string
-	filter  application.BacklogFilter
+	list             application.InitiativeList
+	detail           application.InitiativeDetail
+	backlog          application.BacklogList
+	initiativeFilter application.InitiativeFilter
+	handle           string
+	filter           application.BacklogFilter
 }
 
 func (queries *apiInitiativeQueries) ListInitiatives(
 	_ context.Context,
-	state domain.InitiativeState,
+	filter application.InitiativeFilter,
 ) (application.InitiativeList, error) {
-	queries.state = state
+	queries.initiativeFilter = filter
 	return queries.list, nil
 }
 

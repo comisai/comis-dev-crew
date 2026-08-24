@@ -144,6 +144,9 @@ func (initiative DevelopmentInitiative) Validate() error {
 	if err := validateOpaqueID("integrationPolicyId", initiative.IntegrationPolicyID); err != nil {
 		return err
 	}
+	if err := validateBoundedSafeText("titleRef", initiative.TitleRef, 256); err != nil {
+		return err
+	}
 	if initiative.ManagedRunGroupID == "" {
 		if initiative.State != InitiativePreparing && initiative.State != InitiativeUnknown {
 			return &ValidationError{

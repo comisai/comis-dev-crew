@@ -241,6 +241,7 @@ func TestIntegrationStoredRowsRejectCorruptStatusContentAndTimes(t *testing.T) {
 		{name: "conflicts", update: `UPDATE integration_applications SET conflicts_json = '{'`},
 		{name: "evidence time", update: `UPDATE integration_applications SET evidence_expires_at = 'invalid'`},
 		{name: "reservation time", update: `UPDATE integration_applications SET reserved_at = 'invalid'`},
+		{name: "target preparation", update: `UPDATE integration_applications SET target_preparation_operation_id = 'invalid operation'`},
 		{name: "completion time", update: `UPDATE integration_applications SET status = 'applied', resulting_head = '` +
 			strings.Repeat("d", 40) + `', completed_at = 'invalid', state_version = 2`},
 	}

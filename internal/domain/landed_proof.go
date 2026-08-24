@@ -18,6 +18,7 @@ type MergedPullRequest struct {
 	Number                  int
 	Merged                  bool
 	MergeCommitContainsHead bool
+	HeadRevisionMatches     bool
 }
 
 // LandedEvidence is everything the proof is allowed to consider. Nothing is
@@ -31,7 +32,7 @@ type LandedEvidence struct {
 	MergedPullRequestByHeadBranch *MergedPullRequest
 	DefaultBranchHead             string
 	DefaultBranchUpToDate         bool
-	DefaultBranchContainsContent  bool
+	DefaultBranchContainsHead     bool
 }
 
 // LandedProof is the verdict plus the route that carried it.
@@ -48,11 +49,10 @@ type LandedProof struct {
 //
 //   - the head is reachable from any remote-tracking branch, a fork remote
 //     included, so an upstream-contribution pull request qualifies;
-//   - a MERGED pull request, looked up by head branch, whose merge commit
-//     contains the head — a missing local record never refuses by itself; or
-//   - the content is contained in an up-to-date default branch, which is the
-//     squash-merge-then-delete-branch case where no branch and no matching head
-//     survive.
+//   - a MERGED pull request, looked up by head branch, whose recorded head is
+//     exact or whose merge commit contains it — a missing local record never
+//     refuses by itself; or
+//   - the exact commit is contained in an up-to-date default branch.
 //
 // A refusal always names the gap, because "not proven" is only actionable if an
 // operator can tell which evidence was missing.
@@ -79,12 +79,12 @@ func ProveLanded(evidence LandedEvidence) LandedProof {
 	}
 
 	if merged := evidence.MergedPullRequestByHeadBranch; merged != nil {
-		if merged.Merged && merged.MergeCommitContainsHead {
+		if merged.Merged && (merged.HeadRevisionMatches || merged.MergeCommitContainsHead) {
 			return LandedProof{Landed: true, Route: LandedByMergedPullRequest}
 		}
 	}
 
-	if evidence.DefaultBranchUpToDate && evidence.DefaultBranchContainsContent &&
+	if evidence.DefaultBranchUpToDate && evidence.DefaultBranchContainsHead &&
 		validateRevision(evidence.DefaultBranchHead) == nil {
 		return LandedProof{Landed: true, Route: LandedByDefaultBranchContainment}
 	}
@@ -99,10 +99,10 @@ func landedGap(evidence LandedEvidence) string {
 		if !merged.Merged {
 			return "the pull request for this head branch is not merged"
 		}
-		return "the merged pull request does not contain this head"
+		return "the merged pull request neither records nor contains this head"
 	}
-	if evidence.DefaultBranchContainsContent && !evidence.DefaultBranchUpToDate {
-		return "the default branch contains the content but was not refreshed, so containment is a claim about an old snapshot"
+	if evidence.DefaultBranchContainsHead && !evidence.DefaultBranchUpToDate {
+		return "the default branch contains the head but was not refreshed, so containment is a claim about an old snapshot"
 	}
 	return "no remote-tracking branch reaches this head, no merged pull request was found for its head branch, and the default branch does not contain it"
 }

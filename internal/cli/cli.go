@@ -84,6 +84,8 @@ type parsedCommand struct {
 	inputPath           string
 	taskState           string
 	initiativeState     string
+	initiativeCursor    string
+	initiativeLimit     int
 	decisionAnswer      string
 	operationID         string
 	prepareInput        *localapi.PrepareTaskInput

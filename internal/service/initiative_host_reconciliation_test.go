@@ -147,7 +147,7 @@ func seedServiceHostRecoveryInitiative(
 	}
 	initiative := domain.DevelopmentInitiative{
 		SchemaVersion: 1, Handle: "initiative-host-recovery", ManagedRunGroupID: groupID,
-		State: domain.InitiativeActive,
+		TitleRef: "title-host-recovery", State: domain.InitiativeActive,
 		BaseRevisionSet: []domain.InitiativeBaseRevision{{
 			RepositoryID: tasks[0].RepositoryID, Revision: tasks[0].BaseRevision,
 		}},

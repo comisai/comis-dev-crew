@@ -3,14 +3,13 @@ package application
 import (
 	"context"
 	"errors"
-	"sort"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 // InitiativeQueryStore supplies transactionally consistent initiative views.
 type InitiativeQueryStore interface {
-	InitiativeSnapshot(context.Context) ([]domain.DevelopmentInitiative, int64, error)
+	InitiativeSnapshot(context.Context, InitiativeFilter) ([]domain.DevelopmentInitiative, string, int64, error)
 	InitiativeObservation(context.Context, string) (domain.DevelopmentInitiative, []domain.Task, int64, error)
 	BacklogSnapshot(context.Context, BacklogFilter) ([]domain.BacklogItem, string, int64, error)
 }
@@ -38,20 +37,29 @@ func NewInitiativeQueries(config InitiativeQueryConfig) (*InitiativeQueries, err
 // ListInitiatives returns a deterministic optionally state-scoped snapshot.
 func (queries *InitiativeQueries) ListInitiatives(
 	ctx context.Context,
-	state domain.InitiativeState,
+	filter InitiativeFilter,
 ) (InitiativeList, error) {
-	if state != "" && domain.ValidateInitiativeState(state) != nil {
+	if filter.State != "" && domain.ValidateInitiativeState(filter.State) != nil {
 		return InitiativeList{}, invalidReferenceFailure("initiative state", errors.New("state is not known"))
 	}
-	initiatives, stateVersion, err := queries.store.InitiativeSnapshot(ctx)
+	if filter.AfterHandle != "" && domain.ValidateTaskHandle(filter.AfterHandle) != nil {
+		return InitiativeList{}, invalidReferenceFailure("initiative cursor", errors.New("cursor is invalid"))
+	}
+	if filter.Limit < 0 {
+		return InitiativeList{}, invalidReferenceFailure("initiative limit", errors.New("limit must not be negative"))
+	}
+	if filter.Limit == 0 {
+		filter.Limit = defaultInitiativePage
+	}
+	if filter.Limit > MaximumInitiativePage {
+		filter.Limit = MaximumInitiativePage
+	}
+	initiatives, nextCursor, stateVersion, err := queries.store.InitiativeSnapshot(ctx, filter)
 	if err != nil {
 		return InitiativeList{}, translateReadError(err, "initiative list")
 	}
 	summaries := make([]InitiativeSummary, 0, len(initiatives))
 	for _, initiative := range initiatives {
-		if state != "" && initiative.State != state {
-			continue
-		}
 		taskCount := 0
 		for _, component := range initiative.Components {
 			taskCount += len(component.TaskHandles)
@@ -63,12 +71,9 @@ func (queries *InitiativeQueries) ListInitiatives(
 			UpdatedAt: initiative.UpdatedAt,
 		})
 	}
-	sort.Slice(summaries, func(left, right int) bool {
-		return summaries[left].InitiativeHandle < summaries[right].InitiativeHandle
-	})
 	return InitiativeList{
 		SchemaVersion: 1, CapturedAtMs: queries.clock().UTC().UnixMilli(),
-		StateVersion: stateVersion, Initiatives: summaries,
+		StateVersion: stateVersion, NextCursor: nextCursor, Initiatives: summaries,
 	}, nil
 }
 

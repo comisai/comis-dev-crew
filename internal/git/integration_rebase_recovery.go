@@ -15,6 +15,9 @@ func (registry *Registry) recordIntegrationTargetRef(
 	request application.IntegrationAdapterRequest,
 	targetRef string,
 ) error {
+	if targetRef != "refs/heads/"+expectedIntegrationTargetBranch(request) {
+		return errors.New("apply integration candidate: target branch identity differs")
+	}
 	existing, found, err := registry.recordedIntegrationTargetRef(ctx, request)
 	if err != nil {
 		return errors.New("apply integration candidate: target branch receipt is unavailable")
@@ -136,7 +139,7 @@ func (registry *Registry) recordedIntegrationTargetRef(
 	case integrationReceiptDirect:
 		return "", false, errors.New("apply integration candidate: target branch receipt is ambiguous")
 	case integrationReceiptSymbolic:
-		if !strings.HasPrefix(inspected.value, "refs/heads/") {
+		if inspected.value != "refs/heads/"+expectedIntegrationTargetBranch(request) {
 			return "", false, errors.New("apply integration candidate: target branch receipt is invalid")
 		}
 		return inspected.value, true, nil
@@ -464,7 +467,8 @@ func (registry *Registry) finalizeRecoveredRebase(
 		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
 		WorktreePath: request.Target.WorktreePath,
 	})
-	if err != nil || final.Cleanliness != CandidateClean || final.HeadRevision != resultingHead {
+	if err != nil || final.Cleanliness != CandidateClean || final.HeadRevision != resultingHead ||
+		final.Branch != expectedIntegrationTargetBranch(request) {
 		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: recovered target is unverified")
 	}
 	if err := registry.createIntegrationReceipt(

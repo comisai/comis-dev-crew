@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	devgit "github.com/comisai/comis-dev-crew/internal/git"
@@ -209,6 +210,66 @@ func TestRegistry_RevalidatesCandidateAndTargetHeadsImmediatelyBeforeMutation(t 
 	}
 }
 
+func TestRegistry_RefusesIntegrationOnAnotherBranchAtThePreparedHead(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		replay bool
+	}{
+		{name: "before mutation"},
+		{name: "applied replay", replay: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newIntegrationFixture(t)
+			candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "component.txt", "component\n")
+			targetHead := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "rev-parse", "HEAD")
+			request := fixture.request("integration-target-branch-"+strings.ReplaceAll(test.name, " ", "-"),
+				application.IntegrationCherryPick, candidateHead, targetHead)
+			if test.replay {
+				if _, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request); err != nil {
+					t.Fatalf("ApplyIntegrationCandidate() error = %v", err)
+				}
+			}
+			runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+				"checkout", "-b", "devcrew/substitute-target")
+			if _, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request); err == nil {
+				t.Fatal("ApplyIntegrationCandidate(substitute branch) error = nil")
+			}
+			if !test.replay {
+				if _, err := os.Stat(filepath.Join(fixture.target.CanonicalPath, "component.txt")); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("substitute branch changed before refusal: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestRegistry_ChecksEvidenceExpiryAtTheGitMutationBoundary(t *testing.T) {
+	now := time.Date(2026, time.August, 24, 10, 0, 0, 0, time.UTC)
+	fixture := newIntegrationFixtureWithClock(t, func() time.Time { return now })
+	candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "component.txt", "component\n")
+	targetHead := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "rev-parse", "HEAD")
+	request := fixture.request("integration-expiry-boundary", application.IntegrationCherryPick, candidateHead, targetHead)
+	request.EvidenceExpiresAt = now
+	if _, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request); err == nil {
+		t.Fatal("ApplyIntegrationCandidate(expired) error = nil")
+	}
+	if _, err := os.Stat(filepath.Join(fixture.target.CanonicalPath, "component.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expired integration changed target: %v", err)
+	}
+
+	request.OperationID = "integration-expiry-replay"
+	request.EvidenceExpiresAt = now.Add(time.Minute)
+	result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
+	if err != nil {
+		t.Fatalf("ApplyIntegrationCandidate() error = %v", err)
+	}
+	now = request.EvidenceExpiresAt
+	replayed, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
+	if err != nil || !reflect.DeepEqual(replayed, result) {
+		t.Fatalf("ApplyIntegrationCandidate(expired replay) = %#v, %v", replayed, err)
+	}
+}
+
 func TestRegistry_RefusesDirtyCandidateAndAlteredReplay(t *testing.T) {
 	fixture := newIntegrationFixture(t)
 	candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "component.txt", "component\n")
@@ -243,9 +304,13 @@ type integrationFixture struct {
 }
 
 func newIntegrationFixture(t *testing.T) integrationFixture {
+	return newIntegrationFixtureWithClock(t, time.Now)
+}
+
+func newIntegrationFixtureWithClock(t *testing.T, clock func() time.Time) integrationFixture {
 	t.Helper()
 	repository := newRepositoryFixture(t, "product-api")
-	registry := newLifecycleRegistry(t, repository)
+	registry := newLifecycleRegistryWithClock(t, repository, clock)
 	base := integrationGitOutput(t, integrationFixture{repository: repository}, repository.primary, "rev-parse", "HEAD")
 	prepare := func(operationID, taskHandle string) devgit.PreparedWorktree {
 		prepared, err := registry.PrepareWorktree(context.Background(), devgit.PrepareWorktreeRequest{
@@ -273,7 +338,8 @@ func (fixture integrationFixture) request(
 	return application.IntegrationAdapterRequest{
 		OperationID: operationID, Strategy: strategy,
 		Target: application.IntegrationTargetReference{
-			TaskHandle: fixture.target.TaskHandle, RepositoryID: fixture.repository.repositoryID,
+			TaskHandle: fixture.target.TaskHandle, PreparationOperationID: fixture.target.OperationID,
+			RepositoryID: fixture.repository.repositoryID,
 			WorktreePath: fixture.target.CanonicalPath, ExpectedHead: targetHead,
 		},
 		Candidate: application.IntegrationCandidateReference{
@@ -281,6 +347,7 @@ func (fixture integrationFixture) request(
 			WorktreePath: fixture.candidate.CanonicalPath, BaseRevision: fixture.base,
 			HeadRevision: candidateHead, EvidenceDigest: strings.Repeat("e", 64),
 		},
+		EvidenceExpiresAt: time.Date(2100, time.January, 1, 0, 0, 0, 0, time.UTC),
 	}
 }
 

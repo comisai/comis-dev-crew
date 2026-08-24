@@ -369,7 +369,7 @@ func schedulingInitiative(
 	}
 	return domain.DevelopmentInitiative{
 		SchemaVersion: 1, Handle: handle, ManagedRunGroupID: "managed-run-group-" + handle,
-		State: domain.InitiativeActive,
+		TitleRef: "title-" + handle, State: domain.InitiativeActive,
 		BaseRevisionSet: []domain.InitiativeBaseRevision{{
 			RepositoryID: "repo-primary", Revision: "0123456789abcdef0123456789abcdef01234567",
 		}},

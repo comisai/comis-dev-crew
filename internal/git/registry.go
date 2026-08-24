@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sync"
+	"time"
 )
 
 var repositoryIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,63}$`)
@@ -18,6 +19,7 @@ var errCandidateWorktreeStructural = errors.New("task worktree structure is unve
 type Registry struct {
 	gitExecutable string
 	repositories  map[string]Repository
+	clock         func() time.Time
 	mu            sync.Mutex
 }
 
@@ -33,6 +35,9 @@ func NewRegistry(ctx context.Context, config RegistryConfig) (*Registry, error) 
 	if err := validateGitExecutable(config.GitExecutable); err != nil {
 		return nil, safePathError("create repository registry", err)
 	}
+	if config.Clock == nil {
+		return nil, errors.New("create repository registry: clock is required")
+	}
 	roots, err := validateApprovedRoots(config.ApprovedRoots)
 	if err != nil {
 		return nil, err
@@ -41,7 +46,10 @@ func NewRegistry(ctx context.Context, config RegistryConfig) (*Registry, error) 
 		return nil, errors.New("create repository registry: at least one repository is required")
 	}
 
-	registry := &Registry{gitExecutable: config.GitExecutable, repositories: make(map[string]Repository, len(config.Repositories))}
+	registry := &Registry{
+		gitExecutable: config.GitExecutable, repositories: make(map[string]Repository, len(config.Repositories)),
+		clock: config.Clock,
+	}
 	identities := make(map[string]struct{}, len(config.Repositories))
 	for _, configured := range config.Repositories {
 		if !repositoryIDPattern.MatchString(configured.ID) {

@@ -51,7 +51,7 @@ func TestMergedPullRequestTruthMapsByHeadBranch(t *testing.T) {
 		WorkHead:  workHeadFixture,
 		Available: true,
 		MergedPullRequest: &application.MergedPullRequestTruth{
-			Number: 12, Merged: true, MergeCommitContainsHead: true,
+			Number: 12, Merged: true, HeadRevisionMatches: true,
 		},
 	})
 	proof := domain.ProveLanded(evidence)
@@ -62,21 +62,21 @@ func TestMergedPullRequestTruthMapsByHeadBranch(t *testing.T) {
 
 func TestDefaultBranchContainmentMapsOnlyWhenRefreshed(t *testing.T) {
 	refreshed := toLandedEvidence(application.LandedEvidenceTruth{
-		WorkHead:                     workHeadFixture,
-		Available:                    true,
-		DefaultBranchHead:            defaultHeadFixture,
-		DefaultBranchUpToDate:        true,
-		DefaultBranchContainsContent: true,
+		WorkHead:                  workHeadFixture,
+		Available:                 true,
+		DefaultBranchHead:         defaultHeadFixture,
+		DefaultBranchUpToDate:     true,
+		DefaultBranchContainsHead: true,
 	})
 	if proof := domain.ProveLanded(refreshed); !proof.Landed {
 		t.Fatalf("refreshed containment refused: %+v", proof)
 	}
 	stale := toLandedEvidence(application.LandedEvidenceTruth{
-		WorkHead:                     workHeadFixture,
-		Available:                    true,
-		DefaultBranchHead:            defaultHeadFixture,
-		DefaultBranchUpToDate:        false,
-		DefaultBranchContainsContent: true,
+		WorkHead:                  workHeadFixture,
+		Available:                 true,
+		DefaultBranchHead:         defaultHeadFixture,
+		DefaultBranchUpToDate:     false,
+		DefaultBranchContainsHead: true,
 	})
 	if proof := domain.ProveLanded(stale); proof.Landed {
 		t.Fatalf("stale containment accepted: %+v", proof)

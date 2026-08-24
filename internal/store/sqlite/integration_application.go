@@ -50,28 +50,29 @@ VALUES (39, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 `
 
 type integrationApplicationRow struct {
-	operationID           string
-	recoveryOperationID   string
-	subjectDigest         string
-	initiativeHandle      string
-	integrationTaskHandle string
-	candidateTaskHandle   string
-	repositoryID          string
-	policyID              string
-	strategy              application.IntegrationStrategy
-	targetWorktree        string
-	expectedTargetHead    string
-	candidateWorktree     string
-	candidateBase         string
-	candidateHead         string
-	evidenceDigest        string
-	evidenceExpiresAt     time.Time
-	status                string
-	resultingHead         string
-	conflicts             []string
-	reservedAt            time.Time
-	completedAt           time.Time
-	stateVersion          int64
+	operationID                  string
+	recoveryOperationID          string
+	subjectDigest                string
+	initiativeHandle             string
+	integrationTaskHandle        string
+	targetPreparationOperationID string
+	candidateTaskHandle          string
+	repositoryID                 string
+	policyID                     string
+	strategy                     application.IntegrationStrategy
+	targetWorktree               string
+	expectedTargetHead           string
+	candidateWorktree            string
+	candidateBase                string
+	candidateHead                string
+	evidenceDigest               string
+	evidenceExpiresAt            time.Time
+	status                       string
+	resultingHead                string
+	conflicts                    []string
+	reservedAt                   time.Time
+	completedAt                  time.Time
+	stateVersion                 int64
 }
 
 var _ application.IntegrationStore = (*Store)(nil)
@@ -263,6 +264,7 @@ func resolveIntegrationReservation(
 		return integrationApplicationRow{}, fmt.Errorf("integration candidate is not complete: %w", application.ErrPrecondition)
 	}
 	worktrees := make(map[string]string)
+	preparationOperationIDs := make(map[string]string)
 	deliverySatisfied := make(map[string]bool)
 	for _, component := range initiative.Components {
 		for _, taskHandle := range component.TaskHandles {
@@ -275,6 +277,11 @@ func resolveIntegrationReservation(
 				return integrationApplicationRow{}, fmt.Errorf("integration worktree authority is unavailable: %w", application.ErrPrecondition)
 			}
 			worktrees[taskHandle] = preparation.RequestedWorkspaceRoot
+			preparationOperationID, readErr := taskPreparationOperationID(ctx, transaction, taskHandle)
+			if readErr != nil {
+				return integrationApplicationRow{}, fmt.Errorf("integration preparation authority is unavailable: %w", application.ErrPrecondition)
+			}
+			preparationOperationIDs[taskHandle] = preparationOperationID
 			deliverySatisfied[taskHandle] = task.State.SatisfiesInitiativeDependency()
 		}
 	}
@@ -320,7 +327,8 @@ func resolveIntegrationReservation(
 	return integrationApplicationRow{
 		operationID: request.Command.OperationID, subjectDigest: request.SubjectDigest,
 		initiativeHandle: initiative.Handle, integrationTaskHandle: integrationTask.Handle,
-		candidateTaskHandle: candidateTask.Handle, repositoryID: repositoryID,
+		targetPreparationOperationID: preparationOperationIDs[integrationTask.Handle],
+		candidateTaskHandle:          candidateTask.Handle, repositoryID: repositoryID,
 		policyID: request.PolicyID, strategy: request.Strategy,
 		targetWorktree: worktrees[integrationTask.Handle], expectedTargetHead: request.Command.ExpectedIntegrationHead,
 		candidateWorktree: worktrees[candidateTask.Handle], candidateBase: candidateTask.BaseRevision,

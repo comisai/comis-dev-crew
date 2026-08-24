@@ -161,6 +161,49 @@ func listInitiatives(
 	return initiatives, nil
 }
 
+func listInitiativePage(
+	ctx context.Context,
+	source queryer,
+	filter application.InitiativeFilter,
+) (initiatives []domain.DevelopmentInitiative, nextCursor string, resultErr error) {
+	const selectPage = `SELECT handle, schema_version, managed_run_group_id, title_ref, state,
+        base_revision_set_json, components_json, edges_json, contract_artifacts_json,
+        integration_policy_id, integration_owner_task, state_version, created_at, updated_at
+        FROM initiatives`
+	const pageOrder = ` ORDER BY handle LIMIT ?`
+	var rows *sql.Rows
+	var err error
+	if filter.State != "" {
+		rows, err = source.QueryContext(ctx,
+			selectPage+` WHERE handle > ? AND state = ?`+pageOrder,
+			filter.AfterHandle, filter.State, filter.Limit,
+		)
+	} else {
+		rows, err = source.QueryContext(ctx,
+			selectPage+` WHERE handle > ?`+pageOrder,
+			filter.AfterHandle, filter.Limit,
+		)
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("list initiative page: %w", err)
+	}
+	defer func() { resultErr = errors.Join(resultErr, rows.Close()) }()
+	initiatives = make([]domain.DevelopmentInitiative, 0, filter.Limit)
+	nextCursor = filter.AfterHandle
+	for rows.Next() {
+		initiative, err := scanInitiative(rows)
+		if err != nil {
+			return nil, "", fmt.Errorf("list initiative page: %w", err)
+		}
+		initiatives = append(initiatives, initiative)
+		nextCursor = initiative.Handle
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("list initiative page: %w", err)
+	}
+	return initiatives, nextCursor, nil
+}
+
 func scanInitiative(row rowScanner) (domain.DevelopmentInitiative, error) {
 	var initiative domain.DevelopmentInitiative
 	var baseRevisions, components, edges, contractArtifacts string

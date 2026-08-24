@@ -68,6 +68,7 @@ func initiativeFixtureInPackage() DevelopmentInitiative {
 		SchemaVersion:     1,
 		Handle:            "initiative-alpha",
 		ManagedRunGroupID: "managed-run-group_a",
+		TitleRef:          "title-alpha",
 		State:             InitiativePreparing,
 		BaseRevisionSet: []InitiativeBaseRevision{
 			{RepositoryID: "repo-primary", Revision: "0123456789abcdef0123456789abcdef01234567"},

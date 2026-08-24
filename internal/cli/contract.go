@@ -17,7 +17,7 @@ Commands:
   status [--watch [--passes N] [--interval DURATION]] [--format table|json]
   tasks list [--state STATE] [--format table|json]
   workers list [--format table|json]
-  initiative list [--state STATE] [--format table|json]
+  initiative list [--state STATE] [--after INITIATIVE] [--limit N] [--format table|json]
   initiative show INITIATIVE [--format text|json]
   initiative explain INITIATIVE [--format text|json]
   initiative graph INITIATIVE [--format text|json]

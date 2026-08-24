@@ -59,11 +59,45 @@ func TestGatherLandedEvidenceFindsAMergedPullRequestByHeadBranch(t *testing.T) {
 	if !truth.Available || truth.MergedPullRequest == nil {
 		t.Fatalf("truth = %+v", truth)
 	}
-	if !truth.MergedPullRequest.Merged || !truth.MergedPullRequest.MergeCommitContainsHead {
+	if !truth.MergedPullRequest.Merged || !truth.MergedPullRequest.MergeCommitContainsHead ||
+		!truth.MergedPullRequest.HeadRevisionMatches {
 		t.Fatalf("merged pull request = %+v", truth.MergedPullRequest)
 	}
 	if proof := ProveLandedFromForge(truth); !proof.Landed {
 		t.Fatalf("proof = %+v", proof)
+	}
+}
+
+func TestGatherLandedEvidenceProvesARewrittenMergeFromTheExactPullHead(t *testing.T) {
+	head := strings.Repeat("b", 40)
+	merge := strings.Repeat("c", 40)
+	adapter, closeServer := landedAdapter(t, func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.Method + " " + request.URL.Path {
+		case "GET /repos/comisai/fixture/pulls":
+			_, _ = response.Write([]byte(`[{"number":21}]`))
+		case "GET /repos/comisai/fixture/pulls/21":
+			_, _ = response.Write([]byte(`{"number":21,"state":"closed","merged":true,"merge_commit_sha":"` + merge + `","head":{"sha":"` + head + `","ref":"devcrew/task-fixture"},"base":{"ref":"main"}}`))
+		case "GET /repos/comisai/fixture/compare/" + merge + "..." + head,
+			"GET /repos/comisai/fixture/compare/main..." + head:
+			_, _ = response.Write([]byte(`{"status":"diverged"}`))
+		default:
+			http.NotFound(response, request)
+		}
+	})
+	defer closeServer()
+
+	truth, err := adapter.GatherLandedEvidence(context.Background(), application.LandedEvidenceRequest{
+		RepositoryID: "fixture-repository", Branch: "devcrew/task-fixture", HeadRevision: head,
+	})
+	if err != nil || truth.MergedPullRequest == nil {
+		t.Fatalf("GatherLandedEvidence() = %+v, %v", truth, err)
+	}
+	if !truth.MergedPullRequest.HeadRevisionMatches || truth.MergedPullRequest.MergeCommitContainsHead {
+		t.Fatalf("rewritten merge truth = %+v", truth.MergedPullRequest)
+	}
+	if proof := ProveLandedFromForge(truth); !proof.Landed || proof.Route != "merged_pull_request" {
+		t.Fatalf("rewritten merge proof = %+v", proof)
 	}
 }
 
@@ -89,7 +123,7 @@ func TestGatherLandedEvidenceReportsContainmentInTheDefaultBranch(t *testing.T) 
 	if err != nil {
 		t.Fatalf("GatherLandedEvidence() error = %v", err)
 	}
-	if !truth.DefaultBranchContainsContent || !truth.DefaultBranchUpToDate {
+	if !truth.DefaultBranchContainsHead || !truth.DefaultBranchUpToDate {
 		t.Fatalf("truth = %+v", truth)
 	}
 	if proof := ProveLandedFromForge(truth); !proof.Landed {

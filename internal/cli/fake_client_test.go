@@ -108,7 +108,7 @@ func (client *fakeClient) ListInitiatives(
 	operationID string,
 	input localapi.ListInitiativesInput,
 ) (application.InitiativeList, error) {
-	client.record(operationID, "list-initiatives:"+string(input.State))
+	client.record(operationID, "list-initiatives:"+string(input.State)+":"+input.AfterHandle+":"+strconv.Itoa(input.Limit))
 	return client.initiativeList, client.err
 }
 

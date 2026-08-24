@@ -23,19 +23,20 @@ type MergedPullRequestTruth struct {
 	Number                  int
 	Merged                  bool
 	MergeCommitContainsHead bool
+	HeadRevisionMatches     bool
 }
 
 // LandedEvidenceTruth is everything the forge could establish. Available says
 // whether the forge answered at all, which a caller must not confuse with the
 // forge answering "no".
 type LandedEvidenceTruth struct {
-	WorkHead                     string
-	Available                    bool
-	ReachableFromRemoteRefs      []string
-	MergedPullRequest            *MergedPullRequestTruth
-	DefaultBranchHead            string
-	DefaultBranchUpToDate        bool
-	DefaultBranchContainsContent bool
+	WorkHead                  string
+	Available                 bool
+	ReachableFromRemoteRefs   []string
+	MergedPullRequest         *MergedPullRequestTruth
+	DefaultBranchHead         string
+	DefaultBranchUpToDate     bool
+	DefaultBranchContainsHead bool
 }
 
 // LandedEvidenceGatherer reads what the forge can prove about one head.
@@ -85,7 +86,7 @@ func proveCleanupLanded(
 		MergedPullRequestByHeadBranch: mergedPullRequest(truth.MergedPullRequest),
 		DefaultBranchHead:             truth.DefaultBranchHead,
 		DefaultBranchUpToDate:         truth.DefaultBranchUpToDate,
-		DefaultBranchContainsContent:  truth.DefaultBranchContainsContent,
+		DefaultBranchContainsHead:     truth.DefaultBranchContainsHead,
 	}), nil
 }
 
@@ -97,6 +98,7 @@ func mergedPullRequest(truth *MergedPullRequestTruth) *domain.MergedPullRequest 
 		Number:                  truth.Number,
 		Merged:                  truth.Merged,
 		MergeCommitContainsHead: truth.MergeCommitContainsHead,
+		HeadRevisionMatches:     truth.HeadRevisionMatches,
 	}
 }
 
@@ -104,8 +106,8 @@ func mergedPullRequest(truth *MergedPullRequestTruth) *domain.MergedPullRequest 
 // answer: neither a recorded pull request nor a report artifact hash.
 //
 // That used to refuse outright, and a missing record is not evidence that
-// nothing landed — a squash merge that deleted the branch leaves exactly this
-// state. Consulting the proof here can only turn that refusal into an
+// nothing landed — a rewritten merge that deleted the branch leaves exactly
+// this state. Consulting the proof here can only turn that refusal into an
 // acceptance, so every removal the delivery rule already refused stays refused.
 func (coordinator *CleanupCoordinator) acceptUndeliveredIfLanded(
 	ctx context.Context,
