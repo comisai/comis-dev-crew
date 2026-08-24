@@ -276,6 +276,9 @@ func resolveIntegrationReservation(
 	if candidateTask.State != domain.TaskCandidateComplete && candidateTask.State != domain.TaskDelivered {
 		return integrationApplicationRow{}, fmt.Errorf("integration candidate is not complete: %w", application.ErrPrecondition)
 	}
+	if !initiativeHasIntegrationEdge(initiative, candidateTask.Handle, integrationTask.Handle) {
+		return integrationApplicationRow{}, fmt.Errorf("integration candidate edge is unavailable: %w", application.ErrPrecondition)
+	}
 	worktrees := make(map[string]string)
 	preparationOperationIDs := make(map[string]string)
 	for _, component := range initiative.Components {
@@ -296,8 +299,11 @@ func resolveIntegrationReservation(
 			preparationOperationIDs[taskHandle] = preparationOperationID
 		}
 	}
-	ownerIsolated := integrationTask.State == domain.TaskReady
-	if !ownerIsolated {
+	ownerWritable, err := integrationOwnerDependencyReady(ctx, transaction, initiative, integrationTask)
+	if err != nil {
+		return integrationApplicationRow{}, err
+	}
+	if !ownerWritable {
 		return integrationApplicationRow{}, fmt.Errorf("integration owner is not isolated from an active writer: %w", application.ErrPrecondition)
 	}
 	if err := initiative.AuthorizeIntegrationWorktree(integrationTask.Handle, worktrees); err != nil {
@@ -338,6 +344,20 @@ func resolveIntegrationReservation(
 		evidenceExpiresAt: bundle.ExpiresAt, status: "reserved", conflicts: []string{},
 		reservedAt: request.At,
 	}, nil
+}
+
+func initiativeHasIntegrationEdge(
+	initiative domain.DevelopmentInitiative,
+	candidateTaskHandle string,
+	integrationTaskHandle string,
+) bool {
+	for _, edge := range initiative.Edges {
+		if edge.Kind == domain.EdgeIntegratesAfter && edge.FromTaskHandle == candidateTaskHandle &&
+			edge.ToTaskHandle == integrationTaskHandle {
+			return true
+		}
+	}
+	return false
 }
 
 func integrationMutationAuthorityUnavailable(err error) bool {

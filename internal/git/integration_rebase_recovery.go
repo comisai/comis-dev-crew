@@ -78,9 +78,12 @@ func (registry *Registry) resumeRebaseIntegration(
 	if err := registry.validateServerRebaseConflictResolution(ctx, repository, request); err != nil {
 		return application.IntegrationAdapterResult{}, err
 	}
+	if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
+		return application.IntegrationAdapterResult{}, err
+	}
 	configuration := []string{
 		"--no-optional-locks", "-C", request.Target.WorktreePath,
-		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", "-c", "core.editor=true",
+		"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false", "-c", "core.editor=true",
 		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
 	}
 	if _, err := runGitBytes(ctx, registry.gitExecutable, append(configuration, "rebase", "--continue")...); err != nil {

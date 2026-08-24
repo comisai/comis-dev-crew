@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 )
@@ -16,49 +17,134 @@ func (registry *Registry) preflightRebasePatches(
 	request application.IntegrationAdapterRequest,
 	directory string,
 	commits []string,
+	patches []string,
 ) error {
-	return registry.withTemporaryRebaseIndex(ctx, request.Target.WorktreePath, directory,
+	return registry.withIsolatedRebaseWorkspace(ctx, request.Target.WorktreePath, directory,
 		func(workspace gitWorkspaceEnvironment) error {
+			branch := "refs/heads/rebase-proof"
 			if _, err := runGitBytesInWorkspace(ctx, registry.gitExecutable, workspace,
-				"read-tree", request.Target.ExpectedHead); err != nil {
-				return errors.New("apply integration candidate: rebase sequence proof is unavailable")
+				"update-ref", branch, request.Candidate.HeadRevision); err != nil {
+				return errors.New("apply integration candidate: isolated rebase head is unavailable")
 			}
-			for index, commit := range commits {
-				patch, err := registry.rebaseCommitPatch(ctx, repository, commit)
-				if err != nil {
-					return err
-				}
-				_, reverseCode, reverseErr := executeGitWithEnvironmentInputAndOutputLimit(
-					ctx, registry.gitExecutable, &workspace, patch, 4096,
-					"apply", "--cached", "--reverse", "--check", "-",
-				)
-				if reverseErr != nil || reverseCode != 0 && reverseCode != 1 {
-					return errors.New("apply integration candidate: rebase sequence proof is unavailable")
-				}
-				if reverseCode == 0 {
-					return errors.New("apply integration candidate: target subsumes candidate content")
-				}
-				_, exitCode, err := executeGitWithEnvironmentInputAndOutputLimit(
-					ctx, registry.gitExecutable, &workspace, patch, 4096,
-					"apply", "--cached", "--3way", "--whitespace=nowarn", "-",
-				)
-				if err != nil {
-					return errors.New("apply integration candidate: rebase sequence proof is unavailable")
-				}
-				switch exitCode {
-				case 0:
-					continue
-				case 1:
-					if index != len(commits)-1 {
-						return errors.New("apply integration candidate: commits after a conflict cannot be proven")
-					}
-					return nil
-				default:
-					return errors.New("apply integration candidate: rebase sequence proof is unavailable")
-				}
+			if _, err := runGitBytesInWorkspace(ctx, registry.gitExecutable, workspace,
+				"symbolic-ref", "HEAD", branch); err != nil {
+				return errors.New("apply integration candidate: isolated rebase attachment is unavailable")
 			}
-			return nil
+			if _, err := runGitBytesInWorkspace(ctx, registry.gitExecutable, workspace,
+				"reset", "--hard", request.Candidate.HeadRevision); err != nil {
+				return errors.New("apply integration candidate: isolated rebase checkout is unavailable")
+			}
+			arguments := []string{
+				"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false",
+				"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
+				"rebase", "--no-autostash", "--no-stat", "--reapply-cherry-picks", "--keep-empty",
+				"--committer-date-is-author-date", "--onto", request.Target.ExpectedHead,
+				request.Candidate.BaseRevision, strings.TrimPrefix(branch, "refs/heads/"),
+			}
+			_, exitCode, err := executeGitWithEnvironmentAndOutputLimit(
+				ctx, registry.gitExecutable, &workspace, maximumGitOutputBytes, arguments...,
+			)
+			if err != nil {
+				return errors.New("apply integration candidate: isolated rebase execution is unavailable")
+			}
+			switch exitCode {
+			case 0:
+				return registry.validateIsolatedRebaseResult(ctx, workspace, request, commits, patches)
+			case 1:
+				return registry.validateIsolatedRebaseConflict(ctx, repository, workspace, commits)
+			default:
+				return errors.New("apply integration candidate: isolated rebase execution failed")
+			}
 		})
+}
+
+func (registry *Registry) validateIsolatedRebaseResult(
+	ctx context.Context,
+	workspace gitWorkspaceEnvironment,
+	request application.IntegrationAdapterRequest,
+	commits []string,
+	patches []string,
+) error {
+	output, err := runGitBytesInWorkspace(ctx, registry.gitExecutable, workspace,
+		"rev-list", "--reverse", request.Target.ExpectedHead+"..HEAD")
+	if err != nil {
+		return errors.New("apply integration candidate: isolated rebase result is unavailable")
+	}
+	results := strings.Fields(string(output))
+	if len(results) != len(commits) {
+		return errors.New("apply integration candidate: isolated rebase dropped candidate commits")
+	}
+	for index, result := range results {
+		identity, err := registry.rebasePatchIdentityInWorkspace(ctx, workspace, result)
+		if err != nil || identity != patches[index] {
+			return errors.New("apply integration candidate: isolated rebase content differs")
+		}
+	}
+	return nil
+}
+
+func (registry *Registry) validateIsolatedRebaseConflict(
+	ctx context.Context,
+	repository Repository,
+	workspace gitWorkspaceEnvironment,
+	commits []string,
+) error {
+	rebaseHead, err := runGitInWorkspace(ctx, registry.gitExecutable, workspace,
+		"rev-parse", "--verify", "REBASE_HEAD^{commit}")
+	if err != nil || len(commits) == 0 || rebaseHead != commits[len(commits)-1] {
+		return errors.New("apply integration candidate: isolated rebase sequence cannot be proven")
+	}
+	conflicts, err := rebaseIndexOutput(ctx, registry.gitExecutable, workspace,
+		"diff", "--name-only", "--diff-filter=U", "-z")
+	if err != nil || len(conflicts) == 0 {
+		return errors.New("apply integration candidate: isolated rebase conflict is unavailable")
+	}
+	changed, err := runGitBytesWithLimit(ctx, maximumRebasePatchBytes, registry.gitExecutable,
+		"--no-optional-locks", "-C", repository.PrimaryCheckout, "diff-tree", "--no-commit-id",
+		"--name-only", "-z", "--no-renames", rebaseHead+"^", rebaseHead)
+	if err != nil || !conflictPathsBelongToCommit(conflicts, changed) {
+		return errors.New("apply integration candidate: rebase engine relocates candidate conflicts")
+	}
+	return nil
+}
+
+func conflictPathsBelongToCommit(conflicts []byte, changed []byte) bool {
+	changedPaths := make(map[string]struct{})
+	for _, path := range bytes.Split(bytes.TrimSuffix(changed, []byte{0}), []byte{0}) {
+		changedPaths[string(path)] = struct{}{}
+	}
+	for _, path := range bytes.Split(bytes.TrimSuffix(conflicts, []byte{0}), []byte{0}) {
+		if _, found := changedPaths[string(path)]; !found {
+			return false
+		}
+	}
+	return true
+}
+
+func (registry *Registry) rebasePatchIdentityInWorkspace(
+	ctx context.Context,
+	workspace gitWorkspaceEnvironment,
+	revision string,
+) (string, error) {
+	patch, err := rebaseIndexOutput(ctx, registry.gitExecutable, workspace,
+		"show", "--format=%H", "--no-color", "--no-ext-diff", "--no-textconv",
+		"--no-renames", "--full-index", "--binary", revision)
+	if err != nil {
+		return "", err
+	}
+	output, exitCode, err := executeGitWithEnvironmentInputAndOutputLimit(
+		ctx, registry.gitExecutable, &workspace, patch, 256, "patch-id", "--verbatim")
+	if err != nil || exitCode != 0 {
+		return "", errors.New("apply integration candidate: isolated patch identity is unavailable")
+	}
+	fields := strings.Fields(string(output))
+	if len(fields) == 0 {
+		return "-", nil
+	}
+	if len(fields) != 2 || !gitRevisionPattern.MatchString(fields[0]) || fields[1] != revision {
+		return "", errors.New("apply integration candidate: isolated patch identity is invalid")
+	}
+	return fields[0], nil
 }
 
 func (registry *Registry) validateReconstructedRebaseConflict(
@@ -134,6 +220,32 @@ func (registry *Registry) rebaseCommitPatch(
 	return patch, nil
 }
 
+func (registry *Registry) withIsolatedRebaseWorkspace(
+	ctx context.Context,
+	worktreePath string,
+	directory string,
+	inspect func(gitWorkspaceEnvironment) error,
+) (resultErr error) {
+	root, err := os.MkdirTemp(directory, ".rebase-workspace-")
+	if err != nil {
+		return errors.New("apply integration candidate: isolated rebase workspace is unavailable")
+	}
+	defer func() { resultErr = errors.Join(resultErr, removeTemporaryRebaseObjects(root)) }()
+	if _, err := runGitBytes(ctx, registry.gitExecutable, "init", "--quiet", "--template=", root); err != nil {
+		return errors.New("apply integration candidate: isolated rebase repository is unavailable")
+	}
+	commonDirectory, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
+		"rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil || !filepath.IsAbs(commonDirectory) {
+		return errors.New("apply integration candidate: rebase object identity is unavailable")
+	}
+	return inspect(gitWorkspaceEnvironment{
+		gitDir: filepath.Join(root, ".git"), gitWorkTree: root, gitIndex: filepath.Join(root, ".git", "index"),
+		gitObjectDirectory:          filepath.Join(root, ".git", "objects"),
+		gitAlternateObjectDirectory: filepath.Join(commonDirectory, "objects"),
+	})
+}
+
 func (registry *Registry) withTemporaryRebaseIndex(
 	ctx context.Context,
 	worktreePath string,
@@ -151,10 +263,8 @@ func (registry *Registry) withTemporaryRebaseIndex(
 	}
 	indexPath := file.Name()
 	if closeErr := file.Close(); closeErr != nil {
-		return errors.Join(
-			errors.New("apply integration candidate: temporary rebase index is unavailable"),
-			removeTemporaryRebaseIndex(indexPath),
-		)
+		return errors.Join(errors.New("apply integration candidate: temporary rebase index is unavailable"),
+			removeTemporaryRebaseIndex(indexPath))
 	}
 	if err := os.Remove(indexPath); err != nil {
 		return errors.New("apply integration candidate: temporary rebase index is unavailable")
@@ -162,29 +272,21 @@ func (registry *Registry) withTemporaryRebaseIndex(
 	commonDirectory, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
 		"rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil || !filepath.IsAbs(commonDirectory) {
-		return errors.Join(
-			errors.New("apply integration candidate: rebase object identity is unavailable"),
-			removeTemporaryRebaseIndex(indexPath),
-		)
+		return errors.Join(errors.New("apply integration candidate: rebase object identity is unavailable"),
+			removeTemporaryRebaseIndex(indexPath))
 	}
 	objectDirectory, err := os.MkdirTemp(directory, ".rebase-objects-")
 	if err != nil {
-		return errors.Join(
-			errors.New("apply integration candidate: temporary rebase objects are unavailable"),
-			removeTemporaryRebaseIndex(indexPath),
-		)
+		return errors.Join(errors.New("apply integration candidate: temporary rebase objects are unavailable"),
+			removeTemporaryRebaseIndex(indexPath))
 	}
 	defer func() {
-		resultErr = errors.Join(
-			resultErr,
-			removeTemporaryRebaseIndex(indexPath),
-			removeTemporaryRebaseObjects(objectDirectory),
-		)
+		resultErr = errors.Join(resultErr, removeTemporaryRebaseIndex(indexPath),
+			removeTemporaryRebaseObjects(objectDirectory))
 	}()
 	return inspect(gitWorkspaceEnvironment{
 		gitDir: gitDirectory, gitWorkTree: worktreePath, gitIndex: indexPath,
-		gitObjectDirectory:          objectDirectory,
-		gitAlternateObjectDirectory: filepath.Join(commonDirectory, "objects"),
+		gitObjectDirectory: objectDirectory, gitAlternateObjectDirectory: filepath.Join(commonDirectory, "objects"),
 	})
 }
 

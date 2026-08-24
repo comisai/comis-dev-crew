@@ -163,6 +163,15 @@ func integrationOwnerWritableForRecovery(
 	initiative domain.DevelopmentInitiative,
 	integrationTask domain.Task,
 ) (bool, error) {
+	return integrationOwnerDependencyReady(ctx, source, initiative, integrationTask)
+}
+
+func integrationOwnerDependencyReady(
+	ctx context.Context,
+	source queryer,
+	initiative domain.DevelopmentInitiative,
+	integrationTask domain.Task,
+) (bool, error) {
 	if integrationTask.State != domain.TaskReady {
 		return false, nil
 	}

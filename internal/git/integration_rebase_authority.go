@@ -67,7 +67,7 @@ func (registry *Registry) preflightRebaseSequence(
 			return errors.New("apply integration candidate: rebase uniqueness proof differs")
 		}
 	}
-	return registry.preflightRebasePatches(ctx, repository, request, directory, commits)
+	return registry.preflightRebasePatches(ctx, repository, request, directory, commits, patches)
 }
 
 func (registry *Registry) validateReceiptOnlyRebaseReceipts(

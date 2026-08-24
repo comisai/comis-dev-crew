@@ -311,6 +311,12 @@ for a staged rebase-conflict resolution: it names the immutable conflicted
 operation while the authenticated call contributes a distinct operation ID.
 Changing any initiative, task, head, policy, evidence, worktree, or rebase state
 remains a refusal before the target branch moves.
+The reservation also requires the candidate's exact `integrates_after` edge and
+all of the integration owner's predecessors to be ready. Git mutation refuses
+command-capable repository configuration or attributes, and rebase preflight
+uses an isolated repository with the real rebase engine before publishing any
+authority receipt. Reproducible recovery and bounded-migration evidence is
+recorded in [review-evidence.md](review-evidence.md).
 Submitting a different operation for a candidate task and head that already has
 a reserved, applied, or conflicted application is a precondition failure before
 Git. Reuse the original operation or continue from its durable receipt.

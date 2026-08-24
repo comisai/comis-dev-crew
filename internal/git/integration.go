@@ -81,6 +81,9 @@ func (registry *Registry) ApplyIntegrationCandidate(
 			application.ErrIntegrationMutationNotStarted,
 		)
 	}
+	if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
+		return application.IntegrationAdapterResult{}, errors.Join(err, application.ErrIntegrationMutationNotStarted)
+	}
 	if err := registry.runIntegrationStrategy(ctx, request, repository); err != nil {
 		if errors.Is(err, application.ErrIntegrationMutationNotStarted) {
 			return application.IntegrationAdapterResult{}, err

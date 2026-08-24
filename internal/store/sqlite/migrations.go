@@ -94,6 +94,9 @@ func (store *Store) migrate(ctx context.Context) error {
 	if err := store.applyInitiativeLaunchFactsMigration(ctx); err != nil {
 		return err
 	}
+	if err := store.applyInitiativeLaunchResourceHeadsMigration(ctx); err != nil {
+		return err
+	}
 	return store.backfillReconciledComisReports(ctx)
 }
 

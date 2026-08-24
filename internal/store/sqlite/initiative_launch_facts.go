@@ -74,7 +74,7 @@ func backfillInitiativeLaunchFacts(ctx context.Context, transaction *sql.Tx) err
 			if err != nil {
 				return err
 			}
-			if err := refreshInitiativeLaunchFacts(ctx, transaction, initiative); err != nil {
+			if err := replaceInitiativeLaunchFacts(ctx, transaction, initiative, false); err != nil {
 				return err
 			}
 			afterCreatedAt, afterHandle = item.createdAt, item.handle
@@ -91,8 +91,7 @@ func refreshInitiativeLaunchFactsIfComplete(
 	initiative domain.DevelopmentInitiative,
 ) error {
 	if initiative.State != domain.InitiativeActive {
-		_, err := target.ExecContext(ctx, `DELETE FROM initiative_launch_facts WHERE initiative_handle = ?`, initiative.Handle)
-		return err
+		return clearInitiativeLaunchFacts(ctx, target, initiative.Handle, true)
 	}
 	var available int
 	if err := target.QueryRowContext(ctx, `SELECT COUNT(*) FROM initiative_members AS member
@@ -101,8 +100,7 @@ func refreshInitiativeLaunchFactsIfComplete(
 		return err
 	}
 	if available != len(initiativeTaskHandles(initiative)) {
-		_, err := target.ExecContext(ctx, `DELETE FROM initiative_launch_facts WHERE initiative_handle = ?`, initiative.Handle)
-		return err
+		return clearInitiativeLaunchFacts(ctx, target, initiative.Handle, true)
 	}
 	var artifacts int
 	if err := target.QueryRowContext(ctx,
@@ -111,8 +109,7 @@ func refreshInitiativeLaunchFactsIfComplete(
 		return err
 	}
 	if artifacts != len(initiative.ContractArtifacts) {
-		_, err := target.ExecContext(ctx, `DELETE FROM initiative_launch_facts WHERE initiative_handle = ?`, initiative.Handle)
-		return err
+		return clearInitiativeLaunchFacts(ctx, target, initiative.Handle, true)
 	}
 	return refreshInitiativeLaunchFacts(ctx, target, initiative)
 }
@@ -122,13 +119,32 @@ func refreshInitiativeLaunchFacts(
 	target queryExecer,
 	initiative domain.DevelopmentInitiative,
 ) error {
+	return replaceInitiativeLaunchFacts(ctx, target, initiative, true)
+}
+
+func replaceInitiativeLaunchFacts(
+	ctx context.Context,
+	target queryExecer,
+	initiative domain.DevelopmentInitiative,
+	refreshResourceHeads bool,
+) error {
+	affected := make(map[initiativeLaunchResourceKey]struct{})
+	if refreshResourceHeads {
+		keys, err := initiativeLaunchResourceKeys(ctx, target, initiative.Handle)
+		if err != nil {
+			return err
+		}
+		for _, key := range keys {
+			affected[key] = struct{}{}
+		}
+	}
 	if _, err := target.ExecContext(ctx,
 		`DELETE FROM initiative_launch_facts WHERE initiative_handle = ?`, initiative.Handle,
 	); err != nil {
 		return fmt.Errorf("clear initiative launch facts: %w", err)
 	}
 	if initiative.State != domain.InitiativeActive {
-		return nil
+		return refreshInitiativeLaunchResourceKeys(ctx, target, affected)
 	}
 	tasks := make([]domain.Task, 0, domain.MaximumInitiativeMembers)
 	byHandle := make(map[string]domain.Task, domain.MaximumInitiativeMembers)
@@ -195,7 +211,40 @@ func refreshInitiativeLaunchFacts(
 		}
 		candidateIndex++
 	}
-	return nil
+	if refreshResourceHeads {
+		keys, err := initiativeLaunchResourceKeys(ctx, target, initiative.Handle)
+		if err != nil {
+			return err
+		}
+		for _, key := range keys {
+			affected[key] = struct{}{}
+		}
+	}
+	return refreshInitiativeLaunchResourceKeys(ctx, target, affected)
+}
+
+func clearInitiativeLaunchFacts(
+	ctx context.Context,
+	target queryExecer,
+	initiativeHandle string,
+	refreshResourceHeads bool,
+) error {
+	keys := make(map[initiativeLaunchResourceKey]struct{})
+	if refreshResourceHeads {
+		current, err := initiativeLaunchResourceKeys(ctx, target, initiativeHandle)
+		if err != nil {
+			return err
+		}
+		for _, key := range current {
+			keys[key] = struct{}{}
+		}
+	}
+	if _, err := target.ExecContext(ctx,
+		`DELETE FROM initiative_launch_facts WHERE initiative_handle = ?`, initiativeHandle,
+	); err != nil {
+		return err
+	}
+	return refreshInitiativeLaunchResourceKeys(ctx, target, keys)
 }
 
 func refreshInitiativeLaunchFactsForTask(ctx context.Context, target queryExecer, taskHandle string) error {
@@ -289,7 +338,7 @@ func initiativeLaunchFactPage(
 	sort.Strings(cappedRepositories)
 	query := strings.Builder{}
 	query.WriteString(`SELECT task_handle, initiative_handle, initiative_created_at, scheduling_round,
-		repository_id, worker_profile_id FROM initiative_launch_facts
+		repository_id, worker_profile_id FROM initiative_launch_resource_heads
 		WHERE scheduling_round = ? AND (initiative_created_at, initiative_handle, task_handle) > (?, ?, ?)
 		AND worker_profile_id IN (`)
 	args := []any{round, afterCreatedAt, afterInitiativeHandle, afterTaskHandle}

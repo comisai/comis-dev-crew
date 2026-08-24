@@ -40,7 +40,7 @@ func (registry *Registry) runIntegrationStrategy(
 	}
 	arguments := []string{
 		"--no-optional-locks", "-C", request.Target.WorktreePath,
-		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
+		"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false",
 		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
 	}
 	switch request.Strategy {
@@ -78,6 +78,9 @@ func (registry *Registry) runRebaseIntegration(
 			application.ErrIntegrationMutationNotStarted,
 		)
 	}
+	if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
+		return errors.Join(err, application.ErrIntegrationMutationNotStarted)
+	}
 	if err := registry.recordIntegrationTargetRef(ctx, request, targetRef); err != nil {
 		return err
 	}
@@ -86,11 +89,12 @@ func (registry *Registry) runRebaseIntegration(
 	}
 	configuration := []string{
 		"--no-optional-locks", "-C", request.Target.WorktreePath,
-		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
+		"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false",
 		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
 	}
 	if _, err := runGitBytes(ctx, registry.gitExecutable, append(configuration,
 		"rebase", "--no-autostash", "--no-stat", "--reapply-cherry-picks", "--keep-empty",
+		"--committer-date-is-author-date",
 		"--onto", request.Target.ExpectedHead,
 		request.Candidate.BaseRevision,
 		strings.TrimPrefix(integrationRebaseProofRef(request), "refs/heads/"))...); err != nil {
