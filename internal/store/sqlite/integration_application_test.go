@@ -330,6 +330,42 @@ func TestIntegrationRebaseConflictRecoveryAcceptsReadyOwnerAfterRestart(t *testi
 	}
 }
 
+func TestIntegrationRebaseRecoveryRequiresWriterFreeOwner(t *testing.T) {
+	for _, test := range []struct {
+		state   domain.TaskState
+		allowed bool
+	}{
+		{state: domain.TaskWorking},
+		{state: domain.TaskAwaitingDecision},
+		{state: domain.TaskBlocked},
+		{state: domain.TaskReady, allowed: true},
+	} {
+		t.Run(string(test.state), func(t *testing.T) {
+			fixture := newStoredIntegrationFixture(t)
+			recovery := storedRebaseRecoveryRequest(t, &fixture)
+			mustExecIntegrationTest(t, &fixture, `UPDATE tasks SET state = ? WHERE handle = 'task-integration'`, test.state)
+			reserved, err := fixture.store.ReserveIntegrationApplication(context.Background(), recovery)
+			if !test.allowed {
+				if !errors.Is(err, application.ErrPrecondition) {
+					t.Fatalf("ReserveIntegrationApplication(%s owner) error = %v, want ErrPrecondition", test.state, err)
+				}
+				return
+			}
+			if err != nil || reserved.RecoveryOperationID != recovery.Command.RecoveryOperationID {
+				t.Fatalf("ReserveIntegrationApplication(%s owner) = %#v, %v", test.state, reserved, err)
+			}
+			_, err = fixture.store.CommitTaskStart(context.Background(), application.TaskStartMutation{
+				TaskHandle: "task-integration", OperationID: "start-integration-during-recovery",
+				SubjectDigest: strings.Repeat("7", 64), At: recovery.At.Add(time.Second),
+				SchedulingLimits: initiativeTestSchedulingLimits(2),
+			})
+			if !errors.Is(err, application.ErrPrecondition) {
+				t.Fatalf("CommitTaskStart(reserved recovery owner) error = %v, want ErrPrecondition", err)
+			}
+		})
+	}
+}
+
 func TestIntegrationReservationRejectsAnotherOperationForTheSameCandidate(t *testing.T) {
 	for _, outcome := range []string{"reserved", string(application.IntegrationApplied), string(application.IntegrationConflicted)} {
 		t.Run(outcome, func(t *testing.T) {
