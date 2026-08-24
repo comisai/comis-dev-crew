@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"sort"
-	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -58,12 +56,11 @@ func authorizeInitiativeTaskStart(
 }
 
 const maximumInitiativeSchedulingFrontier = 1024
+const initiativeSchedulingPageSize = 64
 
 type initiativeLaunchCandidate struct {
-	task             domain.Task
-	initiativeHandle string
-	initiativeAt     time.Time
-	round            int
+	task  domain.Task
+	round int
 }
 
 func initiativeSchedulingFrontier(
@@ -74,112 +71,103 @@ func initiativeSchedulingFrontier(
 	limits application.InitiativeSchedulingLimits,
 	usage application.InitiativeSchedulingUsage,
 ) (bool, application.InitiativeScheduleReason, error) {
-	rows, err := source.QueryContext(ctx, `SELECT i.handle,
-		(SELECT COUNT(*) FROM initiative_members AS progress
-		 JOIN tasks AS progressed ON progressed.handle = progress.task_handle
-		 WHERE progress.initiative_handle = i.handle AND progressed.state NOT IN (?, ?)) AS scheduling_round
-		FROM initiatives AS i
-		WHERE i.state = ? AND EXISTS (
-			SELECT 1 FROM initiative_members AS member
-			JOIN tasks AS task ON task.handle = member.task_handle
-			WHERE member.initiative_handle = i.handle AND task.state = ?
-		)
-		ORDER BY scheduling_round, i.created_at, i.handle LIMIT ?`,
-		domain.TaskPrepared, domain.TaskReady, domain.InitiativeActive, domain.TaskReady,
-		maximumInitiativeSchedulingFrontier)
-	if err != nil {
-		return false, "", err
-	}
-	type frontierHandle struct {
-		handle string
-		round  int
-	}
-	handles := make([]frontierHandle, 0, maximumInitiativeSchedulingFrontier)
-	for rows.Next() {
-		var item frontierHandle
-		if err := rows.Scan(&item.handle, &item.round); err != nil {
-			_ = rows.Close()
-			return false, "", err
-		}
-		handles = append(handles, item)
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return false, "", err
-	}
-	pending := make([]initiativeLaunchCandidate, 0, domain.MaximumInitiativeMembers*len(handles))
-	loadedTarget := false
 	targetReason := application.InitiativeScheduleReason("")
 	selected := 0
 	available := limits.MaxConcurrentTasks - usage.Host
-	allocate := func(throughRound int) (bool, bool) {
-		sort.Slice(pending, func(left, right int) bool {
-			if pending[left].round != pending[right].round {
-				return pending[left].round < pending[right].round
+	inspected := 0
+	for round := 0; round < domain.MaximumInitiativeMembers; round++ {
+		cursorAt, cursorHandle := "", ""
+		for inspected < maximumInitiativeSchedulingFrontier {
+			pageLimit := min(initiativeSchedulingPageSize, maximumInitiativeSchedulingFrontier-inspected)
+			page, err := initiativeSchedulingPage(ctx, source, cursorAt, cursorHandle, pageLimit)
+			if err != nil {
+				return false, "", err
 			}
-			if !pending[left].initiativeAt.Equal(pending[right].initiativeAt) {
-				return pending[left].initiativeAt.Before(pending[right].initiativeAt)
+			if len(page) == 0 {
+				break
 			}
-			if pending[left].initiativeHandle != pending[right].initiativeHandle {
-				return pending[left].initiativeHandle < pending[right].initiativeHandle
-			}
-			return pending[left].task.Handle < pending[right].task.Handle
-		})
-		for len(pending) != 0 && pending[0].round <= throughRound {
-			candidate := pending[0]
-			pending = pending[1:]
-			if usage.Repositories[candidate.task.RepositoryID] >= limits.MaxConcurrentTasksPerRepository ||
-				usage.WorkerProfiles[candidate.task.WorkerProfileID] >= limits.WorkerProfileLimits[candidate.task.WorkerProfileID] {
-				if candidate.task.Handle == target.Handle {
-					return false, true
+			for _, item := range page {
+				inspected++
+				initiative, err := getInitiative(ctx, source, item.handle)
+				if err != nil {
+					return false, "", err
 				}
-				continue
+				candidates, reason, err := initiativeSchedulingCandidates(
+					ctx, source, initiative, target.Handle, limits, usage,
+				)
+				if err != nil {
+					return false, "", err
+				}
+				if initiative.Handle == containing.Handle {
+					targetReason = reason
+				}
+				for _, candidate := range candidates {
+					if candidate.round != round {
+						continue
+					}
+					if usage.Repositories[candidate.task.RepositoryID] >= limits.MaxConcurrentTasksPerRepository ||
+						usage.WorkerProfiles[candidate.task.WorkerProfileID] >= limits.WorkerProfileLimits[candidate.task.WorkerProfileID] {
+						if candidate.task.Handle == target.Handle {
+							return false, application.ScheduleResourceQueued, nil
+						}
+						continue
+					}
+					usage.Host++
+					usage.Repositories[candidate.task.RepositoryID]++
+					usage.WorkerProfiles[candidate.task.WorkerProfileID]++
+					selected++
+					if candidate.task.Handle == target.Handle {
+						return true, application.ScheduleResourceQueued, nil
+					}
+					if selected == available {
+						return false, application.ScheduleResourceQueued, nil
+					}
+				}
+				cursorAt, cursorHandle = item.createdAt, item.handle
 			}
-			usage.Host++
-			usage.Repositories[candidate.task.RepositoryID]++
-			usage.WorkerProfiles[candidate.task.WorkerProfileID]++
-			selected++
-			if candidate.task.Handle == target.Handle {
-				return true, true
-			}
-			if selected == available {
-				return false, true
+			if len(page) < pageLimit {
+				break
 			}
 		}
-		return false, false
-	}
-	for _, item := range handles {
-		if launchable, settled := allocate(item.round - 1); settled {
-			return launchable, application.ScheduleResourceQueued, nil
+		if inspected == maximumInitiativeSchedulingFrontier {
+			return false, application.ScheduleResourceQueued, nil
 		}
-		initiative, err := getInitiative(ctx, source, item.handle)
-		if err != nil {
-			return false, "", err
-		}
-		candidates, reason, err := initiativeSchedulingCandidates(ctx, source, initiative, target.Handle, limits, usage)
-		if err != nil {
-			return false, "", err
-		}
-		if initiative.Handle == containing.Handle {
-			loadedTarget = true
-			targetReason = reason
-		}
-		pending = append(pending, candidates...)
-		if launchable, settled := allocate(item.round); settled {
-			return launchable, application.ScheduleResourceQueued, nil
-		}
-	}
-	if !loadedTarget {
-		candidates, reason, err := initiativeSchedulingCandidates(ctx, source, containing, target.Handle, limits, usage)
-		if err != nil {
-			return false, "", err
-		}
-		targetReason = reason
-		pending = append(pending, candidates...)
-	}
-	if launchable, settled := allocate(int(^uint(0) >> 1)); settled {
-		return launchable, application.ScheduleResourceQueued, nil
 	}
 	return false, targetReason, nil
+}
+
+type initiativeSchedulingPageItem struct {
+	handle    string
+	createdAt string
+}
+
+func initiativeSchedulingPage(
+	ctx context.Context,
+	source queryer,
+	afterCreatedAt string,
+	afterHandle string,
+	limit int,
+) ([]initiativeSchedulingPageItem, error) {
+	rows, err := source.QueryContext(ctx, `SELECT handle, created_at FROM initiatives
+		WHERE state = ? AND (created_at, handle) > (?, ?)
+		ORDER BY created_at, handle LIMIT ?`, domain.InitiativeActive,
+		afterCreatedAt, afterHandle, limit)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]initiativeSchedulingPageItem, 0, limit)
+	for rows.Next() {
+		var item initiativeSchedulingPageItem
+		if err := rows.Scan(&item.handle, &item.createdAt); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 func initiativeSchedulingCandidates(
@@ -227,8 +215,7 @@ func initiativeSchedulingCandidates(
 			return nil, "", errors.New("initiative scheduling task is unavailable")
 		}
 		candidates = append(candidates, initiativeLaunchCandidate{
-			task: candidate, initiativeHandle: initiative.Handle, initiativeAt: initiative.CreatedAt,
-			round: round + len(candidates),
+			task: candidate, round: round + len(candidates),
 		})
 	}
 	return candidates, targetReason, nil

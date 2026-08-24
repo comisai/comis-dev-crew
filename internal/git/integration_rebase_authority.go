@@ -25,6 +25,7 @@ func (registry *Registry) preflightRebaseSequence(
 	ctx context.Context,
 	repository Repository,
 	request application.IntegrationAdapterRequest,
+	directory string,
 	commits []string,
 	patches []string,
 ) error {
@@ -65,26 +66,8 @@ func (registry *Registry) preflightRebaseSequence(
 		if _, found := unique[commit]; !found {
 			return errors.New("apply integration candidate: rebase uniqueness proof differs")
 		}
-		patch, err := runGitBytesWithLimit(ctx, maximumRebasePatchBytes, registry.gitExecutable,
-			"--no-optional-locks", "-C", repository.PrimaryCheckout, "diff-tree", "--no-commit-id", "-p",
-			"--binary", "--full-index", "--no-renames", commit+"^", commit)
-		if err != nil {
-			return errors.New("apply integration candidate: rebase subsumption proof is unavailable")
-		}
-		_, exitCode, err := executeGitWithEnvironmentInputAndOutputLimit(ctx, registry.gitExecutable, nil, patch, 256,
-			"--no-optional-locks", "-C", request.Target.WorktreePath, "apply", "--reverse", "--check", "--index", "-")
-		if err != nil {
-			return errors.New("apply integration candidate: rebase subsumption proof is unavailable")
-		}
-		switch exitCode {
-		case 0:
-			return errors.New("apply integration candidate: target subsumes candidate content")
-		case 1:
-		default:
-			return errors.New("apply integration candidate: rebase subsumption proof is unavailable")
-		}
 	}
-	return nil
+	return registry.preflightRebasePatches(ctx, repository, request, directory, commits)
 }
 
 func (registry *Registry) validateReceiptOnlyRebaseReceipts(

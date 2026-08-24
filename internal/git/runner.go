@@ -111,9 +111,11 @@ func executeGit(ctx context.Context, executable string, arguments ...string) ([]
 }
 
 type gitWorkspaceEnvironment struct {
-	gitDir      string
-	gitWorkTree string
-	gitIndex    string
+	gitDir                      string
+	gitWorkTree                 string
+	gitIndex                    string
+	gitObjectDirectory          string
+	gitAlternateObjectDirectory string
 }
 
 func runGitInWorkspace(
@@ -223,6 +225,12 @@ func executeGitWithEnvironmentInputAndOutputLimit(
 			"GIT_WORK_TREE="+workspace.gitWorkTree,
 			"GIT_INDEX_FILE="+workspace.gitIndex,
 		)
+		if workspace.gitObjectDirectory != "" {
+			command.Env = append(command.Env,
+				"GIT_OBJECT_DIRECTORY="+workspace.gitObjectDirectory,
+				"GIT_ALTERNATE_OBJECT_DIRECTORIES="+workspace.gitAlternateObjectDirectory,
+			)
+		}
 	}
 	command.WaitDelay = time.Second
 	if input != nil {

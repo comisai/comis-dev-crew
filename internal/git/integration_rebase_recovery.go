@@ -70,6 +70,9 @@ func (registry *Registry) resumeRebaseIntegration(
 		return application.IntegrationAdapterResult{}, err
 	}
 	if len(conflicts) != 0 {
+		if err := registry.recordServerRebaseConflict(ctx, repository, request); err != nil {
+			return application.IntegrationAdapterResult{}, err
+		}
 		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: rebase conflicts remain unresolved")
 	}
 	if err := registry.validateServerRebaseConflictResolution(ctx, repository, request); err != nil {

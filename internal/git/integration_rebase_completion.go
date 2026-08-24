@@ -119,6 +119,13 @@ func (registry *Registry) prepareServerRebaseProof(
 	repository Repository,
 	request application.IntegrationAdapterRequest,
 ) error {
+	directory, path, err := serverRebaseProofPath(repository, request)
+	if err != nil {
+		return err
+	}
+	if err := ensureServerRebaseProofDirectory(repository.WorktreeRoot, directory); err != nil {
+		return err
+	}
 	commits, err := registry.rebaseCommitRange(
 		ctx, repository, request.Candidate.BaseRevision, request.Candidate.HeadRevision,
 	)
@@ -138,15 +145,8 @@ func (registry *Registry) prepareServerRebaseProof(
 			)
 		}
 	}
-	if err := registry.preflightRebaseSequence(ctx, repository, request, commits, patches); err != nil {
+	if err := registry.preflightRebaseSequence(ctx, repository, request, directory, commits, patches); err != nil {
 		return errors.Join(err, application.ErrIntegrationMutationNotStarted)
-	}
-	directory, path, err := serverRebaseProofPath(repository, request)
-	if err != nil {
-		return err
-	}
-	if err := ensureServerRebaseProofDirectory(repository.WorktreeRoot, directory); err != nil {
-		return err
 	}
 	want := serverRebaseProof{
 		operationID: request.OperationID, candidateCommits: commits, candidatePatches: patches,
@@ -181,10 +181,6 @@ func (registry *Registry) recordServerRebaseConflict(
 	if err != nil || len(conflicts) == 0 {
 		return errors.New("apply integration candidate: conflicted rebase paths are unavailable")
 	}
-	indexDigest, err := registry.rebaseProtectedIndexDigest(ctx, request.Target.WorktreePath, conflicts)
-	if err != nil {
-		return err
-	}
 	directory, path, err := serverRebaseProofPath(repository, request)
 	if err != nil {
 		return err
@@ -198,6 +194,15 @@ func (registry *Registry) recordServerRebaseConflict(
 	)
 	if err != nil || !sameRebaseCommits(proof.candidateCommits, candidates) || !containsRebaseCommit(candidates, rebaseHead) {
 		return errors.New("apply integration candidate: conflicted server rebase proof differs")
+	}
+	if err := registry.validateReconstructedRebaseConflict(
+		ctx, repository, request, directory, rebaseHead, conflicts,
+	); err != nil {
+		return err
+	}
+	indexDigest, err := registry.rebaseProtectedIndexDigest(ctx, request.Target.WorktreePath, conflicts)
+	if err != nil {
+		return err
 	}
 	continued, err := registry.currentServerRebasePrefix(ctx, repository, request, proof, rebaseHead)
 	if err != nil {
