@@ -223,6 +223,34 @@ func TestGitHubAdapter_MapsExactMergedTruthOntoApplicationPort(t *testing.T) {
 	}
 }
 
+func TestGitHubAdapter_DoesNotInventConfiguredMethodDuringReconciliation(t *testing.T) {
+	head := strings.Repeat("1", 40)
+	mergeCommit := strings.Repeat("2", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path != "/repos/comisai/fixture/pulls/31" {
+			http.NotFound(response, request)
+			return
+		}
+		_, _ = response.Write([]byte(`{"number":31,"state":"closed","merged":true,"merge_commit_sha":"` + mergeCommit + `","html_url":"https://example.com/pull/31","head":{"sha":"` + head + `","ref":"devcrew/task-merge"},"base":{"ref":"main"}}`))
+	}))
+	t.Cleanup(server.Close)
+	configuration := validGitHubConfig(server)
+	configuration.MergeCredentials = failingCredentialSource{}
+	configuration.MergeMethod = MergeSquash
+	adapter, err := NewGitHubAdapter(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, found, err := adapter.ReconcileApprovedPullRequest(context.Background(), application.PullRequestMergeRequest{
+		OperationID: "merge-task-0001", RepositoryID: "fixture-repository", PullRequestID: "github-pr-31",
+		Branch: "devcrew/task-merge", HeadRevision: head, RequiredChecks: []string{"ci/unit"},
+	})
+	if err == nil || found {
+		t.Fatalf("ReconcileApprovedPullRequest(without intended method) found=%t, error=%v", found, err)
+	}
+}
+
 func TestGitHubAdapter_MapsOnlySupportedMergeMethodsOntoApplicationPort(t *testing.T) {
 	for _, test := range []struct {
 		name   string
