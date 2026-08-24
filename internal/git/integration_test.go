@@ -278,8 +278,8 @@ func TestRegistry_ChecksEvidenceExpiryAtTheGitMutationBoundary(t *testing.T) {
 	targetHead := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "rev-parse", "HEAD")
 	request := fixture.request("integration-expiry-boundary", application.IntegrationCherryPick, candidateHead, targetHead)
 	request.EvidenceExpiresAt = now
-	if _, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request); err == nil {
-		t.Fatal("ApplyIntegrationCandidate(expired) error = nil")
+	if _, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request); !errors.Is(err, application.ErrIntegrationMutationNotStarted) {
+		t.Fatalf("ApplyIntegrationCandidate(expired) error = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(fixture.target.CanonicalPath, "component.txt")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expired integration changed target: %v", err)

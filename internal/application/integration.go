@@ -16,6 +16,10 @@ import (
 // has a durable reserved, applied, or conflicted application operation.
 var ErrIntegrationApplicationExists = fmt.Errorf("integration candidate already has a durable application operation: %w", ErrPrecondition)
 
+// ErrIntegrationMutationNotStarted marks an adapter failure that positively
+// proves no Git mutation began and permits atomic reservation invalidation.
+var ErrIntegrationMutationNotStarted = errors.New("integration mutation did not start")
+
 // IntegrationStrategy is the closed set of operator-reviewed Git operations.
 // A caller selects an initiative, never an argv fragment or strategy.
 type IntegrationStrategy string
@@ -243,6 +247,29 @@ func (integrations *Integrations) ApplyCandidate(
 	}
 	adapterResult, err := integrations.adapter.ApplyIntegrationCandidate(ctx, reserved.AdapterRequest())
 	if err != nil {
+		if errors.Is(err, ErrIntegrationMutationNotStarted) {
+			invalidated := IntegrationAdapterResult{
+				Outcome: IntegrationInvalidated, PreviousHead: reserved.Target.ExpectedHead,
+			}
+			completed, completionErr := integrations.store.CompleteIntegrationApplication(ctx, IntegrationCompletion{
+				Reservation: reserved, AdapterResult: invalidated, At: at,
+			})
+			if completionErr != nil {
+				return IntegrationApplicationResult{}, &dependencyFailure{
+					message: "integration pre-mutation failure could not be settled",
+					cause:   errors.Join(err, completionErr),
+				}
+			}
+			if validationErr := validateIntegrationResult(completed, reserved); validationErr != nil ||
+				completed.Outcome != IntegrationInvalidated || completed.ResultingHead != "" || len(completed.ConflictPaths) != 0 {
+				if validationErr == nil {
+					validationErr = errors.New("integration pre-mutation settlement outcome differs")
+				}
+				return IntegrationApplicationResult{}, &dependencyFailure{
+					message: "integration pre-mutation settlement differs", cause: validationErr,
+				}
+			}
+		}
 		return IntegrationApplicationResult{}, &dependencyFailure{message: "integration adapter failed", cause: err}
 	}
 	if err := validateIntegrationAdapterResult(adapterResult, reserved); err != nil {

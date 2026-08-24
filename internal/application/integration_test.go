@@ -149,6 +149,61 @@ func TestIntegrationCarriesEvidenceDeadlineToMutationButNotCompletedReplay(t *te
 	}
 }
 
+func TestIntegrationSettlesOnlyFailuresKnownToPrecedeGitMutation(t *testing.T) {
+	at := time.Unix(1_800_000_000, 0).UTC()
+	command := integrationCommand()
+	for _, test := range []struct {
+		name         string
+		adapterError error
+		wantSequence string
+		wantSettled  bool
+	}{
+		{
+			name:         "known pre-mutation failure",
+			adapterError: fmt.Errorf("evidence expired: %w", ErrIntegrationMutationNotStarted),
+			wantSequence: "policy,reserve,complete", wantSettled: true,
+		},
+		{
+			name: "ambiguous adapter failure", adapterError: errors.New("mutation outcome is unknown"),
+			wantSequence: "policy,reserve",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reserved := integrationReservation(command, IntegrationRebase)
+			store := &integrationStore{policyID: "integration-reviewed", reservation: reserved}
+			if test.wantSettled {
+				store.completed = integrationResult(reserved, IntegrationInvalidated, "", nil, at)
+			}
+			adapter := &integrationAdapter{err: test.adapterError}
+			integrations, err := NewIntegrations(IntegrationConfig{
+				Store: store, Adapter: adapter,
+				Policies: func(string) (IntegrationStrategy, error) { return IntegrationRebase, nil },
+				Clock:    func() time.Time { return at },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := integrations.ApplyCandidate(context.Background(), command); err == nil {
+				t.Fatal("ApplyCandidate(adapter failure) error = nil")
+			} else if test.wantSettled && !errors.Is(err, ErrIntegrationMutationNotStarted) {
+				t.Fatalf("ApplyCandidate(pre-mutation) error = %v", err)
+			}
+			if store.sequence != test.wantSequence {
+				t.Fatalf("store sequence = %q, want %q", store.sequence, test.wantSequence)
+			}
+			if test.wantSettled {
+				if store.completion.AdapterResult.Outcome != IntegrationInvalidated ||
+					store.completion.AdapterResult.PreviousHead != command.ExpectedIntegrationHead {
+					t.Fatalf("pre-mutation settlement = %#v", store.completion)
+				}
+			} else if store.completion.AdapterResult.Outcome != "" {
+				t.Fatalf("ambiguous failure was settled: %#v", store.completion)
+			}
+		})
+	}
+}
+
 func TestIntegrationConflictRecoveryUsesNewOperationAfterEvidenceExpiry(t *testing.T) {
 	command := integrationCommand()
 	command.OperationID = "integration-resolution-0001"

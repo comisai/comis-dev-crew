@@ -50,6 +50,9 @@ func (registry *Registry) ApplyIntegrationCandidate(
 		return replay, err
 	}
 	if request.ReceiptOnly {
+		if replay, found, err := registry.reconcileReceiptOnlyCompletedRebase(ctx, repository, request); err != nil || found {
+			return replay, err
+		}
 		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: mutation authority is unavailable")
 	}
 	if replay, found, err := registry.reconcileInterruptedRebase(ctx, request, repository, conflictedRef); err != nil || found {
@@ -73,7 +76,10 @@ func (registry *Registry) ApplyIntegrationCandidate(
 	}
 	mutationAt := registry.clock().UTC()
 	if mutationAt.IsZero() || !mutationAt.Before(request.EvidenceExpiresAt) {
-		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: candidate evidence expired before mutation")
+		return application.IntegrationAdapterResult{}, fmt.Errorf(
+			"apply integration candidate: candidate evidence expired before mutation: %w",
+			application.ErrIntegrationMutationNotStarted,
+		)
 	}
 	if err := registry.runIntegrationStrategy(ctx, request, repository); err != nil {
 		conflicts, conflictErr := registry.integrationConflictPaths(ctx, request.Target.WorktreePath)
@@ -82,6 +88,11 @@ func (registry *Registry) ApplyIntegrationCandidate(
 				return application.IntegrationAdapterResult{}, ctx.Err()
 			}
 			return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: strategy failed without attributable conflicts")
+		}
+		if request.Strategy == application.IntegrationRebase {
+			if proofErr := registry.recordServerRebaseConflict(ctx, repository, request); proofErr != nil {
+				return application.IntegrationAdapterResult{}, proofErr
+			}
 		}
 		if receiptErr := registry.createIntegrationReceipt(ctx, repository, conflictedRef, request.Target.ExpectedHead); receiptErr != nil {
 			return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: conflict receipt could not be recorded")

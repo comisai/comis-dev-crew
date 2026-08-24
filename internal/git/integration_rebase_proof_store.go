@@ -1,0 +1,322 @@
+package git
+
+import (
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"github.com/comisai/comis-dev-crew/internal/application"
+)
+
+const maximumServerRebaseProofBytes = 600000
+
+func serverRebaseProofPath(
+	repository Repository,
+	request application.IntegrationAdapterRequest,
+) (string, string, error) {
+	digest := strings.TrimPrefix(integrationRebaseProofRef(request), "refs/heads/comis-integration-proof-")
+	if len(digest) != 64 || strings.ContainsAny(digest, "/\\\x00\r\n\t ") {
+		return "", "", errors.New("apply integration candidate: server rebase proof identity is invalid")
+	}
+	directory := filepath.Join(repository.WorktreeRoot, ".comis-integration-proofs")
+	return directory, filepath.Join(directory, digest), nil
+}
+
+func ensureServerRebaseProofDirectory(worktreeRoot, directory string) error {
+	info, err := os.Lstat(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.Mkdir(directory, 0o700); err != nil {
+			return errors.New("apply integration candidate: server rebase proof directory could not be created")
+		}
+		if err := syncDirectory(worktreeRoot); err != nil {
+			return err
+		}
+		info, err = os.Lstat(directory)
+	}
+	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("apply integration candidate: server rebase proof directory is invalid")
+	}
+	return nil
+}
+
+func publishInitialServerRebaseProof(directory, path string, proof serverRebaseProof) error {
+	contents := encodeServerRebaseProof(proof)
+	temporary := path + ".pending"
+	if err := stageServerRebaseProof(temporary, contents); err != nil {
+		return err
+	}
+	if existing, found, err := readServerRebaseProof(path); err != nil {
+		return err
+	} else if found {
+		if !sameServerRebaseProof(existing, proof) {
+			return errors.New("apply integration candidate: server rebase proof differs")
+		}
+		if err := discardServerRebaseProofTemporary(temporary); err != nil {
+			return err
+		}
+		return syncDirectory(directory)
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		return errors.New("apply integration candidate: server rebase proof could not be published")
+	}
+	return syncDirectory(directory)
+}
+
+func replaceServerRebaseProof(
+	directory string,
+	path string,
+	existing serverRebaseProof,
+	want serverRebaseProof,
+) error {
+	contents := encodeServerRebaseProof(want)
+	temporary := path + ".next"
+	if err := stageServerRebaseProof(temporary, contents); err != nil {
+		return err
+	}
+	current, found, err := readServerRebaseProof(path)
+	if err != nil || !found || !sameServerRebaseProof(current, existing) {
+		return errors.New("apply integration candidate: server rebase proof changed before publication")
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		return errors.New("apply integration candidate: server rebase proof could not be completed")
+	}
+	return syncDirectory(directory)
+}
+
+func stageServerRebaseProof(path string, contents []byte) error {
+	proof, found, err := readServerRebaseProof(path)
+	if err == nil && found {
+		if string(encodeServerRebaseProof(proof)) != string(contents) {
+			return errors.New("apply integration candidate: pending server rebase proof differs")
+		}
+		return nil
+	}
+	if err != nil {
+		if discardErr := discardServerRebaseProofTemporary(path); discardErr != nil {
+			return discardErr
+		}
+	}
+	return createServerRebaseProof(path, contents)
+}
+
+func discardServerRebaseProofTemporary(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		return errors.New("apply integration candidate: pending server rebase proof is invalid")
+	}
+	if err := os.Remove(path); err != nil {
+		return errors.New("apply integration candidate: pending server rebase proof could not be discarded")
+	}
+	return nil
+}
+
+func createServerRebaseProof(path string, contents []byte) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return errors.New("apply integration candidate: server rebase proof could not be created")
+	}
+	offset := 0
+	var writeErr error
+	for offset < len(contents) && writeErr == nil {
+		var written int
+		written, writeErr = file.Write(contents[offset:])
+		if written <= 0 && writeErr == nil {
+			writeErr = io.ErrShortWrite
+		}
+		offset += written
+	}
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	if writeErr != nil || offset != len(contents) || syncErr != nil || closeErr != nil {
+		_ = os.Remove(path)
+		return errors.New("apply integration candidate: server rebase proof could not be persisted")
+	}
+	return nil
+}
+
+func readServerRebaseProof(path string) (serverRebaseProof, bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return serverRebaseProof{}, false, nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 ||
+		info.Size() < 1 || info.Size() > maximumServerRebaseProofBytes {
+		return serverRebaseProof{}, false, errors.New("apply integration candidate: server rebase proof is invalid")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return serverRebaseProof{}, false, errors.New("apply integration candidate: server rebase proof is unavailable")
+	}
+	contents, readErr := io.ReadAll(io.LimitReader(file, maximumServerRebaseProofBytes+1))
+	closeErr := file.Close()
+	if readErr != nil || closeErr != nil || len(contents) > maximumServerRebaseProofBytes {
+		return serverRebaseProof{}, false, errors.New("apply integration candidate: server rebase proof is unavailable")
+	}
+	proof, err := decodeServerRebaseProof(contents)
+	if err != nil {
+		return serverRebaseProof{}, false, err
+	}
+	return proof, true, nil
+}
+
+func encodeServerRebaseProof(proof serverRebaseProof) []byte {
+	var builder strings.Builder
+	builder.WriteString("version 2\ncandidates ")
+	writeRebaseProofCommits(&builder, proof.candidateCommits)
+	builder.WriteString("resolved ")
+	writeRebaseProofCommits(&builder, proof.resolvedCommits)
+	builder.WriteString("results ")
+	writeRebaseProofCommits(&builder, proof.resultCommits)
+	builder.WriteString("result ")
+	if proof.resultingHead == "" {
+		builder.WriteByte('-')
+	} else {
+		builder.WriteString(proof.resultingHead)
+	}
+	builder.WriteByte('\n')
+	return []byte(builder.String())
+}
+
+func writeRebaseProofCommits(builder *strings.Builder, commits []string) {
+	builder.WriteString(strconv.Itoa(len(commits)))
+	builder.WriteByte('\n')
+	for _, commit := range commits {
+		builder.WriteString(commit)
+		builder.WriteByte('\n')
+	}
+}
+
+func decodeServerRebaseProof(contents []byte) (serverRebaseProof, error) {
+	if len(contents) == 0 || contents[len(contents)-1] != '\n' {
+		return serverRebaseProof{}, errors.New("apply integration candidate: server rebase proof is malformed")
+	}
+	lines := strings.Split(strings.TrimSuffix(string(contents), "\n"), "\n")
+	if len(lines) < 5 || lines[0] != "version 2" {
+		return serverRebaseProof{}, errors.New("apply integration candidate: server rebase proof is malformed")
+	}
+	position := 1
+	candidates, next, err := decodeRebaseProofCommits(lines, position, "candidates", 1, maximumRebaseProofCommits)
+	if err != nil {
+		return serverRebaseProof{}, err
+	}
+	resolved, next, err := decodeRebaseProofCommits(lines, next, "resolved", 0, len(candidates))
+	if err != nil {
+		return serverRebaseProof{}, err
+	}
+	results, next, err := decodeRebaseProofCommits(lines, next, "results", 0, len(candidates))
+	if err != nil || next != len(lines)-1 || !strings.HasPrefix(lines[next], "result ") {
+		return serverRebaseProof{}, errors.New("apply integration candidate: server rebase proof is malformed")
+	}
+	result := strings.TrimPrefix(lines[next], "result ")
+	proof := serverRebaseProof{
+		candidateCommits: candidates, resolvedCommits: resolved, resultCommits: results,
+	}
+	if result == "-" {
+		if len(results) != 0 {
+			return serverRebaseProof{}, errors.New("apply integration candidate: server rebase proof is malformed")
+		}
+		return proof, nil
+	}
+	if !gitRevisionPattern.MatchString(result) || len(results) != len(candidates) || results[len(results)-1] != result {
+		return serverRebaseProof{}, errors.New("apply integration candidate: server rebase proof is malformed")
+	}
+	proof.resultingHead = result
+	return proof, nil
+}
+
+func decodeRebaseProofCommits(
+	lines []string,
+	position int,
+	label string,
+	minimum int,
+	maximum int,
+) ([]string, int, error) {
+	if position >= len(lines) || !strings.HasPrefix(lines[position], label+" ") {
+		return nil, position, errors.New("apply integration candidate: server rebase proof is malformed")
+	}
+	count, err := strconv.Atoi(strings.TrimPrefix(lines[position], label+" "))
+	if err != nil || count < minimum || count > maximum || position+count >= len(lines) {
+		return nil, position, errors.New("apply integration candidate: server rebase proof is malformed")
+	}
+	commits := append([]string(nil), lines[position+1:position+1+count]...)
+	seen := make(map[string]struct{}, len(commits))
+	for _, commit := range commits {
+		if !gitRevisionPattern.MatchString(commit) {
+			return nil, position, errors.New("apply integration candidate: server rebase proof is malformed")
+		}
+		if _, duplicate := seen[commit]; duplicate {
+			return nil, position, errors.New("apply integration candidate: server rebase proof is malformed")
+		}
+		seen[commit] = struct{}{}
+	}
+	return commits, position + count + 1, nil
+}
+
+func sameServerRebaseProofIdentity(left, right serverRebaseProof) bool {
+	return sameRebaseCommits(left.candidateCommits, right.candidateCommits)
+}
+
+func sameServerRebaseProof(left, right serverRebaseProof) bool {
+	return sameRebaseCommits(left.candidateCommits, right.candidateCommits) &&
+		sameRebaseCommits(left.resolvedCommits, right.resolvedCommits) &&
+		sameRebaseCommits(left.resultCommits, right.resultCommits) && left.resultingHead == right.resultingHead
+}
+
+func sameRebaseCommits(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func containsRebaseCommit(commits []string, want string) bool {
+	for _, commit := range commits {
+		if commit == want {
+			return true
+		}
+	}
+	return false
+}
+
+func appendResolvedRebaseCommit(candidates, resolved []string, addition string) []string {
+	wanted := make(map[string]struct{}, len(resolved)+1)
+	for _, commit := range resolved {
+		wanted[commit] = struct{}{}
+	}
+	wanted[addition] = struct{}{}
+	ordered := make([]string, 0, len(wanted))
+	for _, candidate := range candidates {
+		if _, found := wanted[candidate]; found {
+			ordered = append(ordered, candidate)
+		}
+	}
+	return ordered
+}
+
+func validResolvedRebaseCommits(candidates, resolved []string) bool {
+	return sameRebaseCommits(appendResolvedRebaseCommit(candidates, resolved, ""), resolved)
+}
+
+func syncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return errors.New("apply integration candidate: server rebase proof directory is unavailable")
+	}
+	syncErr := directory.Sync()
+	closeErr := directory.Close()
+	if syncErr != nil || closeErr != nil {
+		return errors.New("apply integration candidate: server rebase proof directory could not be persisted")
+	}
+	return nil
+}

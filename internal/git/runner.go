@@ -67,7 +67,19 @@ func runGitBytesWithLimit(
 	executable string,
 	arguments ...string,
 ) ([]byte, error) {
-	output, exitCode, err := executeGitWithEnvironmentAndOutputLimit(ctx, executable, nil, outputLimit, arguments...)
+	return runGitBytesWithInputAndLimit(ctx, nil, outputLimit, executable, arguments...)
+}
+
+func runGitBytesWithInputAndLimit(
+	ctx context.Context,
+	input []byte,
+	outputLimit int,
+	executable string,
+	arguments ...string,
+) ([]byte, error) {
+	output, exitCode, err := executeGitWithEnvironmentInputAndOutputLimit(
+		ctx, executable, nil, input, outputLimit, arguments...,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -178,6 +190,19 @@ func executeGitWithEnvironmentAndOutputLimit(
 	outputLimit int,
 	arguments ...string,
 ) ([]byte, int, error) {
+	return executeGitWithEnvironmentInputAndOutputLimit(
+		ctx, executable, workspace, nil, outputLimit, arguments...,
+	)
+}
+
+func executeGitWithEnvironmentInputAndOutputLimit(
+	ctx context.Context,
+	executable string,
+	workspace *gitWorkspaceEnvironment,
+	input []byte,
+	outputLimit int,
+	arguments ...string,
+) ([]byte, int, error) {
 	if ctx == nil {
 		return nil, -1, errors.New("git command context is required")
 	}
@@ -200,6 +225,9 @@ func executeGitWithEnvironmentAndOutputLimit(
 		)
 	}
 	command.WaitDelay = time.Second
+	if input != nil {
+		command.Stdin = bytes.NewReader(input)
+	}
 	stdout := &boundedBuffer{limit: outputLimit}
 	stderr := &boundedBuffer{limit: maximumGitOutputBytes}
 	command.Stdout = stdout

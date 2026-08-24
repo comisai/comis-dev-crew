@@ -143,7 +143,7 @@ func TestRegistry_ReconcilesCompletedRebaseBeforeConflictReceipt(t *testing.T) {
 		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
 		"rebase", "--continue")
 	rebasedHead := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "rev-parse", "HEAD")
-	writeServerRebaseProofForTest(t, fixture, request, rebasedHead)
+	writeServerRebaseProofForTest(t, fixture, request, rebasedHead, candidateHead)
 
 	restarted := newLifecycleRegistry(t, fixture.repository)
 	dirtyPath := filepath.Join(fixture.target.CanonicalPath, "untracked.txt")
@@ -213,7 +213,7 @@ func TestRegistry_ReconcilesCompletedRecoveryBeforeRebasedReceipt(t *testing.T) 
 		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
 		"rebase", "--continue")
 	rebasedHead := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "rev-parse", "HEAD")
-	writeServerRebaseProofForTest(t, fixture, request, rebasedHead)
+	writeServerRebaseProofForTest(t, fixture, request, rebasedHead, candidateHead)
 	recovery := request
 	recovery.OperationID = "integration-rebase-completed-recovery"
 	recovery.RecoveryOperationID = request.OperationID
@@ -477,6 +477,100 @@ func TestRegistry_RefusesCleanPartialRebaseCompletion(t *testing.T) {
 	}
 }
 
+func TestRegistry_RejectsEqualCountFillerFromCompletedRebaseProof(t *testing.T) {
+	fixture := newIntegrationFixture(t)
+	firstCandidate := commitIntegrationFile(
+		t, fixture, fixture.candidate.CanonicalPath, "candidate-one.txt", "one\n",
+	)
+	candidateHead := commitIntegrationFile(
+		t, fixture, fixture.candidate.CanonicalPath, "candidate-two.txt", "two\n",
+	)
+	targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "target.txt", "target\n")
+	request := fixture.request("integration-rebase-equal-count-filler", application.IntegrationRebase, candidateHead, targetHead)
+	targetRef := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "symbolic-ref", "HEAD")
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
+		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
+		"cherry-pick", firstCandidate)
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
+		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
+		"commit", "--allow-empty", "-m", "filler")
+	fillerHead := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "rev-parse", "HEAD")
+	writeServerRebaseProofForTest(t, fixture, request, fillerHead)
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"symbolic-ref", integrationReceiptRefForTest("target", request), targetRef)
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"update-ref", integrationReceiptRefForTest("rebased", request), fillerHead)
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"update-ref", "ORIG_HEAD", candidateHead)
+
+	if _, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request); err == nil {
+		t.Fatal("ApplyIntegrationCandidate(equal-count filler) error = nil")
+	}
+	if head := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "rev-parse", "HEAD"); head != fillerHead {
+		t.Fatalf("refused filler head = %q, want unchanged %q", head, fillerHead)
+	}
+	runIntegrationGitExpectFailure(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C",
+		fixture.repository.primary, "show-ref", "--verify", "--quiet", integrationReceiptRefForTest("applied", request))
+}
+
+func TestRegistry_ReceiptOnlyReconcilesExactCompletedRebaseWithoutWritingGit(t *testing.T) {
+	fixture := newIntegrationFixture(t)
+	candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "candidate.txt", "candidate\n")
+	targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "target.txt", "target\n")
+	request := fixture.request("integration-rebase-receipt-only-complete", application.IntegrationRebase, candidateHead, targetHead)
+	applied, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
+	if err != nil {
+		t.Fatalf("ApplyIntegrationCandidate(initial rebase) error = %v", err)
+	}
+	appliedRef := integrationReceiptRefForTest("applied", request)
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"update-ref", "-d", appliedRef, applied.ResultingHead)
+	proofPath := serverRebaseProofPathForTest(fixture, request)
+	proofBefore, err := os.ReadFile(proofPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	branchBefore := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "symbolic-ref", "HEAD")
+	request.ReceiptOnly = true
+
+	reconciled, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
+	if err != nil || !reflect.DeepEqual(reconciled, applied) {
+		t.Fatalf("ApplyIntegrationCandidate(receipt-only completion) = %#v, %v", reconciled, err)
+	}
+	if branch := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "symbolic-ref", "HEAD"); branch != branchBefore {
+		t.Fatalf("receipt-only branch = %q, want unchanged %q", branch, branchBefore)
+	}
+	if proofAfter, readErr := os.ReadFile(proofPath); readErr != nil || string(proofAfter) != string(proofBefore) {
+		t.Fatalf("receipt-only proof changed: %v", readErr)
+	}
+	runIntegrationGitExpectFailure(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C",
+		fixture.repository.primary, "show-ref", "--verify", "--quiet", appliedRef)
+}
+
+func TestRegistry_RecoversIncompleteTemporaryServerRebaseProof(t *testing.T) {
+	fixture := newIntegrationFixture(t)
+	candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "candidate.txt", "candidate\n")
+	targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "target.txt", "target\n")
+	request := fixture.request("integration-rebase-proof-orphan", application.IntegrationRebase, candidateHead, targetHead)
+	proofPath := serverRebaseProofPathForTest(fixture, request)
+	if err := os.MkdirAll(filepath.Dir(proofPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(proofPath+".pending", []byte("version 2\npartial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
+	if err != nil || result.Outcome != application.IntegrationApplied {
+		t.Fatalf("ApplyIntegrationCandidate(orphan proof) = %#v, %v", result, err)
+	}
+	if _, err := os.Lstat(proofPath + ".pending"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("orphan proof remains: %v", err)
+	}
+}
+
 func TestRegistry_RebaseRecoveryRejectsUnverifiableCompletion(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -604,6 +698,7 @@ func writeServerRebaseProofForTest(
 	fixture integrationFixture,
 	request application.IntegrationAdapterRequest,
 	resultingHead string,
+	resolvedCommits ...string,
 ) {
 	t.Helper()
 	commits := strings.Fields(integrationGitOutput(
@@ -616,10 +711,31 @@ func writeServerRebaseProofForTest(
 	}
 	digest := strings.TrimPrefix(integrationRebaseProofRefForTest(request), "refs/heads/comis-integration-proof-")
 	var proof strings.Builder
-	proof.WriteString("version 1\ncommits ")
+	resultCommits := []string(nil)
+	if resultingHead != "" {
+		resultCommits = strings.Fields(integrationGitOutput(
+			t, fixture, fixture.repository.primary, "rev-list", "--reverse",
+			request.Target.ExpectedHead+".."+resultingHead,
+		))
+	}
+	proof.WriteString("version 2\ncandidates ")
 	proof.WriteString(fmt.Sprintf("%d", len(commits)))
 	proof.WriteByte('\n')
 	for _, commit := range commits {
+		proof.WriteString(commit)
+		proof.WriteByte('\n')
+	}
+	proof.WriteString("resolved ")
+	proof.WriteString(fmt.Sprintf("%d", len(resolvedCommits)))
+	proof.WriteByte('\n')
+	for _, commit := range resolvedCommits {
+		proof.WriteString(commit)
+		proof.WriteByte('\n')
+	}
+	proof.WriteString("results ")
+	proof.WriteString(fmt.Sprintf("%d", len(resultCommits)))
+	proof.WriteByte('\n')
+	for _, commit := range resultCommits {
 		proof.WriteString(commit)
 		proof.WriteByte('\n')
 	}
@@ -633,6 +749,14 @@ func writeServerRebaseProofForTest(
 	if err := os.WriteFile(filepath.Join(directory, digest), []byte(proof.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func serverRebaseProofPathForTest(
+	fixture integrationFixture,
+	request application.IntegrationAdapterRequest,
+) string {
+	digest := strings.TrimPrefix(integrationRebaseProofRefForTest(request), "refs/heads/comis-integration-proof-")
+	return filepath.Join(fixture.repository.worktreeRoot, ".comis-integration-proofs", digest)
 }
 
 func lockIntegrationReceiptForTest(t *testing.T, fixture integrationFixture, receipt string) {

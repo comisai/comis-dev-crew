@@ -80,6 +80,9 @@ func (registry *Registry) resumeRebaseIntegration(
 	if _, err := runGitBytes(ctx, registry.gitExecutable, append(configuration, "rebase", "--continue")...); err != nil {
 		conflicts, conflictErr := registry.integrationConflictPaths(ctx, request.Target.WorktreePath)
 		if conflictErr == nil && len(conflicts) != 0 {
+			if proofErr := registry.recordServerRebaseConflict(ctx, repository, request); proofErr != nil {
+				return application.IntegrationAdapterResult{}, proofErr
+			}
 			return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: rebase continuation produced unresolved conflicts")
 		}
 		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: rebase continuation failed without attributable conflicts")
