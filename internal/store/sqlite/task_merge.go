@@ -248,7 +248,7 @@ func resolveTaskMergeReservation(
 		operationID: request.OperationID, subjectDigest: request.SubjectDigest,
 		taskHandle: task.Handle, managedRunID: task.ManagedRunID, repositoryID: task.RepositoryID,
 		pullRequestID: forgeEvidence.PullRequestID, branch: forgeEvidence.Branch,
-		headRevision: forgeEvidence.HeadRevision, evidenceDigest: sealed.Digest(),
+		headRevision: forgeEvidence.HeadRevision, evidenceDigest: sealed.Digest(), evidenceExpiresAt: bundle.ExpiresAt,
 		requiredChecks: append([]string(nil), evidenceRow.requiredForgeChecks...),
 		state:          application.TaskMergeAwaitingApproval, reservedAt: request.At,
 	}, nil
@@ -265,6 +265,7 @@ func revalidateTaskMergeReservation(ctx context.Context, transaction *sql.Tx, ro
 	if current.managedRunID != row.managedRunID || current.repositoryID != row.repositoryID ||
 		current.pullRequestID != row.pullRequestID || current.branch != row.branch ||
 		current.headRevision != row.headRevision || current.evidenceDigest != row.evidenceDigest ||
+		!current.evidenceExpiresAt.Equal(row.evidenceExpiresAt) ||
 		!sameStrings(current.requiredChecks, row.requiredChecks) {
 		return fmt.Errorf("task merge evidence changed after reservation: %w", application.ErrPrecondition)
 	}

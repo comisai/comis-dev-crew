@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -674,5 +675,6 @@ func validGitHubConfig(server *httptest.Server) GitHubConfig {
 		PushCredentials: staticCredentialSource{credential: Credential{
 			Kind: CredentialPush, Secret: "push-token", Scopes: []CredentialScope{ScopeContentsWrite},
 		}},
+		Clock: func() time.Time { return time.Date(2026, time.August, 20, 12, 0, 0, 0, time.UTC) },
 	}
 }

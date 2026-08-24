@@ -20,10 +20,11 @@ CREATE TABLE task_merges (
     managed_run_id TEXT NOT NULL,
     repository_id TEXT NOT NULL,
     pull_request_id TEXT NOT NULL,
-    branch TEXT NOT NULL,
-    head_revision TEXT NOT NULL,
-    evidence_digest TEXT NOT NULL,
-    required_checks_json TEXT NOT NULL,
+	branch TEXT NOT NULL,
+	head_revision TEXT NOT NULL,
+	evidence_digest TEXT NOT NULL,
+	evidence_expires_at TEXT NOT NULL,
+	required_checks_json TEXT NOT NULL,
     state TEXT NOT NULL,
     approval_request_id TEXT NOT NULL,
     mcp_operation_id TEXT NOT NULL,
@@ -56,6 +57,7 @@ type taskMergeRow struct {
 	branch               string
 	headRevision         string
 	evidenceDigest       string
+	evidenceExpiresAt    time.Time
 	requiredChecks       []string
 	state                application.TaskMergeState
 	approvalRequestID    string
@@ -78,15 +80,15 @@ func insertTaskMerge(ctx context.Context, target execer, row taskMergeRow) error
 		return errors.New("insert task merge: required checks cannot be encoded")
 	}
 	const statement = `INSERT INTO task_merges (
-        operation_id, subject_digest, task_handle, managed_run_id, repository_id,
-        pull_request_id, branch, head_revision, evidence_digest, required_checks_json,
-        state, approval_request_id, mcp_operation_id, resolving_principal_id,
-        operation_fingerprint, approved_at, expires_at, consumed_at,
-        merge_commit_revision, merge_method, reserved_at, completed_at, state_version
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', '', '', '', '', '', '', '', ?, '', ?)`
+	        operation_id, subject_digest, task_handle, managed_run_id, repository_id,
+	        pull_request_id, branch, head_revision, evidence_digest, evidence_expires_at, required_checks_json,
+	        state, approval_request_id, mcp_operation_id, resolving_principal_id,
+	        operation_fingerprint, approved_at, expires_at, consumed_at,
+	        merge_commit_revision, merge_method, reserved_at, completed_at, state_version
+	    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', '', '', '', '', '', '', '', ?, '', ?)`
 	_, err = target.ExecContext(ctx, statement,
 		row.operationID, row.subjectDigest, row.taskHandle, row.managedRunID, row.repositoryID,
-		row.pullRequestID, row.branch, row.headRevision, row.evidenceDigest, string(checks),
+		row.pullRequestID, row.branch, row.headRevision, row.evidenceDigest, formatTime(row.evidenceExpiresAt), string(checks),
 		row.state, formatTime(row.reservedAt), row.stateVersion,
 	)
 	if isConstraintError(err) {
@@ -142,8 +144,8 @@ func updateTaskMergeOperation(
 
 func findTaskMerge(ctx context.Context, source queryer, operationID string) (taskMergeRow, bool, error) {
 	const query = `SELECT
-        operation_id, subject_digest, task_handle, managed_run_id, repository_id,
-        pull_request_id, branch, head_revision, evidence_digest, required_checks_json,
+	        operation_id, subject_digest, task_handle, managed_run_id, repository_id,
+	        pull_request_id, branch, head_revision, evidence_digest, evidence_expires_at, required_checks_json,
         state, approval_request_id, mcp_operation_id, resolving_principal_id,
         operation_fingerprint, approved_at, expires_at, consumed_at,
         merge_commit_revision, merge_method, reserved_at, completed_at, state_version
@@ -160,10 +162,10 @@ func findTaskMerge(ctx context.Context, source queryer, operationID string) (tas
 
 func scanTaskMerge(source rowScanner) (taskMergeRow, error) {
 	var row taskMergeRow
-	var requiredChecks, approvedAt, expiresAt, consumedAt, reservedAt, completedAt string
+	var requiredChecks, evidenceExpiresAt, approvedAt, expiresAt, consumedAt, reservedAt, completedAt string
 	if err := source.Scan(
 		&row.operationID, &row.subjectDigest, &row.taskHandle, &row.managedRunID, &row.repositoryID,
-		&row.pullRequestID, &row.branch, &row.headRevision, &row.evidenceDigest, &requiredChecks,
+		&row.pullRequestID, &row.branch, &row.headRevision, &row.evidenceDigest, &evidenceExpiresAt, &requiredChecks,
 		&row.state, &row.approvalRequestID, &row.mcpOperationID, &row.resolvingPrincipalID,
 		&row.operationFingerprint, &approvedAt, &expiresAt, &consumedAt,
 		&row.mergeCommitRevision, &row.mergeMethod, &reservedAt, &completedAt, &row.stateVersion,
@@ -177,6 +179,10 @@ func scanTaskMerge(source rowScanner) (taskMergeRow, error) {
 	row.reservedAt, err = parseTime(reservedAt)
 	if err != nil {
 		return taskMergeRow{}, errors.New("stored task merge reservation time is invalid")
+	}
+	row.evidenceExpiresAt, err = parseTime(evidenceExpiresAt)
+	if err != nil {
+		return taskMergeRow{}, errors.New("stored task merge evidence expiry is invalid")
 	}
 	if row.approvedAt, err = parseOptionalTaskMergeTime(approvedAt); err != nil {
 		return taskMergeRow{}, err
@@ -225,8 +231,9 @@ func taskMergeRecord(row taskMergeRow) application.TaskMergeRecord {
 		OperationID: row.operationID, SubjectDigest: row.subjectDigest,
 		TaskHandle: row.taskHandle, ManagedRunID: row.managedRunID, RepositoryID: row.repositoryID,
 		PullRequestID: row.pullRequestID, Branch: row.branch, HeadRevision: row.headRevision,
-		EvidenceDigest: row.evidenceDigest, RequiredChecks: append([]string(nil), row.requiredChecks...),
-		State: row.state, Approval: domain.MergeApproval{
+		EvidenceDigest: row.evidenceDigest, EvidenceExpiresAt: row.evidenceExpiresAt,
+		RequiredChecks: append([]string(nil), row.requiredChecks...),
+		State:          row.state, Approval: domain.MergeApproval{
 			TaskHandle: row.taskHandle, ApprovalID: row.approvalRequestID,
 			ManagedRunID: row.managedRunID, MCPOperationID: row.mcpOperationID,
 			ResolvingPrincipal: row.resolvingPrincipalID, OperationFingerprint: row.operationFingerprint,

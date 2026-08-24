@@ -68,13 +68,14 @@ const (
 // PullRequestMergeRequest carries only store-resolved, approval-bound forge
 // identity, including the immutable intended merge method.
 type PullRequestMergeRequest struct {
-	OperationID    string
-	RepositoryID   string
-	PullRequestID  string
-	Branch         string
-	HeadRevision   string
-	Method         PullRequestMergeMethod
-	RequiredChecks []string
+	OperationID        string
+	RepositoryID       string
+	PullRequestID      string
+	Branch             string
+	HeadRevision       string
+	Method             PullRequestMergeMethod
+	RequiredChecks     []string
+	AuthorityExpiresAt time.Time
 }
 
 // PullRequestMergeReceipt is exact post-mutation forge truth.
@@ -129,6 +130,7 @@ type TaskMergeRecord struct {
 	Branch              string
 	HeadRevision        string
 	EvidenceDigest      string
+	EvidenceExpiresAt   time.Time
 	RequiredChecks      []string
 	State               TaskMergeState
 	Approval            domain.MergeApproval
@@ -377,6 +379,7 @@ func taskMergeForgeRequest(record TaskMergeRecord) PullRequestMergeRequest {
 		OperationID: record.OperationID, RepositoryID: record.RepositoryID,
 		PullRequestID: record.PullRequestID, Branch: record.Branch, HeadRevision: record.HeadRevision,
 		Method: record.Method, RequiredChecks: append([]string(nil), record.RequiredChecks...),
+		AuthorityExpiresAt: earliestTime(record.EvidenceExpiresAt, record.Approval.ExpiresAt),
 	}
 }
 
@@ -384,7 +387,7 @@ func sameTaskMergeForgeRequest(left, right PullRequestMergeRequest) bool {
 	return left.OperationID == right.OperationID && left.RepositoryID == right.RepositoryID &&
 		left.PullRequestID == right.PullRequestID && left.Branch == right.Branch &&
 		left.HeadRevision == right.HeadRevision && left.Method == right.Method &&
-		slices.Equal(left.RequiredChecks, right.RequiredChecks)
+		left.AuthorityExpiresAt.Equal(right.AuthorityExpiresAt) && slices.Equal(left.RequiredChecks, right.RequiredChecks)
 }
 
 func validateTaskMergeRecord(record TaskMergeRecord, operationID, taskHandle, subjectDigest string) error {
@@ -394,7 +397,9 @@ func validateTaskMergeRecord(record TaskMergeRecord, operationID, taskHandle, su
 		domain.ValidateAuthorityReference("pullRequestId", record.PullRequestID) != nil ||
 		record.Branch == "" || len([]byte(record.Branch)) > 256 || strings.ContainsAny(record.Branch, "\x00\r\n\t ") ||
 		domain.ValidateGitRevision(record.HeadRevision) != nil ||
-		domain.ValidateBriefRevisionHash(record.EvidenceDigest) != nil || len(record.RequiredChecks) == 0 ||
+		domain.ValidateBriefRevisionHash(record.EvidenceDigest) != nil || record.EvidenceExpiresAt.IsZero() ||
+		record.EvidenceExpiresAt.Location() != time.UTC || !record.EvidenceExpiresAt.After(record.ReservedAt) ||
+		len(record.RequiredChecks) == 0 ||
 		record.ReservedAt.IsZero() || record.ReservedAt.Location() != time.UTC || record.StateVersion < 1 {
 		return errors.New("merge task: durable reservation is invalid")
 	}
@@ -429,6 +434,13 @@ func validateTaskMergeRecord(record TaskMergeRecord, operationID, taskHandle, su
 		return errors.New("merge task: durable state is invalid")
 	}
 	return nil
+}
+
+func earliestTime(left, right time.Time) time.Time {
+	if left.Before(right) {
+		return left
+	}
+	return right
 }
 
 func validateStoredMergeApproval(record TaskMergeRecord) error {

@@ -159,6 +159,7 @@ func TestTaskMergeStoreRejectsOperationCollisionAndCorruptDurableRows(t *testing
 		{name: "checks syntax", statement: `UPDATE task_merges SET required_checks_json = '{'`},
 		{name: "checks empty", statement: `UPDATE task_merges SET required_checks_json = '[]'`},
 		{name: "reservation time", statement: `UPDATE task_merges SET reserved_at = 'invalid'`},
+		{name: "evidence expiry", statement: `UPDATE task_merges SET evidence_expires_at = 'invalid'`},
 		{name: "approval time", statement: `UPDATE task_merges SET approved_at = 'invalid'`},
 		{name: "expiry time", statement: `UPDATE task_merges SET expires_at = 'invalid'`},
 		{name: "consumed time", statement: `UPDATE task_merges SET consumed_at = 'invalid'`},

@@ -4,6 +4,7 @@ package forge
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
@@ -103,12 +104,13 @@ const (
 // PullRequestMergeRequest binds one merge to the already-approved exact forge
 // identity and every required check observed in its evidence bundle.
 type PullRequestMergeRequest struct {
-	OperationID    string
-	Branch         string
-	HeadRevision   string
-	PullRequestID  string
-	Method         MergeMethod
-	RequiredChecks []string
+	OperationID        string
+	Branch             string
+	HeadRevision       string
+	PullRequestID      string
+	Method             MergeMethod
+	RequiredChecks     []string
+	AuthorityExpiresAt time.Time
 }
 
 // PullRequestMergeReceipt is post-mutation forge truth, not the API call's

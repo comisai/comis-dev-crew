@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 )
@@ -70,6 +71,7 @@ func TestGitHubAdapter_MergesOnlyAfterFreshProtectedTruth(t *testing.T) {
 	receipt, err := adapter.MergePullRequest(context.Background(), PullRequestMergeRequest{
 		OperationID: "merge-task-0001", Branch: "devcrew/task-merge", HeadRevision: head,
 		PullRequestID: "github-pr-31", Method: MergeSquash, RequiredChecks: []string{"ci/unit"},
+		AuthorityExpiresAt: time.Date(2026, time.August, 20, 12, 5, 0, 0, time.UTC),
 	})
 	if err != nil {
 		t.Fatalf("MergePullRequest() error = %v", err)
@@ -96,6 +98,130 @@ func TestGitHubAdapter_MergesOnlyAfterFreshProtectedTruth(t *testing.T) {
 	}
 	if !reflect.DeepEqual(requests, wantRequests) {
 		t.Fatalf("GitHub requests = %#v, want %#v", requests, wantRequests)
+	}
+}
+
+func TestGitHubAdapter_RefusesMutationAfterAuthorityExpiresDuringPreflight(t *testing.T) {
+	head := strings.Repeat("3", 40)
+	now := time.Date(2026, time.August, 20, 12, 0, 0, 0, time.UTC)
+	expiresAt := now.Add(time.Minute)
+	var mu sync.Mutex
+	expired, mergeCalls := false, 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.Method + " " + request.URL.Path {
+		case "GET /repos/comisai/fixture/pulls/31":
+			_, _ = response.Write([]byte(`{"number":31,"state":"open","merged":false,"merge_commit_sha":null,"html_url":"https://example.com/pull/31","head":{"sha":"` + head + `","ref":"devcrew/task-merge"},"base":{"ref":"main"}}`))
+		case "GET /repos/comisai/fixture/commits/" + head + "/check-runs":
+			_, _ = response.Write([]byte(`{"total_count":1,"check_runs":[{"id":31,"name":"ci/unit","status":"completed","conclusion":"success","started_at":"2026-08-20T10:00:00Z"}]}`))
+		case "GET /repos/comisai/fixture/branches/main/protection":
+			mu.Lock()
+			expired = true
+			mu.Unlock()
+			_, _ = response.Write([]byte(`{"required_status_checks":{"strict":true,"contexts":["ci/unit"]},"enforce_admins":{"enabled":true}}`))
+		case "PUT /repos/comisai/fixture/pulls/31/merge":
+			mu.Lock()
+			mergeCalls++
+			mu.Unlock()
+			http.Error(response, "unexpected mutation", http.StatusInternalServerError)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	configuration := validGitHubConfig(server)
+	configuration.MergeCredentials = staticCredentialSource{credential: Credential{
+		Kind: CredentialMerge, Secret: "merge-token", Scopes: []CredentialScope{ScopePullRequestsWrite},
+	}}
+	configuration.MergeMethod = MergeSquash
+	configuration.Clock = func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		if expired {
+			return expiresAt
+		}
+		return now
+	}
+	adapter, err := NewGitHubAdapter(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = adapter.MergePullRequest(context.Background(), PullRequestMergeRequest{
+		OperationID: "merge-task-0001", Branch: "devcrew/task-merge", HeadRevision: head,
+		PullRequestID: "github-pr-31", Method: MergeSquash, RequiredChecks: []string{"ci/unit"},
+		AuthorityExpiresAt: expiresAt,
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if err == nil || mergeCalls != 0 {
+		t.Fatalf("MergePullRequest(expired during preflight) calls=%d, error=%v", mergeCalls, err)
+	}
+}
+
+func TestGitHubAdapter_RejectsDuplicateMergeAuthorityResponses(t *testing.T) {
+	head := strings.Repeat("4", 40)
+	mergeCommit := strings.Repeat("5", 40)
+	validPull := `{"number":31,"state":"open","merged":false,"merge_commit_sha":null,"html_url":"https://example.com/pull/31","head":{"sha":"` + head + `","ref":"devcrew/task-merge"},"base":{"ref":"main"}}`
+	validProtection := `{"required_status_checks":{"strict":true,"contexts":["ci/unit"]},"enforce_admins":{"enabled":true}}`
+	validResponse := `{"sha":"` + mergeCommit + `","merged":true,"message":"merged"}`
+	for _, test := range []struct {
+		name, pull, protection, response string
+		wantMergeCalls                   int
+	}{
+		{name: "pull", pull: strings.Replace(validPull, `"merged":false`, `"merged":true,"merged":false`, 1), protection: validProtection, response: validResponse},
+		{name: "protection", pull: validPull, protection: strings.Replace(validProtection, `"strict":true`, `"strict":false,"strict":true`, 1), response: validResponse},
+		{name: "merge response", pull: validPull, protection: validProtection, response: `{"sha":"` + head + `","sha":"` + mergeCommit + `","merged":false,"merged":true,"message":"merged"}`, wantMergeCalls: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var mu sync.Mutex
+			merged, mergeCalls := false, 0
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				response.Header().Set("Content-Type", "application/json")
+				switch request.Method + " " + request.URL.Path {
+				case "GET /repos/comisai/fixture/pulls/31":
+					mu.Lock()
+					isMerged := merged
+					mu.Unlock()
+					if isMerged {
+						_, _ = response.Write([]byte(`{"number":31,"state":"closed","merged":true,"merge_commit_sha":"` + mergeCommit + `","html_url":"https://example.com/pull/31","head":{"sha":"` + head + `","ref":"devcrew/task-merge"},"base":{"ref":"main"}}`))
+					} else {
+						_, _ = response.Write([]byte(test.pull))
+					}
+				case "GET /repos/comisai/fixture/commits/" + head + "/check-runs":
+					_, _ = response.Write([]byte(`{"total_count":1,"check_runs":[{"id":31,"name":"ci/unit","status":"completed","conclusion":"success","started_at":"2026-08-20T10:00:00Z"}]}`))
+				case "GET /repos/comisai/fixture/branches/main/protection":
+					_, _ = response.Write([]byte(test.protection))
+				case "PUT /repos/comisai/fixture/pulls/31/merge":
+					mu.Lock()
+					mergeCalls++
+					merged = true
+					mu.Unlock()
+					_, _ = response.Write([]byte(test.response))
+				default:
+					http.NotFound(response, request)
+				}
+			}))
+			t.Cleanup(server.Close)
+			configuration := validGitHubConfig(server)
+			configuration.MergeCredentials = staticCredentialSource{credential: Credential{
+				Kind: CredentialMerge, Secret: "merge-token", Scopes: []CredentialScope{ScopePullRequestsWrite},
+			}}
+			configuration.MergeMethod = MergeSquash
+			adapter, err := NewGitHubAdapter(configuration)
+			if err != nil {
+				t.Fatal(err)
+			}
+			receipt, err := adapter.MergePullRequest(context.Background(), PullRequestMergeRequest{
+				OperationID: "merge-task-0001", Branch: "devcrew/task-merge", HeadRevision: head,
+				PullRequestID: "github-pr-31", Method: MergeSquash, RequiredChecks: []string{"ci/unit"},
+				AuthorityExpiresAt: time.Date(2026, time.August, 20, 12, 5, 0, 0, time.UTC),
+			})
+			mu.Lock()
+			defer mu.Unlock()
+			if err == nil || receipt != (PullRequestMergeReceipt{}) || mergeCalls != test.wantMergeCalls {
+				t.Fatalf("MergePullRequest(duplicate %s) = %#v, calls=%d, error=%v", test.name, receipt, mergeCalls, err)
+			}
+		})
 	}
 }
 
@@ -139,6 +265,7 @@ func TestGitHubAdapter_RefusesChangedOrUnprotectedMergeBeforeCredentialResolutio
 			_, err = adapter.MergePullRequest(context.Background(), PullRequestMergeRequest{
 				OperationID: "merge-task-0001", Branch: "devcrew/task-merge", HeadRevision: approvedHead,
 				PullRequestID: "github-pr-31", Method: MergeSquash, RequiredChecks: []string{"ci/unit"},
+				AuthorityExpiresAt: time.Date(2026, time.August, 20, 12, 5, 0, 0, time.UTC),
 			})
 			if err == nil || errors.Is(err, ErrPullRequestTruthUnavailable) {
 				t.Fatalf("MergePullRequest() error = %v, want permanent refusal", err)
@@ -176,6 +303,7 @@ func TestGitHubAdapter_PreservesAlreadyMergedMethodAsUnknownWithoutMutation(t *t
 	receipt, err := adapter.MergePullRequest(context.Background(), PullRequestMergeRequest{
 		OperationID: "merge-task-0001", Branch: "devcrew/task-merge", HeadRevision: head,
 		PullRequestID: "github-pr-31", Method: MergeRebase, RequiredChecks: []string{"ci/unit"},
+		AuthorityExpiresAt: time.Date(2026, time.August, 20, 12, 5, 0, 0, time.UTC),
 	})
 	if !errors.Is(err, ErrPullRequestMergeOutcomeUnknown) || receipt != (PullRequestMergeReceipt{}) || mergeCalls != 0 {
 		t.Fatalf("MergePullRequest(already merged) = %#v, calls=%d, error=%v", receipt, mergeCalls, err)
@@ -227,6 +355,7 @@ func TestGitHubAdapter_PreservesUncertainMutationMethodAsUnknown(t *testing.T) {
 	receipt, err := adapter.MergePullRequest(context.Background(), PullRequestMergeRequest{
 		OperationID: "merge-task-0001", Branch: "devcrew/task-merge", HeadRevision: head,
 		PullRequestID: "github-pr-31", Method: MergeSquash, RequiredChecks: []string{"ci/unit"},
+		AuthorityExpiresAt: time.Date(2026, time.August, 20, 12, 5, 0, 0, time.UTC),
 	})
 	if !errors.Is(err, ErrPullRequestMergeOutcomeUnknown) || receipt != (PullRequestMergeReceipt{}) ||
 		mergeCalls != 1 || !reflect.DeepEqual(events, []string{"merge-credential-resolved"}) {
@@ -257,7 +386,8 @@ func TestGitHubAdapter_PreservesUnknownMergedMethodAcrossApplicationPort(t *test
 	request := application.PullRequestMergeRequest{
 		OperationID: "merge-task-0001", RepositoryID: "fixture-repository", PullRequestID: "github-pr-31",
 		Branch: "devcrew/task-merge", HeadRevision: head, Method: application.PullRequestMergeRebase,
-		RequiredChecks: []string{"ci/unit"},
+		RequiredChecks:     []string{"ci/unit"},
+		AuthorityExpiresAt: time.Date(2026, time.August, 20, 12, 5, 0, 0, time.UTC),
 	}
 	reconciled, found, err := port.ReconcileApprovedPullRequest(context.Background(), request)
 	if !errors.Is(err, ErrPullRequestMergeOutcomeUnknown) || found ||
@@ -297,6 +427,7 @@ func TestGitHubAdapter_DoesNotInventConfiguredMethodDuringReconciliation(t *test
 	_, found, err := adapter.ReconcileApprovedPullRequest(context.Background(), application.PullRequestMergeRequest{
 		OperationID: "merge-task-0001", RepositoryID: "fixture-repository", PullRequestID: "github-pr-31",
 		Branch: "devcrew/task-merge", HeadRevision: head, RequiredChecks: []string{"ci/unit"},
+		AuthorityExpiresAt: time.Date(2026, time.August, 20, 12, 5, 0, 0, time.UTC),
 	})
 	if err == nil || found {
 		t.Fatalf("ReconcileApprovedPullRequest(without intended method) found=%t, error=%v", found, err)

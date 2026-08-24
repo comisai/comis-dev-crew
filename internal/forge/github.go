@@ -45,6 +45,7 @@ type GitHubConfig struct {
 	PushCredentials    CredentialSource
 	MergeCredentials   CredentialSource
 	MergeMethod        MergeMethod
+	Clock              func() time.Time
 }
 
 // GitHubAdapter owns the bounded idempotent push, pull-request, and check flow.
@@ -66,7 +67,7 @@ func NewGitHubAdapter(config GitHubConfig) (*GitHubAdapter, error) {
 		return nil, errors.New("create GitHub adapter: repository and dependencies are required")
 	}
 	if (config.MergeCredentials == nil) != (config.MergeMethod == "") ||
-		(config.MergeMethod != "" && !validMergeMethod(config.MergeMethod)) {
+		(config.MergeMethod != "" && (!validMergeMethod(config.MergeMethod) || config.Clock == nil)) {
 		return nil, errors.New("create GitHub adapter: merge authority and method must be configured together")
 	}
 	return &GitHubAdapter{config: config, base: base}, nil
@@ -447,6 +448,9 @@ func (adapter *GitHubAdapter) requestJSON(
 	}
 	if destination == nil {
 		return nil
+	}
+	if err := rejectDuplicateJSONKeys(contents); err != nil {
+		return errGitHubResponseMalformed
 	}
 	decoder := json.NewDecoder(bytes.NewReader(contents))
 	if err := decoder.Decode(destination); err != nil {

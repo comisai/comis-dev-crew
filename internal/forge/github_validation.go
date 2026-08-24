@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func validatePullRequestRequest(request PullRequestRequest) error {
@@ -23,6 +24,7 @@ func validatePullRequestMergeRequest(request PullRequestMergeRequest) error {
 	if !operationIDPattern.MatchString(request.OperationID) || !branchPattern.MatchString(request.Branch) ||
 		strings.Contains(request.Branch, "..") || !revisionPattern.MatchString(request.HeadRevision) ||
 		!pullRequestPattern.MatchString(request.PullRequestID) || !validMergeMethod(request.Method) ||
+		request.AuthorityExpiresAt.IsZero() || request.AuthorityExpiresAt.Location() != time.UTC ||
 		validateRequiredChecks(request.RequiredChecks) != nil {
 		return errors.New("merge GitHub pull request: request is invalid")
 	}

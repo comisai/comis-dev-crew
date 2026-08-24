@@ -29,6 +29,9 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	if !configured {
 		return config, nil
 	}
+	if config.Clock == nil {
+		config.Clock = func() time.Time { return time.Now().UTC() }
+	}
 	if config.RepositoryComposition == nil || config.ComisComposition == nil || config.CodexComposition == nil ||
 		config.ValidationComposition == nil || config.ForgeComposition == nil ||
 		config.MCPSocketPath == "" || config.RuntimeRoot == "" || config.ServiceInstanceID == "" ||
@@ -227,7 +230,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 			path: forgeConfig.PushCredentialFile, kind: forge.CredentialPush,
 			scopes: []forge.CredentialScope{forge.ScopeContentsWrite},
 		},
-		MergeCredentials: mergeCredentials, MergeMethod: forgeConfig.MergeMethod,
+		MergeCredentials: mergeCredentials, MergeMethod: forgeConfig.MergeMethod, Clock: config.Clock,
 	})
 	if err != nil {
 		return Config{}, fmt.Errorf("run service GitHub composition: %w", err)

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
@@ -68,6 +69,11 @@ func (adapter *GitHubAdapter) MergePullRequest(
 	}
 	if mergeCredential.Secret == readCredential.Secret {
 		return PullRequestMergeReceipt{}, errors.New("merge GitHub pull request: read and merge identities must differ")
+	}
+	mutationAt := adapter.config.Clock()
+	if mutationAt.IsZero() || mutationAt.Location() != time.UTC ||
+		!mutationAt.Before(request.AuthorityExpiresAt) {
+		return PullRequestMergeReceipt{}, errors.New("merge GitHub pull request: merge authority expired before mutation")
 	}
 	body := struct {
 		SHA         string      `json:"sha"`

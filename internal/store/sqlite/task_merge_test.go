@@ -21,7 +21,8 @@ func TestTaskMergeStorePersistsApprovalIntentAndExactCompletionAcrossRestarts(t 
 	pending, err := store.BeginTaskMerge(ctx, reservation)
 	if err != nil || pending.State != application.TaskMergeAwaitingApproval ||
 		pending.ManagedRunID != approval.Approval.ManagedRunID || pending.Branch != "devcrew/task-evidence" ||
-		pending.HeadRevision != completion.Receipt.HeadRevision || pending.StateVersion < 1 {
+		pending.HeadRevision != completion.Receipt.HeadRevision || !pending.EvidenceExpiresAt.After(pending.ReservedAt) ||
+		pending.StateVersion < 1 {
 		t.Fatalf("BeginTaskMerge() = %#v, %v", pending, err)
 	}
 	accepted, err := store.GetOperation(ctx, reservation.OperationID)

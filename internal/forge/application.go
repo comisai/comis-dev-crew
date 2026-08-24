@@ -55,7 +55,7 @@ func (adapter *GitHubAdapter) ReconcileApprovedPullRequest(
 	forgeRequest := PullRequestMergeRequest{
 		OperationID: request.OperationID, PullRequestID: request.PullRequestID,
 		Branch: request.Branch, HeadRevision: request.HeadRevision, Method: intendedMethod,
-		RequiredChecks: append([]string(nil), request.RequiredChecks...),
+		RequiredChecks: append([]string(nil), request.RequiredChecks...), AuthorityExpiresAt: request.AuthorityExpiresAt,
 	}
 	if err := validatePullRequestMergeRequest(forgeRequest); err != nil {
 		return application.PullRequestMergeReceipt{}, false, err
@@ -102,7 +102,7 @@ func (adapter *GitHubAdapter) MergeApprovedPullRequest(
 	receipt, err := adapter.MergePullRequest(ctx, PullRequestMergeRequest{
 		OperationID: request.OperationID, PullRequestID: request.PullRequestID,
 		Branch: request.Branch, HeadRevision: request.HeadRevision, Method: intendedMethod,
-		RequiredChecks: append([]string(nil), request.RequiredChecks...),
+		RequiredChecks: append([]string(nil), request.RequiredChecks...), AuthorityExpiresAt: request.AuthorityExpiresAt,
 	})
 	if err != nil {
 		return application.PullRequestMergeReceipt{}, err

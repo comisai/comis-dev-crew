@@ -176,6 +176,7 @@ func TestTaskMergeRecordValidationRejectsEveryAuthorityShapeMismatch(t *testing.
 		{name: "branch", mutate: func(record *TaskMergeRecord) { record.Branch = "bad branch" }},
 		{name: "head", mutate: func(record *TaskMergeRecord) { record.HeadRevision = "bad" }},
 		{name: "evidence", mutate: func(record *TaskMergeRecord) { record.EvidenceDigest = "bad" }},
+		{name: "evidence expiry", mutate: func(record *TaskMergeRecord) { record.EvidenceExpiresAt = time.Time{} }},
 		{name: "checks missing", mutate: func(record *TaskMergeRecord) { record.RequiredChecks = nil }},
 		{name: "check blank", mutate: func(record *TaskMergeRecord) { record.RequiredChecks = []string{""} }},
 		{name: "check duplicate", mutate: func(record *TaskMergeRecord) { record.RequiredChecks = []string{"ci", "ci"} }},

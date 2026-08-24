@@ -242,6 +242,31 @@ func TestMergeCoordinator_RevalidatesEvidenceAfterOpenOutcomeReconciliation(t *t
 	}
 }
 
+func TestMergeCoordinator_CarriesEarliestAuthorityDeadlineToForge(t *testing.T) {
+	now := time.Date(2026, time.August, 20, 12, 0, 0, 0, time.UTC)
+	store := mergeStoreFixture()
+	approval := mergeApprovalReceipt(now)
+	store.record.State = TaskMergeExecutionAuthorized
+	store.record.Approval = approval.domain(store.record.TaskHandle, store.record.HeadRevision, true)
+	store.record.Method = PullRequestMergeSquash
+	store.record.EvidenceExpiresAt = now.Add(time.Minute)
+	forge := &mergeForge{err: errors.New("stop after observing authority")}
+	coordinator, err := NewMergeCoordinator(MergeCoordinatorConfig{
+		Store: store, Approvals: &mergeApprovalConsumer{}, Forge: forge,
+		MergeMethod: PullRequestMergeSquash, Clock: func() time.Time { return now }, OperatorEnabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = coordinator.MergeTask(context.Background(), MergeTaskCommand{
+		OperationID: store.record.OperationID, TaskHandle: store.record.TaskHandle,
+		ApprovalRequestID: approval.ApprovalRequestID, MCPOperationID: approval.MCPOperationID,
+	})
+	if err == nil || forge.calls != 1 || !forge.request.AuthorityExpiresAt.Equal(store.record.EvidenceExpiresAt) {
+		t.Fatalf("MergeTask(deadline) error=%v, forge=%#v", err, forge)
+	}
+}
+
 func TestMergeCoordinator_RejectsAlteredAuthorizedApprovalBeforeForge(t *testing.T) {
 	now := time.Date(2026, time.August, 20, 12, 0, 0, 0, time.UTC)
 	for _, test := range []struct {
@@ -294,7 +319,8 @@ func mergeStoreFixture() *mergeStore {
 		OperationID: "merge-operation-0001", SubjectDigest: strings.Repeat("1", 64),
 		TaskHandle: "task-merge", ManagedRunID: "managed-run-merge", RepositoryID: "repository-merge",
 		PullRequestID: "github-pr-31", Branch: "devcrew/task-merge", HeadRevision: strings.Repeat("a", 40),
-		EvidenceDigest: strings.Repeat("b", 64), RequiredChecks: []string{"ci/unit"},
+		EvidenceDigest:    strings.Repeat("b", 64),
+		EvidenceExpiresAt: time.Date(2026, time.August, 20, 13, 0, 0, 0, time.UTC), RequiredChecks: []string{"ci/unit"},
 		State: TaskMergeAwaitingApproval, ReservedAt: time.Date(2026, time.August, 20, 11, 0, 0, 0, time.UTC),
 		StateVersion: 1,
 	}}
