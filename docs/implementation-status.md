@@ -612,7 +612,9 @@ member carries one closed reason: `dependency_blocked`, `resource_queued`,
 `contract_stale`, or `integration_held`. Contract consumers must still pin a
 handle listed by the initiative as current, integration waits for exact candidate
 states, and a failed predecessor blocks only its dependent descendants. The same
-decision derives the initiative aggregate state without treating a missing or
+decision loads only bounded artifact metadata; artifact bodies remain on the
+task-scoped, digest-verifying read path and are never scanned fleet-wide. It
+derives the initiative aggregate state without treating a missing or
 reconciling member as healthy. Aggregate derivation treats a dependency-ready
 member as progress before capacity allocation, so one completed component cannot
 trap an unstarted independent sibling behind the integration owner's expected

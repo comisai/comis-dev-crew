@@ -61,3 +61,34 @@ func TestInitiativeLaunchAuthorizationDoesNotReadHistoricalArtifactBodies(t *tes
 		t.Fatalf("authorizeInitiativeTaskStart(with corrupt historical body) error = %v", err)
 	}
 }
+
+func TestInitiativeLaunchAuthorizationStillRejectsInvalidArtifactMetadata(t *testing.T) {
+	ctx := context.Background()
+	store, _, activation := preparedInitiativeActivationStore(t)
+	active := commitActiveInitiativeForTest(t, ctx, store, activation)
+	historical := preparedContractArtifact(
+		active.Initiative, "artifact-invalid-metadata", activation.Members[0].ExternalRunRef,
+		domain.ArtifactAPISchema, "application/json", []byte(`{"version":1}`),
+	)
+	if err := insertInitiativeContractArtifact(ctx, store.db, historical); err != nil {
+		t.Fatalf("insert historical contract artifact: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE initiative_contract_artifacts
+		SET content_hash = 'invalid' WHERE initiative_handle = ? AND artifact_handle = ?`,
+		active.Initiative.Handle, historical.Artifact.ArtifactHandle,
+	); err != nil {
+		t.Fatalf("corrupt artifact metadata: %v", err)
+	}
+	task, err := store.GetTask(ctx, activation.Members[0].ExternalRunRef)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx() error = %v", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	if err := authorizeInitiativeTaskStart(ctx, transaction, task, initiativeTestSchedulingLimits(2)); err == nil {
+		t.Fatal("authorizeInitiativeTaskStart(with invalid artifact metadata) error = nil")
+	}
+}

@@ -94,6 +94,48 @@ func listInitiativeContractArtifacts(
 	return artifacts, nil
 }
 
+// listInitiativeContractArtifactMetadata returns the bounded records required
+// for fleet scheduling without materializing artifact bodies. Content is
+// verified only by task-scoped artifact reads and projections that return it.
+func listInitiativeContractArtifactMetadata(
+	ctx context.Context,
+	source queryer,
+	initiativeHandle string,
+) ([]domain.ComponentContractArtifact, error) {
+	const query = `SELECT artifact_handle, initiative_handle, producer_task_handle,
+        kind, content_hash, source_revision, media_type, size, produced_at,
+        supersedes_artifact_handle
+        FROM initiative_contract_artifacts
+        WHERE (? = '' OR initiative_handle = ?)
+        ORDER BY initiative_handle, artifact_handle`
+	rows, err := source.QueryContext(ctx, query, initiativeHandle, initiativeHandle)
+	if err != nil {
+		return nil, fmt.Errorf("list initiative contract artifact metadata: %w", err)
+	}
+	defer rows.Close()
+	artifacts := make([]domain.ComponentContractArtifact, 0)
+	for rows.Next() {
+		var artifact domain.ComponentContractArtifact
+		var producedAtText string
+		if err := rows.Scan(
+			&artifact.ArtifactHandle, &artifact.InitiativeHandle, &artifact.ProducerTaskHandle,
+			&artifact.Kind, &artifact.ContentHash, &artifact.SourceRevision, &artifact.MediaType,
+			&artifact.Size, &producedAtText, &artifact.SupersedesArtifactHandle,
+		); err != nil {
+			return nil, fmt.Errorf("scan initiative contract artifact metadata: %w", err)
+		}
+		artifact.ProducedAt, err = parseTime(producedAtText)
+		if err != nil || artifact.Validate() != nil {
+			return nil, errors.New("stored initiative contract artifact metadata is invalid")
+		}
+		artifacts = append(artifacts, artifact)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate initiative contract artifact metadata: %w", err)
+	}
+	return artifacts, nil
+}
+
 func validatePreparedInitiativeContractArtifacts(
 	mutation application.PreparedInitiativeMutation,
 	members map[string]domain.Task,

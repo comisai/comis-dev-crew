@@ -43,7 +43,7 @@ func authorizeInitiativeTaskStart(
 	if err != nil {
 		return fmt.Errorf("authorize initiative task start fleet: %w", err)
 	}
-	artifacts, err := listInitiativeContractArtifacts(ctx, transaction, "")
+	artifacts, err := listInitiativeContractArtifactMetadata(ctx, transaction, "")
 	if err != nil {
 		return fmt.Errorf("authorize initiative task start artifacts: %w", err)
 	}

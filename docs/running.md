@@ -118,7 +118,9 @@ host-wide and repository-wide scheduler ceilings. Each reviewed worker
 profile's own `--*-concurrency` limit is enforced at the same time. Initiative
 launch authorization is recomputed under the SQLite write transaction, so a
 stale graph read cannot consume capacity or bypass a newly unsatisfied
-dependency. A member that has already started retains its initiative's place in
+dependency. That fleet-wide decision reads contract metadata only; task-scoped
+artifact reads perform the content-size and SHA-256 checks. A member that has
+already started retains its initiative's place in
 the fair round when that transaction recomputes the schedule; a later initiative
 therefore receives its first eligible slot before the older initiative receives
 a second.
