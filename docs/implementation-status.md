@@ -655,7 +655,9 @@ the whole reconciliation transaction, so no subset can be presented as recovered
 
 After the authenticated Comis control session is available, startup attempts a
 second, narrower reconciliation for bound `unknown` initiatives whose complete
-member set belongs to the current service instance. The service reads the host's
+member set belongs to the current service instance. It scans only `unknown`
+records in handle-ordered pages capped at sixteen, so accumulated terminal
+history does not expand startup memory. The service reads the host's
 content-free managed-run group rollup on that persistent session and compares the
 exact managed-run identities plus all nine host state counts with current durable
 task rows. When a member has a currently forwardable durable Comis report or
@@ -724,8 +726,11 @@ that leaves candidate changes staged cannot pass clean-candidate handoff.
 The reservation and its accepted canonical operation-ledger claim commit in one
 transaction before Git mutation. Startup reconciliation may mark that claim
 unknown, but an exact reservation replay must still match the immutable ledger
-row before work resumes. Content-free Git refs then bridge the interval between a
-Git result and its SQLite completion. Exact applied and conflicted calls replay
+row and revalidate current initiative, owner, preparation, and evidence authority
+before work resumes. When that current authority is unresolved, the replay is
+receipt-only: Git may reread an exact applied or conflicted ref but cannot start
+or resume a strategy. Content-free Git refs bridge the interval between a Git
+result and its SQLite completion. Exact applied and conflicted calls replay
 without repeating Git. Merge and cherry-pick still refuse a changed worktree
 when no exact outcome receipt exists. Rebase records the exact target branch
 before mutation, so an exact operation replay can reconstruct an interrupted

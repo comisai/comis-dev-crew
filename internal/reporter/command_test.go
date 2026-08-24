@@ -219,14 +219,34 @@ func TestRunCommand_ReadsTaskScopedContractArtifact(t *testing.T) {
 func TestRunCommand_RejectsIncompleteRawOutput(t *testing.T) {
 	brief := commandBrief()
 	artifact := []byte("schema: component.contract.v1\nname: payments\n")
-	capability := &commandCapability{brief: brief, artifactContent: artifact}
+	now := time.Date(2026, time.August, 10, 14, 0, 0, 0, time.UTC)
+	capability := &commandCapability{
+		brief: brief, artifactContent: artifact, decisionResponse: "Use the existing adapter.",
+		receipt: domain.ReportReceipt{
+			TaskHandle: "task-command-0001", LocalReportID: "report-command-0001",
+			StateVersion: 4, AcceptedAt: now, PauseRequested: true,
+			Instruction: "Prefer the existing parser.",
+		},
+	}
+	reportConfig := reporter.CommandConfig{
+		Capability: capability, Clock: func() time.Time { return now },
+		NewLocalReportID: func() (string, error) { return "report-command-0001", nil },
+	}
 	commands := []struct {
 		name    string
 		args    []string
 		content []byte
+		config  reporter.CommandConfig
 	}{
-		{name: "brief", args: []string{"brief"}, content: []byte(brief.Content)},
-		{name: "artifact", args: []string{"artifact", "--handle", "contract-payments-v1"}, content: artifact},
+		{name: "brief", args: []string{"brief"}, content: []byte(brief.Content), config: reporter.CommandConfig{Capability: capability}},
+		{name: "artifact", args: []string{"artifact", "--handle", "contract-payments-v1"}, content: artifact, config: reporter.CommandConfig{Capability: capability}},
+		{name: "receipt", args: []string{"progress", "--summary", "bounded"}, config: reportConfig,
+			content: []byte("accepted report-command-0001 at state 4\nPauseRequested=true\nInstruction=Prefer the existing parser.\n")},
+		{name: "decision", args: []string{"decision", "--key", "database-choice", "--question", "Which database?"},
+			content: []byte(capability.decisionResponse + "\n"), config: reportConfig},
+		{name: "acknowledge", args: []string{"acknowledge"}, content: []byte("acknowledged launch\n"),
+			config: reporter.CommandConfig{Capability: capability, WorkingDirectory: func() (string, error) { return "/canonical/task-worktree", nil }}},
+		{name: "version", args: []string{"--version"}, content: []byte("devcrew-report test\n"), config: reporter.CommandConfig{Version: "test"}},
 	}
 	privateFailure := errors.New("private output failure")
 	for _, command := range commands {
@@ -241,7 +261,7 @@ func TestRunCommand_RejectsIncompleteRawOutput(t *testing.T) {
 				var stderr bytes.Buffer
 				exit := reporter.RunCommand(
 					context.Background(), command.args, failure.writer, &stderr,
-					reporter.CommandConfig{Capability: capability},
+					command.config,
 				)
 				if exit != 1 || !strings.Contains(stderr.String(), "runtime attachment") ||
 					strings.Contains(stderr.String(), privateFailure.Error()) {

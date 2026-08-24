@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -46,10 +48,16 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	if len(args) == 1 {
 		switch args[0] {
 		case "--help", "-h":
-			writeCommandUsage(stdout)
+			if err := writeCommandUsage(stdout); err != nil {
+				writeRuntimeFailure(stderr)
+				return 1
+			}
 			return 0
 		case "--version":
-			fmt.Fprintf(stdout, "devcrew-report %s\n", config.Version)
+			if err := writeExact(stdout, []byte("devcrew-report "+config.Version+"\n")); err != nil {
+				writeRuntimeFailure(stderr)
+				return 1
+			}
 			return 0
 		}
 	}
@@ -71,7 +79,7 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 			writeRuntimeFailure(stderr)
 			return 1
 		}
-		if !writeExact(stdout, []byte(brief.Content)) {
+		if err := writeExact(stdout, []byte(brief.Content)); err != nil {
 			writeRuntimeFailure(stderr)
 			return 1
 		}
@@ -97,7 +105,7 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 			writeRuntimeFailure(stderr)
 			return 1
 		}
-		if !writeExact(stdout, content) {
+		if err := writeExact(stdout, content); err != nil {
 			writeRuntimeFailure(stderr)
 			return 1
 		}
@@ -117,7 +125,10 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 			writeRuntimeFailure(stderr)
 			return 1
 		}
-		fmt.Fprintln(stdout, "acknowledged launch")
+		if err := writeExact(stdout, []byte("acknowledged launch\n")); err != nil {
+			writeRuntimeFailure(stderr)
+			return 1
+		}
 		return 0
 	}
 
@@ -166,21 +177,35 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 			writeRuntimeFailure(stderr)
 			return 1
 		}
-		fmt.Fprintln(stdout, response)
+		if err := writeExact(stdout, []byte(response+"\n")); err != nil {
+			writeRuntimeFailure(stderr)
+			return 1
+		}
 		return 0
 	}
-	writeReportReceipt(stdout, receipt)
+	if err := writeReportReceipt(stdout, receipt); err != nil {
+		writeRuntimeFailure(stderr)
+		return 1
+	}
 	return 0
 }
 
-func writeReportReceipt(output io.Writer, receipt domain.ReportReceipt) {
-	fmt.Fprintf(output, "accepted %s at state %d\n", receipt.LocalReportID, receipt.StateVersion)
+func writeReportReceipt(output io.Writer, receipt domain.ReportReceipt) error {
+	var rendered strings.Builder
+	rendered.WriteString("accepted ")
+	rendered.WriteString(receipt.LocalReportID)
+	rendered.WriteString(" at state ")
+	rendered.WriteString(strconv.FormatInt(receipt.StateVersion, 10))
+	rendered.WriteByte('\n')
 	if receipt.PauseRequested {
-		fmt.Fprintln(output, "PauseRequested=true")
+		rendered.WriteString("PauseRequested=true\n")
 	}
 	if receipt.Instruction != "" {
-		fmt.Fprintf(output, "Instruction=%s\n", receipt.Instruction)
+		rendered.WriteString("Instruction=")
+		rendered.WriteString(receipt.Instruction)
+		rendered.WriteByte('\n')
 	}
+	return writeExact(output, []byte(rendered.String()))
 }
 
 type parsedReportCommand struct {
@@ -253,25 +278,32 @@ func readCommandBrief(ctx context.Context, capability RuntimeCapability) (domain
 	return brief, nil
 }
 
-func writeExact(output io.Writer, content []byte) bool {
+func writeExact(output io.Writer, content []byte) error {
 	written, err := output.Write(content)
-	return err == nil && written == len(content)
+	if err != nil {
+		return err
+	}
+	if written != len(content) {
+		return io.ErrShortWrite
+	}
+	return nil
 }
 
-func writeCommandUsage(output io.Writer) {
-	fmt.Fprintln(output, "Usage: devcrew-report <command> [options]")
-	fmt.Fprintln(output, "Commands:")
-	fmt.Fprintln(output, "  acknowledge")
-	fmt.Fprintln(output, "  brief")
-	fmt.Fprintln(output, "  artifact --handle HANDLE")
-	fmt.Fprintln(output, "  progress --summary TEXT")
-	fmt.Fprintln(output, "  decision --key KEY --question TEXT")
-	fmt.Fprintln(output, "  blocked --summary TEXT")
-	fmt.Fprintln(output, "  paused --summary TEXT")
-	fmt.Fprintln(output, "  candidate-complete --summary TEXT --artifact REF")
-	fmt.Fprintln(output, "  failed --summary TEXT")
-	fmt.Fprintln(output, "  resolved --key KEY --summary TEXT")
-	fmt.Fprintln(output, "Reports accept only bounded content fields; task authority comes from the protected runtime attachment.")
+func writeCommandUsage(output io.Writer) error {
+	const usage = "Usage: devcrew-report <command> [options]\n" +
+		"Commands:\n" +
+		"  acknowledge\n" +
+		"  brief\n" +
+		"  artifact --handle HANDLE\n" +
+		"  progress --summary TEXT\n" +
+		"  decision --key KEY --question TEXT\n" +
+		"  blocked --summary TEXT\n" +
+		"  paused --summary TEXT\n" +
+		"  candidate-complete --summary TEXT --artifact REF\n" +
+		"  failed --summary TEXT\n" +
+		"  resolved --key KEY --summary TEXT\n" +
+		"Reports accept only bounded content fields; task authority comes from the protected runtime attachment.\n"
+	return writeExact(output, []byte(usage))
 }
 
 func writeInvalidCommand(output io.Writer) {

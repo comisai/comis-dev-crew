@@ -119,10 +119,22 @@ func (store *Store) ReserveIntegrationApplication(
 		if err := verifyIntegrationOperation(ctx, transaction, row); err != nil {
 			return application.ReservedIntegrationApplication{}, err
 		}
+		reserved := integrationReservationFromRow(row)
+		if row.status == "reserved" {
+			current, authorityErr := resolveIntegrationReservation(ctx, transaction, request)
+			if authorityErr == nil {
+				current.reservedAt = row.reservedAt
+				reserved.ReceiptOnly = !integrationRowMatchesReservation(row, integrationReservationFromRow(current))
+			} else if integrationMutationAuthorityUnavailable(authorityErr) {
+				reserved.ReceiptOnly = true
+			} else {
+				return application.ReservedIntegrationApplication{}, fmt.Errorf("revalidate reserved integration authority: %w", authorityErr)
+			}
+		}
 		if err := transaction.Commit(); err != nil {
 			return application.ReservedIntegrationApplication{}, fmt.Errorf("commit integration reservation replay: %w", err)
 		}
-		return integrationReservationFromRow(row), nil
+		return reserved, nil
 	}
 	if _, err := getOperation(ctx, transaction, request.Command.OperationID); err == nil {
 		return application.ReservedIntegrationApplication{}, fmt.Errorf("integration operation identity is already used: %w", application.ErrConflict)
@@ -317,11 +329,11 @@ func resolveIntegrationReservation(
 	if judgment.Outcome != domain.CandidateAccepted || bundle.HeadRevision != request.Command.CandidateHead {
 		return integrationApplicationRow{}, fmt.Errorf("integration candidate evidence is stale: %w", application.ErrPrecondition)
 	}
-	if _, found, readErr := findCandidateIntegrationApplication(
+	if existing, found, readErr := findCandidateIntegrationApplication(
 		ctx, transaction, initiative.Handle, integrationTask.Handle, candidateTask.Handle, request.Command.CandidateHead,
 	); readErr != nil {
 		return integrationApplicationRow{}, readErr
-	} else if found {
+	} else if found && existing.operationID != request.Command.OperationID {
 		return integrationApplicationRow{}, fmt.Errorf("integration candidate application already exists: %w", application.ErrIntegrationApplicationExists)
 	}
 	return integrationApplicationRow{
@@ -336,6 +348,11 @@ func resolveIntegrationReservation(
 		evidenceExpiresAt: bundle.ExpiresAt, status: "reserved", conflicts: []string{},
 		reservedAt: request.At,
 	}, nil
+}
+
+func integrationMutationAuthorityUnavailable(err error) bool {
+	return errors.Is(err, application.ErrPrecondition) || errors.Is(err, application.ErrNotFound) ||
+		errors.Is(err, application.ErrIntegrationApplicationExists) || errors.Is(err, application.ErrConflict)
 }
 
 func latestCandidateEvidenceRow(ctx context.Context, source queryer, taskHandle string) (candidateEvidenceRow, error) {

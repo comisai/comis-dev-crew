@@ -41,7 +41,7 @@ func TestIntegrationReservationClaimsAndReconcilesGlobalOperationLedger(t *testi
 		t.Fatalf("reconciled integration operation = %#v, %v", unknown, err)
 	}
 	replayed, err := fixture.store.ReserveIntegrationApplication(context.Background(), request)
-	if err != nil || replayed.OperationID != reserved.OperationID || replayed.Result != nil {
+	if err != nil || replayed.OperationID != reserved.OperationID || replayed.Result != nil || !replayed.ReceiptOnly {
 		t.Fatalf("ReserveIntegrationApplication(reconciled replay) = %#v, %v", replayed, err)
 	}
 	completed, err := fixture.store.CompleteIntegrationApplication(context.Background(), application.IntegrationCompletion{

@@ -44,7 +44,8 @@ Prerequisites, all of which fail closed if unmet:
 On restart, every ambiguous nonterminal initiative is first persisted as
 `unknown`. Before the service signals readiness, it then uses the authenticated
 persistent control session to read each current-service group's content-free host
-rollup. An initiative resumes only when the complete managed-run identity set and
+rollup. This scan reads only `unknown` initiatives in bounded handle-ordered
+pages. An initiative resumes only when the complete managed-run identity set and
 every host state count exactly match its durable task rows. If a member still has
 a currently forwardable durable Comis report or evidence publication, startup
 gives that temporary host lag the bounded reconciliation window and refreshes

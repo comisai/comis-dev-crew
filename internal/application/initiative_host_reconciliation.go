@@ -103,7 +103,7 @@ func (mutation InitiativeHostRecoveryMutation) Validate() error {
 // InitiativeHostRecoveryStore owns the read snapshots and the final exact
 // compare-and-set that restores an initiative out of unknown.
 type InitiativeHostRecoveryStore interface {
-	ListInitiatives(context.Context) ([]domain.DevelopmentInitiative, error)
+	InitiativeSnapshot(context.Context, InitiativeFilter) ([]domain.DevelopmentInitiative, string, int64, error)
 	InitiativeObservation(context.Context, string) (domain.DevelopmentInitiative, []domain.Task, int64, error)
 	InitiativeHasPendingComisEgress(context.Context, string) (bool, error)
 	CommitInitiativeHostRecovery(context.Context, InitiativeHostRecoveryMutation) (domain.DevelopmentInitiative, error)
@@ -170,109 +170,120 @@ func (reconciler *InitiativeHostReconciler) Reconcile(
 	if err := ctx.Err(); err != nil {
 		return InitiativeHostReconciliation{}, err
 	}
-	initiatives, err := reconciler.store.ListInitiatives(ctx)
-	if err != nil {
-		return InitiativeHostReconciliation{}, fmt.Errorf("reconcile initiatives with host: list initiatives: %w", err)
-	}
 	result := InitiativeHostReconciliation{}
-	for _, listed := range initiatives {
-		if listed.State != domain.InitiativeUnknown || listed.ManagedRunGroupID == "" {
-			continue
-		}
-		initiative, tasks, _, observationErr := reconciler.store.InitiativeObservation(ctx, listed.Handle)
-		if observationErr != nil {
-			return result, fmt.Errorf("reconcile initiatives with host: read initiative observation: %w", observationErr)
-		}
-		if initiative.State != domain.InitiativeUnknown || initiative.ManagedRunGroupID == "" ||
-			!tasksBelongToService(tasks, reconciler.serviceInstanceID) {
-			continue
-		}
-		result.Attempted++
-		operationID, operationErr := reconciler.newOperationID()
-		if operationErr != nil || domain.ValidateOperationID(operationID) != nil {
-			result.PreservedUnknown++
-			reconciler.record(
-				operationID, BoundaryFailed, initiative, tasks, InitiativeHostRollup{}, 0,
-				InitiativeHostMismatchOperationIdentity,
-			)
-			continue
-		}
-		attemptContext, cancel := context.WithTimeout(ctx, reconciler.attemptTimeout)
-		request := InitiativeHostRollupRequest{
-			OperationID: operationID, ManagedRunGroupID: initiative.ManagedRunGroupID,
-		}
-		attemptCount := 1
-		rollup, readErr := reconciler.host.ReadInitiativeHostRollup(attemptContext, request)
-		durableAuthorityChanged := false
-		if readErr == nil && !initiativeHostEvidenceMatches(initiative, tasks, rollup) {
-			pendingEgress, pendingErr := reconciler.store.InitiativeHasPendingComisEgress(ctx, initiative.Handle)
-			if pendingErr != nil {
-				cancel()
-				return result, fmt.Errorf("reconcile initiatives with host: read pending Comis egress: %w", pendingErr)
-			}
-			for pendingEgress && !initiativeHostEvidenceMatches(initiative, tasks, rollup) {
-				if waitErr := waitInitiativeHostRetry(attemptContext, reconciler.retryInterval); waitErr != nil {
-					if ctx.Err() != nil {
-						cancel()
-						return result, ctx.Err()
-					}
-					break
-				}
-				refreshed, refreshedTasks, _, refreshErr := reconciler.store.InitiativeObservation(
-					attemptContext, initiative.Handle,
-				)
-				if refreshErr != nil {
-					cancel()
-					return result, fmt.Errorf("reconcile initiatives with host: refresh initiative observation: %w", refreshErr)
-				}
-				if refreshed.State != domain.InitiativeUnknown ||
-					refreshed.ManagedRunGroupID != request.ManagedRunGroupID ||
-					!tasksBelongToService(refreshedTasks, reconciler.serviceInstanceID) {
-					durableAuthorityChanged = true
-					break
-				}
-				initiative, tasks = refreshed, refreshedTasks
-				attemptCount++
-				rollup, readErr = reconciler.host.ReadInitiativeHostRollup(attemptContext, request)
-				if readErr != nil {
-					continue
-				}
-			}
-		}
-		cancel()
-		if readErr != nil || !initiativeHostEvidenceMatches(initiative, tasks, rollup) {
-			result.PreservedUnknown++
-			mismatch := initiativeHostEvidenceMismatch(initiative, tasks, rollup)
-			if readErr != nil {
-				mismatch = InitiativeHostMismatchHostRead
-			} else if durableAuthorityChanged {
-				mismatch = InitiativeHostMismatchDurableAuthority
-			}
-			reconciler.record(operationID, BoundaryFailed, initiative, tasks, rollup, attemptCount, mismatch)
-			continue
-		}
-		_, commitErr := reconciler.store.CommitInitiativeHostRecovery(ctx, InitiativeHostRecoveryMutation{
-			InitiativeHandle: initiative.Handle, ServiceInstanceID: reconciler.serviceInstanceID,
-			ManagedRunGroupID:   initiative.ManagedRunGroupID,
-			MemberManagedRunIDs: append([]string(nil), rollup.MemberManagedRunIDs...),
-			StateCounts:         rollup.StateCounts, ExpectedStateVersion: initiative.StateVersion,
-			At: reconciler.clock().UTC(),
+	afterHandle := ""
+	for {
+		initiatives, nextCursor, _, err := reconciler.store.InitiativeSnapshot(ctx, InitiativeFilter{
+			State: domain.InitiativeUnknown, AfterHandle: afterHandle, Limit: MaximumInitiativePage,
 		})
-		if errors.Is(commitErr, ErrPrecondition) {
-			result.PreservedUnknown++
-			reconciler.record(
-				operationID, BoundaryFailed, initiative, tasks, rollup, attemptCount,
-				InitiativeHostMismatchDurableAuthority,
-			)
-			continue
+		if err != nil {
+			return result, fmt.Errorf("reconcile initiatives with host: list unknown initiatives: %w", err)
 		}
-		if commitErr != nil {
-			return result, fmt.Errorf("reconcile initiatives with host: commit exact recovery: %w", commitErr)
+		for _, listed := range initiatives {
+			if listed.State != domain.InitiativeUnknown || listed.ManagedRunGroupID == "" {
+				continue
+			}
+			initiative, tasks, _, observationErr := reconciler.store.InitiativeObservation(ctx, listed.Handle)
+			if observationErr != nil {
+				return result, fmt.Errorf("reconcile initiatives with host: read initiative observation: %w", observationErr)
+			}
+			if initiative.State != domain.InitiativeUnknown || initiative.ManagedRunGroupID == "" ||
+				!tasksBelongToService(tasks, reconciler.serviceInstanceID) {
+				continue
+			}
+			result.Attempted++
+			operationID, operationErr := reconciler.newOperationID()
+			if operationErr != nil || domain.ValidateOperationID(operationID) != nil {
+				result.PreservedUnknown++
+				reconciler.record(
+					operationID, BoundaryFailed, initiative, tasks, InitiativeHostRollup{}, 0,
+					InitiativeHostMismatchOperationIdentity,
+				)
+				continue
+			}
+			attemptContext, cancel := context.WithTimeout(ctx, reconciler.attemptTimeout)
+			request := InitiativeHostRollupRequest{
+				OperationID: operationID, ManagedRunGroupID: initiative.ManagedRunGroupID,
+			}
+			attemptCount := 1
+			rollup, readErr := reconciler.host.ReadInitiativeHostRollup(attemptContext, request)
+			durableAuthorityChanged := false
+			if readErr == nil && !initiativeHostEvidenceMatches(initiative, tasks, rollup) {
+				pendingEgress, pendingErr := reconciler.store.InitiativeHasPendingComisEgress(ctx, initiative.Handle)
+				if pendingErr != nil {
+					cancel()
+					return result, fmt.Errorf("reconcile initiatives with host: read pending Comis egress: %w", pendingErr)
+				}
+				for pendingEgress && !initiativeHostEvidenceMatches(initiative, tasks, rollup) {
+					if waitErr := waitInitiativeHostRetry(attemptContext, reconciler.retryInterval); waitErr != nil {
+						if ctx.Err() != nil {
+							cancel()
+							return result, ctx.Err()
+						}
+						break
+					}
+					refreshed, refreshedTasks, _, refreshErr := reconciler.store.InitiativeObservation(
+						attemptContext, initiative.Handle,
+					)
+					if refreshErr != nil {
+						cancel()
+						return result, fmt.Errorf("reconcile initiatives with host: refresh initiative observation: %w", refreshErr)
+					}
+					if refreshed.State != domain.InitiativeUnknown ||
+						refreshed.ManagedRunGroupID != request.ManagedRunGroupID ||
+						!tasksBelongToService(refreshedTasks, reconciler.serviceInstanceID) {
+						durableAuthorityChanged = true
+						break
+					}
+					initiative, tasks = refreshed, refreshedTasks
+					attemptCount++
+					rollup, readErr = reconciler.host.ReadInitiativeHostRollup(attemptContext, request)
+					if readErr != nil {
+						continue
+					}
+				}
+			}
+			cancel()
+			if readErr != nil || !initiativeHostEvidenceMatches(initiative, tasks, rollup) {
+				result.PreservedUnknown++
+				mismatch := initiativeHostEvidenceMismatch(initiative, tasks, rollup)
+				if readErr != nil {
+					mismatch = InitiativeHostMismatchHostRead
+				} else if durableAuthorityChanged {
+					mismatch = InitiativeHostMismatchDurableAuthority
+				}
+				reconciler.record(operationID, BoundaryFailed, initiative, tasks, rollup, attemptCount, mismatch)
+				continue
+			}
+			_, commitErr := reconciler.store.CommitInitiativeHostRecovery(ctx, InitiativeHostRecoveryMutation{
+				InitiativeHandle: initiative.Handle, ServiceInstanceID: reconciler.serviceInstanceID,
+				ManagedRunGroupID:   initiative.ManagedRunGroupID,
+				MemberManagedRunIDs: append([]string(nil), rollup.MemberManagedRunIDs...),
+				StateCounts:         rollup.StateCounts, ExpectedStateVersion: initiative.StateVersion,
+				At: reconciler.clock().UTC(),
+			})
+			if errors.Is(commitErr, ErrPrecondition) {
+				result.PreservedUnknown++
+				reconciler.record(
+					operationID, BoundaryFailed, initiative, tasks, rollup, attemptCount,
+					InitiativeHostMismatchDurableAuthority,
+				)
+				continue
+			}
+			if commitErr != nil {
+				return result, fmt.Errorf("reconcile initiatives with host: commit exact recovery: %w", commitErr)
+			}
+			result.Recovered++
+			reconciler.record(operationID, BoundaryCompleted, initiative, tasks, rollup, attemptCount, "")
 		}
-		result.Recovered++
-		reconciler.record(operationID, BoundaryCompleted, initiative, tasks, rollup, attemptCount, "")
+		if nextCursor == "" {
+			return result, nil
+		}
+		if domain.ValidateTaskHandle(nextCursor) != nil || nextCursor <= afterHandle {
+			return result, errors.New("reconcile initiatives with host: initiative cursor is invalid")
+		}
+		afterHandle = nextCursor
 	}
-	return result, nil
 }
 
 func waitInitiativeHostRetry(ctx context.Context, interval time.Duration) error {

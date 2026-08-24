@@ -87,6 +87,29 @@ func TestIntegrationReplaysWithoutReapplyingCandidate(t *testing.T) {
 	}
 }
 
+func TestIntegrationCarriesReceiptOnlyReservationToAdapter(t *testing.T) {
+	at := time.Unix(1_800_000_000, 0).UTC()
+	command := integrationCommand()
+	reserved := integrationReservation(command, IntegrationMerge)
+	reserved.ReceiptOnly = true
+	store := &integrationStore{policyID: "integration-reviewed", reservation: reserved}
+	adapter := &integrationAdapter{err: errors.New("durable receipt is unavailable")}
+	integrations, err := NewIntegrations(IntegrationConfig{
+		Store: store, Adapter: adapter,
+		Policies: func(string) (IntegrationStrategy, error) { return IntegrationMerge, nil },
+		Clock:    func() time.Time { return at },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := integrations.ApplyCandidate(context.Background(), command); err == nil {
+		t.Fatal("ApplyCandidate(receipt-only without receipt) error = nil")
+	}
+	if len(adapter.requests) != 1 || !adapter.requests[0].ReceiptOnly || store.sequence != "policy,reserve" {
+		t.Fatalf("receipt-only request = %#v sequence=%q", adapter.requests, store.sequence)
+	}
+}
+
 func TestIntegrationCarriesEvidenceDeadlineToMutationButNotCompletedReplay(t *testing.T) {
 	command := integrationCommand()
 	reserved := integrationReservation(command, IntegrationMerge)

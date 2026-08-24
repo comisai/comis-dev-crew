@@ -34,7 +34,6 @@ func (registry *Registry) ApplyIntegrationCandidate(
 	}
 	registry.mu.Lock()
 	defer registry.mu.Unlock()
-
 	repository, err := registry.Resolve(request.Target.RepositoryID)
 	if err != nil {
 		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: repository is unavailable")
@@ -50,13 +49,15 @@ func (registry *Registry) ApplyIntegrationCandidate(
 	if replay, found, err := registry.replayConflictedIntegration(ctx, request, repository, conflictedRef); err != nil || found {
 		return replay, err
 	}
+	if request.ReceiptOnly {
+		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: mutation authority is unavailable")
+	}
 	if replay, found, err := registry.reconcileInterruptedRebase(ctx, request, repository, conflictedRef); err != nil || found {
 		return replay, err
 	}
 	if request.RecoveryOperationID != "" {
 		return registry.resumeRebaseIntegration(ctx, request, repository)
 	}
-
 	target, candidate, err := registry.inspectIntegrationInputs(ctx, request, repository)
 	if err != nil {
 		return application.IntegrationAdapterResult{}, err
@@ -74,7 +75,6 @@ func (registry *Registry) ApplyIntegrationCandidate(
 	if mutationAt.IsZero() || !mutationAt.Before(request.EvidenceExpiresAt) {
 		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: candidate evidence expired before mutation")
 	}
-
 	if err := registry.runIntegrationStrategy(ctx, request); err != nil {
 		conflicts, conflictErr := registry.integrationConflictPaths(ctx, request.Target.WorktreePath)
 		if conflictErr != nil || len(conflicts) == 0 {

@@ -49,6 +49,34 @@ func TestRegistry_AppliesEveryReviewedIntegrationStrategyAndReplays(t *testing.T
 	}
 }
 
+func TestRegistry_ReceiptOnlyReplayNeverStartsIntegrationMutation(t *testing.T) {
+	fixture := newIntegrationFixture(t)
+	candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "component.txt", "component\n")
+	targetHead := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "rev-parse", "HEAD")
+	request := fixture.request("integration-receipt-only", application.IntegrationMerge, candidateHead, targetHead)
+	request.ReceiptOnly = true
+	if _, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request); err == nil {
+		t.Fatal("ApplyIntegrationCandidate(receipt only without receipt) error = nil")
+	}
+	if head := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "rev-parse", "HEAD"); head != targetHead {
+		t.Fatalf("receipt-only target head = %q, want %q", head, targetHead)
+	}
+	if _, err := os.Stat(filepath.Join(fixture.target.CanonicalPath, "component.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("receipt-only replay mutated target: %v", err)
+	}
+
+	request.ReceiptOnly = false
+	applied, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
+	if err != nil {
+		t.Fatalf("ApplyIntegrationCandidate() error = %v", err)
+	}
+	request.ReceiptOnly = true
+	replayed, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
+	if err != nil || !reflect.DeepEqual(replayed, applied) {
+		t.Fatalf("ApplyIntegrationCandidate(receipt-only replay) = %#v, %v", replayed, err)
+	}
+}
+
 func TestRegistry_RecordsAndReplaysExactConflictPaths(t *testing.T) {
 	for _, strategy := range []application.IntegrationStrategy{application.IntegrationMerge, application.IntegrationRebase} {
 		t.Run(string(strategy), func(t *testing.T) {

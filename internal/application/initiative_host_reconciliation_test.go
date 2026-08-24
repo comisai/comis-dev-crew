@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -11,14 +12,15 @@ import (
 )
 
 type initiativeHostRecoveryStoreStub struct {
-	initiatives    []domain.DevelopmentInitiative
-	observations   map[string][]domain.Task
-	pendingEgress  map[string]bool
-	pendingCalls   []string
-	commits        []InitiativeHostRecoveryMutation
-	listErr        error
-	observationErr error
-	commitErr      error
+	initiatives     []domain.DevelopmentInitiative
+	observations    map[string][]domain.Task
+	pendingEgress   map[string]bool
+	pendingCalls    []string
+	commits         []InitiativeHostRecoveryMutation
+	snapshotFilters []InitiativeFilter
+	listErr         error
+	observationErr  error
+	commitErr       error
 }
 
 func (store *initiativeHostRecoveryStoreStub) InitiativeHasPendingComisEgress(
@@ -29,13 +31,29 @@ func (store *initiativeHostRecoveryStoreStub) InitiativeHasPendingComisEgress(
 	return store.pendingEgress[handle], nil
 }
 
-func (store *initiativeHostRecoveryStoreStub) ListInitiatives(
+func (store *initiativeHostRecoveryStoreStub) InitiativeSnapshot(
 	_ context.Context,
-) ([]domain.DevelopmentInitiative, error) {
+	filter InitiativeFilter,
+) ([]domain.DevelopmentInitiative, string, int64, error) {
+	store.snapshotFilters = append(store.snapshotFilters, filter)
 	if store.listErr != nil {
-		return nil, store.listErr
+		return nil, "", 0, store.listErr
 	}
-	return append([]domain.DevelopmentInitiative(nil), store.initiatives...), nil
+	initiatives := make([]domain.DevelopmentInitiative, 0, filter.Limit+1)
+	for _, initiative := range store.initiatives {
+		if (filter.State != "" && initiative.State != filter.State) || initiative.Handle <= filter.AfterHandle {
+			continue
+		}
+		initiatives = append(initiatives, initiative)
+		if len(initiatives) == filter.Limit+1 {
+			break
+		}
+	}
+	if len(initiatives) <= filter.Limit {
+		return initiatives, "", 1, nil
+	}
+	nextCursor := initiatives[filter.Limit-1].Handle
+	return initiatives[:filter.Limit], nextCursor, 1, nil
 }
 
 func (store *initiativeHostRecoveryStoreStub) InitiativeObservation(
@@ -145,6 +163,40 @@ func TestInitiativeHostReconcilerRecoversOnlyExactCurrentServiceGroups(t *testin
 		store.commits[0].ServiceInstanceID != "service-instance-current" ||
 		store.commits[0].ExpectedStateVersion != current.initiative.StateVersion {
 		t.Fatalf("recovery commits = %#v", store.commits)
+	}
+	if len(store.snapshotFilters) != 1 || store.snapshotFilters[0].State != domain.InitiativeUnknown ||
+		store.snapshotFilters[0].Limit != MaximumInitiativePage {
+		t.Fatalf("initiative snapshot filters = %#v", store.snapshotFilters)
+	}
+}
+
+func TestInitiativeHostReconcilerPagesOnlyUnknownInitiatives(t *testing.T) {
+	initiatives := make([]domain.DevelopmentInitiative, 0, MaximumInitiativePage+2)
+	for index := 0; index <= MaximumInitiativePage; index++ {
+		initiatives = append(initiatives, domain.DevelopmentInitiative{
+			Handle: fmt.Sprintf("initiative-page-%02d", index), State: domain.InitiativeUnknown,
+		})
+	}
+	initiatives = append(initiatives, domain.DevelopmentInitiative{
+		Handle: "initiative-terminal", State: domain.InitiativeDelivered,
+	})
+	store := &initiativeHostRecoveryStoreStub{initiatives: initiatives}
+	reconciler, err := NewInitiativeHostReconciler(InitiativeHostReconcilerConfig{
+		Store: store, Host: &initiativeHostRollupSourceStub{}, ServiceInstanceID: "service-instance-current",
+		NewOperationID: func() (string, error) { return "operation-host-page-0001", nil },
+		Clock:          time.Now, AttemptTimeout: time.Second, RetryInterval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := reconciler.Reconcile(context.Background())
+	if err != nil || result != (InitiativeHostReconciliation{}) {
+		t.Fatalf("Reconcile(paged unknown) = %#v, %v", result, err)
+	}
+	if len(store.snapshotFilters) != 2 || store.snapshotFilters[0].State != domain.InitiativeUnknown ||
+		store.snapshotFilters[0].Limit != MaximumInitiativePage || store.snapshotFilters[0].AfterHandle != "" ||
+		store.snapshotFilters[1].AfterHandle != "initiative-page-15" {
+		t.Fatalf("initiative snapshot filters = %#v", store.snapshotFilters)
 	}
 }
 

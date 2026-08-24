@@ -77,6 +77,7 @@ type IntegrationCandidateReference struct {
 type IntegrationAdapterRequest struct {
 	OperationID         string
 	RecoveryOperationID string
+	ReceiptOnly         bool `json:"-"`
 	Strategy            IntegrationStrategy
 	Target              IntegrationTargetReference
 	Candidate           IntegrationCandidateReference
@@ -112,6 +113,7 @@ type IntegrationReservationRequest struct {
 type ReservedIntegrationApplication struct {
 	OperationID           string
 	RecoveryOperationID   string
+	ReceiptOnly           bool
 	SubjectDigest         string
 	InitiativeHandle      string
 	IntegrationTaskHandle string
@@ -128,8 +130,8 @@ type ReservedIntegrationApplication struct {
 func (reserved ReservedIntegrationApplication) AdapterRequest() IntegrationAdapterRequest {
 	return IntegrationAdapterRequest{
 		OperationID: reserved.OperationID, RecoveryOperationID: reserved.RecoveryOperationID,
-		Strategy: reserved.Strategy,
-		Target:   reserved.Target, Candidate: reserved.Candidate,
+		ReceiptOnly: reserved.ReceiptOnly, Strategy: reserved.Strategy,
+		Target: reserved.Target, Candidate: reserved.Candidate,
 		EvidenceExpiresAt: reserved.EvidenceExpiresAt,
 	}
 }
