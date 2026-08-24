@@ -40,7 +40,7 @@ func TestInitiativeActivationPublishesPerMemberAttachmentOutcomes(t *testing.T) 
 			t.Fatalf("member %d outcome = %q, want %q", index, result.Members[index].Outcome, outcome)
 		}
 	}
-	if result.Initiative.State != domain.InitiativeUnknown || store.stateChanges[len(store.stateChanges)-1] != domain.InitiativeUnknown {
+	if result.Initiative.State != domain.InitiativeUnknown || len(store.stateChanges) != 0 {
 		t.Fatalf("partial activation initiative = %#v, state changes %#v", result.Initiative, store.stateChanges)
 	}
 }
@@ -68,8 +68,8 @@ func TestInitiativeActivationBecomesActiveOnlyAfterEveryAttachmentBinds(t *testi
 			t.Fatalf("member outcome = %q, want completed", member.Outcome)
 		}
 	}
-	if len(store.stateChanges) != 0 {
-		t.Fatalf("successful activation state repairs = %#v, want none", store.stateChanges)
+	if len(store.stateChanges) != 1 || store.stateChanges[0] != domain.InitiativeActive {
+		t.Fatalf("successful activation state publications = %#v, want active", store.stateChanges)
 	}
 }
 
@@ -95,7 +95,7 @@ func TestInitiativeActivationFailsClosedAcrossStoreBoundaries(t *testing.T) {
 		{name: "committed result is incomplete", store: &initiativeActivationStore{
 			replayFound: true, replay: InitiativeActivationResult{Initiative: domain.DevelopmentInitiative{State: domain.InitiativeActive}},
 		}},
-		{name: "unknown posture write fails", store: &initiativeActivationStore{stateErr: errors.New("posture failed")}, fail: 1},
+		{name: "active posture write fails", store: &initiativeActivationStore{stateErr: errors.New("posture failed")}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			attachments := &initiativeActivationAttachments{store: test.store, failAt: test.fail}
@@ -138,6 +138,7 @@ type initiativeActivationStore struct {
 	commitErr    error
 	stateChanges []domain.InitiativeState
 	stateErr     error
+	currentState domain.InitiativeState
 }
 
 func (store *initiativeActivationStore) ReplayInitiativeActivation(
@@ -157,8 +158,9 @@ func (store *initiativeActivationStore) CommitInitiativeActivation(
 	}
 	initiative := domain.DevelopmentInitiative{
 		Handle: "initiative-prepared-0001", ManagedRunGroupID: mutation.ManagedRunGroupID,
-		State: domain.InitiativeActive,
+		State: domain.InitiativeUnknown,
 	}
+	store.currentState = initiative.State
 	tasks := make([]domain.Task, 0, len(mutation.Members))
 	for _, member := range mutation.Members {
 		tasks = append(tasks, domain.Task{
@@ -184,6 +186,7 @@ func (store *initiativeActivationStore) SetInitiativeActivationState(
 	if store.stateErr != nil {
 		return domain.DevelopmentInitiative{}, store.stateErr
 	}
+	store.currentState = state
 	return domain.DevelopmentInitiative{Handle: "initiative-prepared-0001", ManagedRunGroupID: managedRunGroupID, State: state}, nil
 }
 
@@ -206,6 +209,9 @@ func (attachments *initiativeActivationAttachments) BindRuntimeAttachment(
 ) error {
 	if attachments.store.commitCalls == 0 {
 		attachments.boundBeforeCommit = true
+	}
+	if attachments.store.currentState != domain.InitiativeUnknown {
+		return errors.New("initiative is launchable before attachment binding completes")
 	}
 	attachments.requests = append(attachments.requests, request)
 	if attachments.failAt != 0 && len(attachments.requests) == attachments.failAt {

@@ -10,6 +10,9 @@ import (
 // not the same as idle and not the same as failed.
 type InitiativeState string
 
+// MaximumInitiativeMembers is the shared group and initiative member bound.
+const MaximumInitiativeMembers = 16
+
 const (
 	InitiativePreparing         InitiativeState = "preparing"
 	InitiativeActive            InitiativeState = "active"
@@ -172,11 +175,31 @@ func (initiative DevelopmentInitiative) Validate() error {
 	if err := initiative.validateEdges(members); err != nil {
 		return err
 	}
+	if err := initiative.validateContractArtifacts(); err != nil {
+		return err
+	}
 	if initiative.IntegrationOwnerTask != "" && !members[initiative.IntegrationOwnerTask] {
 		return &ValidationError{
 			Field:  "integrationOwnerTask",
 			Reason: "must name a task this initiative contains",
 		}
+	}
+	return nil
+}
+
+func (initiative DevelopmentInitiative) validateContractArtifacts() error {
+	if len(initiative.ContractArtifacts) > 128 {
+		return &ValidationError{Field: "contractArtifacts", Reason: "must hold at most 128 artifacts"}
+	}
+	seen := make(map[string]struct{}, len(initiative.ContractArtifacts))
+	for _, handle := range initiative.ContractArtifacts {
+		if err := validateOpaqueID("contractArtifacts", handle); err != nil {
+			return err
+		}
+		if _, duplicate := seen[handle]; duplicate {
+			return &ValidationError{Field: "contractArtifacts", Reason: "artifact handles must be unique"}
+		}
+		seen[handle] = struct{}{}
 	}
 	return nil
 }
@@ -304,14 +327,10 @@ func (initiative DevelopmentInitiative) validateEdges(members map[string]bool) e
 	return nil
 }
 
-// hasCycle walks the launch-blocking edges only. Validation-only edges cannot
-// deadlock a launch, so including them would refuse graphs that schedule fine.
 func (initiative DevelopmentInitiative) hasCycle(members map[string]bool) bool {
 	adjacency := make(map[string][]string, len(members))
 	for _, edge := range initiative.Edges {
-		if edge.Kind.blocksStart() {
-			adjacency[edge.FromTaskHandle] = append(adjacency[edge.FromTaskHandle], edge.ToTaskHandle)
-		}
+		adjacency[edge.FromTaskHandle] = append(adjacency[edge.FromTaskHandle], edge.ToTaskHandle)
 	}
 	const (
 		unvisited = 0

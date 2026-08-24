@@ -73,7 +73,6 @@ product does, and this list is not permission to guess a name.
 | Recover an exited worker | `reconcile_task` | Validates one exact clean candidate |
 | Resume after a developer edit | `handback_task` | Revalidates the developer's work |
 | Retire a task | `cleanup_task` | Evidence-gated release and removal |
-| Remove work that never delivered | `discard_task` | Permanently removes the worktree; requires an explicit acknowledgement |
 | Close out a scout's review | `attest_scout_decisions` | Records which decisions remain open, or attests that none do; cleanup is blocked until it exists |
 | Refresh a stale base | `sync_primary` | Fast-forwards the primary checkout only; refuses any other posture by name |
 
@@ -85,6 +84,8 @@ Anything not in the live tool set is unavailable, not merely undocumented. If a
 user asks for a merge, a force-push, a deployment, raw terminal custody, or
 sibling-worktree access, say plainly that it is not available here and name who
 can do it instead.
+
+Discard is operator-only and is never available through MCP.
 
 ## Initiative integration
 

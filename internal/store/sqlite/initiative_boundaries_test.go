@@ -337,9 +337,7 @@ func TestInitiativeAggregateAndLaunchRejectOverlappingOrCorruptMembership(t *tes
 func TestInitiativeLaunchRejectsInvalidReviewedLimitsInsideTransaction(t *testing.T) {
 	ctx := context.Background()
 	store, _, activation := preparedInitiativeActivationStore(t)
-	if _, err := store.CommitInitiativeActivation(ctx, activation); err != nil {
-		t.Fatalf("CommitInitiativeActivation() error = %v", err)
-	}
+	commitActiveInitiativeForTest(t, ctx, store, activation)
 	task, err := store.GetTask(ctx, activation.Members[0].ExternalRunRef)
 	if err != nil {
 		t.Fatalf("GetTask() error = %v", err)

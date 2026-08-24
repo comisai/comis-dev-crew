@@ -86,6 +86,7 @@ type PullRequestMergeReceipt struct {
 
 // ApprovedPullRequestMerger owns the separately credentialed forge mutation.
 type ApprovedPullRequestMerger interface {
+	ReconcileApprovedPullRequest(context.Context, PullRequestMergeRequest) (PullRequestMergeReceipt, bool, error)
 	MergeApprovedPullRequest(context.Context, PullRequestMergeRequest) (PullRequestMergeReceipt, error)
 }
 
@@ -274,17 +275,52 @@ func (coordinator *MergeCoordinator) MergeTask(
 			return MergeTaskResult{}, errors.New("merge task: stored approval authority differs")
 		}
 	}
+	forgeRequest := PullRequestMergeRequest{
+		OperationID: record.OperationID, RepositoryID: record.RepositoryID,
+		PullRequestID: record.PullRequestID, Branch: record.Branch, HeadRevision: record.HeadRevision,
+		RequiredChecks: append([]string(nil), record.RequiredChecks...),
+	}
+	reconciledReceipt, reconciled, reconcileErr := coordinator.config.Forge.ReconcileApprovedPullRequest(ctx, forgeRequest)
+	if reconcileErr != nil {
+		return MergeTaskResult{}, &dependencyFailure{message: "merge forge truth is unavailable", cause: reconcileErr}
+	}
+	if reconciled {
+		completedAt := coordinator.config.Clock()
+		if completedAt.IsZero() || completedAt.Location() != time.UTC {
+			return MergeTaskResult{}, errors.New("merge task: clock returned invalid time")
+		}
+		completed, err := coordinator.config.Store.CompleteTaskMerge(ctx, TaskMergeCompletion{
+			OperationID: record.OperationID, Receipt: reconciledReceipt, At: completedAt,
+		})
+		if err != nil {
+			return MergeTaskResult{}, mutationCommitFailure(err)
+		}
+		if err := validateTaskMergeRecord(completed, command.OperationID, command.TaskHandle, subjectDigest); err != nil ||
+			completed.State != TaskMergeCompleted {
+			return MergeTaskResult{}, errors.New("merge task: reconciled durable receipt differs")
+		}
+		return mergeResult(completed), nil
+	}
 	if !coordinator.config.OperatorEnabled {
 		return MergeTaskResult{}, newSafeFailure(
 			domain.ErrorPrecondition, false, "merge operation is disabled",
 			"enable merge authority in operator configuration and request a fresh approval", ErrPrecondition,
 		)
 	}
-	forgeReceipt, err := coordinator.config.Forge.MergeApprovedPullRequest(ctx, PullRequestMergeRequest{
-		OperationID: record.OperationID, RepositoryID: record.RepositoryID,
-		PullRequestID: record.PullRequestID, Branch: record.Branch, HeadRevision: record.HeadRevision,
-		RequiredChecks: append([]string(nil), record.RequiredChecks...),
-	})
+	mutationAt := coordinator.config.Clock()
+	if mutationAt.IsZero() || mutationAt.Location() != time.UTC {
+		return MergeTaskResult{}, errors.New("merge task: clock returned invalid time")
+	}
+	if authorizeErr := record.Approval.AuthorizeMerge(domain.MergeAuthorization{
+		ObservedHead: record.HeadRevision, ManagedRunID: record.ManagedRunID,
+		MCPOperationID: record.Approval.MCPOperationID, Now: mutationAt,
+	}); authorizeErr != nil {
+		return MergeTaskResult{}, newSafeFailure(
+			domain.ErrorPrecondition, false, "merge approval is not current for this operation",
+			"request a fresh approval for the exact task head", authorizeErr,
+		)
+	}
+	forgeReceipt, err := coordinator.config.Forge.MergeApprovedPullRequest(ctx, forgeRequest)
 	if err != nil {
 		return MergeTaskResult{}, &dependencyFailure{message: "merge forge truth is unavailable", cause: err}
 	}

@@ -154,6 +154,9 @@ func (store *Store) CommitTaskCandidateReconciliation(
 	if unresolvedDecisions != 0 {
 		return application.MutationResult{}, fmt.Errorf("task reconciliation decision remains: %w", application.ErrPrecondition)
 	}
+	if err := requireInitiativeValidationDependencies(ctx, transaction, mutation.TaskHandle); err != nil {
+		return application.MutationResult{}, err
+	}
 
 	reconciling, err := authority.Task.ApplyTransition(domain.TransitionReconcileRequired, mutation.At)
 	if err != nil {

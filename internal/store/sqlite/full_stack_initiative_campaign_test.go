@@ -32,6 +32,22 @@ func TestFullStackInitiativeCampaignPreservesParallelLanesAndExactHeadAuthority(
 	if backend.State != domain.TaskWorking || frontend.State != domain.TaskWorking {
 		t.Fatalf("parallel lanes = %q/%q, want both working", backend.State, frontend.State)
 	}
+	if _, err := fixture.store.CommitTaskVerify(ctx, application.TaskVerifyMutation{
+		OperationID: "campaign-frontend-verify-too-early", SubjectDigest: strings.Repeat("8", 64),
+		TaskHandle: frontend.Handle, At: fixture.at.Add(2*time.Minute + 10*time.Second),
+	}); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("frontend verify before backend completion error = %v, want ErrPrecondition", err)
+	}
+	if _, err := fixture.store.CommitReport(ctx, directReportMutation(
+		frontend, sqliteWorkerReport(frontend, "campaign-frontend-report-too-early", domain.ReportCandidateComplete),
+		fixture.at.Add(2*time.Minute+20*time.Second),
+	)); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("frontend report before backend completion error = %v, want ErrPrecondition", err)
+	}
+	frontend, getErr := fixture.store.GetTask(ctx, frontend.Handle)
+	if getErr != nil || frontend.State != domain.TaskWorking {
+		t.Fatalf("frontend after refused validation = %#v, %v", frontend, getErr)
+	}
 	assertCampaignDecision(
 		t, campaignSchedule(t, fixture, *limits), fixture.handles.integration, false, application.ScheduleIntegrationHeld,
 	)
@@ -216,9 +232,15 @@ func newFullStackCampaignFixture(t *testing.T) fullStackCampaignFixture {
 		{FromTaskHandle: handles.contract, ToTaskHandle: handles.frontend, Kind: domain.EdgeConsumesArtifact, RequiredArtifactKind: domain.ArtifactAPISchema},
 		{FromTaskHandle: handles.backend, ToTaskHandle: handles.integration, Kind: domain.EdgeIntegratesAfter},
 		{FromTaskHandle: handles.frontend, ToTaskHandle: handles.integration, Kind: domain.EdgeIntegratesAfter},
+		{FromTaskHandle: handles.backend, ToTaskHandle: handles.frontend, Kind: domain.EdgeBlocksValidation},
 		{FromTaskHandle: handles.integration, ToTaskHandle: handles.validation, Kind: domain.EdgeBlocksStart},
 	}
 	mutation.Initiative.ContractArtifacts = []string{"artifact-api-v1"}
+	contractArtifact := preparedContractArtifact(
+		mutation.Initiative, "artifact-api-v1", handles.contract, domain.ArtifactAPISchema,
+		"application/json", []byte(`{"version":1}`),
+	)
+	mutation.ContractArtifacts = []application.PreparedInitiativeContractArtifact{contractArtifact}
 	mutation.Initiative.IntegrationOwnerTask = handles.integration
 	mutation.Members = nil
 	workspaces := make(map[string]string, len(ordered))
@@ -236,7 +258,7 @@ func newFullStackCampaignFixture(t *testing.T) fullStackCampaignFixture {
 		if handle == handles.backend || handle == handles.frontend {
 			task.ConsumedContracts = []domain.PinnedContract{{
 				ArtifactHandle: "artifact-api-v1", Kind: domain.ArtifactAPISchema,
-				ContentHash: strings.Repeat("a", 64),
+				ContentHash: contractArtifact.Artifact.ContentHash,
 			}}
 		}
 		task.CreatedAt = mutation.At
@@ -278,14 +300,12 @@ func newFullStackCampaignFixture(t *testing.T) fullStackCampaignFixture {
 		})
 	}
 	activatedAt := mutation.At.Add(30 * time.Second)
-	if _, err := store.CommitInitiativeActivation(ctx, application.ManagedRunGroupActivationMutation{
+	commitActiveInitiativeForTest(t, ctx, store, application.ManagedRunGroupActivationMutation{
 		ServiceInstanceID: mutation.Members[0].Task.ServiceInstanceID,
 		ManagedRunGroupID: "managed-run-group-campaign", RegistrationNonce: mutation.GroupRegistrationNonce,
 		Members: activationMembers, OperationID: "campaign-activate-group",
 		SubjectDigest: strings.Repeat("f", 64), At: activatedAt,
-	}); err != nil {
-		t.Fatalf("CommitInitiativeActivation() error = %v", err)
-	}
+	})
 	return fullStackCampaignFixture{
 		store: store, initiativeHandle: mutation.Initiative.Handle,
 		handles: handles, workspaces: workspaces, at: activatedAt,
@@ -306,7 +326,13 @@ func campaignSchedule(
 	if err != nil {
 		t.Fatal(err)
 	}
-	schedules, err := application.ScheduleInitiatives([]domain.DevelopmentInitiative{initiative}, tasks, limits)
+	artifacts, err := listInitiativeContractArtifacts(context.Background(), fixture.store.db, fixture.initiativeHandle)
+	if err != nil {
+		t.Fatalf("listInitiativeContractArtifacts() error = %v", err)
+	}
+	schedules, err := application.ScheduleInitiatives(
+		[]domain.DevelopmentInitiative{initiative}, tasks, artifacts, limits,
+	)
 	if err != nil || len(schedules) != 1 {
 		t.Fatalf("ScheduleInitiatives() = %#v, %v", schedules, err)
 	}

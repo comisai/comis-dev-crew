@@ -106,9 +106,8 @@ func NewInitiativeActivations(config InitiativeActivationConfig) (*InitiativeAct
 	}, nil
 }
 
-// ActivateManagedRunGroup commits every host binding before touching runtime
-// attachments. A local partial attachment bind is returned member-by-member and
-// leaves the initiative unknown, so no scheduler can treat it as launchable.
+// ActivateManagedRunGroup commits every host binding in a non-launchable posture,
+// binds all runtime attachments, and then publishes the group as active.
 func (activations *InitiativeActivations) ActivateManagedRunGroup(
 	ctx context.Context,
 	command ActivateManagedRunGroupCommand,
@@ -180,7 +179,7 @@ func (activations *InitiativeActivations) ActivateManagedRunGroup(
 	}
 	if result.Initiative.State != desiredState {
 		updated, err := activations.store.SetInitiativeActivationState(
-			ctx, command.ManagedRunGroupID, desiredState, activations.clock(),
+			context.WithoutCancel(ctx), command.ManagedRunGroupID, desiredState, activations.clock(),
 		)
 		if err != nil {
 			return InitiativeActivationResult{}, mutationCommitFailure(err)
@@ -198,7 +197,7 @@ func validateManagedRunGroupActivation(ctx context.Context, command ActivateMana
 		domain.ValidateAuthorityReference("serviceInstanceId", command.ServiceInstanceID) != nil ||
 		domain.ValidateAuthorityReference("managedRunGroupId", command.ManagedRunGroupID) != nil ||
 		!registrationNoncePattern.MatchString(command.RegistrationNonce) ||
-		len(command.Members) == 0 || len(command.Members) > maximumInitiativeMembers {
+		len(command.Members) == 0 || len(command.Members) > domain.MaximumInitiativeMembers {
 		return mutationValidationFailure("group activation fields are invalid")
 	}
 	externalRefs := make([]string, 0, len(command.Members))

@@ -127,7 +127,7 @@ func validateManagedRunGroupAbandonment(ctx context.Context, command AbandonMana
 		domain.ValidateAuthorityReference("managedRunGroupId", command.ManagedRunGroupID) != nil ||
 		!registrationNoncePattern.MatchString(command.RegistrationNonce) ||
 		!command.Reason.valid() || !command.Disposition.valid() ||
-		len(command.Members) == 0 || len(command.Members) > maximumInitiativeMembers {
+		len(command.Members) == 0 || len(command.Members) > domain.MaximumInitiativeMembers {
 		return mutationValidationFailure("group abandonment fields are invalid")
 	}
 	externalRefs := make([]string, 0, len(command.Members))

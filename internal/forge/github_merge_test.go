@@ -202,10 +202,16 @@ func TestGitHubAdapter_MapsExactMergedTruthOntoApplicationPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	var port application.ApprovedPullRequestMerger = adapter
-	receipt, err := port.MergeApprovedPullRequest(context.Background(), application.PullRequestMergeRequest{
+	request := application.PullRequestMergeRequest{
 		OperationID: "merge-task-0001", RepositoryID: "fixture-repository", PullRequestID: "github-pr-31",
 		Branch: "devcrew/task-merge", HeadRevision: head, RequiredChecks: []string{"ci/unit"},
-	})
+	}
+	reconciled, found, err := port.ReconcileApprovedPullRequest(context.Background(), request)
+	if err != nil || !found || reconciled.Method != application.PullRequestMergeCommit ||
+		reconciled.MergeCommitRevision != mergeCommit {
+		t.Fatalf("ReconcileApprovedPullRequest() = %#v, %t, %v", reconciled, found, err)
+	}
+	receipt, err := port.MergeApprovedPullRequest(context.Background(), request)
 	if err != nil || receipt.Method != application.PullRequestMergeCommit ||
 		receipt.MergeCommitRevision != mergeCommit {
 		t.Fatalf("MergeApprovedPullRequest() = %#v, %v", receipt, err)

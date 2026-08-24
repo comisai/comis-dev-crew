@@ -38,6 +38,54 @@ func (adapter *GitHubAdapter) VerifyPullRequestDelivery(
 
 var _ application.PullRequestDeliveryVerifier = (*GitHubAdapter)(nil)
 
+// ReconcileApprovedPullRequest reads post-merge truth without resolving the
+// separately scoped merge credential or attempting another mutation.
+func (adapter *GitHubAdapter) ReconcileApprovedPullRequest(
+	ctx context.Context,
+	request application.PullRequestMergeRequest,
+) (application.PullRequestMergeReceipt, bool, error) {
+	if adapter == nil || request.RepositoryID != adapter.config.RepositoryIdentity {
+		return application.PullRequestMergeReceipt{}, false, errors.New("reconcile approved pull request: repository identity differs")
+	}
+	forgeRequest := PullRequestMergeRequest{
+		OperationID: request.OperationID, PullRequestID: request.PullRequestID,
+		Branch: request.Branch, HeadRevision: request.HeadRevision,
+		RequiredChecks: append([]string(nil), request.RequiredChecks...),
+	}
+	if err := validatePullRequestMergeRequest(forgeRequest); err != nil {
+		return application.PullRequestMergeReceipt{}, false, err
+	}
+	number, err := pullRequestNumber(request.PullRequestID)
+	if err != nil {
+		return application.PullRequestMergeReceipt{}, false, err
+	}
+	readCredential, err := adapter.config.ReadCredentials.Resolve(ctx)
+	if err != nil || !validReadCredential(readCredential) {
+		return application.PullRequestMergeReceipt{}, false, errors.New("reconcile approved pull request: read credential is unavailable")
+	}
+	pull, err := adapter.readPullRequest(ctx, readCredential.Secret, number)
+	if err != nil {
+		return application.PullRequestMergeReceipt{}, false, err
+	}
+	receipt, merged := adapter.exactMergedReceipt(forgeRequest, pull)
+	if merged {
+		method, err := applicationMergeMethod(receipt.Method)
+		if err != nil {
+			return application.PullRequestMergeReceipt{}, false, err
+		}
+		return application.PullRequestMergeReceipt{
+			RepositoryID: receipt.RepositoryID, PullRequestID: receipt.PullRequestID,
+			HeadRevision: receipt.HeadRevision, MergeCommitRevision: receipt.MergeCommitRevision,
+			Method: method,
+		}, true, nil
+	}
+	if pull.State != "open" || pull.Merged || pull.Head.SHA != request.HeadRevision ||
+		pull.Head.Ref != request.Branch || pull.Base.Ref != adapter.config.BaseBranch {
+		return application.PullRequestMergeReceipt{}, false, errors.New("reconcile approved pull request: pull-request identity changed")
+	}
+	return application.PullRequestMergeReceipt{}, false, nil
+}
+
 // MergeApprovedPullRequest implements the application mutation port while
 // keeping forge DTOs and the configured strategy inside the adapter package.
 func (adapter *GitHubAdapter) MergeApprovedPullRequest(

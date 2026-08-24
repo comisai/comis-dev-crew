@@ -67,7 +67,6 @@ func (facade *Facade) registerTools() {
 	mcp.AddTool(facade.server, cleanupTool(), facade.cleanupTask)
 	mcp.AddTool(facade.server, mergeTool(), facade.mergeTask)
 	mcp.AddTool(facade.server, cancelTool(), facade.cancelTask)
-	mcp.AddTool(facade.server, discardTool(), facade.discardTask)
 	mcp.AddTool(facade.server, tool(
 		ToolResumeTask,
 		"Return one paused task to the worker already running it. Refused when the worktree has uncommitted changes; hand the work back instead so the edit is revalidated.",

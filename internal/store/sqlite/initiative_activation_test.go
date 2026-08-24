@@ -14,6 +14,29 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
+func commitActiveInitiativeForTest(
+	t *testing.T,
+	ctx context.Context,
+	store *Store,
+	mutation application.ManagedRunGroupActivationMutation,
+) application.InitiativeActivationResult {
+	t.Helper()
+	result, err := store.CommitInitiativeActivation(ctx, mutation)
+	if err != nil {
+		t.Fatalf("CommitInitiativeActivation() error = %v", err)
+	}
+	result.Initiative, err = store.SetInitiativeActivationState(
+		ctx,
+		mutation.ManagedRunGroupID,
+		domain.InitiativeActive,
+		mutation.At,
+	)
+	if err != nil {
+		t.Fatalf("SetInitiativeActivationState(active) error = %v", err)
+	}
+	return result
+}
+
 func TestInitiativeActivationCommitsEveryBindingAtOneStateVersion(t *testing.T) {
 	ctx := context.Background()
 	store, _, mutation := preparedInitiativeActivationStore(t)
@@ -21,9 +44,9 @@ func TestInitiativeActivationCommitsEveryBindingAtOneStateVersion(t *testing.T) 
 	if err != nil {
 		t.Fatalf("CommitInitiativeActivation() error = %v", err)
 	}
-	if result.Initiative.ManagedRunGroupID != mutation.ManagedRunGroupID || result.Initiative.State != domain.InitiativeActive ||
+	if result.Initiative.ManagedRunGroupID != mutation.ManagedRunGroupID || result.Initiative.State != domain.InitiativeUnknown ||
 		result.Initiative.StateVersion != result.Operation.StateVersion || len(result.Tasks) != 2 {
-		t.Fatalf("CommitInitiativeActivation() = %#v, want one active two-member group", result)
+		t.Fatalf("CommitInitiativeActivation() = %#v, want one non-launchable bound group", result)
 	}
 	for _, task := range result.Tasks {
 		if task.State != domain.TaskReady || task.StateVersion != result.Operation.StateVersion || task.ManagedRunID == "" ||
@@ -76,21 +99,17 @@ func TestInitiativeActivationStateMovesByExactBoundGroup(t *testing.T) {
 		t.Fatalf("CommitInitiativeActivation() error = %v", err)
 	}
 	unknownAt := mutation.At.Add(time.Minute)
-	unknown, err := store.SetInitiativeActivationState(ctx, mutation.ManagedRunGroupID, domain.InitiativeUnknown, unknownAt)
-	if err != nil || unknown.State != domain.InitiativeUnknown || unknown.StateVersion <= activated.Initiative.StateVersion {
-		t.Fatalf("SetInitiativeActivationState(unknown) = %#v, %v", unknown, err)
-	}
 	replayed, err := store.SetInitiativeActivationState(ctx, mutation.ManagedRunGroupID, domain.InitiativeUnknown, unknownAt)
-	if err != nil || !reflect.DeepEqual(replayed, unknown) {
-		t.Fatalf("SetInitiativeActivationState(replay) = %#v, %v", replayed, err)
+	if err != nil || !reflect.DeepEqual(replayed, activated.Initiative) {
+		t.Fatalf("SetInitiativeActivationState(unknown replay) = %#v, %v", replayed, err)
 	}
-	activeAt := unknownAt.Add(time.Minute)
+	activeAt := unknownAt
 	active, err := store.SetInitiativeActivationState(ctx, mutation.ManagedRunGroupID, domain.InitiativeActive, activeAt)
 	if err != nil || active.State != domain.InitiativeActive || !active.UpdatedAt.Equal(activeAt) {
 		t.Fatalf("SetInitiativeActivationState(active) = %#v, %v", active, err)
 	}
-	if _, err := store.SetInitiativeActivationState(ctx, mutation.ManagedRunGroupID, domain.InitiativeUnknown, unknownAt); !errors.Is(err, application.ErrPrecondition) {
-		t.Fatalf("SetInitiativeActivationState(backward time) error = %v", err)
+	if _, err := store.SetInitiativeActivationState(ctx, mutation.ManagedRunGroupID, domain.InitiativeUnknown, activeAt.Add(time.Minute)); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("SetInitiativeActivationState(active rollback) error = %v", err)
 	}
 	if _, err := store.SetInitiativeActivationState(ctx, "managed-run-group-missing", domain.InitiativeUnknown, activeAt); !errors.Is(err, application.ErrNotFound) {
 		t.Fatalf("SetInitiativeActivationState(missing group) error = %v", err)

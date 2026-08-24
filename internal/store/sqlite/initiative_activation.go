@@ -140,11 +140,11 @@ func (store *Store) CommitInitiativeActivation(
 		}
 	}
 	initiative.ManagedRunGroupID = mutation.ManagedRunGroupID
-	initiative.State = domain.InitiativeActive
+	initiative.State = domain.InitiativeUnknown
 	initiative.StateVersion = stateVersion
 	initiative.UpdatedAt = mutation.At
 	if err := initiative.Validate(); err != nil {
-		return application.InitiativeActivationResult{}, fmt.Errorf("validate active initiative: %w", err)
+		return application.InitiativeActivationResult{}, fmt.Errorf("validate bound initiative: %w", err)
 	}
 	if err := updateInitiativeRecord(ctx, transaction, initiative); err != nil {
 		return application.InitiativeActivationResult{}, err
@@ -194,7 +194,7 @@ func (store *Store) SetInitiativeActivationState(
 		}
 		return initiative, nil
 	}
-	if (initiative.State != domain.InitiativeActive && initiative.State != domain.InitiativeUnknown) || at.Before(initiative.UpdatedAt) {
+	if initiative.State != domain.InitiativeUnknown || at.Before(initiative.UpdatedAt) {
 		return domain.DevelopmentInitiative{}, application.ErrPrecondition
 	}
 	stateVersion, err := nextMutationStateVersion(ctx, transaction)
@@ -221,7 +221,7 @@ func validateManagedRunGroupActivationMutation(mutation application.ManagedRunGr
 		domain.ValidateAuthorityReference("serviceInstanceId", mutation.ServiceInstanceID) != nil ||
 		domain.ValidateAuthorityReference("managedRunGroupId", mutation.ManagedRunGroupID) != nil ||
 		mutation.RegistrationNonce == "" || mutation.At.Location() != time.UTC ||
-		len(mutation.Members) == 0 || len(mutation.Members) > 16 {
+		len(mutation.Members) == 0 || len(mutation.Members) > domain.MaximumInitiativeMembers {
 		return application.ErrInvalidInput
 	}
 	externalRefs := make(map[string]struct{}, len(mutation.Members))

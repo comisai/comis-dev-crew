@@ -23,7 +23,6 @@ const (
 	ToolHandbackTask      = "handback_task"
 	ToolCleanupTask       = "cleanup_task"
 	ToolMergeTask         = "merge_task"
-	ToolDiscardTask       = "discard_task"
 	ToolPauseTask         = "pause_task"
 	ToolCancelTask        = "cancel_task"
 	ToolResumeTask        = "resume_task"
@@ -57,7 +56,6 @@ type Client interface {
 	HandbackTask(context.Context, string, localapi.HandbackTaskInput) (localapi.TaskMutationResult, error)
 	CleanupTask(context.Context, string, localapi.CleanupTaskInput) (localapi.TaskMutationResult, error)
 	MergeTask(context.Context, string, localapi.MergeTaskInput) (application.MergeTaskResult, error)
-	DiscardTask(context.Context, string, localapi.DiscardTaskInput) (localapi.TaskMutationResult, error)
 	Diagnose(context.Context, string) (application.DiagnosticReport, error)
 	ListTasks(context.Context, string, localapi.ListTasksInput) (application.TaskList, error)
 	ListWorkerProfiles(context.Context, string) (application.WorkerProfileList, error)
@@ -111,15 +109,6 @@ type MergeTaskOutput struct {
 	CompletedAtMs        int64                              `json:"completedAtMs"`
 	StateVersion         int64                              `json:"stateVersion"`
 	SideEffect           localapi.SideEffectClass           `json:"sideEffect"`
-}
-
-// DiscardTaskInput removes the worktree of one task that never delivered.
-// The acknowledgement is a stated argument rather than something implied by
-// naming the tool: a discard has no delivered work to point at, so an
-// operator's explicit statement is the only gate the removal has.
-type DiscardTaskInput struct {
-	TaskHandle   string `json:"taskHandle" jsonschema:"opaque task handle"`
-	Acknowledged bool   `json:"acknowledged" jsonschema:"set true only when the operator accepted that uncommitted work is removed permanently"`
 }
 
 // AttestScoutDecisionsInput records the liaison's inventory of a scout's still

@@ -14,10 +14,7 @@ import (
 func TestInitiativeControlResultSurvivesRestartAndRejectsAlteredReplay(t *testing.T) {
 	ctx := context.Background()
 	store, initiativeHandle, activation := preparedInitiativeActivationStore(t)
-	activated, err := store.CommitInitiativeActivation(ctx, activation)
-	if err != nil {
-		t.Fatalf("CommitInitiativeActivation() error = %v", err)
-	}
+	activated := commitActiveInitiativeForTest(t, ctx, store, activation)
 	for index, task := range activated.Tasks {
 		if _, err := store.CommitTaskCancel(ctx, application.TaskCancelMutation{
 			TaskHandle: task.Handle, OperationID: "cancel-member-" + task.Handle,
@@ -102,10 +99,7 @@ func TestInitiativeControlResultSurvivesRestartAndRejectsAlteredReplay(t *testin
 func TestInitiativeControlStoreRejectsACompletedMemberWithoutItsTaskOperation(t *testing.T) {
 	ctx := context.Background()
 	store, initiativeHandle, activation := preparedInitiativeActivationStore(t)
-	activated, err := store.CommitInitiativeActivation(ctx, activation)
-	if err != nil {
-		t.Fatal(err)
-	}
+	activated := commitActiveInitiativeForTest(t, ctx, store, activation)
 	members := make([]application.InitiativeControlMemberResult, 0, len(activated.Tasks))
 	for _, task := range activated.Tasks {
 		members = append(members, application.InitiativeControlMemberResult{
@@ -270,10 +264,7 @@ func preparedInitiativeControlMutation(t *testing.T) (*Store, application.Initia
 	t.Helper()
 	ctx := context.Background()
 	store, initiativeHandle, activation := preparedInitiativeActivationStore(t)
-	activated, err := store.CommitInitiativeActivation(ctx, activation)
-	if err != nil {
-		t.Fatal(err)
-	}
+	activated := commitActiveInitiativeForTest(t, ctx, store, activation)
 	for index, task := range activated.Tasks {
 		if _, err := store.CommitTaskCancel(ctx, application.TaskCancelMutation{
 			TaskHandle: task.Handle, OperationID: "control-fixture-" + task.Handle,

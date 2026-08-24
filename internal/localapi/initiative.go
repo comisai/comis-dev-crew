@@ -10,13 +10,13 @@ import (
 // PrepareInitiativeInput carries a complete caller-local graph. Operation and
 // service identities are absent because the boundary derives both itself.
 type PrepareInitiativeInput struct {
-	TitleRef             string                                   `json:"titleRef"`
-	BaseRevisionSet      []domain.InitiativeBaseRevision          `json:"baseRevisionSet"`
-	Components           []application.PrepareInitiativeComponent `json:"components"`
-	Edges                []application.PrepareInitiativeEdge      `json:"edges"`
-	ContractArtifacts    []string                                 `json:"contractArtifacts"`
-	IntegrationPolicyID  string                                   `json:"integrationPolicyId"`
-	IntegrationOwnerTask string                                   `json:"integrationOwnerTask,omitempty"`
+	TitleRef             string                                          `json:"titleRef"`
+	BaseRevisionSet      []domain.InitiativeBaseRevision                 `json:"baseRevisionSet"`
+	Components           []application.PrepareInitiativeComponent        `json:"components"`
+	Edges                []application.PrepareInitiativeEdge             `json:"edges"`
+	ContractArtifacts    []application.PrepareInitiativeContractArtifact `json:"contractArtifacts"`
+	IntegrationPolicyID  string                                          `json:"integrationPolicyId"`
+	IntegrationOwnerTask string                                          `json:"integrationOwnerTask,omitempty"`
 }
 
 // ListInitiativesInput optionally scopes initiatives by their closed state.

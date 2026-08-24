@@ -71,6 +71,7 @@ func cloneInitiativeSchedulingLimits(limits InitiativeSchedulingLimits) Initiati
 func ScheduleInitiatives(
 	initiatives []domain.DevelopmentInitiative,
 	tasks []domain.Task,
+	artifacts []domain.ComponentContractArtifact,
 	limits InitiativeSchedulingLimits,
 ) ([]InitiativeSchedule, error) {
 	if err := validateSchedulingLimits(limits); err != nil {
@@ -87,6 +88,10 @@ func ScheduleInitiatives(
 	if err != nil {
 		return nil, err
 	}
+	artifactsByInitiative, err := indexSchedulingArtifacts(ordered, artifacts)
+	if err != nil {
+		return nil, err
+	}
 
 	schedules := make([]InitiativeSchedule, len(ordered))
 	candidates := make([][]schedulingCandidate, len(ordered))
@@ -96,7 +101,7 @@ func ScheduleInitiatives(
 			return nil, fmt.Errorf("schedule initiative %q: %w", initiative.Handle, err)
 		}
 		schedule, ready, err := scheduleOneInitiative(
-			initiativeIndex, initiative, tasksByHandle, memberOwner,
+			initiativeIndex, initiative, tasksByHandle, artifactsByInitiative[initiative.Handle], memberOwner,
 		)
 		if err != nil {
 			return nil, err
@@ -118,6 +123,7 @@ func ScheduleInitiatives(
 func DeriveInitiativeState(
 	initiative domain.DevelopmentInitiative,
 	members []domain.Task,
+	artifacts []domain.ComponentContractArtifact,
 ) (domain.InitiativeState, error) {
 	if err := initiative.Validate(); err != nil {
 		return "", fmt.Errorf("derive initiative state: %w", err)
@@ -132,7 +138,15 @@ func DeriveInitiativeState(
 		}
 		indexed[task.Handle] = task
 	}
-	schedule, ready, err := scheduleOneInitiative(0, initiative, indexed, make(map[string]string))
+	indexedArtifacts, err := indexSchedulingArtifacts(
+		[]domain.DevelopmentInitiative{initiative}, artifacts,
+	)
+	if err != nil {
+		return "", err
+	}
+	schedule, ready, err := scheduleOneInitiative(
+		0, initiative, indexed, indexedArtifacts[initiative.Handle], make(map[string]string),
+	)
 	if err != nil {
 		return "", err
 	}
@@ -194,12 +208,13 @@ func scheduleOneInitiative(
 	scheduleIndex int,
 	initiative domain.DevelopmentInitiative,
 	tasksByHandle map[string]domain.Task,
+	currentArtifacts map[string]domain.ComponentContractArtifact,
 	memberOwner map[string]string,
 ) (InitiativeSchedule, []schedulingCandidate, error) {
 	schedule := InitiativeSchedule{InitiativeHandle: initiative.Handle}
-	currentArtifacts := make(map[string]struct{}, len(initiative.ContractArtifacts))
-	for _, artifactHandle := range initiative.ContractArtifacts {
-		currentArtifacts[artifactHandle] = struct{}{}
+	currentArtifactHandles := make(map[string]struct{}, len(initiative.ContractArtifacts))
+	for _, handle := range initiative.ContractArtifacts {
+		currentArtifactHandles[handle] = struct{}{}
 	}
 	for _, component := range initiative.Components {
 		for _, handle := range component.TaskHandles {
@@ -229,7 +244,9 @@ func scheduleOneInitiative(
 		if task.State != domain.TaskReady || initiative.State != domain.InitiativeActive {
 			continue
 		}
-		decision.Reason = launchDependencyReason(initiative, task, tasksByHandle, currentArtifacts)
+		decision.Reason = launchDependencyReason(
+			initiative, task, tasksByHandle, currentArtifacts, currentArtifactHandles,
+		)
 		if decision.Reason == "" {
 			candidates = append(candidates, schedulingCandidate{
 				scheduleIndex: scheduleIndex, decisionIndex: decisionIndex, task: task,
@@ -243,13 +260,17 @@ func launchDependencyReason(
 	initiative domain.DevelopmentInitiative,
 	task domain.Task,
 	tasks map[string]domain.Task,
-	currentArtifacts map[string]struct{},
+	currentArtifacts map[string]domain.ComponentContractArtifact,
+	currentArtifactHandles map[string]struct{},
 ) InitiativeScheduleReason {
 	for _, edge := range initiative.Edges {
 		if edge.ToTaskHandle != task.Handle || edge.Kind != domain.EdgeConsumesArtifact {
 			continue
 		}
-		pinned, current := taskPinsCurrentContract(task, edge.RequiredArtifactKind, currentArtifacts)
+		pinned, current := taskPinsCurrentContract(
+			task, edge.FromTaskHandle, edge.RequiredArtifactKind,
+			currentArtifacts, currentArtifactHandles,
+		)
 		if pinned && !current {
 			return ScheduleContractStale
 		}
@@ -276,8 +297,10 @@ func launchDependencyReason(
 
 func taskPinsCurrentContract(
 	task domain.Task,
+	producerTaskHandle string,
 	kind domain.ContractArtifactKind,
-	currentArtifacts map[string]struct{},
+	currentArtifacts map[string]domain.ComponentContractArtifact,
+	currentArtifactHandles map[string]struct{},
 ) (bool, bool) {
 	pinned := false
 	for _, contract := range task.ConsumedContracts {
@@ -285,8 +308,10 @@ func taskPinsCurrentContract(
 			continue
 		}
 		pinned = true
-		_, current := currentArtifacts[contract.ArtifactHandle]
-		if current {
+		artifact, recorded := currentArtifacts[contract.ArtifactHandle]
+		_, current := currentArtifactHandles[contract.ArtifactHandle]
+		if recorded && current && artifact.ProducerTaskHandle == producerTaskHandle &&
+			artifact.Kind == contract.Kind && artifact.ContentHash == contract.ContentHash {
 			return true, true
 		}
 	}

@@ -123,6 +123,11 @@ func (store *Store) CommitPreparedInitiative(
 			return application.InitiativePreparationResult{}, fmt.Errorf("insert initiative member operation: %w", err)
 		}
 	}
+	for _, artifact := range mutation.ContractArtifacts {
+		if err := insertInitiativeContractArtifact(ctx, transaction, artifact); err != nil {
+			return application.InitiativePreparationResult{}, fmt.Errorf("insert initiative contract artifact: %w", err)
+		}
+	}
 	operation := completedMutationOperation(
 		mutation.OperationID, commandPrepareInitiative, mutation.SubjectDigest,
 		initiative.Handle, stateVersion, mutation.At,
@@ -165,6 +170,7 @@ func validatePreparedInitiativeMutation(mutation application.PreparedInitiativeM
 		}
 	}
 	seenTasks := make(map[string]struct{}, len(mutation.Members))
+	memberTasks := make(map[string]domain.Task, len(mutation.Members))
 	seenOperations := make(map[string]struct{}, len(mutation.Members))
 	serviceInstanceID := ""
 	for _, member := range mutation.Members {
@@ -194,11 +200,15 @@ func validatePreparedInitiativeMutation(mutation application.PreparedInitiativeM
 			return errors.New("commit prepared initiative: duplicate member operation")
 		}
 		seenTasks[member.Task.Handle] = struct{}{}
+		memberTasks[member.Task.Handle] = member.Task
 		seenOperations[member.OperationID] = struct{}{}
 		preparations = append(preparations, member.Preparation)
 	}
 	if len(seenTasks) != len(initiativeMembers) {
 		return errors.New("commit prepared initiative: member set is incomplete")
+	}
+	if err := validatePreparedInitiativeContractArtifacts(mutation, memberTasks); err != nil {
+		return err
 	}
 	group := application.ManagedRunGroupPreparation{
 		ExternalGroupRef:  mutation.Initiative.Handle,
@@ -259,6 +269,22 @@ func initiativePreparationResult(
 	if err != nil {
 		return application.InitiativePreparationResult{}, err
 	}
+	artifacts, err := listInitiativeContractArtifacts(ctx, source, initiative.Handle)
+	if err != nil {
+		return application.InitiativePreparationResult{}, err
+	}
+	if len(artifacts) != len(initiative.ContractArtifacts) {
+		return application.InitiativePreparationResult{}, errors.New("stored initiative contract artifact set is incomplete")
+	}
+	currentArtifacts := make(map[string]struct{}, len(artifacts))
+	for _, artifact := range artifacts {
+		currentArtifacts[artifact.ArtifactHandle] = struct{}{}
+	}
+	for _, handle := range initiative.ContractArtifacts {
+		if _, found := currentArtifacts[handle]; !found {
+			return application.InitiativePreparationResult{}, errors.New("stored initiative contract artifact is unlisted")
+		}
+	}
 	group := application.ManagedRunGroupPreparation{
 		ExternalGroupRef: initiative.Handle, RegistrationNonce: registrationNonce,
 		Members: preparations, ExpiresAt: expiresAt,
@@ -267,7 +293,8 @@ func initiativePreparationResult(
 		return application.InitiativePreparationResult{}, errors.New("stored initiative preparation is invalid")
 	}
 	return application.InitiativePreparationResult{
-		Initiative: initiative, Tasks: tasks, Preparation: group, Operation: operation,
+		Initiative: initiative, Tasks: tasks, ContractArtifacts: artifacts,
+		Preparation: group, Operation: operation,
 	}, nil
 }
 

@@ -44,6 +44,9 @@ func (store *Store) CommitTaskVerify(
 		if task.State == domain.TaskValidating {
 			return task, nil
 		}
+		if err := requireInitiativeValidationDependencies(ctx, transaction, task.Handle); err != nil {
+			return domain.Task{}, err
+		}
 		updated, err := task.ApplyTransition(domain.TransitionValidationStarted, mutation.At)
 		if err != nil {
 			return domain.Task{}, fmt.Errorf("apply task verify: %w", err)

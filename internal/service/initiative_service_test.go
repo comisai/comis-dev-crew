@@ -68,7 +68,7 @@ func TestRun_ComposesInitiativePreparationOnDedicatedMCPEndpoint(t *testing.T) {
 				},
 			}},
 		}},
-		Edges: []application.PrepareInitiativeEdge{}, ContractArtifacts: []string{},
+		Edges: []application.PrepareInitiativeEdge{}, ContractArtifacts: []application.PrepareInitiativeContractArtifact{},
 		IntegrationPolicyID: "integration-policy-a", IntegrationOwnerTask: "member-ref",
 	})
 	if err != nil {

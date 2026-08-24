@@ -140,6 +140,9 @@ func (registry *Registry) inspectIntegrationInputs(
 }
 
 func (registry *Registry) runIntegrationStrategy(ctx context.Context, request application.IntegrationAdapterRequest) error {
+	if request.Strategy == application.IntegrationRebase {
+		return registry.runRebaseIntegration(ctx, request)
+	}
 	arguments := []string{
 		"--no-optional-locks", "-C", request.Target.WorktreePath,
 		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
@@ -148,8 +151,6 @@ func (registry *Registry) runIntegrationStrategy(ctx context.Context, request ap
 	switch request.Strategy {
 	case application.IntegrationMerge:
 		arguments = append(arguments, "merge", "--no-ff", "--no-edit", "--no-verify", "--no-stat", request.Candidate.HeadRevision)
-	case application.IntegrationRebase:
-		arguments = append(arguments, "rebase", "--no-autostash", "--no-stat", request.Candidate.HeadRevision)
 	case application.IntegrationCherryPick:
 		arguments = append(arguments, "cherry-pick", request.Candidate.BaseRevision+".."+request.Candidate.HeadRevision)
 	default:
@@ -157,6 +158,42 @@ func (registry *Registry) runIntegrationStrategy(ctx context.Context, request ap
 	}
 	_, err := runGitBytes(ctx, registry.gitExecutable, arguments...)
 	return err
+}
+
+func (registry *Registry) runRebaseIntegration(ctx context.Context, request application.IntegrationAdapterRequest) error {
+	targetRef, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"symbolic-ref", "--quiet", "HEAD")
+	if err != nil || !strings.HasPrefix(targetRef, "refs/heads/") || strings.ContainsAny(targetRef, "\x00\r\n\t ") {
+		return errors.New("apply integration candidate: target branch identity is unavailable")
+	}
+	configuration := []string{
+		"--no-optional-locks", "-C", request.Target.WorktreePath,
+		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
+		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
+	}
+	if _, err := runGitBytes(ctx, registry.gitExecutable, append(configuration,
+		"checkout", "--detach", "--no-guess", request.Candidate.HeadRevision)...); err != nil {
+		return err
+	}
+	if _, err := runGitBytes(ctx, registry.gitExecutable, append(configuration,
+		"rebase", "--no-autostash", "--no-stat", "--onto", request.Target.ExpectedHead,
+		request.Candidate.BaseRevision)...); err != nil {
+		return err
+	}
+	resultingHead, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil || !gitRevisionPattern.MatchString(resultingHead) || resultingHead == request.Target.ExpectedHead {
+		return errors.New("apply integration candidate: rebased head is invalid")
+	}
+	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"update-ref", targetRef, resultingHead, request.Target.ExpectedHead); err != nil {
+		return errors.New("apply integration candidate: target branch changed during rebase")
+	}
+	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"symbolic-ref", "HEAD", targetRef); err != nil {
+		return errors.New("apply integration candidate: rebased target could not be reattached")
+	}
+	return nil
 }
 
 func (registry *Registry) integrationConflictPaths(ctx context.Context, worktreePath string) ([]string, error) {
@@ -232,12 +269,59 @@ func (registry *Registry) replayConflictedIntegration(
 	if head != request.Target.ExpectedHead {
 		return application.IntegrationAdapterResult{}, false, errors.New("apply integration candidate: conflict receipt head differs")
 	}
+	if request.Strategy == application.IntegrationRebase {
+		return registry.replayConflictedRebase(ctx, request, head)
+	}
 	target, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
 		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
 		WorktreePath: request.Target.WorktreePath,
 	})
 	if err != nil || target.HeadRevision != head {
 		return application.IntegrationAdapterResult{}, false, errors.New("apply integration candidate: conflict receipt differs from target")
+	}
+	conflicts, err := registry.integrationConflictPaths(ctx, request.Target.WorktreePath)
+	if err != nil || len(conflicts) == 0 {
+		return application.IntegrationAdapterResult{}, false, errors.New("apply integration candidate: recorded conflicts are unavailable")
+	}
+	return application.IntegrationAdapterResult{
+		Outcome: application.IntegrationConflicted, PreviousHead: head, ConflictPaths: conflicts,
+	}, true, nil
+}
+
+func (registry *Registry) replayConflictedRebase(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+	head string,
+) (application.IntegrationAdapterResult, bool, error) {
+	originalHead, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"rev-parse", "--verify", "ORIG_HEAD^{commit}")
+	if err != nil || originalHead != request.Candidate.HeadRevision {
+		return application.IntegrationAdapterResult{}, false, errors.New("apply integration candidate: rebase origin differs from receipt")
+	}
+	rebaseHead, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"rev-parse", "--verify", "REBASE_HEAD^{commit}")
+	if err != nil {
+		return application.IntegrationAdapterResult{}, false, errors.New("apply integration candidate: recorded rebase is unavailable")
+	}
+	baseContains, err := gitPredicate(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"merge-base", "--is-ancestor", request.Candidate.BaseRevision, rebaseHead)
+	if err != nil || !baseContains {
+		return application.IntegrationAdapterResult{}, false, errors.New("apply integration candidate: rebase conflict is outside candidate range")
+	}
+	candidateContains, err := gitPredicate(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"merge-base", "--is-ancestor", rebaseHead, request.Candidate.HeadRevision)
+	if err != nil || !candidateContains {
+		return application.IntegrationAdapterResult{}, false, errors.New("apply integration candidate: rebase conflict differs from candidate")
+	}
+	currentHead, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return application.IntegrationAdapterResult{}, false, errors.New("apply integration candidate: rebasing target head is unavailable")
+	}
+	targetContains, err := gitPredicate(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"merge-base", "--is-ancestor", head, currentHead)
+	if err != nil || !targetContains {
+		return application.IntegrationAdapterResult{}, false, errors.New("apply integration candidate: rebasing target differs from receipt")
 	}
 	conflicts, err := registry.integrationConflictPaths(ctx, request.Target.WorktreePath)
 	if err != nil || len(conflicts) == 0 {

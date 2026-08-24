@@ -76,6 +76,9 @@ func (store *Store) migrate(ctx context.Context) error {
 	if err := store.applyVersionedMigration(ctx, 43, taskResumeLaunchMigration); err != nil {
 		return err
 	}
+	if err := store.applyVersionedMigration(ctx, 44, initiativeContractArtifactMigration); err != nil {
+		return err
+	}
 	return store.backfillReconciledComisReports(ctx)
 }
 

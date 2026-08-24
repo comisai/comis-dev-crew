@@ -295,10 +295,7 @@ func TestInitiativeAggregateReportsMissingMembersAndStaleVersions(t *testing.T) 
 
 	t.Run("stale aggregate version", func(t *testing.T) {
 		store, _, activation := preparedInitiativeActivationStore(t)
-		activated, err := store.CommitInitiativeActivation(context.Background(), activation)
-		if err != nil {
-			t.Fatalf("CommitInitiativeActivation() error = %v", err)
-		}
+		activated := commitActiveInitiativeForTest(t, context.Background(), store, activation)
 		mustExecInitiativeBoundary(t, store, `UPDATE tasks SET state = 'cancelled'`)
 		transaction, err := store.db.BeginTx(context.Background(), nil)
 		if err != nil {
@@ -317,9 +314,7 @@ func TestInitiativeAggregateReportsMissingMembersAndStaleVersions(t *testing.T) 
 func TestInitiativeLaunchAuthorizationRejectsCorruptFleetAndUnlaunchablePosture(t *testing.T) {
 	t.Run("corrupt fleet task", func(t *testing.T) {
 		store, _, activation := preparedInitiativeActivationStore(t)
-		if _, err := store.CommitInitiativeActivation(context.Background(), activation); err != nil {
-			t.Fatalf("CommitInitiativeActivation() error = %v", err)
-		}
+		commitActiveInitiativeForTest(t, context.Background(), store, activation)
 		task, err := store.GetTask(context.Background(), activation.Members[0].ExternalRunRef)
 		if err != nil {
 			t.Fatalf("GetTask() error = %v", err)

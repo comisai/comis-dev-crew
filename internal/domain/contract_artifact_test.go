@@ -49,6 +49,14 @@ func TestContractArtifactRejectsAnEmptyOrOversizedBody(t *testing.T) {
 	}
 }
 
+func TestContractArtifactRequiresDurableProductionTime(t *testing.T) {
+	artifact := artifactFixture()
+	artifact.ProducedAt = time.Time{}
+	if err := artifact.Validate(); err == nil {
+		t.Fatal("artifact without a production time accepted")
+	}
+}
+
 func TestContractArtifactCannotSupersedeItself(t *testing.T) {
 	artifact := artifactFixture()
 	artifact.SupersedesArtifactHandle = artifact.ArtifactHandle

@@ -14,10 +14,7 @@ import (
 func TestInitiativeAggregateMovesAtomicallyWithMemberState(t *testing.T) {
 	ctx := context.Background()
 	store, initiativeHandle, activation := preparedInitiativeActivationStore(t)
-	activated, err := store.CommitInitiativeActivation(ctx, activation)
-	if err != nil {
-		t.Fatalf("CommitInitiativeActivation() error = %v", err)
-	}
+	activated := commitActiveInitiativeForTest(t, ctx, store, activation)
 
 	first, err := store.CommitTaskCancel(ctx, application.TaskCancelMutation{
 		TaskHandle: "task-component-a", OperationID: "cancel-component-0001",
@@ -55,9 +52,7 @@ func TestInitiativeAggregateMovesAtomicallyWithMemberState(t *testing.T) {
 func TestInitiativeAggregateFailureRollsBackTheMemberMutation(t *testing.T) {
 	ctx := context.Background()
 	store, initiativeHandle, activation := preparedInitiativeActivationStore(t)
-	if _, err := store.CommitInitiativeActivation(ctx, activation); err != nil {
-		t.Fatalf("CommitInitiativeActivation() error = %v", err)
-	}
+	commitActiveInitiativeForTest(t, ctx, store, activation)
 	if _, err := store.db.ExecContext(ctx, `UPDATE tasks SET state = 'candidate_complete'
 		WHERE handle = 'task-component-a'`); err != nil {
 		t.Fatalf("seed completed predecessor: %v", err)
@@ -91,9 +86,7 @@ func TestInitiativeAggregateFailureRollsBackTheMemberMutation(t *testing.T) {
 func TestInitiativeMemberStartRequiresAtomicSchedulerAuthority(t *testing.T) {
 	ctx := context.Background()
 	store, _, activation := preparedInitiativeActivationStore(t)
-	if _, err := store.CommitInitiativeActivation(ctx, activation); err != nil {
-		t.Fatalf("CommitInitiativeActivation() error = %v", err)
-	}
+	commitActiveInitiativeForTest(t, ctx, store, activation)
 	mutation := application.TaskStartMutation{
 		TaskHandle: "task-integration", OperationID: "start-held-integration-0001",
 		SubjectDigest: strings.Repeat("d", 64), At: activation.At.Add(time.Minute),
@@ -123,9 +116,7 @@ func TestInitiativeMemberStartRequiresAtomicSchedulerAuthority(t *testing.T) {
 func TestInitiativeMemberStartFailsClosedWithoutCapacityAuthority(t *testing.T) {
 	ctx := context.Background()
 	store, _, activation := preparedInitiativeActivationStore(t)
-	if _, err := store.CommitInitiativeActivation(ctx, activation); err != nil {
-		t.Fatalf("CommitInitiativeActivation() error = %v", err)
-	}
+	commitActiveInitiativeForTest(t, ctx, store, activation)
 	withoutLimits := application.TaskStartMutation{
 		TaskHandle: "task-component-a", OperationID: "start-without-limits-0001",
 		SubjectDigest: strings.Repeat("f", 64), At: activation.At.Add(time.Minute),

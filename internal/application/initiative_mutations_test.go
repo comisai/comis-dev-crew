@@ -2,7 +2,9 @@ package application
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -61,6 +63,51 @@ func TestPrepareInitiativeRejectsTheWholeGraphBeforeWorkspaceSideEffects(t *test
 	if len(store.intents) != 0 || store.commitCalls != 0 || len(workspaces.requests) != 0 || len(attachments.requests) != 0 {
 		t.Fatalf("invalid graph produced side effects: intents=%d commits=%d workspaces=%d attachments=%d",
 			len(store.intents), store.commitCalls, len(workspaces.requests), len(attachments.requests))
+	}
+}
+
+func TestPrepareInitiativePersistsOnlyExactProducerOwnedContractArtifacts(t *testing.T) {
+	store := &initiativeMutationStore{}
+	workspaces := &initiativeWorkspacePreparer{}
+	attachments := &initiativeAttachmentPreparer{}
+	coordinator := newInitiativeMutationsForTest(t, store, workspaces, attachments)
+	command := validPrepareInitiativeCommand()
+	content := `{"openapi":"3.1.0"}`
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
+	command.ContractArtifacts = []PrepareInitiativeContractArtifact{{
+		ArtifactHandle: "artifact-api-v1", ProducerTaskRef: "backend-ref",
+		Kind: domain.ArtifactAPISchema, MediaType: "application/json", Content: content,
+	}}
+	command.Components[1].Tasks[0].Contract.ConsumedContracts = []domain.PinnedContract{{
+		ArtifactHandle: "artifact-api-v1", Kind: domain.ArtifactAPISchema, ContentHash: digest,
+	}}
+	command.Edges = append(command.Edges, PrepareInitiativeEdge{
+		FromTaskRef: "backend-ref", ToTaskRef: "frontend-ref",
+		Kind: domain.EdgeConsumesArtifact, RequiredArtifactKind: domain.ArtifactAPISchema,
+	})
+
+	if _, err := coordinator.PrepareInitiative(context.Background(), command); err != nil {
+		t.Fatalf("PrepareInitiative() error = %v", err)
+	}
+	if len(store.committed.ContractArtifacts) != 1 {
+		t.Fatalf("contract artifacts = %#v, want one", store.committed.ContractArtifacts)
+	}
+	artifact := store.committed.ContractArtifacts[0]
+	if artifact.Artifact.ProducerTaskHandle != "task-backend" ||
+		artifact.Artifact.ContentHash != digest || string(artifact.Content) != content {
+		t.Fatalf("durable contract artifact = %#v", artifact)
+	}
+
+	secondStore := &initiativeMutationStore{}
+	command.OperationID = "prepare-initiative-0002"
+	command.Components[1].Tasks[0].Contract.ConsumedContracts[0].ContentHash = strings.Repeat("f", 64)
+	if _, err := newInitiativeMutationsForTest(
+		t, secondStore, &initiativeWorkspacePreparer{}, &initiativeAttachmentPreparer{},
+	).PrepareInitiative(context.Background(), command); err == nil {
+		t.Fatal("PrepareInitiative(counterfeit contract digest) error = nil")
+	}
+	if len(secondStore.intents) != 0 || secondStore.commitCalls != 0 {
+		t.Fatal("counterfeit contract reached durable preparation side effects")
 	}
 }
 

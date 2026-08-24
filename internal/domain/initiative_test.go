@@ -69,6 +69,17 @@ func TestInitiativeRejectsCycle(t *testing.T) {
 	}
 }
 
+func TestInitiativeRejectsValidationCycle(t *testing.T) {
+	initiative := initiativeFixture()
+	initiative.Edges = []domain.InitiativeEdge{
+		{FromTaskHandle: "task-backend", ToTaskHandle: "task-frontend", Kind: domain.EdgeBlocksValidation},
+		{FromTaskHandle: "task-frontend", ToTaskHandle: "task-backend", Kind: domain.EdgeBlocksValidation},
+	}
+	if err := initiative.Validate(); err == nil {
+		t.Fatal("validation cycle accepted")
+	}
+}
+
 func TestInitiativeRejectsSelfEdge(t *testing.T) {
 	initiative := initiativeFixture()
 	initiative.Edges = append(initiative.Edges, domain.InitiativeEdge{

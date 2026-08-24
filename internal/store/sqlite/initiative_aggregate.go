@@ -46,7 +46,11 @@ func refreshInitiativeAggregate(
 		}
 		members = append(members, task)
 	}
-	state, err := application.DeriveInitiativeState(*containing, members)
+	artifacts, err := listInitiativeContractArtifacts(ctx, transaction, containing.Handle)
+	if err != nil {
+		return fmt.Errorf("refresh initiative aggregate artifacts: %w", err)
+	}
+	state, err := application.DeriveInitiativeState(*containing, members, artifacts)
 	if err != nil {
 		return fmt.Errorf("refresh initiative aggregate state: %w", err)
 	}

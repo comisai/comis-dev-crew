@@ -12,8 +12,6 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
-const maximumInitiativeMembers = 16
-
 // PrepareInitiativeTaskContract is one immutable member task contract. Its base
 // revision and repository come from the containing component and frozen base set.
 type PrepareInitiativeTaskContract struct {
@@ -50,6 +48,16 @@ type PrepareInitiativeEdge struct {
 	RequiredArtifactKind domain.ContractArtifactKind `json:"requiredArtifactKind,omitempty"`
 }
 
+// PrepareInitiativeContractArtifact supplies one immutable contract and its
+// producer using only caller-local graph references.
+type PrepareInitiativeContractArtifact struct {
+	ArtifactHandle  string                      `json:"artifactHandle"`
+	ProducerTaskRef string                      `json:"producerTaskRef"`
+	Kind            domain.ContractArtifactKind `json:"kind"`
+	MediaType       string                      `json:"mediaType"`
+	Content         string                      `json:"content"`
+}
+
 // PrepareInitiativeCommand is the complete graph and immutable member contract set.
 type PrepareInitiativeCommand struct {
 	OperationID          string
@@ -58,7 +66,7 @@ type PrepareInitiativeCommand struct {
 	BaseRevisionSet      []domain.InitiativeBaseRevision
 	Components           []PrepareInitiativeComponent
 	Edges                []PrepareInitiativeEdge
-	ContractArtifacts    []string
+	ContractArtifacts    []PrepareInitiativeContractArtifact
 	IntegrationPolicyID  string
 	IntegrationOwnerTask string
 }
@@ -78,7 +86,7 @@ func (preparation ManagedRunGroupPreparation) Validate(createdAt time.Time) erro
 	if domain.ValidateTaskHandle(preparation.ExternalGroupRef) != nil ||
 		!registrationNoncePattern.MatchString(preparation.RegistrationNonce) ||
 		preparation.ExpiresAt.Location() != time.UTC || !preparation.ExpiresAt.After(createdAt) ||
-		len(preparation.Members) == 0 || len(preparation.Members) > maximumInitiativeMembers {
+		len(preparation.Members) == 0 || len(preparation.Members) > domain.MaximumInitiativeMembers {
 		return errors.New("managed-run group preparation is invalid")
 	}
 	seen := make(map[string]struct{}, len(preparation.Members))
@@ -103,11 +111,19 @@ type PreparedInitiativeMember struct {
 	SubjectDigest string
 }
 
+// PreparedInitiativeContractArtifact carries immutable bytes beside their
+// validated durable metadata for the atomic preparation commit.
+type PreparedInitiativeContractArtifact struct {
+	Artifact domain.ComponentContractArtifact
+	Content  []byte
+}
+
 // PreparedInitiativeMutation is committed as one store transaction after every
 // reversible workspace and runtime attachment has been prepared.
 type PreparedInitiativeMutation struct {
 	Initiative             domain.DevelopmentInitiative
 	Members                []PreparedInitiativeMember
+	ContractArtifacts      []PreparedInitiativeContractArtifact
 	GroupRegistrationNonce string
 	GroupExpiresAt         time.Time
 	OperationID            string
@@ -117,10 +133,11 @@ type PreparedInitiativeMutation struct {
 
 // InitiativePreparationResult is the private canonical result used for exact replay.
 type InitiativePreparationResult struct {
-	Initiative  domain.DevelopmentInitiative
-	Tasks       []domain.Task
-	Preparation ManagedRunGroupPreparation
-	Operation   domain.OperationRecord
+	Initiative        domain.DevelopmentInitiative
+	Tasks             []domain.Task
+	ContractArtifacts []domain.ComponentContractArtifact
+	Preparation       ManagedRunGroupPreparation
+	Operation         domain.OperationRecord
 }
 
 // InitiativeMutationStore owns initiative replay, preparation intents, and the
@@ -214,7 +231,7 @@ func (mutations *InitiativeMutations) PrepareInitiative(
 	}
 
 	now := mutations.clock()
-	initiative, drafts, err := mutations.buildInitiative(command, now)
+	initiative, drafts, artifacts, err := mutations.buildInitiative(command, now)
 	if err != nil {
 		return InitiativePreparationResult{}, mutationValidationFailure("initiative graph or member contract is invalid")
 	}
@@ -231,6 +248,9 @@ func (mutations *InitiativeMutations) PrepareInitiative(
 		drafts[index].task.CreatedAt = intentAt
 		drafts[index].task.UpdatedAt = intentAt
 	}
+	for index := range artifacts {
+		artifacts[index].Artifact.ProducedAt = intentAt
+	}
 	groupNonce, err := mutations.nonces()
 	if err != nil {
 		return InitiativePreparationResult{}, &dependencyFailure{message: "group registration identity source failed", cause: err}
@@ -243,7 +263,7 @@ func (mutations *InitiativeMutations) PrepareInitiative(
 		return InitiativePreparationResult{}, err
 	}
 	return mutations.store.CommitPreparedInitiative(ctx, PreparedInitiativeMutation{
-		Initiative: initiative, Members: members,
+		Initiative: initiative, Members: members, ContractArtifacts: artifacts,
 		GroupRegistrationNonce: groupNonce, GroupExpiresAt: intentAt.Add(mutations.preparationTTL).UTC(),
 		OperationID: command.OperationID, SubjectDigest: subjectDigest, At: intentAt,
 	})
@@ -252,20 +272,19 @@ func (mutations *InitiativeMutations) PrepareInitiative(
 func (mutations *InitiativeMutations) buildInitiative(
 	command PrepareInitiativeCommand,
 	at time.Time,
-) (domain.DevelopmentInitiative, []initiativeMemberDraft, error) {
+) (domain.DevelopmentInitiative, []initiativeMemberDraft, []PreparedInitiativeContractArtifact, error) {
 	memberCount := 0
 	for _, component := range command.Components {
 		memberCount += len(component.Tasks)
 	}
-	if memberCount == 0 || memberCount > maximumInitiativeMembers {
-		return domain.DevelopmentInitiative{}, nil, errors.New("initiative member count is invalid")
+	if memberCount == 0 || memberCount > domain.MaximumInitiativeMembers {
+		return domain.DevelopmentInitiative{}, nil, nil, errors.New("initiative member count is invalid")
 	}
 	initiative := domain.DevelopmentInitiative{
 		SchemaVersion: 1,
 		Handle:        initiativeIdentity(command.ServiceInstanceID, command.OperationID),
 		TitleRef:      command.TitleRef, State: domain.InitiativePreparing,
 		BaseRevisionSet:     append([]domain.InitiativeBaseRevision(nil), command.BaseRevisionSet...),
-		ContractArtifacts:   append([]string(nil), command.ContractArtifacts...),
 		IntegrationPolicyID: command.IntegrationPolicyID,
 		StateVersion:        1, CreatedAt: at, UpdatedAt: at,
 	}
@@ -282,12 +301,12 @@ func (mutations *InitiativeMutations) buildInitiative(
 		}
 		for _, member := range component.Tasks {
 			if domain.ValidateTaskHandle(member.TaskRef) != nil || refs[member.TaskRef] != "" {
-				return domain.DevelopmentInitiative{}, nil, errors.New("initiative task reference is invalid")
+				return domain.DevelopmentInitiative{}, nil, nil, errors.New("initiative task reference is invalid")
 			}
 			operationID := initiativeMemberOperationID(command.OperationID, member.TaskRef)
 			taskHandle, err := mutations.taskIDs(operationID)
 			if err != nil {
-				return domain.DevelopmentInitiative{}, nil, err
+				return domain.DevelopmentInitiative{}, nil, nil, err
 			}
 			refs[member.TaskRef] = taskHandle
 			task := domain.Task{
@@ -304,7 +323,7 @@ func (mutations *InitiativeMutations) buildInitiative(
 			}
 			task, err = task.PinBriefRevision()
 			if err != nil {
-				return domain.DevelopmentInitiative{}, nil, err
+				return domain.DevelopmentInitiative{}, nil, nil, err
 			}
 			domainComponent.TaskHandles = append(domainComponent.TaskHandles, taskHandle)
 			drafts = append(drafts, initiativeMemberDraft{taskRef: member.TaskRef, operationID: operationID, task: task})
@@ -315,7 +334,7 @@ func (mutations *InitiativeMutations) buildInitiative(
 		from, fromFound := refs[edge.FromTaskRef]
 		to, toFound := refs[edge.ToTaskRef]
 		if !fromFound || !toFound {
-			return domain.DevelopmentInitiative{}, nil, errors.New("initiative edge names a missing task")
+			return domain.DevelopmentInitiative{}, nil, nil, errors.New("initiative edge names a missing task")
 		}
 		initiative.Edges = append(initiative.Edges, domain.InitiativeEdge{
 			FromTaskHandle: from, ToTaskHandle: to, Kind: edge.Kind,
@@ -325,14 +344,25 @@ func (mutations *InitiativeMutations) buildInitiative(
 	if command.IntegrationOwnerTask != "" {
 		owner, found := refs[command.IntegrationOwnerTask]
 		if !found {
-			return domain.DevelopmentInitiative{}, nil, errors.New("initiative owner names a missing task")
+			return domain.DevelopmentInitiative{}, nil, nil, errors.New("initiative owner names a missing task")
 		}
 		initiative.IntegrationOwnerTask = owner
 	}
-	if err := initiative.Validate(); err != nil {
-		return domain.DevelopmentInitiative{}, nil, err
+	artifacts, err := buildInitiativeContractArtifacts(command, initiative.Handle, drafts, refs, at)
+	if err != nil {
+		return domain.DevelopmentInitiative{}, nil, nil, err
 	}
-	return initiative, drafts, nil
+	initiative.ContractArtifacts = make([]string, len(artifacts))
+	for index, artifact := range artifacts {
+		initiative.ContractArtifacts[index] = artifact.Artifact.ArtifactHandle
+	}
+	if err := initiative.Validate(); err != nil {
+		return domain.DevelopmentInitiative{}, nil, nil, err
+	}
+	if err := validateInitiativeContractPins(initiative, drafts, artifacts); err != nil {
+		return domain.DevelopmentInitiative{}, nil, nil, err
+	}
+	return initiative, drafts, artifacts, nil
 }
 
 func (mutations *InitiativeMutations) validateInitiativeDependencies(

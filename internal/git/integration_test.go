@@ -49,25 +49,65 @@ func TestRegistry_AppliesEveryReviewedIntegrationStrategyAndReplays(t *testing.T
 }
 
 func TestRegistry_RecordsAndReplaysExactConflictPaths(t *testing.T) {
-	fixture := newIntegrationFixture(t)
-	candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "fixture.txt", "candidate\n")
-	targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "fixture.txt", "integration\n")
-	request := fixture.request("integration-conflict-0001", application.IntegrationMerge, candidateHead, targetHead)
+	for _, strategy := range []application.IntegrationStrategy{application.IntegrationMerge, application.IntegrationRebase} {
+		t.Run(string(strategy), func(t *testing.T) {
+			fixture := newIntegrationFixture(t)
+			candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "fixture.txt", "candidate\n")
+			targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "fixture.txt", "integration\n")
+			request := fixture.request("integration-conflict-"+string(strategy), strategy, candidateHead, targetHead)
 
-	result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
+			result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
+			if err != nil {
+				t.Fatalf("ApplyIntegrationCandidate(conflict) error = %v", err)
+			}
+			if result.Outcome != application.IntegrationConflicted || result.PreviousHead != targetHead ||
+				result.ResultingHead != "" || !reflect.DeepEqual(result.ConflictPaths, []string{"fixture.txt"}) {
+				t.Fatalf("conflict result = %#v", result)
+			}
+			if head := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "rev-parse", "HEAD"); head != targetHead {
+				t.Fatalf("conflicted target head = %q, want %q", head, targetHead)
+			}
+			replayed, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
+			if err != nil || !reflect.DeepEqual(replayed, result) {
+				t.Fatalf("ApplyIntegrationCandidate(conflict replay) = %#v, %v", replayed, err)
+			}
+		})
+	}
+}
+
+func TestRegistry_RebaseAppliesLaterCandidateAfterCurrentTarget(t *testing.T) {
+	fixture := newIntegrationFixture(t)
+	firstHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "first.txt", "first\n")
+	targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "target.txt", "target\n")
+	first, err := fixture.registry.ApplyIntegrationCandidate(context.Background(),
+		fixture.request("integration-rebase-first", application.IntegrationRebase, firstHead, targetHead))
 	if err != nil {
-		t.Fatalf("ApplyIntegrationCandidate(conflict) error = %v", err)
+		t.Fatal(err)
 	}
-	if result.Outcome != application.IntegrationConflicted || result.PreviousHead != targetHead ||
-		result.ResultingHead != "" || !reflect.DeepEqual(result.ConflictPaths, []string{"fixture.txt"}) {
-		t.Fatalf("conflict result = %#v", result)
+	secondCandidate, err := fixture.registry.PrepareWorktree(context.Background(), devgit.PrepareWorktreeRequest{
+		OperationID: "prepare-component-0002", TaskHandle: "task-component-two",
+		RepositoryID: fixture.repository.repositoryID, BaseRevision: fixture.base,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if head := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "rev-parse", "HEAD"); head != targetHead {
-		t.Fatalf("conflicted target head = %q, want %q", head, targetHead)
+	secondHead := commitIntegrationFile(t, fixture, secondCandidate.CanonicalPath, "second.txt", "second\n")
+	request := fixture.request("integration-rebase-second", application.IntegrationRebase, secondHead, first.ResultingHead)
+	request.Candidate.TaskHandle = secondCandidate.TaskHandle
+	request.Candidate.WorktreePath = secondCandidate.CanonicalPath
+	second, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
 	}
-	replayed, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
-	if err != nil || !reflect.DeepEqual(replayed, result) {
-		t.Fatalf("ApplyIntegrationCandidate(conflict replay) = %#v, %v", replayed, err)
+	if first.ResultingHead == second.ResultingHead {
+		t.Fatal("second rebase did not advance the integration target")
+	}
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"merge-base", "--is-ancestor", first.ResultingHead, second.ResultingHead)
+	for _, name := range []string{"first.txt", "second.txt", "target.txt"} {
+		if _, err := os.Stat(filepath.Join(fixture.target.CanonicalPath, name)); err != nil {
+			t.Fatalf("rebased target omits %q: %v", name, err)
+		}
 	}
 }
 

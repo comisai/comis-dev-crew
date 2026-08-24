@@ -58,6 +58,9 @@ func (artifact ComponentContractArtifact) Validate() error {
 	if artifact.Size <= 0 || artifact.Size > maxContractArtifactBytes {
 		return &ValidationError{Field: "size", Reason: "must be a positive bounded artifact size"}
 	}
+	if artifact.ProducedAt.IsZero() || artifact.ProducedAt.Location() != time.UTC {
+		return &ValidationError{Field: "producedAt", Reason: "must be a non-zero UTC time"}
+	}
 	if artifact.SupersedesArtifactHandle != "" {
 		if err := validateOpaqueID("supersedesArtifactHandle", artifact.SupersedesArtifactHandle); err != nil {
 			return err

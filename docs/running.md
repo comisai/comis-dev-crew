@@ -271,17 +271,21 @@ devcrew-mcp \
   --service-instance service-instance-devcrew
 ```
 
-The facade defines twenty-seven tools: `prepare_task`, `prepare_initiative`,
+The facade defines twenty-six tools: `prepare_task`, `prepare_initiative`,
 `apply_integration_candidate`, `get_initiative`, `backlog_list`, `backlog_add`, `backlog_promote`,
 `promote_scout`, `reconcile_task`,
-`handback_task`, `cleanup_task`, `merge_task`, `discard_task`, `pause_task`, `cancel_task`,
+`handback_task`, `cleanup_task`, `merge_task`, `pause_task`, `cancel_task`,
 `resume_task`, `replace_worker`, `steer_task`, `verify_task`,
 `attest_scout_decisions`, `sync_primary`, `list_tasks`, `get_task`,
 `explain_task`, `get_launch_plan`, `worker_profiles`, and `doctor`.
 `prepare_initiative` returns the private managed-run group registration, including
 each canonical public relay identity, through the MCP result extension while
 keeping nonces and host resource paths out of
-model-visible structured content. An exact retry after group activation still
+model-visible structured content. Contract artifacts are supplied as bounded
+records containing their handle, caller-local producer task, closed kind, media
+type, and immutable content. The service derives the SHA-256 digest, persists
+the bytes and producer identity, and accepts consumer pins only when the handle,
+kind, digest, and graph edge resolve to that exact durable record. An exact retry after group activation still
 returns the original `preparing`/`prepared` projection at the preparation
 operation's state version and cannot allocate another artifact. Private member
 preparation closures remain authoritative during reconstruction, so replay
@@ -325,10 +329,9 @@ and approval attribution. An uncertain transport outcome replays the identical
 durable merge transaction; it cannot reserve another task or head.
 `cancel_task` is destructive — it ends work an operator asked for and repeating
 it does not undo that — but it is not removal.
-`discard_task` is the removal a cancelled task has no other route to: cleanup
-requires delivery evidence that a task which never delivered will never have.
-It removes uncommitted work permanently and takes the operator's explicit
-`acknowledged` argument, which is the only gate it has.
+Discard remains an operator-only CLI action because it permanently removes work
+that never produced delivery evidence. The MCP facade cannot request or
+acknowledge it.
 `attest_scout_decisions` records the liaison's inventory of a scout's still-open
 human decisions. Only a model can inventory decisions from prose, so the service
 never derives this and never infers it from silence: the finding is a stated

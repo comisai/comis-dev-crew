@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -168,6 +169,11 @@ func TestPreparedInitiativeCommitsFiveMemberFullStackGraph(t *testing.T) {
 	}
 	mutation.Initiative.Components = make([]domain.InitiativeComponent, 0, len(handles))
 	mutation.Initiative.ContractArtifacts = []string{"artifact-api-v1"}
+	contractArtifact := preparedContractArtifact(
+		mutation.Initiative, "artifact-api-v1", "task-contract", domain.ArtifactAPISchema,
+		"application/json", []byte(`{"version":1}`),
+	)
+	mutation.ContractArtifacts = []application.PreparedInitiativeContractArtifact{contractArtifact}
 	mutation.Members = make([]application.PreparedInitiativeMember, 0, len(handles))
 	for index, handle := range handles {
 		mutation.Initiative.Components = append(mutation.Initiative.Components, domain.InitiativeComponent{
@@ -181,7 +187,7 @@ func TestPreparedInitiativeCommitsFiveMemberFullStackGraph(t *testing.T) {
 		if handle == "task-backend" || handle == "task-frontend" {
 			task.ConsumedContracts = []domain.PinnedContract{{
 				ArtifactHandle: "artifact-api-v1", Kind: domain.ArtifactAPISchema,
-				ContentHash: strings.Repeat("a", 64),
+				ContentHash: contractArtifact.Artifact.ContentHash,
 			}}
 		}
 		task.CreatedAt = mutation.At
@@ -223,6 +229,42 @@ func TestPreparedInitiativeCommitsFiveMemberFullStackGraph(t *testing.T) {
 	if len(result.Tasks) != len(handles) || len(result.Preparation.Members) != len(handles) {
 		t.Fatalf("CommitPreparedInitiative() members = %d/%d, want %d", len(result.Tasks), len(result.Preparation.Members), len(handles))
 	}
+	if len(result.ContractArtifacts) != 1 ||
+		result.ContractArtifacts[0].ProducerTaskHandle != "task-contract" ||
+		result.ContractArtifacts[0].ContentHash != contractArtifact.Artifact.ContentHash {
+		t.Fatalf("CommitPreparedInitiative() contract artifacts = %#v", result.ContractArtifacts)
+	}
+	if _, err := store.db.ExecContext(ctx,
+		`UPDATE initiative_contract_artifacts SET content = ? WHERE initiative_handle = ?`,
+		[]byte(`{"version":2}`), mutation.Initiative.Handle,
+	); err != nil {
+		t.Fatalf("corrupt contract artifact content: %v", err)
+	}
+	if _, _, err := store.ReplayInitiativePreparation(
+		ctx, mutation.OperationID, mutation.SubjectDigest,
+	); err == nil {
+		t.Fatal("ReplayInitiativePreparation(corrupt artifact bytes) error = nil")
+	}
+}
+
+func preparedContractArtifact(
+	initiative domain.DevelopmentInitiative,
+	artifactHandle string,
+	producerTaskHandle string,
+	kind domain.ContractArtifactKind,
+	mediaType string,
+	content []byte,
+) application.PreparedInitiativeContractArtifact {
+	digest := fmt.Sprintf("%x", sha256.Sum256(content))
+	return application.PreparedInitiativeContractArtifact{
+		Artifact: domain.ComponentContractArtifact{
+			ArtifactHandle: artifactHandle, InitiativeHandle: initiative.Handle,
+			ProducerTaskHandle: producerTaskHandle, Kind: kind, ContentHash: digest,
+			SourceRevision: initiative.BaseRevisionSet[0].Revision,
+			MediaType:      mediaType, Size: int64(len(content)), ProducedAt: initiative.CreatedAt,
+		},
+		Content: append([]byte(nil), content...),
+	}
 }
 
 func TestPreparedInitiativeRollsBackEveryDurableRecordOnMemberFailure(t *testing.T) {
@@ -244,7 +286,8 @@ func TestPreparedInitiativeRollsBackEveryDurableRecordOnMemberFailure(t *testing
 	}
 	for table, want := range map[string]int{
 		"initiatives": 0, "initiative_preparations": 0, "tasks": 0,
-		"task_preparations": 0, "operations": 0, "task_preparation_intents": 2,
+		"initiative_contract_artifacts": 0, "task_preparations": 0,
+		"operations": 0, "task_preparation_intents": 2,
 	} {
 		var count int
 		if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&count); err != nil { // #nosec G202 -- table names are a closed test fixture.
@@ -253,6 +296,32 @@ func TestPreparedInitiativeRollsBackEveryDurableRecordOnMemberFailure(t *testing
 		if count != want {
 			t.Fatalf("%s rows = %d, want %d after rollback", table, count, want)
 		}
+	}
+}
+
+func TestPreparedInitiativeRejectsArtifactFromOutsideItsMemberSet(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	mutation := sqlitePreparedInitiativeMutation()
+	mutation.Initiative.ContractArtifacts = []string{"artifact-api-v1"}
+	mutation.ContractArtifacts = []application.PreparedInitiativeContractArtifact{preparedContractArtifact(
+		mutation.Initiative, "artifact-api-v1", "task-outside", domain.ArtifactAPISchema,
+		"application/json", []byte(`{"version":1}`),
+	)}
+	recordInitiativeMemberIntents(t, store, mutation)
+	if _, err := store.CommitPreparedInitiative(ctx, mutation); err == nil {
+		t.Fatal("CommitPreparedInitiative(outside artifact producer) error = nil")
+	}
+	var initiatives int
+	if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM initiatives").Scan(&initiatives); err != nil {
+		t.Fatal(err)
+	}
+	if initiatives != 0 {
+		t.Fatalf("initiative rows = %d, want none", initiatives)
 	}
 }
 
@@ -282,6 +351,7 @@ func sqlitePreparedInitiativeMutation() application.PreparedInitiativeMutation {
 	at := time.Date(2026, time.August, 20, 16, 0, 0, 0, time.UTC)
 	initiative := persistenceInitiative("initiative-prepare-0001", domain.InitiativePreparing, 1)
 	initiative.ManagedRunGroupID = ""
+	initiative.ContractArtifacts = []string{}
 	initiative.CreatedAt = at
 	initiative.UpdatedAt = at
 	members := make([]application.PreparedInitiativeMember, 0, 2)

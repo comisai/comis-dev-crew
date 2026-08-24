@@ -163,7 +163,7 @@ func prepareInitiativeInputFixture() PrepareInitiativeInput {
 		Edges: []application.PrepareInitiativeEdge{{
 			FromTaskRef: "api-ref", ToTaskRef: "integration-ref", Kind: domain.EdgeBlocksStart,
 		}},
-		ContractArtifacts: []string{}, IntegrationPolicyID: "integration-policy-a",
+		ContractArtifacts: []application.PrepareInitiativeContractArtifact{}, IntegrationPolicyID: "integration-policy-a",
 		IntegrationOwnerTask: "integration-ref",
 	}
 }

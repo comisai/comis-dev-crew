@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 const maxProtocolFileBytes = 2 * 1024 * 1024
@@ -87,6 +89,7 @@ func validateManifest(manifest Manifest) error {
 func validateLimits(limits Limits) error {
 	values := []int{
 		limits.MaxEvidenceBytes,
+		limits.MaxGroupMembers,
 		limits.MaxInFlightRequests,
 		limits.MaxLineBytes,
 		limits.MaxReportBytes,
@@ -98,6 +101,9 @@ func validateLimits(limits Limits) error {
 		if value <= 0 {
 			return fmt.Errorf("manifest limit must be positive")
 		}
+	}
+	if limits.MaxGroupMembers != domain.MaximumInitiativeMembers {
+		return fmt.Errorf("manifest group limit differs from the application bound")
 	}
 	if limits.MaxReportBytes > limits.MaxRequestBytes || limits.MaxRequestBytes > limits.MaxLineBytes {
 		return fmt.Errorf("manifest request limits are contradictory")

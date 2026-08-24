@@ -386,14 +386,14 @@ func TestFacade_UncertainTerminalMutationsReconcileBeforeExactRetry(t *testing.T
 
 func assertToolCatalog(t *testing.T, tools []*mcp.Tool) {
 	t.Helper()
-	want := map[string]bool{ToolPrepareTask: false, ToolPrepareInitiative: false, ToolApplyIntegration: false, ToolGetInitiative: true, ToolBacklogList: true, ToolAddBacklog: false, ToolPromoteBacklog: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolMergeTask: false, ToolDiscardTask: false, ToolSyncPrimary: false, ToolAttestScout: false, ToolPauseTask: false, ToolCancelTask: false, ToolResumeTask: false, ToolVerifyTask: false, ToolPromoteScout: false, ToolReplaceWorker: false, ToolSteerTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
+	want := map[string]bool{ToolPrepareTask: false, ToolPrepareInitiative: false, ToolApplyIntegration: false, ToolGetInitiative: true, ToolBacklogList: true, ToolAddBacklog: false, ToolPromoteBacklog: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolMergeTask: false, ToolSyncPrimary: false, ToolAttestScout: false, ToolPauseTask: false, ToolCancelTask: false, ToolResumeTask: false, ToolVerifyTask: false, ToolPromoteScout: false, ToolReplaceWorker: false, ToolSteerTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
 	if len(tools) != len(want) {
 		t.Fatalf("tool count = %d, want %d", len(tools), len(want))
 	}
 	// Destructive is an explicit set, not a single name. A tool that quietly
 	// became destructive would otherwise fail this test with an annotation dump
 	// rather than a statement about which tools may destroy work.
-	destructiveTools := map[string]bool{ToolCleanupTask: true, ToolMergeTask: true, ToolCancelTask: true, ToolDiscardTask: true}
+	destructiveTools := map[string]bool{ToolCleanupTask: true, ToolMergeTask: true, ToolCancelTask: true}
 	for _, tool := range tools {
 		readOnly, ok := want[tool.Name]
 		destructive := destructiveTools[tool.Name]
@@ -484,8 +484,6 @@ type fakeClient struct {
 	cleanupErrors   []error
 	mergeResult     application.MergeTaskResult
 	mergeErrors     []error
-	discardResult   localapi.TaskMutationResult
-	discardErrors   []error
 	syncReport      application.PrimarySyncReport
 	syncErrors      []error
 	attestResult    localapi.TaskMutationResult

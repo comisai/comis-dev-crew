@@ -43,7 +43,11 @@ func authorizeInitiativeTaskStart(
 	if err != nil {
 		return fmt.Errorf("authorize initiative task start fleet: %w", err)
 	}
-	schedules, err := application.ScheduleInitiatives(initiatives, tasks, *limits)
+	artifacts, err := listInitiativeContractArtifacts(ctx, transaction, "")
+	if err != nil {
+		return fmt.Errorf("authorize initiative task start artifacts: %w", err)
+	}
+	schedules, err := application.ScheduleInitiatives(initiatives, tasks, artifacts, *limits)
 	if err != nil {
 		return fmt.Errorf("authorize initiative task start schedule: %w", err)
 	}

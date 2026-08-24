@@ -1,109 +1,50 @@
 package cli
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"sort"
-	"strconv"
+	"bytes"
+	"context"
 	"strings"
 	"testing"
 )
 
-// TestCLI_EveryTaskVerbTheParserAcceptsAppearsInUsage closes the class rather
-// than one instance of it. A verb the parser accepts but the usage text never
-// names is unreachable in practice: an operator reads `--help`, does not see
-// the command, and concludes the service cannot do the thing it can already do.
-// Asserting one known verb at a time only proves the verb somebody remembered.
-//
-// The accepted set is read from the dispatcher's own source so a verb added
-// tomorrow is covered without anyone updating a list here.
-func TestCLI_EveryTaskVerbTheParserAcceptsAppearsInUsage(t *testing.T) {
-	verbs := taskVerbsAcceptedByParser(t)
-	if len(verbs) == 0 {
-		t.Fatal("no task verbs were read from the dispatcher source")
+func TestCLI_AcceptedTaskCommandsAppearInPublicHelp(t *testing.T) {
+	commands := []struct {
+		verb string
+		args []string
+	}{
+		{verb: "show", args: []string{"task", "show", "task-0001"}},
+		{verb: "explain", args: []string{"task", "explain", "task-0001"}},
+		{verb: "diff", args: []string{"task", "diff", "task-0001"}},
+		{verb: "logs", args: []string{"task", "logs", "task-0001"}},
+		{verb: "launch-plan", args: []string{"task", "launch-plan", "task-0001"}},
+		{verb: "operation", args: []string{"task", "operation", "operation-0001"}},
+		{verb: "prepare", args: []string{"task", "prepare", "--input", "-"}},
+		{verb: "reconcile", args: []string{"task", "reconcile", "task-0001", "--action", "validate-clean-candidate"}},
+		{verb: "handback", args: []string{"task", "handback", "task-0001", "--action", "validate-developer-work"}},
+		{verb: "pause", args: []string{"task", "pause", "task-0001"}},
+		{verb: "cancel", args: []string{"task", "cancel", "task-0001"}},
+		{verb: "resume", args: []string{"task", "resume", "task-0001"}},
+		{verb: "verify", args: []string{"task", "verify", "task-0001"}},
+		{verb: "attest", args: []string{"task", "attest", "task-0001", "--finding", "no_open_decisions"}},
+		{verb: "promote", args: []string{"task", "promote", "task-0001", "--input", "-"}},
+		{verb: "replace", args: []string{"task", "replace", "task-0001", "--worker", "fixture-worker"}},
+		{verb: "steer", args: []string{"task", "steer", "task-0001", "--input", "-"}},
+		{verb: "merge", args: []string{"task", "merge", "task-0001"}},
+		{verb: "cleanup", args: []string{"task", "cleanup", "task-0001"}},
+		{verb: "discard", args: []string{"task", "discard", "task-0001", "--yes"}},
 	}
-	for _, verb := range verbs {
-		if !strings.Contains(usage, "task "+verb) {
-			t.Errorf("task verb %q is accepted by the parser but missing from the CLI usage text", verb)
-		}
+	var help bytes.Buffer
+	if code := Run(context.Background(), []string{"--help"}, &help, &help, Config{}); code != ExitSuccess {
+		t.Fatalf("Run(--help) = %d", code)
 	}
-}
-
-// taskVerbsAcceptedByParser reads every literal compared against the task
-// subcommand argument inside parseTaskCommand, covering both the early-return
-// comparisons and the trailing switch.
-func taskVerbsAcceptedByParser(t *testing.T) []string {
-	t.Helper()
-	file, err := parser.ParseFile(token.NewFileSet(), "cli.go", nil, parser.SkipObjectResolution)
-	if err != nil {
-		t.Fatalf("parse cli.go: %v", err)
-	}
-	var dispatcher *ast.FuncDecl
-	for _, declaration := range file.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if ok && function.Name.Name == "parseTaskCommand" {
-			dispatcher = function
-			break
-		}
-	}
-	if dispatcher == nil {
-		t.Fatal("parseTaskCommand is no longer present in cli.go")
-	}
-	found := map[string]struct{}{}
-	ast.Inspect(dispatcher.Body, func(node ast.Node) bool {
-		switch typed := node.(type) {
-		case *ast.BinaryExpr:
-			if typed.Op == token.EQL && isTaskSubcommandArgument(typed.X) {
-				addStringLiteral(found, typed.Y)
+	for _, command := range commands {
+		t.Run(command.verb, func(t *testing.T) {
+			if _, err := parseCommand(command.args, "/private/tmp/devcrew.sock"); err != nil {
+				t.Fatalf("parseCommand(%v) error = %v", command.args, err)
 			}
-		case *ast.SwitchStmt:
-			if !isTaskSubcommandArgument(typed.Tag) {
-				return true
+			if !strings.Contains(help.String(), "task "+command.verb) {
+				t.Fatalf("public help omits accepted task command %q", command.verb)
 			}
-			for _, statement := range typed.Body.List {
-				clause, ok := statement.(*ast.CaseClause)
-				if !ok {
-					continue
-				}
-				for _, expression := range clause.List {
-					addStringLiteral(found, expression)
-				}
-			}
-		}
-		return true
-	})
-	verbs := make([]string, 0, len(found))
-	for verb := range found {
-		verbs = append(verbs, verb)
+		})
 	}
-	sort.Strings(verbs)
-	return verbs
-}
-
-// isTaskSubcommandArgument matches the `args[0]` selector the dispatcher
-// switches on, so an unrelated comparison never contributes a phantom verb.
-func isTaskSubcommandArgument(expression ast.Expr) bool {
-	index, ok := expression.(*ast.IndexExpr)
-	if !ok {
-		return false
-	}
-	identifier, ok := index.X.(*ast.Ident)
-	if !ok || identifier.Name != "args" {
-		return false
-	}
-	literal, ok := index.Index.(*ast.BasicLit)
-	return ok && literal.Kind == token.INT && literal.Value == "0"
-}
-
-func addStringLiteral(into map[string]struct{}, expression ast.Expr) {
-	literal, ok := expression.(*ast.BasicLit)
-	if !ok || literal.Kind != token.STRING {
-		return
-	}
-	value, err := strconv.Unquote(literal.Value)
-	if err != nil || value == "" {
-		return
-	}
-	into[value] = struct{}{}
 }

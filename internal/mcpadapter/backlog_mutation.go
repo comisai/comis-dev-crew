@@ -16,7 +16,7 @@ type AddBacklogInput struct {
 	Shape            domain.TaskShape        `json:"shape" jsonschema:"task shape; use exactly ship or scout"`
 	RequestedOutcome string                  `json:"requestedOutcome" jsonschema:"bounded desired outcome for later task preparation"`
 	DependsOn        []string                `json:"dependsOn" jsonschema:"existing backlog handles that must be promoted first; use an empty JSON array when there are none"`
-	Priority         domain.BacklogPriority  `json:"priority" jsonschema:"use exactly low, normal, high, or urgent"`
+	Priority         domain.BacklogPriority  `json:"priority" jsonschema:"use exactly low, normal, or high"`
 	Readiness        domain.BacklogReadiness `json:"readiness" jsonschema:"use exactly ready or needs_refinement"`
 }
 

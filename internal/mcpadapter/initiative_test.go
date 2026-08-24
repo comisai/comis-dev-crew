@@ -338,7 +338,7 @@ func prepareInitiativeMCPInput() PrepareInitiativeInput {
 				},
 			}},
 		}},
-		Edges: []PrepareInitiativeEdge{}, ContractArtifacts: []string{},
+		Edges: []PrepareInitiativeEdge{}, ContractArtifacts: []PrepareInitiativeContractArtifact{},
 		IntegrationPolicyID: "integration-policy-a", IntegrationOwnerTask: "member-ref",
 	}
 }

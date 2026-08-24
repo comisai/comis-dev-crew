@@ -147,6 +147,56 @@ func TestMergeCoordinator_ReconcilesDurablyAuthorizedAndCompletedReplays(t *test
 	}
 }
 
+func TestMergeCoordinator_RejectsExpiredAuthorizedReplayBeforeForge(t *testing.T) {
+	now := time.Date(2026, time.August, 20, 12, 0, 0, 0, time.UTC)
+	store := mergeStoreFixture()
+	store.record.State = TaskMergeExecutionAuthorized
+	approval := mergeApprovalReceipt(now)
+	store.record.Approval = approval.domain(store.record.TaskHandle, store.record.HeadRevision, true)
+	forge := &mergeForge{}
+	coordinator, err := NewMergeCoordinator(MergeCoordinatorConfig{
+		Store: store, Approvals: &mergeApprovalConsumer{}, Forge: forge,
+		Clock: func() time.Time { return store.record.Approval.ExpiresAt }, OperatorEnabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = coordinator.MergeTask(context.Background(), MergeTaskCommand{
+		OperationID: store.record.OperationID, TaskHandle: store.record.TaskHandle,
+		ApprovalRequestID: approval.ApprovalRequestID, MCPOperationID: approval.MCPOperationID,
+	})
+	if !domain.IsMergeRefusal(err, domain.MergeRefusedApprovalExpired) || forge.calls != 0 || forge.reconcileCalls != 1 {
+		t.Fatalf("MergeTask(expired authorized replay) error = %v, forge = %#v", err, forge)
+	}
+}
+
+func TestMergeCoordinator_ReconcilesExpiredAuthorizedOutcomeWithoutRemerging(t *testing.T) {
+	now := time.Date(2026, time.August, 20, 12, 0, 0, 0, time.UTC)
+	store := mergeStoreFixture()
+	store.record.State = TaskMergeExecutionAuthorized
+	approval := mergeApprovalReceipt(now)
+	store.record.Approval = approval.domain(store.record.TaskHandle, store.record.HeadRevision, true)
+	forge := &mergeForge{reconciled: true, reconcileReceipt: PullRequestMergeReceipt{
+		RepositoryID: store.record.RepositoryID, PullRequestID: store.record.PullRequestID,
+		HeadRevision: store.record.HeadRevision, MergeCommitRevision: strings.Repeat("d", 40),
+		Method: PullRequestMergeSquash,
+	}}
+	coordinator, err := NewMergeCoordinator(MergeCoordinatorConfig{
+		Store: store, Approvals: &mergeApprovalConsumer{}, Forge: forge,
+		Clock: func() time.Time { return store.record.Approval.ExpiresAt }, OperatorEnabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := coordinator.MergeTask(context.Background(), MergeTaskCommand{
+		OperationID: store.record.OperationID, TaskHandle: store.record.TaskHandle,
+		ApprovalRequestID: approval.ApprovalRequestID, MCPOperationID: approval.MCPOperationID,
+	})
+	if err != nil || result.State != TaskMergeCompleted || forge.calls != 0 || forge.reconcileCalls != 1 {
+		t.Fatalf("MergeTask(reconciled expired outcome) = %#v, %v, forge = %#v", result, err, forge)
+	}
+}
+
 type mergeStore struct {
 	record         TaskMergeRecord
 	events         *[]string
@@ -226,10 +276,22 @@ func (consumer *mergeApprovalConsumer) ConsumeMergeApproval(
 }
 
 type mergeForge struct {
-	receipt PullRequestMergeReceipt
-	events  *[]string
-	calls   int
-	err     error
+	receipt          PullRequestMergeReceipt
+	reconcileReceipt PullRequestMergeReceipt
+	reconciled       bool
+	events           *[]string
+	calls            int
+	reconcileCalls   int
+	err              error
+	reconcileErr     error
+}
+
+func (adapter *mergeForge) ReconcileApprovedPullRequest(
+	_ context.Context,
+	_ PullRequestMergeRequest,
+) (PullRequestMergeReceipt, bool, error) {
+	adapter.reconcileCalls++
+	return adapter.reconcileReceipt, adapter.reconciled, adapter.reconcileErr
 }
 
 func (adapter *mergeForge) MergeApprovedPullRequest(

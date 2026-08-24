@@ -106,7 +106,11 @@ func (store *Store) CommitInitiativeHostRecovery(
 	}
 	derivationInput := initiative
 	derivationInput.State = domain.InitiativeActive
-	recoveredState, err := application.DeriveInitiativeState(derivationInput, tasks)
+	artifacts, err := listInitiativeContractArtifacts(ctx, transaction, initiative.Handle)
+	if err != nil {
+		return domain.DevelopmentInitiative{}, fmt.Errorf("read initiative host recovery artifacts: %w", err)
+	}
+	recoveredState, err := application.DeriveInitiativeState(derivationInput, tasks, artifacts)
 	if err != nil {
 		return domain.DevelopmentInitiative{}, fmt.Errorf("derive initiative host recovery state: %w", err)
 	}

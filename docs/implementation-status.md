@@ -511,7 +511,10 @@ classes through the strict local boundary and the same reviewed preparation
 dependencies used by standalone tasks. The boundary supplies its own operation
 and service identities, refuses caller-supplied host authority fields, and
 returns the exact private group preparation only when every prepared member and
-durable operation agree on the initiative identity and state version.
+durable operation agree on the initiative identity and state version. Contract
+artifacts are durable byte records owned by one initiative producer; preparation
+derives and stores their digest and refuses any consumer pin or artifact edge
+that does not resolve to the exact handle, kind, producer, and digest.
 
 Initiative list, detail, dependency graph, and backlog list projections read
 their records and advertised state version from one read-only SQLite snapshot.
@@ -697,7 +700,10 @@ and conflict materialization ahead of the confined worker launch. A launched own
 remains writable only in its explicit working, decision, or blocked states. The Git
 registry then revalidates both worktree identities,
 cleanliness, and heads while holding its mutation lock. Fixed argv performs the
-selected operation with hooks and signing disabled. Applied heads and sorted,
+selected operation with hooks and signing disabled. Rebase applies the candidate
+range from its frozen base onto the current expected integration head, then
+compare-and-swaps the integration branch; it never rebases existing integration
+commits onto a later component. Applied heads and sorted,
 bounded conflict paths are durable records; conflicts remain in the dedicated
 integration worktree for an actionable resolution. The integration worker may
 edit only those paths, but it preserves the server-staged non-conflicting
@@ -967,7 +973,10 @@ fresh exact-head, required-check, and matching branch-protection reads. The
 application coordinator consumes the exact authenticated Comis receipt and
 SQLite atomically reserves current accepted evidence, records the complete
 approval before forge mutation, and joins exact post-merge truth to the same
-operation. Pending approval and recorded mutation intent survive startup
+operation. A recorded mutation intent first performs read-only outcome
+reconciliation; when the pull request is still open, every retry revalidates
+the approval against a fresh UTC clock before the forge mutation, so an expired
+receipt cannot authorize a later merge. Pending approval and recorded mutation intent survive startup
 reconciliation; altered replays, stale evidence, split ledger writes, and
 unprotected branches fail closed. The canonical local API exposes one
 `MergeTask` mutation to both protected endpoint classes: operator calls can

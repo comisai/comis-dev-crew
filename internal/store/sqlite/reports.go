@@ -36,6 +36,11 @@ func (store *Store) CommitReport(ctx context.Context, mutation application.Repor
 	if err != nil {
 		return domain.ReportReceipt{}, err
 	}
+	if mutation.Report.Report.Kind == domain.ReportCandidateComplete {
+		if err := requireInitiativeValidationDependencies(ctx, transaction, task.Handle); err != nil {
+			return domain.ReportReceipt{}, err
+		}
+	}
 	if err := requireIntegrationReportProvenance(ctx, transaction, task, mutation.Report.Report.Kind); err != nil {
 		return domain.ReportReceipt{}, err
 	}

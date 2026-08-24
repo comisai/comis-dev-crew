@@ -540,6 +540,13 @@ func (control *serviceComisControl) ConsumeMergeApproval(
 
 type serviceMergeForge struct{}
 
+func (serviceMergeForge) ReconcileApprovedPullRequest(
+	context.Context,
+	application.PullRequestMergeRequest,
+) (application.PullRequestMergeReceipt, bool, error) {
+	return application.PullRequestMergeReceipt{}, false, nil
+}
+
 func (serviceMergeForge) MergeApprovedPullRequest(
 	context.Context,
 	application.PullRequestMergeRequest,

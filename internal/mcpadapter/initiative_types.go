@@ -57,15 +57,23 @@ type PrepareInitiativeEdge struct {
 	RequiredArtifactKind domain.ContractArtifactKind `json:"requiredArtifactKind,omitempty" jsonschema:"artifact kind required by an artifact-consuming edge"`
 }
 
+type PrepareInitiativeContractArtifact struct {
+	ArtifactHandle  string                      `json:"artifactHandle" jsonschema:"opaque immutable contract artifact handle"`
+	ProducerTaskRef string                      `json:"producerTaskRef" jsonschema:"caller-local producer task reference"`
+	Kind            domain.ContractArtifactKind `json:"kind" jsonschema:"closed contract artifact kind"`
+	MediaType       string                      `json:"mediaType" jsonschema:"bounded media type"`
+	Content         string                      `json:"content" jsonschema:"bounded immutable UTF-8 artifact content"`
+}
+
 // PrepareInitiativeInput is the complete model-visible graph contract.
 type PrepareInitiativeInput struct {
-	TitleRef             string                          `json:"titleRef" jsonschema:"bounded private title reference"`
-	BaseRevisionSet      []PrepareInitiativeBaseRevision `json:"baseRevisionSet" jsonschema:"one frozen revision per component repository"`
-	Components           []PrepareInitiativeComponent    `json:"components" jsonschema:"complete bounded component and task set"`
-	Edges                []PrepareInitiativeEdge         `json:"edges" jsonschema:"complete acyclic same-initiative dependency set"`
-	ContractArtifacts    []string                        `json:"contractArtifacts" jsonschema:"current immutable contract artifact handles"`
-	IntegrationPolicyID  string                          `json:"integrationPolicyId" jsonschema:"operator-configured integration policy identity"`
-	IntegrationOwnerTask string                          `json:"integrationOwnerTask,omitempty" jsonschema:"caller-local task reference for the single integration owner"`
+	TitleRef             string                              `json:"titleRef" jsonschema:"bounded private title reference"`
+	BaseRevisionSet      []PrepareInitiativeBaseRevision     `json:"baseRevisionSet" jsonschema:"one frozen revision per component repository"`
+	Components           []PrepareInitiativeComponent        `json:"components" jsonschema:"complete bounded component and task set"`
+	Edges                []PrepareInitiativeEdge             `json:"edges" jsonschema:"complete acyclic same-initiative dependency set"`
+	ContractArtifacts    []PrepareInitiativeContractArtifact `json:"contractArtifacts" jsonschema:"complete immutable contract artifact registry"`
+	IntegrationPolicyID  string                              `json:"integrationPolicyId" jsonschema:"operator-configured integration policy identity"`
+	IntegrationOwnerTask string                              `json:"integrationOwnerTask,omitempty" jsonschema:"caller-local task reference for the single integration owner"`
 }
 
 // PrepareInitiativeOutput omits private host registration metadata.
@@ -117,9 +125,16 @@ func (input PrepareInitiativeInput) local() localapi.PrepareInitiativeInput {
 			Kind: edge.Kind, RequiredArtifactKind: edge.RequiredArtifactKind,
 		}
 	}
+	artifacts := make([]application.PrepareInitiativeContractArtifact, len(input.ContractArtifacts))
+	for index, artifact := range input.ContractArtifacts {
+		artifacts[index] = application.PrepareInitiativeContractArtifact{
+			ArtifactHandle: artifact.ArtifactHandle, ProducerTaskRef: artifact.ProducerTaskRef,
+			Kind: artifact.Kind, MediaType: artifact.MediaType, Content: artifact.Content,
+		}
+	}
 	return localapi.PrepareInitiativeInput{
 		TitleRef: input.TitleRef, BaseRevisionSet: bases, Components: components, Edges: edges,
-		ContractArtifacts:   append([]string(nil), input.ContractArtifacts...),
+		ContractArtifacts:   artifacts,
 		IntegrationPolicyID: input.IntegrationPolicyID, IntegrationOwnerTask: input.IntegrationOwnerTask,
 	}
 }
