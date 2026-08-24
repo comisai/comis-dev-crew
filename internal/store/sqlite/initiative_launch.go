@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -39,100 +41,197 @@ func authorizeInitiativeTaskStart(
 	if _, err := application.ScheduleInitiativesWithUsage(nil, nil, nil, *limits, usage); err != nil {
 		return fmt.Errorf("authorize initiative task start schedule: %w", err)
 	}
-	available := limits.MaxConcurrentTasks - usage.Host
-	if available < 1 {
+	if usage.Host >= limits.MaxConcurrentTasks {
 		return fmt.Errorf("authorize initiative task start: %s: %w", application.ScheduleResourceQueued, application.ErrPrecondition)
 	}
-	initiatives, tasks, artifacts, err := initiativeSchedulingFleet(ctx, transaction, available)
+	launchable, reason, err := initiativeSchedulingFrontier(ctx, transaction, task, containing, *limits, usage)
 	if err != nil {
 		return fmt.Errorf("authorize initiative task start fleet: %w", err)
 	}
-	frontierContainsTarget := false
-	for _, initiative := range initiatives {
-		frontierContainsTarget = frontierContainsTarget || initiative.Handle == containing.Handle
+	if launchable {
+		return nil
 	}
-	if !frontierContainsTarget {
-		return fmt.Errorf("authorize initiative task start: %s: %w", application.ScheduleResourceQueued, application.ErrPrecondition)
+	if reason != "" {
+		return fmt.Errorf("authorize initiative task start: %s: %w", reason, application.ErrPrecondition)
 	}
-	schedules, err := application.ScheduleInitiativesWithUsage(initiatives, tasks, artifacts, *limits, usage)
-	if err != nil {
-		return fmt.Errorf("authorize initiative task start schedule: %w", err)
-	}
-	for _, schedule := range schedules {
-		if schedule.InitiativeHandle != containing.Handle {
-			continue
-		}
-		for _, decision := range schedule.Tasks {
-			if decision.TaskHandle != task.Handle {
-				continue
-			}
-			if decision.Launchable {
-				return nil
-			}
-			if decision.Reason != "" {
-				return fmt.Errorf("authorize initiative task start: %s: %w", decision.Reason, application.ErrPrecondition)
-			}
-			return fmt.Errorf("authorize initiative task start: initiative is not launchable: %w", application.ErrPrecondition)
-		}
-	}
-	return errors.New("authorize initiative task start: scheduler omitted the initiative member")
+	return fmt.Errorf("authorize initiative task start: initiative is not launchable: %w", application.ErrPrecondition)
 }
 
-func initiativeSchedulingFleet(
+const maximumInitiativeSchedulingFrontier = 1024
+
+type initiativeLaunchCandidate struct {
+	task             domain.Task
+	initiativeHandle string
+	initiativeAt     time.Time
+	round            int
+}
+
+func initiativeSchedulingFrontier(
 	ctx context.Context,
 	source queryer,
-	limit int,
-) ([]domain.DevelopmentInitiative, []domain.Task, []domain.ComponentContractArtifact, error) {
-	if limit < 1 || limit > 1024 {
-		return nil, nil, nil, errors.New("initiative scheduling frontier is invalid")
-	}
-	rows, err := source.QueryContext(ctx, `SELECT i.handle FROM initiatives AS i
+	target domain.Task,
+	containing domain.DevelopmentInitiative,
+	limits application.InitiativeSchedulingLimits,
+	usage application.InitiativeSchedulingUsage,
+) (bool, application.InitiativeScheduleReason, error) {
+	rows, err := source.QueryContext(ctx, `SELECT i.handle,
+		(SELECT COUNT(*) FROM initiative_members AS progress
+		 JOIN tasks AS progressed ON progressed.handle = progress.task_handle
+		 WHERE progress.initiative_handle = i.handle AND progressed.state NOT IN (?, ?)) AS scheduling_round
+		FROM initiatives AS i
 		WHERE i.state = ? AND EXISTS (
 			SELECT 1 FROM initiative_members AS member
 			JOIN tasks AS task ON task.handle = member.task_handle
 			WHERE member.initiative_handle = i.handle AND task.state = ?
 		)
-		ORDER BY i.created_at, i.handle LIMIT ?`, domain.InitiativeActive, domain.TaskReady, limit)
+		ORDER BY scheduling_round, i.created_at, i.handle LIMIT ?`,
+		domain.TaskPrepared, domain.TaskReady, domain.InitiativeActive, domain.TaskReady,
+		maximumInitiativeSchedulingFrontier)
 	if err != nil {
-		return nil, nil, nil, err
+		return false, "", err
 	}
-	handles := make([]string, 0, limit)
+	type frontierHandle struct {
+		handle string
+		round  int
+	}
+	handles := make([]frontierHandle, 0, maximumInitiativeSchedulingFrontier)
 	for rows.Next() {
-		var handle string
-		if err := rows.Scan(&handle); err != nil {
+		var item frontierHandle
+		if err := rows.Scan(&item.handle, &item.round); err != nil {
 			_ = rows.Close()
-			return nil, nil, nil, err
+			return false, "", err
 		}
-		handles = append(handles, handle)
+		handles = append(handles, item)
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, nil, nil, err
+		return false, "", err
 	}
-	initiatives := make([]domain.DevelopmentInitiative, 0, len(handles))
-	for _, handle := range handles {
-		initiative, err := getInitiative(ctx, source, handle)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		initiatives = append(initiatives, initiative)
-	}
-	tasks := make([]domain.Task, 0)
-	artifacts := make([]domain.ComponentContractArtifact, 0)
-	for _, initiative := range initiatives {
-		for _, taskHandle := range initiativeTaskHandles(initiative) {
-			task, err := getTask(ctx, source, taskHandle)
-			if err != nil {
-				return nil, nil, nil, err
+	pending := make([]initiativeLaunchCandidate, 0, domain.MaximumInitiativeMembers*len(handles))
+	loadedTarget := false
+	targetReason := application.InitiativeScheduleReason("")
+	selected := 0
+	available := limits.MaxConcurrentTasks - usage.Host
+	allocate := func(throughRound int) (bool, bool) {
+		sort.Slice(pending, func(left, right int) bool {
+			if pending[left].round != pending[right].round {
+				return pending[left].round < pending[right].round
 			}
-			tasks = append(tasks, task)
+			if !pending[left].initiativeAt.Equal(pending[right].initiativeAt) {
+				return pending[left].initiativeAt.Before(pending[right].initiativeAt)
+			}
+			if pending[left].initiativeHandle != pending[right].initiativeHandle {
+				return pending[left].initiativeHandle < pending[right].initiativeHandle
+			}
+			return pending[left].task.Handle < pending[right].task.Handle
+		})
+		for len(pending) != 0 && pending[0].round <= throughRound {
+			candidate := pending[0]
+			pending = pending[1:]
+			if usage.Repositories[candidate.task.RepositoryID] >= limits.MaxConcurrentTasksPerRepository ||
+				usage.WorkerProfiles[candidate.task.WorkerProfileID] >= limits.WorkerProfileLimits[candidate.task.WorkerProfileID] {
+				if candidate.task.Handle == target.Handle {
+					return false, true
+				}
+				continue
+			}
+			usage.Host++
+			usage.Repositories[candidate.task.RepositoryID]++
+			usage.WorkerProfiles[candidate.task.WorkerProfileID]++
+			selected++
+			if candidate.task.Handle == target.Handle {
+				return true, true
+			}
+			if selected == available {
+				return false, true
+			}
 		}
-		current, err := listInitiativeContractArtifactMetadata(ctx, source, initiative.Handle)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		artifacts = append(artifacts, current...)
+		return false, false
 	}
-	return initiatives, tasks, artifacts, nil
+	for _, item := range handles {
+		if launchable, settled := allocate(item.round - 1); settled {
+			return launchable, application.ScheduleResourceQueued, nil
+		}
+		initiative, err := getInitiative(ctx, source, item.handle)
+		if err != nil {
+			return false, "", err
+		}
+		candidates, reason, err := initiativeSchedulingCandidates(ctx, source, initiative, target.Handle, limits, usage)
+		if err != nil {
+			return false, "", err
+		}
+		if initiative.Handle == containing.Handle {
+			loadedTarget = true
+			targetReason = reason
+		}
+		pending = append(pending, candidates...)
+		if launchable, settled := allocate(item.round); settled {
+			return launchable, application.ScheduleResourceQueued, nil
+		}
+	}
+	if !loadedTarget {
+		candidates, reason, err := initiativeSchedulingCandidates(ctx, source, containing, target.Handle, limits, usage)
+		if err != nil {
+			return false, "", err
+		}
+		targetReason = reason
+		pending = append(pending, candidates...)
+	}
+	if launchable, settled := allocate(int(^uint(0) >> 1)); settled {
+		return launchable, application.ScheduleResourceQueued, nil
+	}
+	return false, targetReason, nil
+}
+
+func initiativeSchedulingCandidates(
+	ctx context.Context,
+	source queryer,
+	initiative domain.DevelopmentInitiative,
+	targetHandle string,
+	limits application.InitiativeSchedulingLimits,
+	usage application.InitiativeSchedulingUsage,
+) ([]initiativeLaunchCandidate, application.InitiativeScheduleReason, error) {
+	tasks := make([]domain.Task, 0, domain.MaximumInitiativeMembers)
+	byHandle := make(map[string]domain.Task, domain.MaximumInitiativeMembers)
+	round := 0
+	for _, taskHandle := range initiativeTaskHandles(initiative) {
+		task, err := getTask(ctx, source, taskHandle)
+		if err != nil {
+			return nil, "", err
+		}
+		tasks = append(tasks, task)
+		byHandle[task.Handle] = task
+		if task.State != domain.TaskPrepared && task.State != domain.TaskReady {
+			round++
+		}
+	}
+	artifacts, err := listInitiativeContractArtifactMetadata(ctx, source, initiative.Handle)
+	if err != nil {
+		return nil, "", err
+	}
+	schedules, err := application.ScheduleInitiativesWithUsage(
+		[]domain.DevelopmentInitiative{initiative}, tasks, artifacts, limits, usage)
+	if err != nil || len(schedules) != 1 {
+		return nil, "", errors.Join(err, errors.New("initiative scheduling decision is unavailable"))
+	}
+	candidates := make([]initiativeLaunchCandidate, 0, len(schedules[0].Tasks))
+	targetReason := application.InitiativeScheduleReason("")
+	for _, decision := range schedules[0].Tasks {
+		if decision.TaskHandle == targetHandle {
+			targetReason = decision.Reason
+		}
+		if decision.State != domain.TaskReady || !decision.Launchable && decision.Reason != application.ScheduleResourceQueued {
+			continue
+		}
+		candidate, found := byHandle[decision.TaskHandle]
+		if !found {
+			return nil, "", errors.New("initiative scheduling task is unavailable")
+		}
+		candidates = append(candidates, initiativeLaunchCandidate{
+			task: candidate, initiativeHandle: initiative.Handle, initiativeAt: initiative.CreatedAt,
+			round: round + len(candidates),
+		})
+	}
+	return candidates, targetReason, nil
 }
 
 func initiativeSchedulingUsage(

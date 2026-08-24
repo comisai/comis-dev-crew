@@ -55,7 +55,7 @@ func writeServerRebaseProofForTest(
 			request.Target.ExpectedHead+".."+resultingHead,
 		))
 	}
-	proof.WriteString("version 4\noperation ")
+	proof.WriteString("version 5\noperation ")
 	if request.RecoveryOperationID != "" {
 		proof.WriteString(request.RecoveryOperationID)
 	} else {
@@ -91,6 +91,7 @@ func writeServerRebaseProofForTest(
 		proof.WriteString(strings.Repeat("0", 64))
 		proof.WriteString(" 1\nZml4dHVyZS50eHQ\n")
 	}
+	proof.WriteString("continued 0\n")
 	proof.WriteString("results ")
 	proof.WriteString(fmt.Sprintf("%d", len(resultCommits)))
 	proof.WriteByte('\n')

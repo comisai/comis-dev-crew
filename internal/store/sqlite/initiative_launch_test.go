@@ -169,3 +169,61 @@ func TestInitiativeLaunchAuthorizationBoundsActiveSchedulingFrontier(t *testing.
 		t.Fatalf("authorizeInitiativeTaskStart(bounded active frontier) error = %v", err)
 	}
 }
+
+func TestInitiativeLaunchAuthorizationSkipsEarlierCapacityIneligibleInitiatives(t *testing.T) {
+	ctx := context.Background()
+	store, _, activation := preparedInitiativeActivationStore(t)
+	active := commitActiveInitiativeForTest(t, ctx, store, activation)
+	occupied := storeTask("task-capped-repository-running", active.Initiative.StateVersion+1)
+	occupied.State = domain.TaskWorking
+	occupied.RepositoryID = "repo-capped"
+	occupied.ManagedRunID = "managed-run-capped-repository"
+	occupied.WorkspaceLeaseID = "workspace-lease-capped-repository"
+	occupied, err := occupied.PinBriefRevision()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateTask(ctx, occupied); err != nil {
+		t.Fatal(err)
+	}
+	olderTask := storeTask("task-capped-repository-ready", occupied.StateVersion+1)
+	olderTask.State = domain.TaskReady
+	olderTask.RepositoryID = occupied.RepositoryID
+	olderTask.ManagedRunID = "managed-run-capped-ready"
+	olderTask.WorkspaceLeaseID = "workspace-lease-capped-ready"
+	olderTask, err = olderTask.PinBriefRevision()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateTask(ctx, olderTask); err != nil {
+		t.Fatal(err)
+	}
+	older := persistenceInitiative("initiative-capped-repository", domain.InitiativeActive, olderTask.StateVersion)
+	older.BaseRevisionSet[0].RepositoryID = olderTask.RepositoryID
+	older.Components = older.Components[:1]
+	older.Components[0].RepositoryID = olderTask.RepositoryID
+	older.Components[0].TaskHandles = []string{olderTask.Handle}
+	older.Edges = nil
+	older.ContractArtifacts = nil
+	older.IntegrationOwnerTask = ""
+	older.CreatedAt = active.Initiative.CreatedAt.Add(-time.Hour)
+	older.UpdatedAt = older.CreatedAt
+	if err := store.CreateInitiative(ctx, older); err != nil {
+		t.Fatal(err)
+	}
+	target, err := store.GetTask(ctx, activation.Members[0].ExternalRunRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	limits := initiativeTestSchedulingLimits(2)
+	limits.MaxConcurrentTasksPerRepository = 1
+
+	if err := authorizeInitiativeTaskStart(ctx, transaction, target, limits); err != nil {
+		t.Fatalf("authorizeInitiativeTaskStart(after capped initiative) error = %v", err)
+	}
+}

@@ -19,6 +19,7 @@ type serverRebaseProof struct {
 	candidatePatches []string
 	resolvedCommits  []string
 	conflicts        []serverRebaseConflict
+	continuedCommits []string
 	resultCommits    []string
 	resultingHead    string
 }
@@ -69,6 +70,13 @@ func (registry *Registry) runRebaseIntegration(
 	}
 	if err := registry.prepareServerRebaseProof(ctx, repository, request); err != nil {
 		return errors.Join(err, application.ErrIntegrationMutationNotStarted)
+	}
+	mutationAt := registry.clock().UTC()
+	if mutationAt.IsZero() || !mutationAt.Before(request.EvidenceExpiresAt) {
+		return errors.Join(
+			errors.New("apply integration candidate: candidate evidence expired during rebase preflight"),
+			application.ErrIntegrationMutationNotStarted,
+		)
 	}
 	if err := registry.recordIntegrationTargetRef(ctx, request, targetRef); err != nil {
 		return err
@@ -191,12 +199,18 @@ func (registry *Registry) recordServerRebaseConflict(
 	if err != nil || !sameRebaseCommits(proof.candidateCommits, candidates) || !containsRebaseCommit(candidates, rebaseHead) {
 		return errors.New("apply integration candidate: conflicted server rebase proof differs")
 	}
+	continued, err := registry.currentServerRebasePrefix(ctx, repository, request, proof, rebaseHead)
+	if err != nil {
+		return err
+	}
 	want := proof
+	want.continuedCommits = continued
 	want.resolvedCommits = appendResolvedRebaseCommit(candidates, proof.resolvedCommits, rebaseHead)
 	want.conflicts = []serverRebaseConflict{{
 		commit: rebaseHead, indexDigest: indexDigest, paths: conflicts,
 	}}
 	if sameRebaseCommits(want.resolvedCommits, proof.resolvedCommits) &&
+		sameRebaseCommits(want.continuedCommits, proof.continuedCommits) &&
 		sameServerRebaseConflicts(want.conflicts, proof.conflicts) {
 		if err := discardServerRebaseProofTemporary(path + ".next"); err != nil {
 			return err
@@ -392,7 +406,9 @@ func (registry *Registry) verifyServerRebaseSemantics(
 	results, resultErr := registry.rebaseCommitRange(ctx, repository, request.Target.ExpectedHead, resultingHead)
 	if candidateErr != nil || resultErr != nil || !sameRebaseCommits(proof.candidateCommits, candidates) ||
 		len(candidates) != len(results) || !validResolvedRebaseCommits(candidates, proof.resolvedCommits) ||
-		len(results) == 0 || results[len(results)-1] != resultingHead {
+		len(results) == 0 || results[len(results)-1] != resultingHead ||
+		len(proof.continuedCommits) > len(results) ||
+		!sameRebaseCommits(proof.continuedCommits, results[:len(proof.continuedCommits)]) {
 		return nil, errors.New("apply integration candidate: server rebase range proof differs")
 	}
 	resolved := make(map[string]struct{}, len(proof.resolvedCommits))

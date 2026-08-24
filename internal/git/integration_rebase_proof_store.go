@@ -172,7 +172,7 @@ func readServerRebaseProof(path string) (serverRebaseProof, bool, error) {
 
 func encodeServerRebaseProof(proof serverRebaseProof) []byte {
 	var builder strings.Builder
-	builder.WriteString("version 4\noperation ")
+	builder.WriteString("version 5\noperation ")
 	builder.WriteString(proof.operationID)
 	builder.WriteString("\ncandidates ")
 	writeRebaseProofCommits(&builder, proof.candidateCommits)
@@ -195,6 +195,8 @@ func encodeServerRebaseProof(proof serverRebaseProof) []byte {
 			builder.WriteByte('\n')
 		}
 	}
+	builder.WriteString("continued ")
+	writeRebaseProofCommits(&builder, proof.continuedCommits)
 	builder.WriteString("results ")
 	writeRebaseProofCommits(&builder, proof.resultCommits)
 	builder.WriteString("result ")
@@ -221,7 +223,7 @@ func decodeServerRebaseProof(contents []byte) (serverRebaseProof, error) {
 		return serverRebaseProof{}, errors.New("apply integration candidate: server rebase proof is malformed")
 	}
 	lines := strings.Split(strings.TrimSuffix(string(contents), "\n"), "\n")
-	if len(lines) < 8 || lines[0] != "version 4" || !strings.HasPrefix(lines[1], "operation ") {
+	if len(lines) < 9 || lines[0] != "version 5" || !strings.HasPrefix(lines[1], "operation ") {
 		return serverRebaseProof{}, errors.New("apply integration candidate: server rebase proof is malformed")
 	}
 	operationID := strings.TrimPrefix(lines[1], "operation ")
@@ -245,6 +247,10 @@ func decodeServerRebaseProof(contents []byte) (serverRebaseProof, error) {
 	if err != nil || !serverRebaseConflictsWereResolved(resolved, conflicts) {
 		return serverRebaseProof{}, errors.New("apply integration candidate: server rebase proof is malformed")
 	}
+	continued, next, err := decodeRebaseProofCommits(lines, next, "continued", 0, len(candidates))
+	if err != nil {
+		return serverRebaseProof{}, err
+	}
 	results, next, err := decodeRebaseProofCommits(lines, next, "results", 0, len(candidates))
 	if err != nil || next != len(lines)-1 || !strings.HasPrefix(lines[next], "result ") {
 		return serverRebaseProof{}, errors.New("apply integration candidate: server rebase proof is malformed")
@@ -253,7 +259,7 @@ func decodeServerRebaseProof(contents []byte) (serverRebaseProof, error) {
 	proof := serverRebaseProof{
 		operationID:      operationID,
 		candidateCommits: candidates, candidatePatches: patches,
-		resolvedCommits: resolved, conflicts: conflicts, resultCommits: results,
+		resolvedCommits: resolved, conflicts: conflicts, continuedCommits: continued, resultCommits: results,
 	}
 	if result == "-" {
 		if len(results) != 0 {
@@ -261,7 +267,8 @@ func decodeServerRebaseProof(contents []byte) (serverRebaseProof, error) {
 		}
 		return proof, nil
 	}
-	if !gitRevisionPattern.MatchString(result) || len(results) != len(candidates) || results[len(results)-1] != result {
+	if !gitRevisionPattern.MatchString(result) || len(results) != len(candidates) || results[len(results)-1] != result ||
+		!sameRebaseCommits(continued, results[:len(continued)]) {
 		return serverRebaseProof{}, errors.New("apply integration candidate: server rebase proof is malformed")
 	}
 	proof.resultingHead = result
@@ -370,6 +377,7 @@ func sameServerRebaseProof(left, right serverRebaseProof) bool {
 		sameRebaseCommits(left.candidatePatches, right.candidatePatches) &&
 		sameRebaseCommits(left.resolvedCommits, right.resolvedCommits) &&
 		sameServerRebaseConflicts(left.conflicts, right.conflicts) &&
+		sameRebaseCommits(left.continuedCommits, right.continuedCommits) &&
 		sameRebaseCommits(left.resultCommits, right.resultCommits) && left.resultingHead == right.resultingHead
 }
 

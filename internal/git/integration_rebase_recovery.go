@@ -195,6 +195,9 @@ func (registry *Registry) reconcileInterruptedRebase(
 		if err != nil {
 			return application.IntegrationAdapterResult{}, true, err
 		}
+		if err := registry.recordServerRebaseConflict(ctx, repository, request); err != nil {
+			return application.IntegrationAdapterResult{}, true, err
+		}
 		if err := registry.createIntegrationReceipt(ctx, repository, conflictedRef, request.Target.ExpectedHead); err != nil {
 			return application.IntegrationAdapterResult{}, true, errors.New("apply integration candidate: conflict receipt could not be recorded")
 		}

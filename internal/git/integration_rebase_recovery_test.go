@@ -109,6 +109,18 @@ func TestRegistry_ReconcilesInterruptedRebaseConflictBeforeReceipt(t *testing.T)
 	if err != nil || !reflect.DeepEqual(replayed, result) {
 		t.Fatalf("ApplyIntegrationCandidate(interrupted conflict replay) = %#v, %v", replayed, err)
 	}
+	if err := os.WriteFile(filepath.Join(fixture.target.CanonicalPath, "fixture.txt"), []byte("resolved\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"add", "--", "fixture.txt")
+	recovery := request
+	recovery.OperationID = "integration-rebase-interrupted-conflict-recovery"
+	recovery.RecoveryOperationID = request.OperationID
+	applied, err := restarted.ApplyIntegrationCandidate(context.Background(), recovery)
+	if err != nil || applied.Outcome != application.IntegrationApplied {
+		t.Fatalf("ApplyIntegrationCandidate(interrupted conflict recovery) = %#v, %v", applied, err)
+	}
 }
 
 func TestRegistry_ReconcilesCompletedRebaseBeforeConflictReceipt(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 )
@@ -144,4 +145,104 @@ func TestRegistry_RebaseRejectsDropProneRangesBeforeMutation(t *testing.T) {
 		}
 		assertRebaseProofBoundPreservedTarget(t, fixture, request, targetHead)
 	})
+
+	t.Run("subset already upstream", func(t *testing.T) {
+		fixture := newIntegrationFixture(t)
+		baseBody := "first\nsecond\nthird\nfourth\nfifth\nsixth\nseventh\n"
+		sharedBase := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath,
+			"subset.txt", baseBody)
+		runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+			"reset", "--hard", sharedBase)
+		candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath,
+			"subset.txt", "FIRST\nsecond\nthird\nfourth\nfifth\nsixth\nseventh\n")
+		targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath,
+			"subset.txt", "FIRST\nsecond\nthird\nfourth\nfifth\nsixth\nSEVENTH\n")
+		request := fixture.request("integration-rebase-subset-upstream",
+			application.IntegrationRebase, candidateHead, targetHead)
+		request.Candidate.BaseRevision = sharedBase
+
+		_, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
+		if !errors.Is(err, application.ErrIntegrationMutationNotStarted) {
+			t.Fatalf("ApplyIntegrationCandidate(subset content) error = %v", err)
+		}
+		assertRebaseProofBoundPreservedTarget(t, fixture, request, targetHead)
+	})
+}
+
+func TestRegistry_RebasePreflightRechecksEvidenceFreshness(t *testing.T) {
+	fresh := time.Date(2099, time.January, 1, 0, 0, 0, 0, time.UTC)
+	expired := fresh.Add(time.Minute)
+	checking := false
+	checks := 0
+	fixture := newIntegrationFixtureWithClock(t, func() time.Time {
+		if !checking {
+			return fresh
+		}
+		checks++
+		if checks == 1 {
+			return fresh
+		}
+		return expired
+	})
+	candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath,
+		"freshness.txt", "candidate\n")
+	targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath,
+		"target.txt", "target\n")
+	request := fixture.request("integration-rebase-preflight-expiry",
+		application.IntegrationRebase, candidateHead, targetHead)
+	request.EvidenceExpiresAt = expired
+	checking = true
+
+	_, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
+	if !errors.Is(err, application.ErrIntegrationMutationNotStarted) {
+		t.Fatalf("ApplyIntegrationCandidate(expired during preflight) error = %v", err)
+	}
+	assertRebaseProofBoundPreservedTarget(t, fixture, request, targetHead)
+}
+
+func TestRegistry_RebaseRecoveryRejectsRewrittenEarlierConflictResult(t *testing.T) {
+	fixture := newIntegrationFixture(t)
+	_ = commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "fixture.txt", "candidate-one\n")
+	candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "fixture.txt", "candidate-two\n")
+	targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "fixture.txt", "integration\n")
+	request := fixture.request("integration-rebase-rewritten-conflict",
+		application.IntegrationRebase, candidateHead, targetHead)
+	result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
+	if err != nil || result.Outcome != application.IntegrationConflicted {
+		t.Fatalf("ApplyIntegrationCandidate(first conflict) = %#v, %v", result, err)
+	}
+	if err := os.WriteFile(filepath.Join(fixture.target.CanonicalPath, "fixture.txt"), []byte("resolved-first\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"add", "--", "fixture.txt")
+	firstRecovery := request
+	firstRecovery.OperationID = "integration-rebase-rewritten-first-recovery"
+	firstRecovery.RecoveryOperationID = request.OperationID
+	if _, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), firstRecovery); err == nil {
+		t.Fatal("ApplyIntegrationCandidate(second conflict) error = nil")
+	}
+	parent := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "rev-parse", "HEAD^")
+	tree := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "rev-parse", "HEAD^{tree}")
+	forged := integrationGitOutput(t, fixture, fixture.target.CanonicalPath,
+		"-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+		"commit-tree", tree, "-p", parent, "-m", "rewritten result")
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"update-ref", "HEAD", forged)
+	if err := os.WriteFile(filepath.Join(fixture.target.CanonicalPath, "fixture.txt"), []byte("resolved-second\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"add", "--", "fixture.txt")
+	secondRecovery := request
+	secondRecovery.OperationID = "integration-rebase-rewritten-second-recovery"
+	secondRecovery.RecoveryOperationID = request.OperationID
+
+	if _, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), secondRecovery); err == nil {
+		t.Fatal("ApplyIntegrationCandidate(rewritten earlier result) error = nil")
+	}
+	if head := integrationGitOutput(t, fixture, fixture.repository.primary,
+		"rev-parse", "refs/heads/"+fixture.target.Branch); head != targetHead {
+		t.Fatalf("target head = %q, want unchanged %q", head, targetHead)
+	}
 }

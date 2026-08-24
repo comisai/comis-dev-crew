@@ -82,6 +82,9 @@ func (registry *Registry) validateServerRebaseConflictResolution(
 	if err != nil {
 		return errors.New("apply integration candidate: conflict recovery identity is unavailable")
 	}
+	if err := registry.requireServerRebasePrefix(ctx, repository, request, proof, rebaseHead); err != nil {
+		return err
+	}
 	var snapshot *serverRebaseConflict
 	for index := range proof.conflicts {
 		if proof.conflicts[index].commit == rebaseHead {
