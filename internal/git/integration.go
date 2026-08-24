@@ -282,7 +282,7 @@ func (registry *Registry) inspectIntegrationReceipt(
 	reference string,
 ) (inspectedIntegrationReceipt, error) {
 	output, exitCode, err := executeGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
-		"symbolic-ref", "--quiet", reference)
+		"symbolic-ref", "--quiet", "--no-recurse", reference)
 	if err != nil {
 		return inspectedIntegrationReceipt{}, err
 	}

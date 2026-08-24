@@ -511,7 +511,7 @@ func newStoredIntegrationFixture(t *testing.T) storedIntegrationFixture {
 	boundAt := mutation.At.Add(time.Minute)
 	for handle, state := range map[string]string{
 		"task-component-a": "validating",
-		"task-integration": "working",
+		"task-integration": "ready",
 	} {
 		if _, err := store.db.Exec(`UPDATE tasks SET managed_run_id = ?, workspace_lease_id = ?, state = ?, updated_at = ? WHERE handle = ?`,
 			"managed-run_"+handle, "workspace-lease_"+handle, state, formatTime(boundAt), handle); err != nil {

@@ -11,6 +11,10 @@ import (
 
 func TestIntegrationOwnerCompletionRequiresAppliedPredecessorReceipts(t *testing.T) {
 	fixture := newStoredIntegrationFixture(t)
+	if _, err := fixture.store.db.ExecContext(context.Background(),
+		`UPDATE tasks SET state = 'working' WHERE handle = 'task-integration'`); err != nil {
+		t.Fatalf("set integration owner working: %v", err)
+	}
 	integration, err := fixture.store.GetTask(context.Background(), "task-integration")
 	if err != nil {
 		t.Fatal(err)

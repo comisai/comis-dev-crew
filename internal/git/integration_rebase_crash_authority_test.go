@@ -42,7 +42,7 @@ func TestRegistry_InterruptedConflictRejectsPostCrashProtectedChanges(t *testing
 	}
 }
 
-func TestRegistry_RecoversLaterConflictAfterCrash(t *testing.T) {
+func TestRegistry_RejectsLaterConflictCrashSequenceBeforeMutation(t *testing.T) {
 	fixture := newIntegrationFixture(t)
 	_ = commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath,
 		"fixture.txt", "candidate-one\n")
@@ -52,39 +52,11 @@ func TestRegistry_RecoversLaterConflictAfterCrash(t *testing.T) {
 		"fixture.txt", "integration\n")
 	request := fixture.request("integration-rebase-later-conflict-crash",
 		application.IntegrationRebase, candidateHead, targetHead)
-	if result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request); err != nil ||
-		result.Outcome != application.IntegrationConflicted {
-		t.Fatalf("ApplyIntegrationCandidate(first conflict) = %#v, %v", result, err)
+	_, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
+	if !errors.Is(err, application.ErrIntegrationMutationNotStarted) {
+		t.Fatalf("ApplyIntegrationCandidate(later conflict sequence) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(fixture.target.CanonicalPath, "fixture.txt"),
-		[]byte("resolved-first\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C",
-		fixture.target.CanonicalPath, "add", "--", "fixture.txt")
-	runIntegrationGitExpectFailure(t, fixture.repository.gitExecutable,
-		"--no-optional-locks", "-C", fixture.target.CanonicalPath,
-		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", "-c", "core.editor=true",
-		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
-		"rebase", "--continue")
-
-	recovery := request
-	recovery.OperationID = "integration-rebase-later-conflict-crash-recovery"
-	recovery.RecoveryOperationID = request.OperationID
-	restarted := newLifecycleRegistry(t, fixture.repository)
-	if _, err := restarted.ApplyIntegrationCandidate(context.Background(), recovery); err == nil {
-		t.Fatal("ApplyIntegrationCandidate(unresolved later conflict) error = nil")
-	}
-	if err := os.WriteFile(filepath.Join(fixture.target.CanonicalPath, "fixture.txt"),
-		[]byte("resolved-second\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C",
-		fixture.target.CanonicalPath, "add", "--", "fixture.txt")
-	result, err := restarted.ApplyIntegrationCandidate(context.Background(), recovery)
-	if err != nil || result.Outcome != application.IntegrationApplied {
-		t.Fatalf("ApplyIntegrationCandidate(recovered later conflict) = %#v, %v", result, err)
-	}
+	assertRebaseProofBoundPreservedTarget(t, fixture, request, targetHead)
 }
 
 func TestRegistry_RebaseRejectsSequentialSubsumptionBeforeMutation(t *testing.T) {

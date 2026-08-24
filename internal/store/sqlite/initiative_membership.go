@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -36,14 +37,8 @@ func (store *Store) applyInitiativeMembershipMigration(ctx context.Context) erro
 	if _, err := transaction.ExecContext(ctx, initiativeMembershipMigration); err != nil {
 		return fmt.Errorf("apply SQLite migration 47: %w", err)
 	}
-	initiatives, err := listInitiatives(ctx, transaction)
-	if err != nil {
-		return fmt.Errorf("read migration 47 initiatives: %w", err)
-	}
-	for _, initiative := range initiatives {
-		if err := insertInitiativeMembership(ctx, transaction, initiative); err != nil {
-			return fmt.Errorf("backfill migration 47 membership: %w", err)
-		}
+	if err := backfillInitiativeMembership(ctx, transaction); err != nil {
+		return fmt.Errorf("backfill migration 47 membership: %w", err)
 	}
 	if _, err := transaction.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at)
 		VALUES (47, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`); err != nil {
@@ -53,6 +48,43 @@ func (store *Store) applyInitiativeMembershipMigration(ctx context.Context) erro
 		return fmt.Errorf("commit SQLite migration 47: %w", err)
 	}
 	return nil
+}
+
+const initiativeMembershipMigrationPageSize = 64
+
+func backfillInitiativeMembership(ctx context.Context, transaction *sql.Tx) error {
+	const query = `SELECT handle, schema_version, managed_run_group_id, title_ref, state,
+		base_revision_set_json, components_json, edges_json, contract_artifacts_json,
+		integration_policy_id, integration_owner_task, state_version, created_at, updated_at
+		FROM initiatives WHERE handle > ? ORDER BY handle LIMIT ?`
+	afterHandle := ""
+	for {
+		rows, err := transaction.QueryContext(ctx, query, afterHandle, initiativeMembershipMigrationPageSize)
+		if err != nil {
+			return fmt.Errorf("read initiative page: %w", err)
+		}
+		page := make([]domain.DevelopmentInitiative, 0, initiativeMembershipMigrationPageSize)
+		for rows.Next() {
+			initiative, scanErr := scanInitiative(rows)
+			if scanErr != nil {
+				_ = rows.Close()
+				return fmt.Errorf("validate initiative page: %w", scanErr)
+			}
+			page = append(page, initiative)
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return fmt.Errorf("read initiative page: %w", err)
+		}
+		for _, initiative := range page {
+			if err := insertInitiativeMembership(ctx, transaction, initiative); err != nil {
+				return err
+			}
+		}
+		if len(page) < initiativeMembershipMigrationPageSize {
+			return nil
+		}
+		afterHandle = page[len(page)-1].Handle
+	}
 }
 
 func insertInitiativeMembership(ctx context.Context, target execer, initiative domain.DevelopmentInitiative) error {

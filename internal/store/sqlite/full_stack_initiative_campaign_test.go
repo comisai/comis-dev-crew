@@ -108,7 +108,10 @@ func TestFullStackInitiativeCampaignPreservesParallelLanesAndExactHeadAuthority(
 	}); !errors.Is(err, application.ErrPrecondition) {
 		t.Fatalf("validation before integration error = %v, want ErrPrecondition", err)
 	}
-	integration := startCampaignTask(t, fixture, fixture.handles.integration, limits, fixture.at.Add(19*time.Minute))
+	integration, err := fixture.store.GetTask(ctx, fixture.handles.integration)
+	if err != nil || integration.State != domain.TaskReady {
+		t.Fatalf("integration before isolated application = %#v, %v", integration, err)
+	}
 
 	targetHead := strings.Repeat("d", 40)
 	adapter := &campaignIntegrationAdapter{
@@ -178,6 +181,7 @@ func TestFullStackInitiativeCampaignPreservesParallelLanesAndExactHeadAuthority(
 		t.Fatalf("ApplyCandidate(current backend) = %#v, %v", backendResult, err)
 	}
 
+	integration = startCampaignTask(t, fixture, fixture.handles.integration, limits, fixture.at.Add(26*time.Minute+30*time.Second))
 	integration = reportCampaignCandidate(
 		t, fixture, integration, "campaign-integration-candidate", fixture.at.Add(27*time.Minute),
 	)

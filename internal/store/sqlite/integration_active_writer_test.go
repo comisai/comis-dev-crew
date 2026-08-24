@@ -10,6 +10,10 @@ import (
 
 func TestIntegrationReservationRejectsWorkingOwnerWithActiveWriter(t *testing.T) {
 	fixture := newStoredIntegrationFixture(t)
+	if _, err := fixture.store.db.ExecContext(context.Background(),
+		`UPDATE tasks SET state = 'working' WHERE handle = 'task-integration'`); err != nil {
+		t.Fatalf("set integration owner working: %v", err)
+	}
 	request := fixture.reservationRequest("integration-active-writer-refusal", application.IntegrationMerge)
 
 	if _, err := fixture.store.ReserveIntegrationApplication(context.Background(), request); !errors.Is(err, application.ErrPrecondition) {

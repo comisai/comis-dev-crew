@@ -102,5 +102,6 @@ func integrationCandidateMutationState(state domain.TaskState) bool {
 }
 
 func integrationInitiativeMutationState(state domain.InitiativeState) bool {
-	return state == domain.InitiativeActive || state == domain.InitiativeIntegrating
+	return state == domain.InitiativeActive || state == domain.InitiativeBlocked || state == domain.InitiativeIntegrating ||
+		state == domain.InitiativeValidating
 }

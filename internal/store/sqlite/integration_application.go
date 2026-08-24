@@ -251,7 +251,8 @@ func resolveIntegrationReservation(
 	if err != nil {
 		return integrationApplicationRow{}, err
 	}
-	if initiative.State != domain.InitiativeActive && initiative.State != domain.InitiativeIntegrating {
+	if initiative.State != domain.InitiativeActive && initiative.State != domain.InitiativeBlocked &&
+		initiative.State != domain.InitiativeIntegrating && initiative.State != domain.InitiativeValidating {
 		return integrationApplicationRow{}, fmt.Errorf("integration initiative is not active: %w", application.ErrPrecondition)
 	}
 	if initiative.IntegrationPolicyID != request.PolicyID || initiative.AuthorizeIntegrationWrite(request.Command.IntegrationTaskHandle) != nil {
@@ -277,7 +278,6 @@ func resolveIntegrationReservation(
 	}
 	worktrees := make(map[string]string)
 	preparationOperationIDs := make(map[string]string)
-	deliverySatisfied := make(map[string]bool)
 	for _, component := range initiative.Components {
 		for _, taskHandle := range component.TaskHandles {
 			task, readErr := getTask(ctx, transaction, taskHandle)
@@ -294,21 +294,11 @@ func resolveIntegrationReservation(
 				return integrationApplicationRow{}, fmt.Errorf("integration preparation authority is unavailable: %w", application.ErrPrecondition)
 			}
 			preparationOperationIDs[taskHandle] = preparationOperationID
-			deliverySatisfied[taskHandle] = task.State.SatisfiesInitiativeDependency()
 		}
 	}
-	ownerWritable := integrationTask.State == domain.TaskWorking ||
-		integrationTask.State == domain.TaskAwaitingDecision || integrationTask.State == domain.TaskBlocked
-	if integrationTask.State == domain.TaskReady {
-		for _, taskHandle := range initiative.DependencyReadyTasks(deliverySatisfied) {
-			if taskHandle == integrationTask.Handle {
-				ownerWritable = true
-				break
-			}
-		}
-	}
-	if !ownerWritable {
-		return integrationApplicationRow{}, fmt.Errorf("integration owner is not writable: %w", application.ErrPrecondition)
+	ownerIsolated := integrationTask.State == domain.TaskReady
+	if !ownerIsolated {
+		return integrationApplicationRow{}, fmt.Errorf("integration owner is not isolated from an active writer: %w", application.ErrPrecondition)
 	}
 	if err := initiative.AuthorizeIntegrationWorktree(integrationTask.Handle, worktrees); err != nil {
 		return integrationApplicationRow{}, fmt.Errorf("integration worktree authority differs: %w", application.ErrPrecondition)

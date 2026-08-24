@@ -74,12 +74,11 @@ func initiativeSchedulingFrontier(
 	targetReason := application.InitiativeScheduleReason("")
 	selected := 0
 	available := limits.MaxConcurrentTasks - usage.Host
-	inspected := 0
 	for round := 0; round < domain.MaximumInitiativeMembers; round++ {
 		cursorAt, cursorHandle := "", ""
-		for inspected < maximumInitiativeSchedulingFrontier {
-			pageLimit := min(initiativeSchedulingPageSize, maximumInitiativeSchedulingFrontier-inspected)
-			page, err := initiativeSchedulingPage(ctx, source, cursorAt, cursorHandle, pageLimit)
+		eligible := 0
+		for {
+			page, err := initiativeSchedulingPage(ctx, source, cursorAt, cursorHandle, initiativeSchedulingPageSize)
 			if err != nil {
 				return false, "", err
 			}
@@ -87,7 +86,6 @@ func initiativeSchedulingFrontier(
 				break
 			}
 			for _, item := range page {
-				inspected++
 				initiative, err := getInitiative(ctx, source, item.handle)
 				if err != nil {
 					return false, "", err
@@ -112,6 +110,10 @@ func initiativeSchedulingFrontier(
 						}
 						continue
 					}
+					eligible++
+					if eligible > maximumInitiativeSchedulingFrontier {
+						return false, application.ScheduleResourceQueued, nil
+					}
 					usage.Host++
 					usage.Repositories[candidate.task.RepositoryID]++
 					usage.WorkerProfiles[candidate.task.WorkerProfileID]++
@@ -125,12 +127,9 @@ func initiativeSchedulingFrontier(
 				}
 				cursorAt, cursorHandle = item.createdAt, item.handle
 			}
-			if len(page) < pageLimit {
+			if len(page) < initiativeSchedulingPageSize {
 				break
 			}
-		}
-		if inspected == maximumInitiativeSchedulingFrontier {
-			return false, application.ScheduleResourceQueued, nil
 		}
 	}
 	return false, targetReason, nil

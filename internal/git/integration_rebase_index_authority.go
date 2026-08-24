@@ -23,7 +23,7 @@ func (registry *Registry) preflightRebasePatches(
 				"read-tree", request.Target.ExpectedHead); err != nil {
 				return errors.New("apply integration candidate: rebase sequence proof is unavailable")
 			}
-			for _, commit := range commits {
+			for index, commit := range commits {
 				patch, err := registry.rebaseCommitPatch(ctx, repository, commit)
 				if err != nil {
 					return err
@@ -49,6 +49,9 @@ func (registry *Registry) preflightRebasePatches(
 				case 0:
 					continue
 				case 1:
+					if index != len(commits)-1 {
+						return errors.New("apply integration candidate: commits after a conflict cannot be proven")
+					}
 					return nil
 				default:
 					return errors.New("apply integration candidate: rebase sequence proof is unavailable")
