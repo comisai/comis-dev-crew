@@ -153,7 +153,7 @@ type FleetCapacitySnapshot struct {
 	Dimensions []FleetCapacityDimension `json:"dimensions"`
 }
 
-// FleetSnapshot is the canonical current E0 fleet projection.
+// FleetSnapshot is the canonical current fleet projection.
 type FleetSnapshot struct {
 	SchemaVersion int                   `json:"schemaVersion"`
 	CapturedAtMs  int64                 `json:"capturedAtMs"`

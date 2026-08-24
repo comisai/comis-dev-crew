@@ -200,7 +200,7 @@ type DeliveredWorkspaceRemover interface {
 	RemoveDiscardedWorkspace(context.Context, DeliveredWorkspaceRemoval) error
 }
 
-// CleanupCoordinatorConfig supplies the complete E0 cleanup authority set.
+// CleanupCoordinatorConfig supplies the complete cleanup authority set.
 type CleanupCoordinatorConfig struct {
 	Store      TaskCleanupStore
 	Workspaces WorkspaceInspector

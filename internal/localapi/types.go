@@ -214,8 +214,8 @@ type Outcome struct {
 	failureCause    application.BoundaryFailureCause
 }
 
-// operatorOnly reports whether a method carries private task detail that §20.3
-// keeps off the model surface.
+// operatorOnly reports whether a method carries private operator data or controls
+// that stay off the model surface.
 //
 // The boundary lives here rather than only in the set of tools the facade
 // exposes, so a facade that later grows a tool cannot thereby gain an authority

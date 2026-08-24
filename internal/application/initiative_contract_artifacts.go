@@ -38,7 +38,7 @@ func buildInitiativeContractArtifacts(
 			ArtifactHandle: input.ArtifactHandle, InitiativeHandle: initiativeHandle,
 			ProducerTaskHandle: producerHandle, Kind: input.Kind, ContentHash: digest,
 			SourceRevision: tasksByHandle[producerHandle].BaseRevision,
-			MediaType: input.MediaType, Size: int64(len(content)), ProducedAt: at,
+			MediaType:      input.MediaType, Size: int64(len(content)), ProducedAt: at,
 		}
 		if err := artifact.Validate(); err != nil {
 			return nil, err

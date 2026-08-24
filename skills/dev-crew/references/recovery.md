@@ -116,10 +116,12 @@ easier profile, and looking for one is a sign the intended action is different.
 
 ## Resume
 
-`resume_task` returns a paused task to the worker already running it. It is
-refused when the worktree has uncommitted changes, and that refusal is the point
-of the command: the paused worker holds a brief and an evidence set describing
-the tree it stopped on, and neither would notice an edit.
+`resume_task` readies a paused task for an authenticated relaunch of the same
+worker profile after the previous terminal has settled. A clean commit left in
+lease-private Git administration can make the shared tree appear dirty; the
+service verifies and promotes that exact commit before recording the relaunch.
+An actual uncommitted developer edit is refused because the paused worker's brief
+and evidence describe the tree it stopped on, and neither would notice the edit.
 
 A refusal is a routing signal, not an obstacle. Do not retry it and do not look
 for a force flag — there is none. Hand the work back with

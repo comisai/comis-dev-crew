@@ -6,7 +6,7 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
-// Fleet returns the canonical current E0 fleet snapshot.
+// Fleet returns the canonical current fleet snapshot.
 func (queries *Queries) Fleet(ctx context.Context) (FleetSnapshot, error) {
 	tasks, stateVersion, err := queries.taskSnapshot(ctx)
 	if err != nil {

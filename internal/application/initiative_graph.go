@@ -25,7 +25,7 @@ type InitiativeGraphEdge struct {
 	RequiredArtifactKind domain.ContractArtifactKind `json:"requiredArtifactKind,omitempty"`
 }
 
-// InitiativeGraphView is the §23.3 projection of one initiative.
+// InitiativeGraphView is the read-only projection of one initiative.
 //
 // It is a read. The envelope — source, confidence, completeness and observation
 // time — travels with it because a consumer that cannot tell a complete view
@@ -47,8 +47,8 @@ type InitiativeGraphView struct {
 // ProjectInitiativeGraph renders one initiative as the detailed fleet
 // projection.
 //
-// The caller's state map is only read. A projection that wrote through it would
-// be mutating task state from a view, which §23.3 forbids outright.
+// The caller's state map is only read. Writing through it would give a view
+// mutation authority over task state.
 //
 // A member whose state nobody supplied is projected unknown and drops the whole
 // view to partial, rather than being quietly omitted — an absent node reads as

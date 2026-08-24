@@ -1,16 +1,17 @@
 # Implementation status
 
-`comis-dev-crew` is pre-release E0 foundation work. This page records, subsystem
-by subsystem, what is actually implemented and what is deliberately not claimed.
-It is maintained alongside the behavior it describes.
+`comis-dev-crew` is pre-release work spanning its E0 foundation and staged
+post-E0 capabilities. This page records, subsystem by subsystem, what is actually
+implemented and what is deliberately not claimed. It is maintained alongside
+the behavior it describes.
 
 ## Summary
 
 The service owns durable SQLite state and a strict owner-only local API. The
-operator CLI provides service, fleet, task, operation, and worker-profile views
-alongside the task lifecycle commands: prepare, reconcile, handback, cleanup, and
-the intervention set — pause, resume, cancel, verify, promote, replace, steer,
-and the acknowledged operator-only discard. The
+operator CLI provides service, fleet, task, initiative, backlog, operation, and
+worker-profile views alongside task lifecycle commands, initiative controls and
+candidate integration, durable backlog intake and promotion, the operator half
+of approval-bound merge, and the acknowledged operator-only discard. The
 protocol foundation pins the 43-artifact Comis capability-service contract at
 source commit `4deb33ed59b272d4a84046a20a7f51a615f06039` and bundle digest
 `dea251a955a4d68faf402aa6977db1b4544737e43aa1f624f39dc359008f6414`, and generates
@@ -83,16 +84,18 @@ messages in the bounded Comis failure evidence.
 ## Foundation
 
 The maintainer-created bootstrap was adopted without reinitializing its history.
-The repository has its engineering protocol, verification contract, CI foundation,
-pure E0 domain records, a pure-Go SQLite store, canonical read application
-handlers, a bounded newline-delimited local protocol over an owner-only Unix
-socket, the first read-only operator CLI, and an authenticated Comis protocol pin
-with generated DTO, validation, and Unix control client support.
+That foundation established the engineering protocol, verification contract, CI
+foundation, initial E0 domain records, pure-Go SQLite store, canonical read
+application handlers, bounded newline-delimited local protocol over an owner-only
+Unix socket, initial read-only operator CLI, and authenticated Comis protocol pin
+with generated DTO, validation, and Unix control client support. Later staged
+capabilities reuse those boundaries rather than creating alternate authorities.
 
 The protocol join gate is implemented for protocol
 `comis.capability-service/1`, including attention-response, workspace-lease,
-terminal-event, and execution-attachment control scopes. Public operator mutation transport is not
-claimed.
+terminal-event, and execution-attachment control scopes. No network-exposed
+public operator transport is claimed; mutations remain on the owner-only local
+API.
 
 The pinned bundle also carries `managedRuns.heartbeat` and `managedRuns.cancel`.
 A supervised liveness reporter now drives the first: it sweeps durable task
@@ -315,9 +318,12 @@ trusting a worker's prose description of which files changed.
 ## Comis adapter
 
 The adapter contains the supervised persistent bidirectional connection used by
-the next service composition step. It authenticates the exact pinned handshake,
-dispatches only `managedRuns.activate`, `managedRuns.abandon`, and terminal events; carries
-reports, evidence, attention-response receives, and workspace release on the same socket; and reconnects with bounded backoff.
+the installed service composition. It authenticates the exact pinned handshake;
+dispatches managed-run and managed-run-group activation and abandonment,
+managed-run cancellation, and terminal events; reads exact group host rollups;
+and carries liveness, reports, evidence, attention-response receives, exact
+approval-receipt consumption, and workspace release on the same socket. It
+reconnects with bounded backoff.
 Wrong credentials, altered operation envelopes, unknown fields, excess
 concurrency, and forged run references fail before handler authority. The adapter
 does not retry an uncertain report itself.
@@ -328,9 +334,9 @@ with the same operation and service-report identities until it can durably recor
 an exact host acknowledgement. It is implemented as an independently supervised
 adapter and participates in the installed service lifecycle.
 
-The service lifecycle supervises exactly one supplied control connection and that
-forwarder alongside both local endpoints, cancelling and joining all of them if
-any component fails.
+The service lifecycle gives the one supplied control connection, its bounded
+forwarders, and both local endpoints explicit cancellation and joined completion
+paths.
 
 Authenticated inbound activation is backed by the same durable mutation
 coordinator: the stored external reference, registration nonce, service instance,
@@ -788,11 +794,12 @@ redirect the protected attachment, or advance task state.
 
 ## Local client and MCP adapter
 
-The typed local client and strict handler expose the canonical task mutations:
-preparation, reconciliation, handback, and cleanup, alongside the on-request
-lifecycle and intervention set — pause, resume, cancel, verify, promote, replace,
-steer, and the operator-only discard. Each is idempotent under its stable
-operation ID and reconciles rather than re-sends an uncertain outcome. An
+The typed local client and strict handler are the canonical mutation boundary for
+task, initiative, backlog, integration, and merge operations. The task set
+includes preparation, reconciliation, handback, cleanup, pause, resume, cancel,
+verify, promote, replace, steer, merge, and the operator-only discard. Each is
+idempotent under its stable operation ID and reconciles rather than re-sends an
+uncertain outcome. An
 independently acknowledged discard retry resumes the one durable discard hold
 after a staged failure, while exact task, repository, and worktree identity
 remain mandatory. Dirty or unpinned contents carry no delivery authority, an
@@ -824,10 +831,11 @@ normalized task, operation, state version, and `mutate` classification across al
 three paths. Repeated calls create one task, and an altered stable operation
 remains the same non-retryable `conflict`. List, get, explain, and launch plan
 return identical versioned projections through all adapters and retain their
-`read` classification. The official-SDK facade exposes the same task-control
-surface as the CLI and typed local client; `reconcile_task` and the other
-non-read-only tools are idempotent, closed-world, and use the same stable result
-and side-effect semantics across all three paths.
+`read` classification. Shared mutations keep the same stable result and
+side-effect semantics, while caller-class checks deliberately keep the catalogs
+non-identical: discard and initiative controls are operator-only, and destructive
+merge completion requires private Comis approval context that the CLI cannot
+supply.
 
 A tagged integration test builds and kills the real stdio `devcrew-mcp` process,
 replaces it, and proves the prepared task, completed operation, exact private
@@ -1118,10 +1126,11 @@ only with deterministic reviewed inputs. Candidate
 completion advances only to `validating`; it never claims validation, delivery, or
 terminal success.
 
-## Deliberately not built at E0
+## Deliberately excluded from the E0 foundation
 
-Two surfaces are absent for a reason worth stating, because each would be easy
-to add badly, and one has since become reachable.
+Two E0 exclusions remain worth stating because each would have been easy to add
+badly. The process projection remains absent; the landed-proof boundary has since
+become reachable.
 
 **There is no `task processes` projection.** A per-process view is meant to join
 what this service launched with what the host observed beneath the task's

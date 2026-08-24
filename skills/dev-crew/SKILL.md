@@ -57,21 +57,24 @@ product does, and this list is not permission to guess a name.
 
 | Intent | Tool | Changes |
 |---|---|---|
-| Look | `list_tasks`, `get_task`, `explain_task`, `get_launch_plan` | Nothing |
+| Look | `list_tasks`, `get_task`, `explain_task`, `get_launch_plan`, `get_initiative`, `backlog_list` | Nothing |
 | See what can run | `worker_profiles` | Nothing |
 | Check readiness | `doctor` | Nothing |
 | Start work | `prepare_task` | Creates a prepared task and worktree |
 | Start coordinated work | `prepare_initiative` | Creates one validated graph and its isolated member worktrees |
+| Queue later work | `backlog_add` | Records bounded intent without creating run authority |
+| Promote queued work | `backlog_promote` | Creates one prepared task from a ready backlog item |
 | Apply a component candidate | `apply_integration_candidate` | Mutates only the recorded integration owner's worktree through reviewed Git policy |
 | Settle a worker safely | `pause_task` | Asks the worker to stop at a safe boundary; changes no state itself |
 | Stop work, keep it | `cancel_task` | Stops the task; worktree and artifacts survive |
-| Continue a paused task | `resume_task` | Returns it to the same worker; refused on a dirty worktree |
+| Continue a paused task | `resume_task` | Readies the same profile after its terminal settles; developer edits route to handback |
 | Validate now | `verify_task` | Opens validation against the reviewed profile; reports no verdict |
 | Act on a scout's findings | `promote_scout` | Mints a new ship task; the scout and its evidence are preserved |
 | Swap a wedged worker | `replace_worker` | Readies the same work for a different reviewed worker |
 | Tell a worker something | `steer_task` | Queues one instruction it reads on its next report |
 | Recover an exited worker | `reconcile_task` | Validates one exact clean candidate |
 | Resume after a developer edit | `handback_task` | Revalidates the developer's work |
+| Merge approved work | `merge_task` | Merges only the exact delivered pull request authorized by bound Comis approval |
 | Retire a task | `cleanup_task` | Evidence-gated release and removal |
 | Close out a scout's review | `attest_scout_decisions` | Records which decisions remain open, or attests that none do; cleanup is blocked until it exists |
 | Refresh a stale base | `sync_primary` | Fast-forwards the primary checkout only; refuses any other posture by name |
@@ -81,9 +84,9 @@ require the normal approval; never describe an approval as a formality, and
 never re-use a human's answer to a worker question as approval for an action.
 
 Anything not in the live tool set is unavailable, not merely undocumented. If a
-user asks for a merge, a force-push, a deployment, raw terminal custody, or
-sibling-worktree access, say plainly that it is not available here and name who
-can do it instead.
+user asks for a force-push, a deployment, raw terminal custody, or sibling-
+worktree access, say plainly that it is not available here and name who can do
+it instead.
 
 Discard is operator-only and is never available through MCP.
 

@@ -51,7 +51,8 @@ INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (43, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 `
 
-// CommitTaskResume returns one paused task to its existing worker.
+// CommitTaskResume records one paused task as ready for a new authenticated
+// generation of its existing worker profile.
 //
 // The caller has already proven the worktree is exactly as the worker left it.
 // That proof is the whole precondition: resuming the same worker onto a tree

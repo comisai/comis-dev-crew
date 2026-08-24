@@ -114,8 +114,8 @@ type ValidationComposition struct {
 	PollInterval        time.Duration
 }
 
-// ForgeComposition fixes the sole E0 pull-request route and keeps its read and
-// push credentials in distinct owner-private files.
+// ForgeComposition fixes the sole pull-request route and keeps its read, push,
+// and merge credentials in distinct owner-private files.
 type ForgeComposition struct {
 	APIBaseURL             string
 	Owner                  string

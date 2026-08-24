@@ -261,7 +261,8 @@ func (client *Client) CancelTask(ctx context.Context, operationID string, input 
 	return result, err
 }
 
-// ResumeTask returns one paused task to its existing worker.
+// ResumeTask requests another authenticated generation of the paused task's
+// existing worker profile.
 func (client *Client) ResumeTask(ctx context.Context, operationID string, input ResumeTaskInput) (TaskMutationResult, error) {
 	var result TaskMutationResult
 	err := client.call(ctx, operationID, MethodResumeTask, input, &result)

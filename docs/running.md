@@ -135,7 +135,7 @@ supervisor tick under the same identity; it does not restart the service or stop
 the operator socket and worker supervisors. A durable decision-ledger failure
 still stops the service because its authoritative airing state is unavailable.
 
-The Codex profile is required by the installed E0 composition. The Claude Code
+The Codex profile is required by the installed composition. The Claude Code
 profile is optional but all of its flags are an atomic group. Its executable must
 be the canonical regular reviewed artifact and its config directory must be a
 canonical owner-private (`0700`) directory. The terminal allow entry exposes only

@@ -6,14 +6,14 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
-// ResumeTask returns one paused task to the worker that was already running it.
+// ResumeTask readies one paused task for an authenticated relaunch of the same
+// worker profile.
 //
-// It refuses a worktree that is not exactly as that worker left it. This is the
-// rule the command exists for: the paused worker still holds a brief, a base
-// revision, and an evidence set describing the tree it stopped on, and none of
-// those would notice a developer's edit. Resuming onto a changed tree would
-// continue from a description of a tree that no longer exists, and the first
-// sign of it would be a candidate built on assumptions nobody re-checked.
+// The previous terminal must be settled, and the worktree must be exactly as the
+// worker left it. A clean commit in lease-private Git administration is verified
+// and promoted into the shared task branch before the relaunch generation is
+// recorded. An actual developer edit would leave the brief, base revision, and
+// evidence describing a tree that no longer exists.
 //
 // A dirty tree is therefore not an error to work around but a routing decision:
 // the operator wants handback, which captures the fresh head, invalidates the
