@@ -145,6 +145,11 @@ func (store *Store) beginTaskCleanup(
 		return application.TaskCleanupRecord{}, err
 	}
 	bundle := sealed.Bundle()
+	if err := proveCleanupIntegrationApplications(
+		ctx, transaction, task, evidenceRow.digest, bundle.HeadRevision,
+	); err != nil {
+		return application.TaskCleanupRecord{}, err
+	}
 	if err := proveCleanupCandidateOrigin(
 		ctx, transaction, task, preparationOperationID, worktreePath, bundle.HeadRevision,
 	); err != nil {

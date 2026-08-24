@@ -72,6 +72,9 @@ func (registry *Registry) resumeRebaseIntegration(
 	if len(conflicts) != 0 {
 		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: rebase conflicts remain unresolved")
 	}
+	if err := registry.validateServerRebaseConflictResolution(ctx, repository, request); err != nil {
+		return application.IntegrationAdapterResult{}, err
+	}
 	configuration := []string{
 		"--no-optional-locks", "-C", request.Target.WorktreePath,
 		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", "-c", "core.editor=true",

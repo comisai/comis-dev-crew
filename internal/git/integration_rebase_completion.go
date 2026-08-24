@@ -14,11 +14,19 @@ const (
 )
 
 type serverRebaseProof struct {
+	operationID      string
 	candidateCommits []string
 	candidatePatches []string
 	resolvedCommits  []string
+	conflicts        []serverRebaseConflict
 	resultCommits    []string
 	resultingHead    string
+}
+
+type serverRebaseConflict struct {
+	commit      string
+	indexDigest string
+	paths       []string
 }
 
 func (registry *Registry) runIntegrationStrategy(
@@ -74,7 +82,8 @@ func (registry *Registry) runRebaseIntegration(
 		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
 	}
 	if _, err := runGitBytes(ctx, registry.gitExecutable, append(configuration,
-		"rebase", "--no-autostash", "--no-stat", "--onto", request.Target.ExpectedHead,
+		"rebase", "--no-autostash", "--no-stat", "--reapply-cherry-picks", "--keep-empty",
+		"--onto", request.Target.ExpectedHead,
 		request.Candidate.BaseRevision,
 		strings.TrimPrefix(integrationRebaseProofRef(request), "refs/heads/"))...); err != nil {
 		return err
@@ -121,6 +130,9 @@ func (registry *Registry) prepareServerRebaseProof(
 			)
 		}
 	}
+	if err := registry.preflightRebaseSequence(ctx, repository, request, commits, patches); err != nil {
+		return errors.Join(err, application.ErrIntegrationMutationNotStarted)
+	}
 	directory, path, err := serverRebaseProofPath(repository, request)
 	if err != nil {
 		return err
@@ -128,7 +140,9 @@ func (registry *Registry) prepareServerRebaseProof(
 	if err := ensureServerRebaseProofDirectory(repository.WorktreeRoot, directory); err != nil {
 		return err
 	}
-	want := serverRebaseProof{candidateCommits: commits, candidatePatches: patches}
+	want := serverRebaseProof{
+		operationID: request.OperationID, candidateCommits: commits, candidatePatches: patches,
+	}
 	existing, found, err := readServerRebaseProof(path)
 	if err != nil {
 		return err
@@ -155,12 +169,20 @@ func (registry *Registry) recordServerRebaseConflict(
 	if err != nil {
 		return errors.New("apply integration candidate: conflicted rebase identity is unavailable")
 	}
+	conflicts, err := registry.integrationConflictPaths(ctx, request.Target.WorktreePath)
+	if err != nil || len(conflicts) == 0 {
+		return errors.New("apply integration candidate: conflicted rebase paths are unavailable")
+	}
+	indexDigest, err := registry.rebaseProtectedIndexDigest(ctx, request.Target.WorktreePath, conflicts)
+	if err != nil {
+		return err
+	}
 	directory, path, err := serverRebaseProofPath(repository, request)
 	if err != nil {
 		return err
 	}
 	proof, found, err := readServerRebaseProof(path)
-	if err != nil || !found || proof.resultingHead != "" {
+	if err != nil || !found || proof.operationID != originalIntegrationOperationID(request) || proof.resultingHead != "" {
 		return errors.New("apply integration candidate: conflicted server rebase proof is unavailable")
 	}
 	candidates, err := registry.rebaseCommitRange(
@@ -171,7 +193,11 @@ func (registry *Registry) recordServerRebaseConflict(
 	}
 	want := proof
 	want.resolvedCommits = appendResolvedRebaseCommit(candidates, proof.resolvedCommits, rebaseHead)
-	if sameRebaseCommits(want.resolvedCommits, proof.resolvedCommits) {
+	want.conflicts = []serverRebaseConflict{{
+		commit: rebaseHead, indexDigest: indexDigest, paths: conflicts,
+	}}
+	if sameRebaseCommits(want.resolvedCommits, proof.resolvedCommits) &&
+		sameServerRebaseConflicts(want.conflicts, proof.conflicts) {
 		if err := discardServerRebaseProofTemporary(path + ".next"); err != nil {
 			return err
 		}
@@ -227,7 +253,8 @@ func (registry *Registry) completeServerRebaseProof(
 		return err
 	}
 	proof, found, err := readServerRebaseProof(path)
-	if err != nil || !found || proof.resultingHead != "" && proof.resultingHead != resultingHead {
+	if err != nil || !found || proof.operationID != originalIntegrationOperationID(request) ||
+		proof.resultingHead != "" && proof.resultingHead != resultingHead {
 		return errors.New("apply integration candidate: server rebase proof is unavailable")
 	}
 	resultCommits, err := registry.verifyServerRebaseSemantics(ctx, repository, request, proof, resultingHead)
@@ -260,7 +287,8 @@ func (registry *Registry) requireServerRebaseProof(
 		return err
 	}
 	proof, found, err := readServerRebaseProof(path)
-	if err != nil || !found || proof.resultingHead != resultingHead || len(proof.resultCommits) == 0 {
+	if err != nil || !found || proof.operationID != originalIntegrationOperationID(request) ||
+		proof.resultingHead != resultingHead || len(proof.resultCommits) == 0 {
 		return errors.New("apply integration candidate: server rebase proof is unavailable")
 	}
 	resultCommits, err := registry.verifyServerRebaseSemantics(ctx, repository, request, proof, resultingHead)
@@ -289,23 +317,19 @@ func (registry *Registry) reconcileReceiptOnlyCompletedRebase(
 	if !found || proof.resultingHead == "" || len(proof.resultCommits) == 0 {
 		return application.IntegrationAdapterResult{}, false, nil
 	}
+	if proof.operationID != originalIntegrationOperationID(request) {
+		return application.IntegrationAdapterResult{}, true,
+			errors.New("apply integration candidate: receipt-only proof identity differs")
+	}
 	if err := registry.requireServerRebaseProof(ctx, repository, request, proof.resultingHead); err != nil {
 		return application.IntegrationAdapterResult{}, true, err
 	}
 	if err := registry.ensureRebaseSequencerAbsent(ctx, request.Target.WorktreePath); err != nil {
 		return application.IntegrationAdapterResult{}, true, err
 	}
-	targetRef, found, err := registry.recordedIntegrationTargetRef(ctx, request)
-	if err != nil || !found {
-		return application.IntegrationAdapterResult{}, true,
-			errors.New("apply integration candidate: receipt-only target receipt is unavailable")
-	}
-	rebasedHead, found, err := registry.integrationReceiptHeadAtPath(
-		ctx, request.Target.WorktreePath, integrationReceiptRef("rebased", request),
-	)
-	if err != nil || !found || rebasedHead != proof.resultingHead {
-		return application.IntegrationAdapterResult{}, true,
-			errors.New("apply integration candidate: receipt-only rebased receipt differs")
+	targetRef, err := registry.validateReceiptOnlyRebaseReceipts(ctx, request, proof.resultingHead)
+	if err != nil {
+		return application.IntegrationAdapterResult{}, true, err
 	}
 	proofRef := integrationRebaseProofRef(request)
 	proofHead, proofFound, err := registry.integrationReceiptHeadAtPath(

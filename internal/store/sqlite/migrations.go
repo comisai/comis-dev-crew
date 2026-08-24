@@ -88,6 +88,9 @@ func (store *Store) migrate(ctx context.Context) error {
 	if err := store.applyInitiativeMembershipMigration(ctx); err != nil {
 		return err
 	}
+	if err := store.applyVersionedMigration(ctx, 48, initiativeSchedulingMigration); err != nil {
+		return err
+	}
 	return store.backfillReconciledComisReports(ctx)
 }
 

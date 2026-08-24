@@ -157,6 +157,41 @@ func proveCleanupCandidateOrigin(
 	return nil
 }
 
+func proveCleanupIntegrationApplications(
+	ctx context.Context,
+	transaction *sql.Tx,
+	task domain.Task,
+	evidenceDigest string,
+	headRevision string,
+) error {
+	initiative, found, err := initiativeForTask(ctx, transaction, task.Handle)
+	if err != nil {
+		return fmt.Errorf("inspect task cleanup integration membership: %w", err)
+	}
+	if !found {
+		return nil
+	}
+	for _, edge := range initiative.Edges {
+		if edge.Kind != domain.EdgeIntegratesAfter || edge.FromTaskHandle != task.Handle {
+			continue
+		}
+		var applied int
+		if err := transaction.QueryRowContext(ctx, `SELECT COUNT(*)
+			FROM integration_applications
+			WHERE initiative_handle = ? AND integration_task_handle = ?
+			AND candidate_task_handle = ? AND candidate_head = ?
+			AND evidence_digest = ? AND status = 'applied'`,
+			initiative.Handle, edge.ToTaskHandle, task.Handle, headRevision, evidenceDigest,
+		).Scan(&applied); err != nil {
+			return fmt.Errorf("inspect task cleanup integration application: %w", err)
+		}
+		if applied != 1 {
+			return fmt.Errorf("task cleanup integration application is incomplete: %w", application.ErrPrecondition)
+		}
+	}
+	return nil
+}
+
 func cleanupPreparation(ctx context.Context, transaction *sql.Tx, taskHandle string) (string, string, error) {
 	const query = `SELECT o.id, p.requested_workspace_root
         FROM operations o JOIN task_preparations p ON p.task_handle = o.result_ref

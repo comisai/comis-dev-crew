@@ -1,6 +1,7 @@
 package git
 
 import (
+	"encoding/base64"
 	"errors"
 	"io"
 	"os"
@@ -9,9 +10,10 @@ import (
 	"strings"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
-const maximumServerRebaseProofBytes = 1100000
+const maximumServerRebaseProofBytes = 1600000
 
 func serverRebaseProofPath(
 	repository Repository,
@@ -117,6 +119,9 @@ func discardServerRebaseProofTemporary(path string) error {
 }
 
 func createServerRebaseProof(path string, contents []byte) error {
+	if len(contents) == 0 || len(contents) > maximumServerRebaseProofBytes {
+		return errors.New("apply integration candidate: server rebase proof exceeds its bound")
+	}
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return errors.New("apply integration candidate: server rebase proof could not be created")
@@ -167,12 +172,29 @@ func readServerRebaseProof(path string) (serverRebaseProof, bool, error) {
 
 func encodeServerRebaseProof(proof serverRebaseProof) []byte {
 	var builder strings.Builder
-	builder.WriteString("version 3\ncandidates ")
+	builder.WriteString("version 4\noperation ")
+	builder.WriteString(proof.operationID)
+	builder.WriteString("\ncandidates ")
 	writeRebaseProofCommits(&builder, proof.candidateCommits)
 	builder.WriteString("patches ")
 	writeRebaseProofCommits(&builder, proof.candidatePatches)
 	builder.WriteString("resolved ")
 	writeRebaseProofCommits(&builder, proof.resolvedCommits)
+	builder.WriteString("conflicts ")
+	builder.WriteString(strconv.Itoa(len(proof.conflicts)))
+	builder.WriteByte('\n')
+	for _, conflict := range proof.conflicts {
+		builder.WriteString(conflict.commit)
+		builder.WriteByte(' ')
+		builder.WriteString(conflict.indexDigest)
+		builder.WriteByte(' ')
+		builder.WriteString(strconv.Itoa(len(conflict.paths)))
+		builder.WriteByte('\n')
+		for _, path := range conflict.paths {
+			builder.WriteString(base64.RawURLEncoding.EncodeToString([]byte(path)))
+			builder.WriteByte('\n')
+		}
+	}
 	builder.WriteString("results ")
 	writeRebaseProofCommits(&builder, proof.resultCommits)
 	builder.WriteString("result ")
@@ -199,10 +221,14 @@ func decodeServerRebaseProof(contents []byte) (serverRebaseProof, error) {
 		return serverRebaseProof{}, errors.New("apply integration candidate: server rebase proof is malformed")
 	}
 	lines := strings.Split(strings.TrimSuffix(string(contents), "\n"), "\n")
-	if len(lines) < 6 || lines[0] != "version 3" {
+	if len(lines) < 8 || lines[0] != "version 4" || !strings.HasPrefix(lines[1], "operation ") {
 		return serverRebaseProof{}, errors.New("apply integration candidate: server rebase proof is malformed")
 	}
-	position := 1
+	operationID := strings.TrimPrefix(lines[1], "operation ")
+	if domain.ValidateOperationID(operationID) != nil {
+		return serverRebaseProof{}, errors.New("apply integration candidate: server rebase proof is malformed")
+	}
+	position := 2
 	candidates, next, err := decodeRebaseProofCommits(lines, position, "candidates", 1, maximumRebaseProofCommits)
 	if err != nil {
 		return serverRebaseProof{}, err
@@ -215,14 +241,19 @@ func decodeServerRebaseProof(contents []byte) (serverRebaseProof, error) {
 	if err != nil {
 		return serverRebaseProof{}, err
 	}
+	conflicts, next, err := decodeServerRebaseConflicts(lines, next, len(candidates))
+	if err != nil || !serverRebaseConflictsWereResolved(resolved, conflicts) {
+		return serverRebaseProof{}, errors.New("apply integration candidate: server rebase proof is malformed")
+	}
 	results, next, err := decodeRebaseProofCommits(lines, next, "results", 0, len(candidates))
 	if err != nil || next != len(lines)-1 || !strings.HasPrefix(lines[next], "result ") {
 		return serverRebaseProof{}, errors.New("apply integration candidate: server rebase proof is malformed")
 	}
 	result := strings.TrimPrefix(lines[next], "result ")
 	proof := serverRebaseProof{
+		operationID:      operationID,
 		candidateCommits: candidates, candidatePatches: patches,
-		resolvedCommits: resolved, resultCommits: results,
+		resolvedCommits: resolved, conflicts: conflicts, resultCommits: results,
 	}
 	if result == "-" {
 		if len(results) != 0 {
@@ -282,15 +313,63 @@ func decodeRebaseProofCommits(
 	return commits, position + count + 1, nil
 }
 
+func decodeServerRebaseConflicts(
+	lines []string,
+	position int,
+	maximum int,
+) ([]serverRebaseConflict, int, error) {
+	if position >= len(lines) || !strings.HasPrefix(lines[position], "conflicts ") {
+		return nil, position, errors.New("apply integration candidate: server rebase proof is malformed")
+	}
+	count, err := strconv.Atoi(strings.TrimPrefix(lines[position], "conflicts "))
+	if err != nil || count < 0 || count > maximum {
+		return nil, position, errors.New("apply integration candidate: server rebase proof is malformed")
+	}
+	position++
+	conflicts := make([]serverRebaseConflict, 0, count)
+	for range count {
+		if position >= len(lines) {
+			return nil, position, errors.New("apply integration candidate: server rebase proof is malformed")
+		}
+		fields := strings.Fields(lines[position])
+		position++
+		if len(fields) != 3 || !gitRevisionPattern.MatchString(fields[0]) ||
+			!gitRevisionPattern.MatchString(fields[1]) {
+			return nil, position, errors.New("apply integration candidate: server rebase proof is malformed")
+		}
+		pathCount, err := strconv.Atoi(fields[2])
+		if err != nil || pathCount < 1 || pathCount > 256 || position+pathCount > len(lines) {
+			return nil, position, errors.New("apply integration candidate: server rebase proof is malformed")
+		}
+		paths := make([]string, 0, pathCount)
+		for _, encoded := range lines[position : position+pathCount] {
+			decoded, err := base64.RawURLEncoding.DecodeString(encoded)
+			path := string(decoded)
+			if err != nil || path == "" || len(decoded) > 1024 || strings.ContainsAny(path, "\x00\r\n") {
+				return nil, position, errors.New("apply integration candidate: server rebase proof is malformed")
+			}
+			paths = append(paths, path)
+		}
+		position += pathCount
+		conflicts = append(conflicts, serverRebaseConflict{
+			commit: fields[0], indexDigest: fields[1], paths: paths,
+		})
+	}
+	return conflicts, position, nil
+}
+
 func sameServerRebaseProofIdentity(left, right serverRebaseProof) bool {
-	return sameRebaseCommits(left.candidateCommits, right.candidateCommits) &&
+	return left.operationID == right.operationID &&
+		sameRebaseCommits(left.candidateCommits, right.candidateCommits) &&
 		sameRebaseCommits(left.candidatePatches, right.candidatePatches)
 }
 
 func sameServerRebaseProof(left, right serverRebaseProof) bool {
-	return sameRebaseCommits(left.candidateCommits, right.candidateCommits) &&
+	return left.operationID == right.operationID &&
+		sameRebaseCommits(left.candidateCommits, right.candidateCommits) &&
 		sameRebaseCommits(left.candidatePatches, right.candidatePatches) &&
 		sameRebaseCommits(left.resolvedCommits, right.resolvedCommits) &&
+		sameServerRebaseConflicts(left.conflicts, right.conflicts) &&
 		sameRebaseCommits(left.resultCommits, right.resultCommits) && left.resultingHead == right.resultingHead
 }
 

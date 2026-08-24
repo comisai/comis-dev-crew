@@ -281,8 +281,12 @@ func (integrations *Integrations) ApplyCandidate(
 	if err := validateIntegrationAdapterResult(adapterResult, reserved); err != nil {
 		return IntegrationApplicationResult{}, &dependencyFailure{message: "integration adapter result differs", cause: err}
 	}
+	completionAt := integrations.clock().UTC()
+	if completionAt.IsZero() || completionAt.Before(reserved.ReservedAt) {
+		return IntegrationApplicationResult{}, &dependencyFailure{message: "integration completion time is invalid"}
+	}
 	completed, err := integrations.store.CompleteIntegrationApplication(ctx, IntegrationCompletion{
-		Reservation: reserved, AdapterResult: cloneIntegrationAdapterResult(adapterResult), At: at,
+		Reservation: reserved, AdapterResult: cloneIntegrationAdapterResult(adapterResult), At: completionAt,
 	})
 	if err != nil {
 		return IntegrationApplicationResult{}, &dependencyFailure{message: "integration completion failed", cause: err}

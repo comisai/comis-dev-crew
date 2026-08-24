@@ -55,7 +55,13 @@ func writeServerRebaseProofForTest(
 			request.Target.ExpectedHead+".."+resultingHead,
 		))
 	}
-	proof.WriteString("version 3\ncandidates ")
+	proof.WriteString("version 4\noperation ")
+	if request.RecoveryOperationID != "" {
+		proof.WriteString(request.RecoveryOperationID)
+	} else {
+		proof.WriteString(request.OperationID)
+	}
+	proof.WriteString("\ncandidates ")
 	proof.WriteString(fmt.Sprintf("%d", len(commits)))
 	proof.WriteByte('\n')
 	for _, commit := range commits {
@@ -75,6 +81,15 @@ func writeServerRebaseProofForTest(
 	for _, commit := range resolvedCommits {
 		proof.WriteString(commit)
 		proof.WriteByte('\n')
+	}
+	proof.WriteString("conflicts ")
+	proof.WriteString(fmt.Sprintf("%d", len(resolvedCommits)))
+	proof.WriteByte('\n')
+	for _, commit := range resolvedCommits {
+		proof.WriteString(commit)
+		proof.WriteByte(' ')
+		proof.WriteString(strings.Repeat("0", 64))
+		proof.WriteString(" 1\nZml4dHVyZS50eHQ\n")
 	}
 	proof.WriteString("results ")
 	proof.WriteString(fmt.Sprintf("%d", len(resultCommits)))

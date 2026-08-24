@@ -32,13 +32,27 @@ func authorizeInitiativeTaskStart(
 	if containing.State != domain.InitiativeActive {
 		return fmt.Errorf("authorize initiative task start: initiative is not active: %w", application.ErrPrecondition)
 	}
-	initiatives, tasks, artifacts, err := initiativeSchedulingFleet(ctx, transaction)
-	if err != nil {
-		return fmt.Errorf("authorize initiative task start fleet: %w", err)
-	}
 	usage, err := initiativeSchedulingUsage(ctx, transaction)
 	if err != nil {
 		return fmt.Errorf("authorize initiative task start capacity: %w", err)
+	}
+	if _, err := application.ScheduleInitiativesWithUsage(nil, nil, nil, *limits, usage); err != nil {
+		return fmt.Errorf("authorize initiative task start schedule: %w", err)
+	}
+	available := limits.MaxConcurrentTasks - usage.Host
+	if available < 1 {
+		return fmt.Errorf("authorize initiative task start: %s: %w", application.ScheduleResourceQueued, application.ErrPrecondition)
+	}
+	initiatives, tasks, artifacts, err := initiativeSchedulingFleet(ctx, transaction, available)
+	if err != nil {
+		return fmt.Errorf("authorize initiative task start fleet: %w", err)
+	}
+	frontierContainsTarget := false
+	for _, initiative := range initiatives {
+		frontierContainsTarget = frontierContainsTarget || initiative.Handle == containing.Handle
+	}
+	if !frontierContainsTarget {
+		return fmt.Errorf("authorize initiative task start: %s: %w", application.ScheduleResourceQueued, application.ErrPrecondition)
 	}
 	schedules, err := application.ScheduleInitiativesWithUsage(initiatives, tasks, artifacts, *limits, usage)
 	if err != nil {
@@ -67,21 +81,40 @@ func authorizeInitiativeTaskStart(
 func initiativeSchedulingFleet(
 	ctx context.Context,
 	source queryer,
+	limit int,
 ) ([]domain.DevelopmentInitiative, []domain.Task, []domain.ComponentContractArtifact, error) {
-	initiatives := make([]domain.DevelopmentInitiative, 0)
-	afterHandle := ""
-	for {
-		page, next, err := listInitiativePage(ctx, source, application.InitiativeFilter{
-			State: domain.InitiativeActive, AfterHandle: afterHandle, Limit: application.MaximumInitiativePage,
-		})
+	if limit < 1 || limit > 1024 {
+		return nil, nil, nil, errors.New("initiative scheduling frontier is invalid")
+	}
+	rows, err := source.QueryContext(ctx, `SELECT i.handle FROM initiatives AS i
+		WHERE i.state = ? AND EXISTS (
+			SELECT 1 FROM initiative_members AS member
+			JOIN tasks AS task ON task.handle = member.task_handle
+			WHERE member.initiative_handle = i.handle AND task.state = ?
+		)
+		ORDER BY i.created_at, i.handle LIMIT ?`, domain.InitiativeActive, domain.TaskReady, limit)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	handles := make([]string, 0, limit)
+	for rows.Next() {
+		var handle string
+		if err := rows.Scan(&handle); err != nil {
+			_ = rows.Close()
+			return nil, nil, nil, err
+		}
+		handles = append(handles, handle)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, nil, nil, err
+	}
+	initiatives := make([]domain.DevelopmentInitiative, 0, len(handles))
+	for _, handle := range handles {
+		initiative, err := getInitiative(ctx, source, handle)
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		initiatives = append(initiatives, page...)
-		if next == "" {
-			break
-		}
-		afterHandle = next
+		initiatives = append(initiatives, initiative)
 	}
 	tasks := make([]domain.Task, 0)
 	artifacts := make([]domain.ComponentContractArtifact, 0)

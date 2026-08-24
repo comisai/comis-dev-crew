@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
@@ -122,5 +123,49 @@ func TestInitiativeLaunchAuthorizationDoesNotMaterializeTerminalHistory(t *testi
 	defer func() { _ = transaction.Rollback() }()
 	if err := authorizeInitiativeTaskStart(ctx, transaction, task, initiativeTestSchedulingLimits(2)); err != nil {
 		t.Fatalf("authorizeInitiativeTaskStart(unrelated terminal history) error = %v", err)
+	}
+}
+
+func TestInitiativeLaunchAuthorizationBoundsActiveSchedulingFrontier(t *testing.T) {
+	ctx := context.Background()
+	store, _, activation := preparedInitiativeActivationStore(t)
+	active := commitActiveInitiativeForTest(t, ctx, store, activation)
+	unrelatedTask := storeTask("task-active-frontier-a", active.Initiative.StateVersion+1)
+	unrelatedTask.State = domain.TaskReady
+	unrelatedTask.ManagedRunID = "managed-run-active-frontier-a"
+	unrelatedTask.WorkspaceLeaseID = "workspace-lease-active-frontier-a"
+	if err := store.CreateTask(ctx, unrelatedTask); err != nil {
+		t.Fatal(err)
+	}
+	unrelated := persistenceInitiative("initiative-active-frontier", domain.InitiativeActive, unrelatedTask.StateVersion)
+	unrelated.Components[0].RepositoryID = unrelatedTask.RepositoryID
+	unrelated.Components[0].TaskHandles = []string{unrelatedTask.Handle}
+	unrelated.Components[1].RepositoryID = unrelatedTask.RepositoryID
+	unrelated.Components[1].TaskHandles = []string{"task-active-frontier-integration"}
+	unrelated.BaseRevisionSet[0].RepositoryID = unrelatedTask.RepositoryID
+	unrelated.Edges[0].FromTaskHandle = unrelatedTask.Handle
+	unrelated.Edges[0].ToTaskHandle = "task-active-frontier-integration"
+	unrelated.IntegrationOwnerTask = "task-active-frontier-integration"
+	unrelated.CreatedAt = active.Initiative.CreatedAt.Add(time.Hour)
+	unrelated.UpdatedAt = unrelated.CreatedAt
+	if err := store.CreateInitiative(ctx, unrelated); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx,
+		"UPDATE initiatives SET components_json = '{' WHERE handle = ?", unrelated.Handle,
+	); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.GetTask(ctx, activation.Members[0].ExternalRunRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	if err := authorizeInitiativeTaskStart(ctx, transaction, task, initiativeTestSchedulingLimits(1)); err != nil {
+		t.Fatalf("authorizeInitiativeTaskStart(bounded active frontier) error = %v", err)
 	}
 }
