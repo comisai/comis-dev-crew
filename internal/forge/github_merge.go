@@ -12,8 +12,8 @@ import (
 )
 
 // MergePullRequest revalidates exact protected forge truth before resolving
-// the separately configured merge credential. It returns only post-mutation
-// truth and reconciles a replay or uncertain PUT by re-reading the pull request.
+// the separately configured merge credential. It returns only a mutation
+// acknowledgement corroborated by exact post-mutation forge truth.
 func (adapter *GitHubAdapter) MergePullRequest(
 	ctx context.Context,
 	request PullRequestMergeRequest,
@@ -42,8 +42,11 @@ func (adapter *GitHubAdapter) MergePullRequest(
 	if err != nil {
 		return PullRequestMergeReceipt{}, err
 	}
-	if receipt, merged := adapter.exactMergedReceipt(request, pull); merged {
-		return receipt, nil
+	if _, merged := adapter.exactMergedRevision(request, pull); merged {
+		return PullRequestMergeReceipt{}, fmt.Errorf(
+			"merge GitHub pull request: actual merge method is unavailable: %w",
+			ErrPullRequestMergeOutcomeUnknown,
+		)
 	}
 	if pull.State != "open" || pull.Merged || pull.Head.SHA != request.HeadRevision ||
 		pull.Head.Ref != request.Branch || pull.Base.Ref != adapter.config.BaseBranch {
@@ -77,14 +80,17 @@ func (adapter *GitHubAdapter) MergePullRequest(
 	)
 	postMerge, readErr := adapter.readPullRequest(ctx, readCredential.Secret, number)
 	if readErr == nil {
-		if receipt, merged := adapter.exactMergedReceipt(request, postMerge); merged {
-			if mutationErr == nil && (!response.Merged || response.SHA != receipt.MergeCommitRevision) {
+		if mergeRevision, merged := adapter.exactMergedRevision(request, postMerge); merged {
+			if mutationErr != nil || !response.Merged || response.SHA != mergeRevision {
 				return PullRequestMergeReceipt{}, fmt.Errorf(
-					"merge GitHub pull request: acknowledgement differs from forge truth: %w",
+					"merge GitHub pull request: acknowledged method is not proved by forge truth: %w",
 					ErrPullRequestMergeOutcomeUnknown,
 				)
 			}
-			return receipt, nil
+			return PullRequestMergeReceipt{
+				RepositoryID: adapter.config.RepositoryIdentity, PullRequestID: request.PullRequestID,
+				HeadRevision: request.HeadRevision, MergeCommitRevision: mergeRevision, Method: request.Method,
+			}, nil
 		}
 	}
 	if mutationErr != nil {
@@ -101,20 +107,16 @@ func pullRequestNumber(pullRequestID string) (int, error) {
 	return number, nil
 }
 
-func (adapter *GitHubAdapter) exactMergedReceipt(
+func (adapter *GitHubAdapter) exactMergedRevision(
 	request PullRequestMergeRequest,
 	pull githubPull,
-) (PullRequestMergeReceipt, bool) {
+) (string, bool) {
 	if pull.State != "closed" || !pull.Merged || pull.Head.SHA != request.HeadRevision ||
 		pull.Head.Ref != request.Branch || pull.Base.Ref != adapter.config.BaseBranch ||
 		pull.MergeCommitSHA == nil || !revisionPattern.MatchString(*pull.MergeCommitSHA) {
-		return PullRequestMergeReceipt{}, false
+		return "", false
 	}
-	return PullRequestMergeReceipt{
-		RepositoryID: adapter.config.RepositoryIdentity, PullRequestID: request.PullRequestID,
-		HeadRevision: request.HeadRevision, MergeCommitRevision: *pull.MergeCommitSHA,
-		Method: request.Method,
-	}, true
+	return *pull.MergeCommitSHA, true
 }
 
 func allMergeChecksPassed(checks []domain.ForgeCheckEvidence, required []string) bool {

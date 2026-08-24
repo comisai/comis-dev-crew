@@ -3,6 +3,7 @@ package forge
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 )
@@ -38,7 +39,7 @@ func (adapter *GitHubAdapter) VerifyPullRequestDelivery(
 
 var _ application.PullRequestDeliveryVerifier = (*GitHubAdapter)(nil)
 
-// ReconcileApprovedPullRequest reads post-merge truth without resolving the
+// ReconcileApprovedPullRequest reads forge truth without resolving the
 // separately scoped merge credential or attempting another mutation.
 func (adapter *GitHubAdapter) ReconcileApprovedPullRequest(
 	ctx context.Context,
@@ -71,17 +72,12 @@ func (adapter *GitHubAdapter) ReconcileApprovedPullRequest(
 	if err != nil {
 		return application.PullRequestMergeReceipt{}, false, err
 	}
-	receipt, merged := adapter.exactMergedReceipt(forgeRequest, pull)
+	_, merged := adapter.exactMergedRevision(forgeRequest, pull)
 	if merged {
-		method, err := applicationMergeMethod(receipt.Method)
-		if err != nil {
-			return application.PullRequestMergeReceipt{}, false, err
-		}
-		return application.PullRequestMergeReceipt{
-			RepositoryID: receipt.RepositoryID, PullRequestID: receipt.PullRequestID,
-			HeadRevision: receipt.HeadRevision, MergeCommitRevision: receipt.MergeCommitRevision,
-			Method: method,
-		}, true, nil
+		return application.PullRequestMergeReceipt{}, false, fmt.Errorf(
+			"reconcile approved pull request: actual merge method is unavailable: %w",
+			ErrPullRequestMergeOutcomeUnknown,
+		)
 	}
 	if pull.State != "open" || pull.Merged || pull.Head.SHA != request.HeadRevision ||
 		pull.Head.Ref != request.Branch || pull.Base.Ref != adapter.config.BaseBranch {

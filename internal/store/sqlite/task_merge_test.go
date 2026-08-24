@@ -83,6 +83,37 @@ func TestTaskMergeStorePersistsApprovalIntentAndExactCompletionAcrossRestarts(t 
 	}
 }
 
+func TestTaskMergeStoreRevalidatesAuthorizedEvidenceBeforeMutation(t *testing.T) {
+	ctx := context.Background()
+	store, reservation, approval, _ := openTaskMergeFixture(
+		t, filepath.Join(canonicalTempDir(t), "devcrew.db"), "task-merge-authorized-revalidation",
+	)
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.BeginTaskMerge(ctx, reservation); err != nil {
+		t.Fatalf("BeginTaskMerge() error = %v", err)
+	}
+	authorized, err := store.AuthorizeTaskMerge(ctx, approval)
+	if err != nil || authorized.State != application.TaskMergeExecutionAuthorized {
+		t.Fatalf("AuthorizeTaskMerge() = %#v, %v", authorized, err)
+	}
+	freshReplay := approval
+	freshReplay.At = approval.At.Add(time.Second)
+	replayed, err := store.AuthorizeTaskMerge(ctx, freshReplay)
+	if err != nil || !reflect.DeepEqual(replayed, authorized) {
+		t.Fatalf("AuthorizeTaskMerge(fresh replay) = %#v, %v", replayed, err)
+	}
+	staleReplay := approval
+	staleReplay.At = reservation.At.Add(9 * time.Minute)
+	if _, err := store.AuthorizeTaskMerge(ctx, staleReplay); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("AuthorizeTaskMerge(stale evidence) error = %v, want ErrPrecondition", err)
+	}
+	row, found, err := findTaskMerge(ctx, store.db, reservation.OperationID)
+	if err != nil || !found || row.state != application.TaskMergeExecutionAuthorized ||
+		row.stateVersion != authorized.StateVersion {
+		t.Fatalf("authorized row after stale evidence = %#v, %v, found %t", row, err, found)
+	}
+}
+
 func TestTaskMergeStoreRejectsChangedStaleAndIneligibleReservations(t *testing.T) {
 	ctx := context.Background()
 	store, reservation, _, _ := openTaskMergeFixture(

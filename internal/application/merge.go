@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -279,12 +280,10 @@ func (coordinator *MergeCoordinator) MergeTask(
 			return MergeTaskResult{}, errors.New("merge task: stored approval authority differs")
 		}
 	}
-	forgeRequest := PullRequestMergeRequest{
-		OperationID: record.OperationID, RepositoryID: record.RepositoryID,
-		PullRequestID: record.PullRequestID, Branch: record.Branch, HeadRevision: record.HeadRevision,
-		Method:         record.Method,
-		RequiredChecks: append([]string(nil), record.RequiredChecks...),
+	if err := validateAuthorizedMergeCommand(record, command); err != nil {
+		return MergeTaskResult{}, err
 	}
+	forgeRequest := taskMergeForgeRequest(record)
 	reconciledReceipt, reconciled, reconcileErr := coordinator.config.Forge.ReconcileApprovedPullRequest(ctx, forgeRequest)
 	if reconcileErr != nil {
 		return MergeTaskResult{}, &dependencyFailure{message: "merge forge truth is unavailable", cause: reconcileErr}
@@ -325,6 +324,25 @@ func (coordinator *MergeCoordinator) MergeTask(
 			"request a fresh approval for the exact task head", authorizeErr,
 		)
 	}
+	revalidated, err := coordinator.config.Store.AuthorizeTaskMerge(ctx, TaskMergeAuthorization{
+		OperationID: record.OperationID, Approval: record.Approval, Method: record.Method, At: mutationAt,
+	})
+	if err != nil {
+		return MergeTaskResult{}, mutationCommitFailure(err)
+	}
+	if err := validateTaskMergeRecord(revalidated, command.OperationID, command.TaskHandle, subjectDigest); err != nil ||
+		revalidated.State != TaskMergeExecutionAuthorized {
+		return MergeTaskResult{}, errors.New("merge task: revalidated approval authority differs")
+	}
+	if err := validateAuthorizedMergeCommand(revalidated, command); err != nil {
+		return MergeTaskResult{}, err
+	}
+	revalidatedForgeRequest := taskMergeForgeRequest(revalidated)
+	if !sameTaskMergeForgeRequest(forgeRequest, revalidatedForgeRequest) {
+		return MergeTaskResult{}, errors.New("merge task: revalidated forge authority differs")
+	}
+	record = revalidated
+	forgeRequest = revalidatedForgeRequest
 	forgeReceipt, err := coordinator.config.Forge.MergeApprovedPullRequest(ctx, forgeRequest)
 	if err != nil {
 		return MergeTaskResult{}, &dependencyFailure{message: "merge forge truth is unavailable", cause: err}
@@ -340,6 +358,33 @@ func (coordinator *MergeCoordinator) MergeTask(
 		return MergeTaskResult{}, errors.New("merge task: completed durable receipt differs")
 	}
 	return mergeResult(completed), nil
+}
+
+func validateAuthorizedMergeCommand(record TaskMergeRecord, command MergeTaskCommand) error {
+	if record.State == TaskMergeExecutionAuthorized &&
+		record.Approval.ApprovalID == command.ApprovalRequestID &&
+		record.Approval.MCPOperationID == command.MCPOperationID {
+		return nil
+	}
+	return newSafeFailure(
+		domain.ErrorPrecondition, false, "merge approval differs from the authorized operation",
+		"retry with the exact approval-bound managed operation", ErrPrecondition,
+	)
+}
+
+func taskMergeForgeRequest(record TaskMergeRecord) PullRequestMergeRequest {
+	return PullRequestMergeRequest{
+		OperationID: record.OperationID, RepositoryID: record.RepositoryID,
+		PullRequestID: record.PullRequestID, Branch: record.Branch, HeadRevision: record.HeadRevision,
+		Method: record.Method, RequiredChecks: append([]string(nil), record.RequiredChecks...),
+	}
+}
+
+func sameTaskMergeForgeRequest(left, right PullRequestMergeRequest) bool {
+	return left.OperationID == right.OperationID && left.RepositoryID == right.RepositoryID &&
+		left.PullRequestID == right.PullRequestID && left.Branch == right.Branch &&
+		left.HeadRevision == right.HeadRevision && left.Method == right.Method &&
+		slices.Equal(left.RequiredChecks, right.RequiredChecks)
 }
 
 func validateTaskMergeRecord(record TaskMergeRecord, operationID, taskHandle, subjectDigest string) error {

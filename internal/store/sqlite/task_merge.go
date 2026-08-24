@@ -84,7 +84,7 @@ func (store *Store) BeginTaskMerge(
 }
 
 // AuthorizeTaskMerge atomically persists the exact authenticated receipt and
-// marks the external mutation intent before the forge adapter is invoked.
+// revalidates its reserved evidence on authorized replay.
 func (store *Store) AuthorizeTaskMerge(
 	ctx context.Context,
 	request application.TaskMergeAuthorization,
@@ -118,6 +118,11 @@ func (store *Store) AuthorizeTaskMerge(
 	if row.state != application.TaskMergeAwaitingApproval {
 		if !taskMergeApprovalMatches(row, request.Approval) || row.mergeMethod != request.Method {
 			return application.TaskMergeRecord{}, fmt.Errorf("task merge authorization altered replay: %w", application.ErrConflict)
+		}
+		if row.state == application.TaskMergeExecutionAuthorized {
+			if err := revalidateTaskMergeReservation(ctx, transaction, row, request.At); err != nil {
+				return application.TaskMergeRecord{}, err
+			}
 		}
 		if err := transaction.Commit(); err != nil {
 			return application.TaskMergeRecord{}, fmt.Errorf("commit task merge authorization replay: %w", err)

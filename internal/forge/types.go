@@ -12,9 +12,9 @@ import (
 // to retry without changing pull-request delivery authority.
 var ErrPullRequestTruthUnavailable = errors.New("pull-request truth is temporarily unavailable")
 
-// ErrPullRequestMergeOutcomeUnknown marks a merge mutation whose final forge
-// truth could not be proved. Retrying the same operation is required; callers
-// must never translate this into success from the PUT response alone.
+// ErrPullRequestMergeOutcomeUnknown marks a merge mutation whose exact result
+// or actual method could not be proved. Callers preserve unknown rather than
+// translating intended or acknowledged state into success.
 var ErrPullRequestMergeOutcomeUnknown = errors.New("pull-request merge outcome is unknown")
 
 // CredentialKind is the closed forge authority vocabulary.

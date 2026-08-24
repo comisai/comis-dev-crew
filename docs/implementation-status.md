@@ -997,14 +997,18 @@ SQLite atomically reserves current accepted evidence, records the complete
 approval and immutable selected method before forge mutation, and joins exact
 post-merge truth to the same operation only when the receipt carries that
 method. A recorded mutation intent first performs read-only outcome
-reconciliation; when the pull request is still open, every retry revalidates
-the approval against a fresh UTC clock before the forge mutation, so an expired
-receipt cannot authorize a later merge. Pending approval and recorded mutation intent survive startup
-reconciliation; altered replays, stale evidence, split ledger writes, and
-unprotected branches fail closed. The canonical local API exposes one
-`MergeTask` mutation to both protected endpoint classes: operator calls can
-carry only the task handle, while MCP calls must bind the approval request and
-the identical operation ID; neither can choose forge coordinates or method.
+reconciliation; when the pull request is still open, every retry requires the
+exact persisted approval metadata, revalidates the approval against a fresh UTC
+clock, and transactionally revalidates the reserved evidence immediately before
+the forge mutation. GitHub's merged pull-request representation does not prove
+the actual method, so an already-merged or uncertain mutation remains unknown
+unless the mutation acknowledgement and exact reread agree. Pending approval
+and recorded mutation intent survive startup reconciliation; altered replays,
+stale evidence, split ledger writes, and unprotected branches fail closed. The
+canonical local API exposes one `MergeTask` mutation to both protected endpoint
+classes: operator calls can carry only the task handle, while MCP calls must
+bind the approval request and the identical operation ID; neither can choose
+forge coordinates or method.
 Installed composition now joins that mutation to the sole SQLite writer, the
 persistent authenticated Comis connection, and the separately credentialed
 forge adapter only when all three authorities exist. The operator CLI now

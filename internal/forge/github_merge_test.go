@@ -150,13 +150,13 @@ func TestGitHubAdapter_RefusesChangedOrUnprotectedMergeBeforeCredentialResolutio
 	}
 }
 
-func TestGitHubAdapter_ReconcilesAnAlreadyMergedExactHeadWithoutAnotherMutation(t *testing.T) {
+func TestGitHubAdapter_PreservesAlreadyMergedMethodAsUnknownWithoutMutation(t *testing.T) {
 	head := strings.Repeat("e", 40)
 	mergeCommit := strings.Repeat("f", 40)
 	mergeCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
-		if request.URL.Path == "/repos/comisai/fixture/pulls/31" {
+		if request.Method == http.MethodGet && request.URL.Path == "/repos/comisai/fixture/pulls/31" {
 			_, _ = response.Write([]byte(`{"number":31,"state":"closed","merged":true,"merge_commit_sha":"` + mergeCommit + `","html_url":"https://example.com/pull/31","head":{"sha":"` + head + `","ref":"devcrew/task-merge"},"base":{"ref":"main"}}`))
 			return
 		}
@@ -177,12 +177,64 @@ func TestGitHubAdapter_ReconcilesAnAlreadyMergedExactHeadWithoutAnotherMutation(
 		OperationID: "merge-task-0001", Branch: "devcrew/task-merge", HeadRevision: head,
 		PullRequestID: "github-pr-31", Method: MergeRebase, RequiredChecks: []string{"ci/unit"},
 	})
-	if err != nil || receipt.MergeCommitRevision != mergeCommit || receipt.Method != MergeRebase || mergeCalls != 0 {
-		t.Fatalf("MergePullRequest(replay) = %#v, calls=%d, error=%v", receipt, mergeCalls, err)
+	if !errors.Is(err, ErrPullRequestMergeOutcomeUnknown) || receipt != (PullRequestMergeReceipt{}) || mergeCalls != 0 {
+		t.Fatalf("MergePullRequest(already merged) = %#v, calls=%d, error=%v", receipt, mergeCalls, err)
 	}
 }
 
-func TestGitHubAdapter_MapsExactMergedTruthOntoApplicationPort(t *testing.T) {
+func TestGitHubAdapter_PreservesUncertainMutationMethodAsUnknown(t *testing.T) {
+	head := strings.Repeat("3", 40)
+	mergeCommit := strings.Repeat("4", 40)
+	merged := false
+	mergeCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.Method + " " + request.URL.Path {
+		case "GET /repos/comisai/fixture/pulls/31":
+			state, mergedJSON, commit := "open", "false", "null"
+			if merged {
+				state, mergedJSON, commit = "closed", "true", `"`+mergeCommit+`"`
+			}
+			_, _ = response.Write([]byte(`{"number":31,"state":"` + state + `","merged":` + mergedJSON +
+				`,"merge_commit_sha":` + commit + `,"html_url":"https://example.com/pull/31","head":{"sha":"` + head +
+				`","ref":"devcrew/task-merge"},"base":{"ref":"main"}}`))
+		case "GET /repos/comisai/fixture/commits/" + head + "/check-runs":
+			_, _ = response.Write([]byte(`{"total_count":1,"check_runs":[{"id":31,"name":"ci/unit","status":"completed","conclusion":"success","started_at":"2026-08-20T10:00:00Z"}]}`))
+		case "GET /repos/comisai/fixture/branches/main/protection":
+			_, _ = response.Write([]byte(`{"required_status_checks":{"strict":true,"contexts":["ci/unit"]},"enforce_admins":{"enabled":true}}`))
+		case "PUT /repos/comisai/fixture/pulls/31/merge":
+			mergeCalls++
+			merged = true
+			http.Error(response, `{"message":"Pull Request was already merged"}`, http.StatusConflict)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	configuration := validGitHubConfig(server)
+	events := make([]string, 0, 1)
+	configuration.MergeCredentials = recordingCredentialSource{
+		events: &events,
+		credential: Credential{
+			Kind: CredentialMerge, Secret: "merge-token", Scopes: []CredentialScope{ScopePullRequestsWrite},
+		},
+	}
+	configuration.MergeMethod = MergeSquash
+	adapter, err := NewGitHubAdapter(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := adapter.MergePullRequest(context.Background(), PullRequestMergeRequest{
+		OperationID: "merge-task-0001", Branch: "devcrew/task-merge", HeadRevision: head,
+		PullRequestID: "github-pr-31", Method: MergeSquash, RequiredChecks: []string{"ci/unit"},
+	})
+	if !errors.Is(err, ErrPullRequestMergeOutcomeUnknown) || receipt != (PullRequestMergeReceipt{}) ||
+		mergeCalls != 1 || !reflect.DeepEqual(events, []string{"merge-credential-resolved"}) {
+		t.Fatalf("MergePullRequest(uncertain method) = %#v, calls=%d, error=%v", receipt, mergeCalls, err)
+	}
+}
+
+func TestGitHubAdapter_PreservesUnknownMergedMethodAcrossApplicationPort(t *testing.T) {
 	head := strings.Repeat("1", 40)
 	mergeCommit := strings.Repeat("2", 40)
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -208,13 +260,12 @@ func TestGitHubAdapter_MapsExactMergedTruthOntoApplicationPort(t *testing.T) {
 		RequiredChecks: []string{"ci/unit"},
 	}
 	reconciled, found, err := port.ReconcileApprovedPullRequest(context.Background(), request)
-	if err != nil || !found || reconciled.Method != application.PullRequestMergeRebase ||
-		reconciled.MergeCommitRevision != mergeCommit {
+	if !errors.Is(err, ErrPullRequestMergeOutcomeUnknown) || found ||
+		reconciled != (application.PullRequestMergeReceipt{}) {
 		t.Fatalf("ReconcileApprovedPullRequest() = %#v, %t, %v", reconciled, found, err)
 	}
 	receipt, err := port.MergeApprovedPullRequest(context.Background(), request)
-	if err != nil || receipt.Method != application.PullRequestMergeRebase ||
-		receipt.MergeCommitRevision != mergeCommit {
+	if !errors.Is(err, ErrPullRequestMergeOutcomeUnknown) || receipt != (application.PullRequestMergeReceipt{}) {
 		t.Fatalf("MergeApprovedPullRequest() = %#v, %v", receipt, err)
 	}
 	if _, err := port.MergeApprovedPullRequest(context.Background(), application.PullRequestMergeRequest{

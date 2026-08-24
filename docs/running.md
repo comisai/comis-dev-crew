@@ -328,11 +328,14 @@ and managed-run identity in the schema-validated `comis.callContext`, and binds
 the approval request to that context's identical operation ID. Repository,
 pull request, head, required checks, credential, and merge method are all
 resolved from durable service state and operator policy. The selected method is
-persisted with the approval before the forge call and reused for outcome
-reconciliation even after restart. Its visible success is
-accepted only from an exact durable completion carrying post-merge forge truth
-and approval attribution. An uncertain transport outcome replays the identical
-durable merge transaction; it cannot reserve another task or head.
+persisted with the approval before the forge call and remains immutable after
+restart. GitHub's merged pull-request representation does not identify the
+actual merge method, so completion requires the initiating mutation
+acknowledgement and an exact reread to agree; an already-merged or uncertain
+outcome remains unknown instead of inheriting the intended method. Visible
+success is accepted only from an exact durable completion carrying post-merge
+forge truth and approval attribution. An uncertain transport outcome replays
+the identical durable merge transaction; it cannot reserve another task or head.
 `cancel_task` is destructive — it ends work an operator asked for and repeating
 it does not undo that — but it is not removal.
 Discard remains an operator-only CLI action because it permanently removes work
