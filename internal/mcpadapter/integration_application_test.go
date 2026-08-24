@@ -101,7 +101,7 @@ func TestFacadeAppliesExactCandidateAndKeepsPolicyAndPathsPrivate(t *testing.T) 
 	}
 }
 
-func TestFacadeCandidateApplicationCanResumeExactFailedOperation(t *testing.T) {
+func TestFacadeCandidateApplicationUsesSeparateConflictResolutionOperation(t *testing.T) {
 	client := &integrationMCPClient{fakeClient: &fakeClient{}, result: integrationMCPResult()}
 	facade, err := New(Config{
 		Client: client, ServiceInstanceID: "service-instance-0001", Version: "test",
@@ -124,8 +124,8 @@ func TestFacadeCandidateApplicationCanResumeExactFailedOperation(t *testing.T) {
 	if err != nil || called.IsError {
 		t.Fatalf("CallTool(recover integration) = %#v, %v", called, err)
 	}
-	if client.operationID != "failed-integration-operation" {
-		t.Fatalf("recovered operation = %q, want failed-integration-operation", client.operationID)
+	if client.operationID != "new-integration-operation" {
+		t.Fatalf("resolution operation = %q, want new-integration-operation", client.operationID)
 	}
 	arguments["recoveryOperationId"] = "bad operation"
 	refused, err := connectFacade(t, facade).CallTool(context.Background(), &mcp.CallToolParams{
