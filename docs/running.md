@@ -300,12 +300,13 @@ owner, accepted candidate, and exact candidate and target heads. The service
 resolves policy, strategy, repository, and worktrees; the visible result contains
 only the reviewed strategy, evidence digest, applied head or bounded conflicts,
 and durable state version. An uncertain call retries the exact reserved operation,
-whose receipt-backed Git adapter either replays one known result or refuses
-ambiguity. `recoveryOperationId` is reserved for a staged rebase-conflict
-resolution: it names the immutable conflicted operation while the authenticated
-call contributes a distinct operation ID. Changing any initiative, task, head,
-policy, evidence, worktree, or rebase state remains a refusal before the target
-branch moves.
+whose global operation claim is already durable. The Git adapter either replays
+an exact receipt, reconciles an interrupted rebase from its recorded target and
+verified sequencer state, or refuses ambiguity. `recoveryOperationId` is reserved
+for a staged rebase-conflict resolution: it names the immutable conflicted
+operation while the authenticated call contributes a distinct operation ID.
+Changing any initiative, task, head, policy, evidence, worktree, or rebase state
+remains a refusal before the target branch moves.
 Submitting a different operation for a candidate task and head that already has
 a reserved, applied, or conflicted application is a precondition failure before
 Git. Reuse the original operation or continue from its durable receipt.

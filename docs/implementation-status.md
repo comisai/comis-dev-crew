@@ -718,13 +718,21 @@ edit only those paths, but it preserves the server-staged non-conflicting
 candidate changes and commits the complete index. A path-limited conflict commit
 that leaves candidate changes staged cannot pass clean-candidate handoff.
 
-Content-free Git refs bridge the interval between a Git result and its SQLite
-commit. Exact applied and conflicted calls replay without repeating Git. A crash
-before a receipt is written leaves the reserved operation and changed worktree
-ambiguous, so the retry refuses instead of inferring success. A crash after the
-receipt or after SQLite completion replays the one exact result. Completion and
-the canonical operation ledger commit in one transaction, and accepted evidence
-expiry blocks a new mutation without invalidating a result already completed.
+The reservation and its accepted canonical operation-ledger claim commit in one
+transaction before Git mutation. Startup reconciliation may mark that claim
+unknown, but an exact reservation replay must still match the immutable ledger
+row before work resumes. Content-free Git refs then bridge the interval between a
+Git result and its SQLite completion. Exact applied and conflicted calls replay
+without repeating Git. Merge and cherry-pick still refuse a changed worktree
+when no exact outcome receipt exists. Rebase records the exact target branch
+before mutation, so an exact operation replay can reconstruct an interrupted
+conflict or clean completion only when the origin, sequencer, target, and current
+head all agree; the separate resolution operation applies the same checks if
+`rebase --continue` settled before its receipt was written. Every ambiguous or
+altered posture preserves the worktree and refuses recovery. Completion updates
+the application row and transitions the existing operation-ledger claim in one
+transaction. Accepted evidence expiry blocks a new mutation without invalidating
+a result already completed.
 Another operation for the same candidate task and head is rejected before Git
 and before a second reservation is inserted. Its typed precondition directs the
 caller to the original operation or its applied or conflicted receipt.
