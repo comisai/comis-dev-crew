@@ -83,6 +83,30 @@ func TestIntegrationApplicationPersistsEveryClosedOutcomeAcrossRestart(t *testin
 	}
 }
 
+func TestIntegrationAbortedSettlementPreservesCandidateEvidence(t *testing.T) {
+	fixture := newStoredIntegrationFixture(t)
+	request := fixture.reservationRequest("integration-store-aborted", application.IntegrationRebase)
+	reserved, err := fixture.store.ReserveIntegrationApplication(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aborted := application.IntegrationOutcome("aborted")
+	completed, err := fixture.store.CompleteIntegrationApplication(context.Background(), application.IntegrationCompletion{
+		Reservation: reserved,
+		AdapterResult: application.IntegrationAdapterResult{
+			Outcome: aborted, PreviousHead: request.Command.ExpectedIntegrationHead,
+		},
+		At: request.At.Add(time.Second),
+	})
+	if err != nil || completed.Outcome != aborted {
+		t.Fatalf("CompleteIntegrationApplication(aborted) = %#v, %v", completed, err)
+	}
+	candidate, err := fixture.store.GetTask(context.Background(), reserved.Candidate.TaskHandle)
+	if err != nil || candidate.State != domain.TaskCandidateComplete {
+		t.Fatalf("aborted candidate = %#v, %v", candidate, err)
+	}
+}
+
 func TestIntegrationReservationSurvivesRestartBeforeGitCompletion(t *testing.T) {
 	fixture := newStoredIntegrationFixture(t)
 	request := fixture.reservationRequest("integration-reserved-restart", application.IntegrationMerge)

@@ -188,6 +188,55 @@ func TestInitiativeLaunchAuthorizationSkipsPagedIneligibleHistory(t *testing.T) 
 	}
 }
 
+func TestInitiativeLaunchAuthorizationAdvancesWithinResourceForEverySlot(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(canonicalTempDir(t), "resource-frontier-slots.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	created := time.Date(2026, time.August, 25, 12, 0, 0, 0, time.UTC)
+	items := []struct {
+		task       domain.Task
+		initiative string
+		repository string
+	}{
+		{task: schedulingTestTask("task-resource-slot-first", domain.TaskReady, 1), initiative: "initiative-resource-slot-first", repository: "product-api"},
+		{task: schedulingTestTask("task-resource-slot-second", domain.TaskReady, 2), initiative: "initiative-resource-slot-second", repository: "product-api"},
+		{task: schedulingTestTask("task-resource-slot-later", domain.TaskReady, 3), initiative: "initiative-resource-slot-later", repository: "other-api"},
+	}
+	for index := range items {
+		items[index].task.RepositoryID = items[index].repository
+		items[index].task, err = items[index].task.PinBriefRevision()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := insertTask(ctx, transaction, items[index].task); err != nil {
+			t.Fatal(err)
+		}
+		initiative := schedulingTestInitiative(items[index].initiative,
+			created.Add(time.Duration(index)*time.Second), []string{items[index].task.Handle})
+		initiative.BaseRevisionSet[0].RepositoryID = items[index].repository
+		initiative.Components[0].RepositoryID = items[index].repository
+		if err := insertInitiative(ctx, transaction, initiative); err != nil {
+			t.Fatal(err)
+		}
+	}
+	limits := initiativeTestSchedulingLimits(2)
+	limits.MaxConcurrentTasksPerRepository = 2
+	if err := authorizeInitiativeTaskStart(ctx, transaction, items[1].task, limits); err != nil {
+		t.Fatalf("authorizeInitiativeTaskStart(second older resource task) error = %v", err)
+	}
+	if err := authorizeInitiativeTaskStart(ctx, transaction, items[2].task, limits); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("authorizeInitiativeTaskStart(later other-resource task) error = %v, want queued", err)
+	}
+}
+
 func schedulingTestTask(handle string, state domain.TaskState, version int) domain.Task {
 	task := storeTask(handle, int64(version+1))
 	task.State = state

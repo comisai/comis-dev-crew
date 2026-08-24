@@ -204,6 +204,34 @@ func TestIntegrationSettlesOnlyFailuresKnownToPrecedeGitMutation(t *testing.T) {
 	}
 }
 
+func TestIntegrationSettlesPreconditionRefusalsWithoutInvalidatingEvidence(t *testing.T) {
+	at := time.Unix(1_800_000_000, 0).UTC()
+	command := integrationCommand()
+	reserved := integrationReservation(command, IntegrationRebase)
+	aborted := IntegrationOutcome("aborted")
+	store := &integrationStore{
+		policyID: "integration-reviewed", reservation: reserved,
+		completed: integrationResult(reserved, aborted, "", nil, at),
+	}
+	adapter := &integrationAdapter{err: fmt.Errorf("unsupported topology: %w", ErrIntegrationMutationNotStarted)}
+	integrations, err := NewIntegrations(IntegrationConfig{
+		Store: store, Adapter: adapter,
+		Policies: func(string) (IntegrationStrategy, error) { return IntegrationRebase, nil },
+		Clock:    func() time.Time { return at },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := integrations.ApplyCandidate(context.Background(), command); err == nil {
+		t.Fatal("ApplyCandidate(precondition refusal) error = nil")
+	}
+	if store.completion.AdapterResult.Outcome != aborted {
+		t.Fatalf("precondition settlement outcome = %q, want %q",
+			store.completion.AdapterResult.Outcome, aborted)
+	}
+}
+
 func TestIntegrationConflictRecoveryUsesNewOperationAfterEvidenceExpiry(t *testing.T) {
 	command := integrationCommand()
 	command.OperationID = "integration-resolution-0001"
