@@ -154,15 +154,30 @@ func (registry *Registry) reconcileInterruptedRebase(
 	if request.Strategy != application.IntegrationRebase || request.RecoveryOperationID != "" {
 		return application.IntegrationAdapterResult{}, false, nil
 	}
+	rebasedHead, rebasedFound, err := registry.integrationReceiptHead(
+		ctx, repository, integrationReceiptRef("rebased", request),
+	)
+	if err != nil {
+		return application.IntegrationAdapterResult{}, true, errors.New("apply integration candidate: rebased head receipt is unavailable")
+	}
 	targetRef, found, err := registry.recordedIntegrationTargetRef(ctx, request)
-	if err != nil || !found {
-		return application.IntegrationAdapterResult{}, false, err
+	if err != nil {
+		return application.IntegrationAdapterResult{}, true, err
+	}
+	if !found {
+		if rebasedFound {
+			return application.IntegrationAdapterResult{}, true, errors.New("apply integration candidate: rebased head receipt has no target")
+		}
+		return application.IntegrationAdapterResult{}, false, nil
 	}
 	conflicts, err := registry.integrationConflictPaths(ctx, request.Target.WorktreePath)
 	if err != nil {
 		return application.IntegrationAdapterResult{}, true, err
 	}
 	if len(conflicts) != 0 {
+		if rebasedFound {
+			return application.IntegrationAdapterResult{}, true, errors.New("apply integration candidate: rebased head receipt contradicts conflicts")
+		}
 		branchHead, err := registry.integrationBranchHead(ctx, request.Target.WorktreePath, targetRef)
 		if err != nil || branchHead != request.Target.ExpectedHead {
 			return application.IntegrationAdapterResult{}, true, errors.New("apply integration candidate: interrupted target branch differs")
@@ -186,7 +201,24 @@ func (registry *Registry) reconcileInterruptedRebase(
 		return application.IntegrationAdapterResult{}, true, err
 	}
 	if currentHead == request.Target.ExpectedHead && attached && headRef == targetRef {
+		if rebasedFound {
+			return application.IntegrationAdapterResult{}, true, errors.New("apply integration candidate: rebased head receipt differs from target")
+		}
 		return application.IntegrationAdapterResult{}, false, nil
+	}
+	if rebasedFound && currentHead != rebasedHead {
+		return application.IntegrationAdapterResult{}, true, errors.New("apply integration candidate: rebased head receipt differs from worktree")
+	}
+	if !rebasedFound {
+		restored, restoreErr := registry.restorePreparedRebaseTarget(
+			ctx, request, targetRef, currentHead, headRef, attached,
+		)
+		if restoreErr != nil {
+			return application.IntegrationAdapterResult{}, true, restoreErr
+		}
+		if restored {
+			return application.IntegrationAdapterResult{}, false, nil
+		}
 	}
 	if err := registry.validateRebaseOrigin(ctx, request); err != nil {
 		return application.IntegrationAdapterResult{}, true, err

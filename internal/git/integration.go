@@ -185,14 +185,10 @@ func (registry *Registry) runRebaseIntegration(ctx context.Context, request appl
 		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
 		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
 	}
-	proofRef := integrationRebaseProofRef(request)
-	if _, err := runGitBytes(ctx, registry.gitExecutable, append(configuration,
-		"checkout", "--no-guess", strings.TrimPrefix(proofRef, "refs/heads/"))...); err != nil {
-		return err
-	}
 	if _, err := runGitBytes(ctx, registry.gitExecutable, append(configuration,
 		"rebase", "--no-autostash", "--no-stat", "--onto", request.Target.ExpectedHead,
-		request.Candidate.BaseRevision)...); err != nil {
+		request.Candidate.BaseRevision,
+		strings.TrimPrefix(integrationRebaseProofRef(request), "refs/heads/"))...); err != nil {
 		return err
 	}
 	resultingHead, err := registry.validRecoveredRebaseHead(ctx, request)
@@ -211,6 +207,41 @@ func (registry *Registry) runRebaseIntegration(ctx context.Context, request appl
 		return err
 	}
 	return nil
+}
+
+func (registry *Registry) restorePreparedRebaseTarget(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+	targetRef string,
+	currentHead string,
+	headRef string,
+	attached bool,
+) (bool, error) {
+	proofRef := integrationRebaseProofRef(request)
+	if !attached || headRef != proofRef || currentHead != request.Candidate.HeadRevision {
+		return false, nil
+	}
+	if err := registry.ensureRebaseSequencerAbsent(ctx, request.Target.WorktreePath); err != nil {
+		return false, err
+	}
+	proofHead, found, err := registry.integrationReceiptHeadAtPath(ctx, request.Target.WorktreePath, proofRef)
+	if err != nil || !found || proofHead != request.Candidate.HeadRevision {
+		return false, errors.New("apply integration candidate: prepared rebase proof differs")
+	}
+	branchHead, err := registry.integrationBranchHead(ctx, request.Target.WorktreePath, targetRef)
+	if err != nil || branchHead != request.Target.ExpectedHead {
+		return false, errors.New("apply integration candidate: prepared rebase target differs")
+	}
+	status, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"status", "--porcelain=v2", "-z", "--untracked-files=all")
+	if err != nil || len(status) != 0 {
+		return false, errors.New("apply integration candidate: prepared rebase is not clean")
+	}
+	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"-c", "core.hooksPath=/dev/null", "checkout", "--no-guess", strings.TrimPrefix(targetRef, "refs/heads/")); err != nil {
+		return false, errors.New("apply integration candidate: prepared rebase target could not be restored")
+	}
+	return true, nil
 }
 
 func (registry *Registry) integrationConflictPaths(ctx context.Context, worktreePath string) ([]string, error) {

@@ -80,13 +80,12 @@ func TestRegistry_ReconcilesInterruptedRebaseConflictBeforeReceipt(t *testing.T)
 		"symbolic-ref", integrationReceiptRefForTest("target", request), targetRef)
 	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
 		"update-ref", integrationRebaseProofRefForTest(request), candidateHead)
-	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
-		"checkout", "--no-guess", strings.TrimPrefix(integrationRebaseProofRefForTest(request), "refs/heads/"))
 	runIntegrationGitExpectFailure(t, fixture.repository.gitExecutable,
 		"--no-optional-locks", "-C", fixture.target.CanonicalPath,
 		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
 		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
-		"rebase", "--no-autostash", "--no-stat", "--onto", targetHead, request.Candidate.BaseRevision)
+		"rebase", "--no-autostash", "--no-stat", "--onto", targetHead, request.Candidate.BaseRevision,
+		strings.TrimPrefix(integrationRebaseProofRefForTest(request), "refs/heads/"))
 
 	restarted := newLifecycleRegistry(t, fixture.repository)
 	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
@@ -125,13 +124,12 @@ func TestRegistry_ReconcilesCompletedRebaseBeforeConflictReceipt(t *testing.T) {
 		"symbolic-ref", integrationReceiptRefForTest("target", request), targetRef)
 	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
 		"update-ref", integrationRebaseProofRefForTest(request), candidateHead)
-	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
-		"checkout", "--no-guess", strings.TrimPrefix(integrationRebaseProofRefForTest(request), "refs/heads/"))
 	runIntegrationGitExpectFailure(t, fixture.repository.gitExecutable,
 		"--no-optional-locks", "-C", fixture.target.CanonicalPath,
 		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
 		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
-		"rebase", "--no-autostash", "--no-stat", "--onto", targetHead, request.Candidate.BaseRevision)
+		"rebase", "--no-autostash", "--no-stat", "--onto", targetHead, request.Candidate.BaseRevision,
+		strings.TrimPrefix(integrationRebaseProofRefForTest(request), "refs/heads/"))
 	if err := os.WriteFile(filepath.Join(fixture.target.CanonicalPath, "fixture.txt"), []byte("resolved\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -345,21 +343,71 @@ func TestRegistry_RebaseTargetReceiptRejectsAlteredOrAmbiguousIdentity(t *testin
 }
 
 func TestRegistry_RejectsDanglingOutcomeReceiptBeforeMutation(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		outcome  string
+		strategy application.IntegrationStrategy
+	}{
+		{name: "applied receipt", outcome: "applied", strategy: application.IntegrationMerge},
+		{name: "rebased receipt", outcome: "rebased", strategy: application.IntegrationRebase},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newIntegrationFixture(t)
+			candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "candidate.txt", "candidate\n")
+			targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "target.txt", "target\n")
+			request := fixture.request("integration-dangling-"+strings.ReplaceAll(test.name, " ", "-"),
+				test.strategy, candidateHead, targetHead)
+			runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.repository.primary,
+				"symbolic-ref", integrationReceiptRefForTest(test.outcome, request), "refs/heads/missing-integration-result")
+
+			if _, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request); err == nil {
+				t.Fatalf("ApplyIntegrationCandidate(dangling %s) error = nil", test.name)
+			}
+			if head := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "rev-parse", "HEAD"); head != targetHead {
+				t.Fatalf("target head = %q, want unchanged %q", head, targetHead)
+			}
+			if branch := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "symbolic-ref", "HEAD"); branch != "refs/heads/"+fixture.target.Branch {
+				t.Fatalf("target branch = %q, want %q", branch, "refs/heads/"+fixture.target.Branch)
+			}
+			if _, err := os.Stat(filepath.Join(fixture.target.CanonicalPath, "candidate.txt")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("candidate content reached target: %v", err)
+			}
+			runIntegrationGitExpectFailure(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C",
+				fixture.repository.primary, "show-ref", "--verify", "--quiet", integrationReceiptRefForTest("target", request))
+			runIntegrationGitExpectFailure(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C",
+				fixture.repository.primary, "show-ref", "--verify", "--quiet", integrationRebaseProofRefForTest(request))
+		})
+	}
+}
+
+func TestRegistry_RestartsPreparedRebaseBeforeGitStarts(t *testing.T) {
 	fixture := newIntegrationFixture(t)
 	candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "candidate.txt", "candidate\n")
 	targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "target.txt", "target\n")
-	request := fixture.request("integration-dangling-outcome-receipt", application.IntegrationMerge, candidateHead, targetHead)
-	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.repository.primary,
-		"symbolic-ref", integrationReceiptRefForTest("applied", request), "refs/heads/missing-integration-result")
+	request := fixture.request("integration-prepared-rebase-restart", application.IntegrationRebase, candidateHead, targetHead)
+	targetRef := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "symbolic-ref", "HEAD")
+	proofRef := integrationRebaseProofRefForTest(request)
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"symbolic-ref", integrationReceiptRefForTest("target", request), targetRef)
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"update-ref", proofRef, candidateHead)
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"checkout", "--no-guess", strings.TrimPrefix(proofRef, "refs/heads/"))
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"update-ref", "-d", "ORIG_HEAD")
 
-	if _, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request); err == nil {
-		t.Fatal("ApplyIntegrationCandidate(dangling applied receipt) error = nil")
+	result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
+	if err != nil || result.Outcome != application.IntegrationApplied || result.PreviousHead != targetHead ||
+		result.ResultingHead == "" || result.ResultingHead == targetHead {
+		t.Fatalf("ApplyIntegrationCandidate(prepared restart) = %#v, %v", result, err)
 	}
-	if head := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "rev-parse", "HEAD"); head != targetHead {
-		t.Fatalf("target head = %q, want unchanged %q", head, targetHead)
+	if branch := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "symbolic-ref", "HEAD"); branch != targetRef {
+		t.Fatalf("restarted target branch = %q, want %q", branch, targetRef)
 	}
-	if _, err := os.Stat(filepath.Join(fixture.target.CanonicalPath, "candidate.txt")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("candidate content reached target: %v", err)
+	for _, name := range []string{"candidate.txt", "target.txt"} {
+		if _, err := os.Stat(filepath.Join(fixture.target.CanonicalPath, name)); err != nil {
+			t.Fatalf("restarted target omits %q: %v", name, err)
+		}
 	}
 }
 
@@ -390,14 +438,13 @@ func TestRegistry_RefusesCleanPartialRebaseCompletion(t *testing.T) {
 				runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.repository.primary,
 					"update-ref", integrationReceiptRefForTest("conflicted", request), targetHead)
 			}
-			runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
-				"checkout", "--no-guess", strings.TrimPrefix(integrationRebaseProofRefForTest(request), "refs/heads/"))
 			runIntegrationGitExpectFailure(t, fixture.repository.gitExecutable,
 				"--no-optional-locks", "-C", fixture.target.CanonicalPath,
 				"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
 				"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
 				"rebase", "--no-autostash", "--no-stat", "--exec=false",
-				"--onto", targetHead, request.Candidate.BaseRevision)
+				"--onto", targetHead, request.Candidate.BaseRevision,
+				strings.TrimPrefix(integrationRebaseProofRefForTest(request), "refs/heads/"))
 			if _, err := os.Stat(filepath.Join(fixture.target.CanonicalPath, "candidate-two.txt")); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("pending candidate content exists: %v", err)
 			}
