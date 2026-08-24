@@ -532,6 +532,13 @@ type storedIntegrationFixture struct {
 }
 
 func newStoredIntegrationFixture(t *testing.T) storedIntegrationFixture {
+	return newStoredIntegrationFixtureWithMutation(t, nil)
+}
+
+func newStoredIntegrationFixtureWithMutation(
+	t *testing.T,
+	mutate func(*application.PreparedInitiativeMutation),
+) storedIntegrationFixture {
 	t.Helper()
 	databasePath := filepath.Join(canonicalTempDir(t), "devcrew.db")
 	store, err := Open(context.Background(), databasePath)
@@ -540,6 +547,9 @@ func newStoredIntegrationFixture(t *testing.T) storedIntegrationFixture {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	mutation := sqlitePreparedInitiativeMutation()
+	if mutate != nil {
+		mutate(&mutation)
+	}
 	recordInitiativeMemberIntents(t, store, mutation)
 	if _, err := store.CommitPreparedInitiative(context.Background(), mutation); err != nil {
 		t.Fatal(err)

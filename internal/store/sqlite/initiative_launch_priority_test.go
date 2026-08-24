@@ -167,6 +167,16 @@ func TestInitiativeLaunchAuthorizationSkipsPagedIneligibleHistory(t *testing.T) 
 			); err != nil {
 				t.Fatal(err)
 			}
+			if kind == "resource" {
+				var heads int
+				if err := transaction.QueryRowContext(ctx, `SELECT COUNT(*)
+					FROM initiative_launch_resource_heads WHERE repository_id = 'repo-capped'`).Scan(&heads); err != nil {
+					t.Fatalf("read persisted capped-resource frontier: %v", err)
+				}
+				if heads != 1 {
+					t.Fatalf("persisted capped-resource frontier heads = %d, want 1", heads)
+				}
+			}
 			if err := authorizeInitiativeTaskStart(ctx, transaction, older, limits); err != nil {
 				t.Fatalf("authorizeInitiativeTaskStart(oldest eligible after %s history) error = %v", kind, err)
 			}
