@@ -602,8 +602,16 @@ func TestRegistry_RemoveDiscardedWorktreeRemovesAcknowledgedDirtyWorkspace(t *te
 		t.Fatalf("discard with wrong authority changed the worktree: %v", err)
 	}
 
-	if err := registry.RemoveDiscardedWorktree(context.Background(), request); err != nil {
-		t.Fatalf("RemoveDiscardedWorktree() error = %v", err)
+	var throughPort application.DeliveredWorkspaceRemover = registry
+	if err := throughPort.RemoveDiscardedWorkspace(context.Background(), application.DeliveredWorkspaceRemoval{
+		PreparationOperationID: request.PreparationOperationID,
+		TaskHandle:             request.TaskHandle,
+		RepositoryID:           request.RepositoryID,
+		WorktreePath:           request.WorktreePath,
+		Branch:                 request.Branch,
+		HeadRevision:           request.HeadRevision,
+	}); err != nil {
+		t.Fatalf("RemoveDiscardedWorkspace() error = %v", err)
 	}
 	if _, err := os.Lstat(prepared.CanonicalPath); !os.IsNotExist(err) {
 		t.Fatalf("discarded worktree remains: %v", err)

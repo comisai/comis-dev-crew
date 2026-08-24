@@ -75,6 +75,69 @@ func TestRegistry_RecordsAndReplaysExactConflictPaths(t *testing.T) {
 	}
 }
 
+func TestRegistry_RebaseConflictReplayRejectsAlteredGitState(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		tamper func(t *testing.T, fixture integrationFixture, targetHead string)
+	}{
+		{
+			name: "changed origin",
+			tamper: func(t *testing.T, fixture integrationFixture, targetHead string) {
+				runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C",
+					fixture.target.CanonicalPath, "update-ref", "ORIG_HEAD", targetHead)
+			},
+		},
+		{
+			name: "missing rebase head",
+			tamper: func(t *testing.T, fixture integrationFixture, _ string) {
+				runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C",
+					fixture.target.CanonicalPath, "update-ref", "-d", "REBASE_HEAD")
+			},
+		},
+		{
+			name: "changed rebase head",
+			tamper: func(t *testing.T, fixture integrationFixture, targetHead string) {
+				runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C",
+					fixture.target.CanonicalPath, "update-ref", "REBASE_HEAD", targetHead)
+			},
+		},
+		{
+			name: "changed current head",
+			tamper: func(t *testing.T, fixture integrationFixture, _ string) {
+				candidateHead := integrationGitOutput(
+					t, fixture, fixture.candidate.CanonicalPath, "rev-parse", "HEAD",
+				)
+				runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C",
+					fixture.target.CanonicalPath, "update-ref", "HEAD", candidateHead)
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newIntegrationFixture(t)
+			candidateHead := commitIntegrationFile(
+				t, fixture, fixture.candidate.CanonicalPath, "fixture.txt", "candidate\n",
+			)
+			targetHead := commitIntegrationFile(
+				t, fixture, fixture.target.CanonicalPath, "fixture.txt", "integration\n",
+			)
+			request := fixture.request(
+				"integration-rebase-tamper-"+strings.ReplaceAll(test.name, " ", "-"),
+				application.IntegrationRebase,
+				candidateHead,
+				targetHead,
+			)
+			result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
+			if err != nil || result.Outcome != application.IntegrationConflicted {
+				t.Fatalf("ApplyIntegrationCandidate(conflict) = %#v, %v", result, err)
+			}
+			test.tamper(t, fixture, targetHead)
+			if _, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request); err == nil {
+				t.Fatal("ApplyIntegrationCandidate(altered replay) error = nil")
+			}
+		})
+	}
+}
+
 func TestRegistry_RebaseAppliesLaterCandidateAfterCurrentTarget(t *testing.T) {
 	fixture := newIntegrationFixture(t)
 	firstHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "first.txt", "first\n")

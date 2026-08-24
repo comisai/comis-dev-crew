@@ -111,6 +111,62 @@ func TestPrepareInitiativePersistsOnlyExactProducerOwnedContractArtifacts(t *tes
 	}
 }
 
+func TestPrepareInitiativeRejectsAmbiguousContractArtifactAuthority(t *testing.T) {
+	artifact := PrepareInitiativeContractArtifact{
+		ArtifactHandle: "artifact-api-v1", ProducerTaskRef: "backend-ref",
+		Kind: domain.ArtifactAPISchema, MediaType: "application/json", Content: `{"openapi":"3.1.0"}`,
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*PrepareInitiativeCommand)
+	}{
+		{name: "producer outside initiative", mutate: func(command *PrepareInitiativeCommand) {
+			outside := artifact
+			outside.ProducerTaskRef = "outside-ref"
+			command.ContractArtifacts = []PrepareInitiativeContractArtifact{outside}
+		}},
+		{name: "invalid artifact", mutate: func(command *PrepareInitiativeCommand) {
+			invalid := artifact
+			invalid.MediaType = ""
+			command.ContractArtifacts = []PrepareInitiativeContractArtifact{invalid}
+		}},
+		{name: "duplicate artifact handle", mutate: func(command *PrepareInitiativeCommand) {
+			duplicate := artifact
+			duplicate.ProducerTaskRef = "frontend-ref"
+			command.ContractArtifacts = []PrepareInitiativeContractArtifact{artifact, duplicate}
+		}},
+		{name: "duplicate producer kind", mutate: func(command *PrepareInitiativeCommand) {
+			duplicate := artifact
+			duplicate.ArtifactHandle = "artifact-api-v2"
+			command.ContractArtifacts = []PrepareInitiativeContractArtifact{artifact, duplicate}
+		}},
+		{name: "unresolved artifact edge", mutate: func(command *PrepareInitiativeCommand) {
+			command.ContractArtifacts = []PrepareInitiativeContractArtifact{artifact}
+			command.Edges = append(command.Edges, PrepareInitiativeEdge{
+				FromTaskRef: "backend-ref", ToTaskRef: "frontend-ref",
+				Kind: domain.EdgeConsumesArtifact, RequiredArtifactKind: domain.ArtifactAPISchema,
+			})
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &initiativeMutationStore{}
+			workspaces := &initiativeWorkspacePreparer{}
+			attachments := &initiativeAttachmentPreparer{}
+			command := validPrepareInitiativeCommand()
+			test.mutate(&command)
+			if _, err := newInitiativeMutationsForTest(
+				t, store, workspaces, attachments,
+			).PrepareInitiative(context.Background(), command); err == nil {
+				t.Fatal("PrepareInitiative(ambiguous contract artifact) error = nil")
+			}
+			if len(store.intents) != 0 || store.commitCalls != 0 ||
+				len(workspaces.requests) != 0 || len(attachments.requests) != 0 {
+				t.Fatal("ambiguous contract artifact reached preparation side effects")
+			}
+		})
+	}
+}
+
 func TestPrepareInitiativePreservesReversibleArtifactsAfterPartialPreparationFailure(t *testing.T) {
 	store := &initiativeMutationStore{}
 	workspaces := &initiativeWorkspacePreparer{failAt: 2}

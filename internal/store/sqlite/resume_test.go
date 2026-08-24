@@ -119,6 +119,32 @@ func TestStore_ResumeLaunchReadDistinguishesNoGenerationFromFailure(t *testing.T
 	if _, _, err := unavailable.TaskResumeLaunch(context.Background(), "task-without-store"); err == nil {
 		t.Fatal("TaskResumeLaunch(unavailable store) error = nil")
 	}
+	if _, err := store.db.ExecContext(context.Background(), "DROP TABLE task_resume_launches"); err != nil {
+		t.Fatalf("drop resume launch storage: %v", err)
+	}
+	if _, _, err := store.TaskResumeLaunch(context.Background(), "task-without-resume-generation"); err == nil {
+		t.Fatal("TaskResumeLaunch(missing storage) error = nil")
+	}
+}
+
+func TestStore_ResumeRollsBackWhenItsLaunchGenerationCannotBeRecorded(t *testing.T) {
+	store, task, at := pausedTaskFixture(t)
+	if _, err := store.db.ExecContext(context.Background(), `CREATE TRIGGER refuse_resume_launch
+		BEFORE INSERT ON task_resume_launches
+		BEGIN SELECT RAISE(ABORT, 'injected resume launch failure'); END`); err != nil {
+		t.Fatalf("install resume launch failure: %v", err)
+	}
+	if _, err := store.CommitTaskResume(context.Background(),
+		resumeMutation(task.Handle, "operation-resume-launch-failure", at.Add(time.Minute))); err == nil {
+		t.Fatal("CommitTaskResume(unrecordable launch) error = nil")
+	}
+	persisted, err := store.GetTask(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	if persisted.State != domain.TaskPaused || persisted.StateVersion != task.StateVersion {
+		t.Fatalf("task after failed resume = %#v, want unchanged paused task", persisted)
+	}
 }
 
 func TestStore_ResumeRefusesUntilThePreviousTerminalIsSettled(t *testing.T) {

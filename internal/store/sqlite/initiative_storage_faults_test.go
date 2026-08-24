@@ -109,6 +109,7 @@ func TestInitiativePreparationReplayRejectsCorruptPrivateJoins(t *testing.T) {
 		{name: "invalid group nonce", statement: `UPDATE initiative_preparations SET registration_nonce = 'bad nonce'`},
 		{name: "missing member preparation", statement: `DELETE FROM task_preparations WHERE task_handle = 'task-component-a'`},
 		{name: "invalid member record", statement: `UPDATE tasks SET state = 'invented' WHERE handle = 'task-component-a'`},
+		{name: "missing contract artifact inventory", statement: `DROP TABLE initiative_contract_artifacts`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := openInitiativeFaultStore(t)

@@ -245,6 +245,17 @@ func TestPreparedInitiativeCommitsFiveMemberFullStackGraph(t *testing.T) {
 	); err == nil {
 		t.Fatal("ReplayInitiativePreparation(corrupt artifact bytes) error = nil")
 	}
+	if _, err := store.db.ExecContext(ctx,
+		`UPDATE initiative_contract_artifacts SET size = 'invalid' WHERE initiative_handle = ?`,
+		mutation.Initiative.Handle,
+	); err != nil {
+		t.Fatalf("corrupt contract artifact size: %v", err)
+	}
+	if _, _, err := store.ReplayInitiativePreparation(
+		ctx, mutation.OperationID, mutation.SubjectDigest,
+	); err == nil {
+		t.Fatal("ReplayInitiativePreparation(unscannable artifact) error = nil")
+	}
 }
 
 func preparedContractArtifact(
@@ -322,6 +333,70 @@ func TestPreparedInitiativeRejectsArtifactFromOutsideItsMemberSet(t *testing.T) 
 	}
 	if initiatives != 0 {
 		t.Fatalf("initiative rows = %d, want none", initiatives)
+	}
+}
+
+func TestPreparedInitiativeRejectsInexactContractArtifactSets(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*testing.T, *application.PreparedInitiativeMutation)
+	}{
+		{name: "unlisted artifact", mutate: func(_ *testing.T, mutation *application.PreparedInitiativeMutation) {
+			mutation.Initiative.ContractArtifacts = nil
+		}},
+		{name: "duplicate artifact", mutate: func(_ *testing.T, mutation *application.PreparedInitiativeMutation) {
+			mutation.ContractArtifacts = append(mutation.ContractArtifacts, mutation.ContractArtifacts[0])
+		}},
+		{name: "incomplete artifact set", mutate: func(_ *testing.T, mutation *application.PreparedInitiativeMutation) {
+			mutation.ContractArtifacts = nil
+		}},
+		{name: "mismatched consumer pin", mutate: func(t *testing.T, mutation *application.PreparedInitiativeMutation) {
+			member := mutation.Members[1].Task
+			member.ConsumedContracts = []domain.PinnedContract{{
+				ArtifactHandle: "artifact-api-v1", Kind: domain.ArtifactAPISchema,
+				ContentHash: strings.Repeat("f", 64),
+			}}
+			var err error
+			mutation.Members[1].Task, err = member.PinBriefRevision()
+			if err != nil {
+				t.Fatalf("PinBriefRevision() error = %v", err)
+			}
+		}},
+		{name: "unresolved producer edge", mutate: func(_ *testing.T, mutation *application.PreparedInitiativeMutation) {
+			mutation.Initiative.Edges = []domain.InitiativeEdge{{
+				FromTaskHandle: "task-component-a", ToTaskHandle: "task-integration",
+				Kind: domain.EdgeConsumesArtifact, RequiredArtifactKind: domain.ArtifactAPISchema,
+			}}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			store, err := Open(ctx, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			mutation := sqlitePreparedInitiativeMutation()
+			mutation.Initiative.ContractArtifacts = []string{"artifact-api-v1"}
+			mutation.ContractArtifacts = []application.PreparedInitiativeContractArtifact{
+				preparedContractArtifact(
+					mutation.Initiative, "artifact-api-v1", "task-component-a",
+					domain.ArtifactAPISchema, "application/json", []byte(`{"version":1}`),
+				),
+			}
+			test.mutate(t, &mutation)
+			recordInitiativeMemberIntents(t, store, mutation)
+			if _, err := store.CommitPreparedInitiative(ctx, mutation); err == nil {
+				t.Fatal("CommitPreparedInitiative(inexact artifact set) error = nil")
+			}
+			var initiatives int
+			if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM initiatives").Scan(&initiatives); err != nil {
+				t.Fatal(err)
+			}
+			if initiatives != 0 {
+				t.Fatalf("initiative rows = %d, want none", initiatives)
+			}
+		})
 	}
 }
 
