@@ -169,6 +169,24 @@ func TestRegistry_RebaseRejectsDropProneRangesBeforeMutation(t *testing.T) {
 	})
 }
 
+func TestRegistry_RebaseRejectsUnprovableSequenceAfterConflict(t *testing.T) {
+	fixture := newIntegrationFixture(t)
+	_ = commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath,
+		"fixture.txt", "candidate-conflict\n")
+	candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath,
+		"after-conflict.txt", "later candidate\n")
+	targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath,
+		"fixture.txt", "integration-conflict\n")
+	request := fixture.request("integration-rebase-unprovable-after-conflict",
+		application.IntegrationRebase, candidateHead, targetHead)
+
+	_, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
+	if !errors.Is(err, application.ErrIntegrationMutationNotStarted) {
+		t.Fatalf("ApplyIntegrationCandidate(unprovable sequence) error = %v", err)
+	}
+	assertRebaseProofBoundPreservedTarget(t, fixture, request, targetHead)
+}
+
 func TestRegistry_RebasePreflightRechecksEvidenceFreshness(t *testing.T) {
 	fresh := time.Date(2099, time.January, 1, 0, 0, 0, 0, time.UTC)
 	expired := fresh.Add(time.Minute)

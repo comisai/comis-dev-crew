@@ -441,6 +441,55 @@ func TestInitiativeMembershipMigrationBackfillsExistingGraphs(t *testing.T) {
 	}
 }
 
+func TestInitiativeMembershipMigrationBackfillsLargeHistory(t *testing.T) {
+	ctx := context.Background()
+	databasePath := filepath.Join(canonicalTempDir(t), "large-membership-upgrade.db")
+	store, err := Open(ctx, databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 2048; index++ {
+		initiative := persistenceInitiative(
+			fmt.Sprintf("initiative-membership-upgrade-%04d", index), domain.InitiativeDelivered, int64(index+1),
+		)
+		initiative.Components[0].TaskHandles = []string{fmt.Sprintf("task-upgrade-%04d-a", index)}
+		initiative.Components[1].TaskHandles = []string{fmt.Sprintf("task-upgrade-%04d-b", index)}
+		initiative.Edges[0].FromTaskHandle = initiative.Components[0].TaskHandles[0]
+		initiative.Edges[0].ToTaskHandle = initiative.Components[1].TaskHandles[0]
+		initiative.IntegrationOwnerTask = initiative.Components[1].TaskHandles[0]
+		if err := insertInitiative(ctx, transaction, initiative); err != nil {
+			_ = transaction.Rollback()
+			t.Fatalf("insert initiative %d: %v", index, err)
+		}
+	}
+	if err := transaction.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `DROP TABLE initiative_members;
+		DELETE FROM schema_migrations WHERE version = 47`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(ctx, databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	var count int
+	if err := reopened.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM initiative_members`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 4096 {
+		t.Fatalf("initiative membership count = %d, want 4096", count)
+	}
+}
+
 func requireInitiativeBacklogRepository(t *testing.T, store *Store) initiativeBacklogRepository {
 	t.Helper()
 	repository, ok := any(store).(initiativeBacklogRepository)

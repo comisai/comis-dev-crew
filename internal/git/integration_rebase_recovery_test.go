@@ -325,6 +325,13 @@ func TestRegistry_RebaseTargetReceiptRejectsAlteredOrAmbiguousIdentity(t *testin
 			runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.repository.primary,
 				"symbolic-ref", receipt, "refs/heads/missing-integration-target")
 		}, wantErr: true},
+		{name: "multi-hop symbolic identity", prepare: func(t *testing.T, fixture integrationFixture, receipt, targetRef, _ string) {
+			alias := "refs/heads/integration-receipt-alias"
+			runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.repository.primary,
+				"symbolic-ref", alias, targetRef)
+			runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.repository.primary,
+				"symbolic-ref", receipt, alias)
+		}, wantErr: true},
 		{name: "direct ref is ambiguous", prepare: func(t *testing.T, fixture integrationFixture, receipt, _, targetHead string) {
 			runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.repository.primary,
 				"update-ref", receipt, targetHead)

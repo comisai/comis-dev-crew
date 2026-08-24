@@ -67,6 +67,9 @@ func TestInitiativeLaunchAuthorizationPreservesPriorityBeyondFirstPage(t *testin
 		}
 	}
 	limits := initiativeTestSchedulingLimits(1)
+	if err := authorizeInitiativeTaskStart(ctx, transaction, older, limits); err != nil {
+		t.Fatalf("authorizeInitiativeTaskStart(oldest eligible) error = %v", err)
+	}
 	err = authorizeInitiativeTaskStart(ctx, transaction, target, limits)
 	if !errors.Is(err, application.ErrPrecondition) {
 		t.Fatalf("authorizeInitiativeTaskStart(later target) error = %v, want queued precondition", err)
