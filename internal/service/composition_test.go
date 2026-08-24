@@ -42,6 +42,7 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 	if configured.candidateGit == nil || configured.workspaceInspector == nil || configured.reconciliationInspector == nil ||
 		configured.validationCatalog == nil ||
 		configured.pullRequests == nil || configured.cleanupRemover == nil || configured.cleanupForge == nil ||
+		configured.cleanupLanded == nil ||
 		configured.mergePullRequests != nil || configured.mergeOperatorEnabled ||
 		configured.validationMaxOutputBytes != 64<<10 ||
 		configured.validationPollInterval != 25*time.Millisecond {

@@ -116,21 +116,10 @@ func TestFacade_PrepareInitiativeSchemaCannotSelectServiceOrHostAuthority(t *tes
 		if listed.Name != ToolPrepareInitiative {
 			continue
 		}
-		encoded, marshalErr := json.Marshal(listed.InputSchema)
-		if marshalErr != nil {
-			t.Fatal(marshalErr)
-		}
-		schema := string(encoded)
-		for _, required := range []string{"baseRevisionSet", "components", "tasks", "contract", "integrationPolicyId"} {
-			if !strings.Contains(schema, required) {
-				t.Fatalf("prepare_initiative schema omits %q: %s", required, schema)
-			}
-		}
-		for _, forbidden := range []string{"serviceInstanceId", "managedRunGroupId", "registrationNonce"} {
-			if strings.Contains(schema, forbidden) {
-				t.Fatalf("prepare_initiative schema exposes %q: %s", forbidden, schema)
-			}
-		}
+		semantics := inspectSchemaSemantics(t, listed.InputSchema)
+		requireSchemaFields(t, semantics,
+			"baseRevisionSet", "components", "tasks", "contract", "integrationPolicyId")
+		forbidSchemaFields(t, semantics, "serviceInstanceId", "managedRunGroupId", "registrationNonce")
 		return
 	}
 	t.Fatal("prepare_initiative tool is absent")

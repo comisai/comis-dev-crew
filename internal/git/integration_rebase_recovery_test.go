@@ -539,6 +539,40 @@ func TestRegistry_RebaseContinuationRefusesALaterConflict(t *testing.T) {
 	}
 }
 
+func TestRegistry_RebaseRecoveryRefusesRepointedWorktreeBeforeMutation(t *testing.T) {
+	fixture := newIntegrationFixture(t)
+	candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "fixture.txt", "candidate\n")
+	targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "fixture.txt", "integration\n")
+	request := fixture.request("integration-rebase-repointed", application.IntegrationRebase, candidateHead, targetHead)
+	if result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request); err != nil || result.Outcome != application.IntegrationConflicted {
+		t.Fatalf("ApplyIntegrationCandidate(conflict) = %#v, %v", result, err)
+	}
+	if err := os.WriteFile(filepath.Join(fixture.target.CanonicalPath, "fixture.txt"), []byte("resolved\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"add", "--", "fixture.txt")
+	moved := fixture.target.CanonicalPath + "-moved"
+	if err := os.Rename(fixture.target.CanonicalPath, moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(moved, fixture.target.CanonicalPath); err != nil {
+		t.Fatal(err)
+	}
+	recovery := request
+	recovery.OperationID = "integration-rebase-repointed-recovery"
+	recovery.RecoveryOperationID = request.OperationID
+	if _, err := newLifecycleRegistry(t, fixture.repository).ApplyIntegrationCandidate(context.Background(), recovery); err == nil {
+		t.Fatal("ApplyIntegrationCandidate(repointed recovery) error = nil")
+	}
+	if info, err := os.Lstat(fixture.target.CanonicalPath); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("repointed target = %#v, %v", info, err)
+	}
+	if head := integrationGitOutput(t, fixture, fixture.repository.primary, "rev-parse", "refs/heads/"+fixture.target.Branch); head != targetHead {
+		t.Fatalf("target branch head after refused recovery = %q, want %q", head, targetHead)
+	}
+}
+
 func integrationReceiptRefForTest(outcome string, request application.IntegrationAdapterRequest) string {
 	canonical, _ := json.Marshal(request)
 	digest := sha256.Sum256(canonical)

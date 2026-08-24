@@ -10,7 +10,7 @@ import (
 )
 
 func renderInitiativeList(destination io.Writer, list application.InitiativeList) error {
-	return writeTable(destination, func(table *tabwriter.Writer) error {
+	if err := writeTable(destination, func(table *tabwriter.Writer) error {
 		if _, err := fmt.Fprintln(table, "INITIATIVE\tSTATE\tCOMPONENTS\tTASKS\tUPDATED"); err != nil {
 			return err
 		}
@@ -22,7 +22,14 @@ func renderInitiativeList(destination io.Writer, list application.InitiativeList
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	if list.NextCursor != "" {
+		_, err := fmt.Fprintf(destination, "resume with --after %s\n", list.NextCursor)
+		return err
+	}
+	return nil
 }
 
 func renderInitiativeDetail(destination io.Writer, detail application.InitiativeDetail) error {

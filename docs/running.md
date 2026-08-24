@@ -588,6 +588,9 @@ devcrew [--socket PATH] decision respond TASK DECISION --input FILE|- [--operati
 devcrew [--socket PATH] decision cancel TASK DECISION [--operation OPERATION] [--format json]
 ```
 
+The initiative table prints `resume with --after INITIATIVE` only when another
+bounded page exists. JSON callers receive the same value as `nextCursor`.
+
 Backlog mutation contracts use the same strict request-size bound as task
 contracts. Addition includes the operator's source conversation reference.
 Promotion names its item on the command line and refuses a contract that also

@@ -154,6 +154,14 @@ func TestReservedIntegrationBlocksCancellationOfEitherBoundTask(t *testing.T) {
 			if !errors.Is(err, application.ErrPrecondition) {
 				t.Fatalf("CommitTaskCancel(reserved integration) error = %v", err)
 			}
+			_, err = fixture.store.CommitManagedRunCancel(context.Background(), application.ManagedRunCancelMutation{
+				ServiceInstanceID: before.ServiceInstanceID, ManagedRunID: before.ManagedRunID,
+				Reason: application.CancelReasonOwnerCancelled, OperationID: "managed-cancel-reserved-" + taskHandle,
+				SubjectDigest: strings.Repeat("8", 64), At: request.At.Add(2 * time.Minute),
+			})
+			if !errors.Is(err, application.ErrPrecondition) {
+				t.Fatalf("CommitManagedRunCancel(reserved integration) error = %v", err)
+			}
 			after, err := fixture.store.GetTask(context.Background(), taskHandle)
 			if err != nil || !reflect.DeepEqual(after, before) {
 				t.Fatalf("task after refused cancel = %#v, %v; want %#v", after, err, before)

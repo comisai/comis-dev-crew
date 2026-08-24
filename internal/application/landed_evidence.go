@@ -7,9 +7,9 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
-// LandedEvidenceRequest asks the forge what it can prove about one head. It
-// names a branch and a head and nothing else: the request grants no authority
-// and carries none, because proving work landed is a read.
+// LandedEvidenceRequest asks configured evidence sources what they can prove
+// about one head. It names a branch and a head and nothing else: the request
+// grants no authority and carries none, because proving work landed is a read.
 type LandedEvidenceRequest struct {
 	RepositoryID string
 	Branch       string
@@ -26,9 +26,9 @@ type MergedPullRequestTruth struct {
 	HeadRevisionMatches     bool
 }
 
-// LandedEvidenceTruth is everything the forge could establish. Available says
-// whether the forge answered at all, which a caller must not confuse with the
-// forge answering "no".
+// LandedEvidenceTruth is everything the configured sources could establish.
+// Available says whether the forge answered at all, which a caller must not
+// confuse with the forge answering "no".
 type LandedEvidenceTruth struct {
 	WorkHead                  string
 	Available                 bool
@@ -39,13 +39,14 @@ type LandedEvidenceTruth struct {
 	DefaultBranchContainsHead bool
 }
 
-// LandedEvidenceGatherer reads what the forge can prove about one head.
+// LandedEvidenceGatherer reads what configured sources can prove about one head.
 type LandedEvidenceGatherer interface {
 	GatherLandedEvidence(context.Context, LandedEvidenceRequest) (LandedEvidenceTruth, error)
 }
 
-// proveCleanupLanded asks the forge whether work landed, for the one case the
-// delivery rule cannot answer: no recorded pull request and no report artifact.
+// proveCleanupLanded asks configured evidence sources whether work landed, for
+// the one case the delivery rule cannot answer: no recorded pull request and no
+// report artifact.
 //
 // It only ever ADDS acceptance. Every refusal the delivery rule already makes
 // stays a refusal, because this is consulted after that rule has declined and

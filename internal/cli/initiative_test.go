@@ -60,6 +60,19 @@ func TestCLI_InitiativeGraphJSONReturnsTheGraphProjectionItself(t *testing.T) {
 	}
 }
 
+func TestCLI_InitiativeListShowsContinuationForTruncatedPage(t *testing.T) {
+	client := fixtureClient()
+	client.initiativeList.NextCursor = "initiative-next"
+	var stdout, stderr bytes.Buffer
+	code := Run(context.Background(), []string{"initiative", "list"}, &stdout, &stderr, testConfig(client))
+	if code != ExitSuccess {
+		t.Fatalf("Run(initiative list) = %d, stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "resume with --after initiative-next") {
+		t.Fatalf("initiative list output = %q", stdout.String())
+	}
+}
+
 func TestCLI_RejectsInvalidInitiativeSyntaxBeforeConnecting(t *testing.T) {
 	tests := [][]string{
 		{"initiative"},

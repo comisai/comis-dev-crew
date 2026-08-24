@@ -33,6 +33,9 @@ func (store *Store) CommitManagedRunCancel(
 		if task.ServiceInstanceID != mutation.ServiceInstanceID || mutation.At.Location() != time.UTC {
 			return domain.Task{}, fmt.Errorf("managed-run cancel join: %w", application.ErrPrecondition)
 		}
+		if err := refuseReservedIntegrationCancellation(ctx, transaction, task.Handle); err != nil {
+			return domain.Task{}, err
+		}
 		// Two operators can both decide to stop the same run. The second one
 		// reports the settled task rather than transitioning it again.
 		if task.State == domain.TaskCancelled {

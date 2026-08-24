@@ -119,7 +119,7 @@ func TestInitiativeAndBacklogQuerySnapshotsCarryOneDurableVersion(t *testing.T) 
 	initiatives, cursor, version, err := repository.InitiativeSnapshot(ctx, application.InitiativeFilter{
 		Limit: application.MaximumInitiativePage,
 	})
-	if err != nil || version != 12 || cursor != initiative.Handle ||
+	if err != nil || version != 12 || cursor != "" ||
 		len(initiatives) != 1 || initiatives[0].Handle != initiative.Handle {
 		t.Fatalf("InitiativeSnapshot() = %#v, %q, %d, %v", initiatives, cursor, version, err)
 	}
@@ -188,12 +188,12 @@ func TestInitiativeSnapshotFiltersAndPaginatesBeforeMaterializing(t *testing.T) 
 	filter.AfterHandle = cursor
 	second, cursor, _, err := store.InitiativeSnapshot(ctx, filter)
 	if err != nil || len(second) != len(expected)-application.MaximumInitiativePage ||
-		second[len(second)-1].Handle != expected[len(expected)-1] || cursor != expected[len(expected)-1] {
+		second[len(second)-1].Handle != expected[len(expected)-1] || cursor != "" {
 		t.Fatalf("InitiativeSnapshot(second) = %#v, cursor %q, %v", second, cursor, err)
 	}
-	filter.AfterHandle = cursor
+	filter.AfterHandle = expected[len(expected)-1]
 	empty, cursor, _, err := store.InitiativeSnapshot(ctx, filter)
-	if err != nil || len(empty) != 0 || cursor != filter.AfterHandle {
+	if err != nil || len(empty) != 0 || cursor != "" {
 		t.Fatalf("InitiativeSnapshot(empty) = %#v, cursor %q, %v", empty, cursor, err)
 	}
 	filter.Limit = application.MaximumInitiativePage + 1

@@ -16,32 +16,11 @@ func (registry *Registry) InspectCandidate(ctx context.Context, request Candidat
 	if err := ctx.Err(); err != nil {
 		return CandidateSnapshot{}, err
 	}
-	if !repositoryIDPattern.MatchString(request.TaskHandle) || !repositoryIDPattern.MatchString(request.RepositoryID) {
-		return CandidateSnapshot{}, errors.New("inspect task candidate: request identity is invalid")
-	}
-	repository, err := registry.Resolve(request.RepositoryID)
-	if err != nil {
-		return CandidateSnapshot{}, errors.New("inspect task candidate: repository is unavailable")
-	}
-	expectedPath := filepath.Join(repository.WorktreeRoot, request.TaskHandle)
-	if request.WorktreePath != expectedPath {
-		return CandidateSnapshot{}, errors.New("inspect task candidate: worktree does not match task root")
-	}
-	if _, err := registry.ValidateWorktree(ctx, request.RepositoryID, request.WorktreePath); err != nil {
-		if ctx.Err() != nil {
-			return CandidateSnapshot{}, ctx.Err()
-		}
-		if errors.Is(err, errCandidateWorktreeStructural) {
-			return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: worktree identity is invalid: %w", ErrCandidateWorktreeUnverified)
-		}
-		return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: worktree inspection failed: %w", err)
-	}
-	entries, err := registry.worktreeEntries(ctx, repository)
+	entry, err := registry.inspectCandidateWorktreeIdentity(ctx, request)
 	if err != nil {
 		return CandidateSnapshot{}, err
 	}
-	entry, found := findWorktreeEntry(entries, request.WorktreePath)
-	if !found || entry.locked || entry.prunable || entry.branch == "" || !gitRevisionPattern.MatchString(entry.head) {
+	if entry.branch == "" {
 		return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: worktree inventory is ambiguous: %w", ErrCandidateWorktreeUnverified)
 	}
 	branch, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.WorktreePath,
@@ -85,4 +64,39 @@ func (registry *Registry) InspectCandidate(ctx context.Context, request Candidat
 		RepositoryID: request.RepositoryID, WorktreePath: request.WorktreePath,
 		Branch: branch, HeadRevision: head, Cleanliness: cleanliness,
 	}, nil
+}
+
+func (registry *Registry) inspectCandidateWorktreeIdentity(
+	ctx context.Context,
+	request CandidateSnapshotRequest,
+) (worktreeListEntry, error) {
+	if !repositoryIDPattern.MatchString(request.TaskHandle) || !repositoryIDPattern.MatchString(request.RepositoryID) {
+		return worktreeListEntry{}, errors.New("inspect task candidate: request identity is invalid")
+	}
+	repository, err := registry.Resolve(request.RepositoryID)
+	if err != nil {
+		return worktreeListEntry{}, errors.New("inspect task candidate: repository is unavailable")
+	}
+	expectedPath := filepath.Join(repository.WorktreeRoot, request.TaskHandle)
+	if request.WorktreePath != expectedPath {
+		return worktreeListEntry{}, errors.New("inspect task candidate: worktree does not match task root")
+	}
+	if _, err := registry.ValidateWorktree(ctx, request.RepositoryID, request.WorktreePath); err != nil {
+		if ctx.Err() != nil {
+			return worktreeListEntry{}, ctx.Err()
+		}
+		if errors.Is(err, errCandidateWorktreeStructural) {
+			return worktreeListEntry{}, fmt.Errorf("inspect task candidate: worktree identity is invalid: %w", ErrCandidateWorktreeUnverified)
+		}
+		return worktreeListEntry{}, fmt.Errorf("inspect task candidate: worktree inspection failed: %w", err)
+	}
+	entries, err := registry.worktreeEntries(ctx, repository)
+	if err != nil {
+		return worktreeListEntry{}, err
+	}
+	entry, found := findWorktreeEntry(entries, request.WorktreePath)
+	if !found || entry.locked || entry.prunable || !gitRevisionPattern.MatchString(entry.head) {
+		return worktreeListEntry{}, fmt.Errorf("inspect task candidate: worktree inventory is ambiguous: %w", ErrCandidateWorktreeUnverified)
+	}
+	return entry, nil
 }

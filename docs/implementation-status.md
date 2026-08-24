@@ -547,7 +547,8 @@ identities but no registration nonce or host resource path.
 The operator console exposes initiative list, show, explain, and graph reads
 through that same canonical local client. Human views retain dependency
 readiness and closed safe actions; graph JSON is the graph DTO itself rather
-than a second wrapper contract.
+than a second wrapper contract. A truncated initiative table prints its opaque
+continuation cursor, while a complete page does not imply more results.
 
 The operator console also exposes `backlog add` and `backlog promote` through
 strict bounded file-or-stdin JSON contracts. The promotion target appears only

@@ -176,32 +176,34 @@ func listInitiativePage(
 	if filter.State != "" {
 		rows, err = source.QueryContext(ctx,
 			selectPage+` WHERE handle > ? AND state = ?`+pageOrder,
-			filter.AfterHandle, filter.State, filter.Limit,
+			filter.AfterHandle, filter.State, filter.Limit+1,
 		)
 	} else {
 		rows, err = source.QueryContext(ctx,
 			selectPage+` WHERE handle > ?`+pageOrder,
-			filter.AfterHandle, filter.Limit,
+			filter.AfterHandle, filter.Limit+1,
 		)
 	}
 	if err != nil {
 		return nil, "", fmt.Errorf("list initiative page: %w", err)
 	}
 	defer func() { resultErr = errors.Join(resultErr, rows.Close()) }()
-	initiatives = make([]domain.DevelopmentInitiative, 0, filter.Limit)
-	nextCursor = filter.AfterHandle
+	initiatives = make([]domain.DevelopmentInitiative, 0, filter.Limit+1)
 	for rows.Next() {
 		initiative, err := scanInitiative(rows)
 		if err != nil {
 			return nil, "", fmt.Errorf("list initiative page: %w", err)
 		}
 		initiatives = append(initiatives, initiative)
-		nextCursor = initiative.Handle
 	}
 	if err := rows.Err(); err != nil {
 		return nil, "", fmt.Errorf("list initiative page: %w", err)
 	}
-	return initiatives, nextCursor, nil
+	if len(initiatives) <= filter.Limit {
+		return initiatives, "", nil
+	}
+	nextCursor = initiatives[filter.Limit-1].Handle
+	return initiatives[:filter.Limit], nextCursor, nil
 }
 
 func scanInitiative(row rowScanner) (domain.DevelopmentInitiative, error) {

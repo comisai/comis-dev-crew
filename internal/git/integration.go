@@ -39,6 +39,9 @@ func (registry *Registry) ApplyIntegrationCandidate(
 	if err != nil {
 		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: repository is unavailable")
 	}
+	if err := registry.preflightIntegrationWorktrees(ctx, request); err != nil {
+		return application.IntegrationAdapterResult{}, err
+	}
 	appliedRef := integrationReceiptRef("applied", request)
 	conflictedRef := integrationReceiptRef("conflicted", request)
 	if replay, found, err := registry.replayAppliedIntegration(ctx, request, repository, appliedRef); err != nil || found {

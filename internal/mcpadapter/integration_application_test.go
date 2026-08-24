@@ -60,21 +60,11 @@ func TestFacadeAppliesExactCandidateAndKeepsPolicyAndPathsPrivate(t *testing.T) 
 			continue
 		}
 		found = true
-		encoded, marshalErr := json.Marshal(listed.InputSchema)
-		if marshalErr != nil {
-			t.Fatal(marshalErr)
-		}
-		schema := string(encoded)
-		for _, required := range []string{"initiativeHandle", "integrationTaskHandle", "candidateTaskHandle", "candidateHead", "expectedIntegrationHead"} {
-			if !strings.Contains(schema, required) {
-				t.Fatalf("integration schema omits %q: %s", required, schema)
-			}
-		}
-		for _, forbidden := range []string{"strategy", "policy", "worktree", "baseRevision", "argv"} {
-			if strings.Contains(strings.ToLower(schema), strings.ToLower(forbidden)) {
-				t.Fatalf("integration schema exposes %q: %s", forbidden, schema)
-			}
-		}
+		semantics := inspectSchemaSemantics(t, listed.InputSchema)
+		requireSchemaFields(t, semantics,
+			"initiativeHandle", "integrationTaskHandle", "candidateTaskHandle",
+			"candidateHead", "expectedIntegrationHead")
+		forbidSchemaFields(t, semantics, "strategy", "policy", "worktree", "baseRevision", "argv")
 	}
 	if !found {
 		t.Fatal("integration tool is absent")

@@ -113,22 +113,21 @@ func TestFacadeBacklogSchemasExcludeProvenanceAndHostAuthority(t *testing.T) {
 			continue
 		}
 		seen++
-		encoded, err := json.Marshal(listed.InputSchema)
-		if err != nil {
-			t.Fatal(err)
+		semantics := inspectSchemaSemantics(t, listed.InputSchema)
+		if listed.Name == ToolAddBacklog {
+			requireSchemaFields(t, semantics,
+				"repositoryId", "shape", "requestedOutcome", "dependsOn", "priority", "readiness")
+		} else {
+			requireSchemaFields(t, semantics,
+				"backlogHandle", "baseRevision", "acceptanceCriteria", "constraints",
+				"validationProfile", "deliveryMode", "workerProfileId")
 		}
-		schema := string(encoded)
-		for _, forbidden := range []string{
+		forbidSchemaFields(t, semantics,
 			"sourceConversationRef", "serviceInstanceId", "taskHandle", "workspaceRoot",
 			"registrationNonce", "managedRunId", "executionAttachmentId",
-		} {
-			if strings.Contains(schema, forbidden) {
-				t.Fatalf("%s schema exposes %q: %s", listed.Name, forbidden, schema)
-			}
-		}
-		if listed.Name == ToolPromoteBacklog &&
-			(strings.Contains(schema, "repositoryId") || strings.Contains(schema, `"shape"`)) {
-			t.Fatalf("backlog_promote schema can retarget the item: %s", schema)
+		)
+		if listed.Name == ToolPromoteBacklog {
+			forbidSchemaFields(t, semantics, "repositoryId", "shape")
 		}
 	}
 	if seen != 2 {
