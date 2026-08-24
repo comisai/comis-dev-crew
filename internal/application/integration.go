@@ -46,6 +46,7 @@ type IntegrationPolicyResolver func(string) (IntegrationStrategy, error)
 // target heads. Paths and strategy are intentionally absent.
 type ApplyIntegrationCandidateCommand struct {
 	OperationID             string
+	RecoveryOperationID     string
 	InitiativeHandle        string
 	IntegrationTaskHandle   string
 	CandidateTaskHandle     string
@@ -73,10 +74,11 @@ type IntegrationCandidateReference struct {
 
 // IntegrationAdapterRequest is the complete typed Git mutation contract.
 type IntegrationAdapterRequest struct {
-	OperationID string
-	Strategy    IntegrationStrategy
-	Target      IntegrationTargetReference
-	Candidate   IntegrationCandidateReference
+	OperationID         string
+	RecoveryOperationID string
+	Strategy            IntegrationStrategy
+	Target              IntegrationTargetReference
+	Candidate           IntegrationCandidateReference
 }
 
 // IntegrationAdapterResult reports either one exact new head or bounded
@@ -107,6 +109,7 @@ type IntegrationReservationRequest struct {
 // result is present only when the exact operation already completed.
 type ReservedIntegrationApplication struct {
 	OperationID           string
+	RecoveryOperationID   string
 	SubjectDigest         string
 	InitiativeHandle      string
 	IntegrationTaskHandle string
@@ -122,8 +125,9 @@ type ReservedIntegrationApplication struct {
 // AdapterRequest projects a reservation onto the mutation boundary.
 func (reserved ReservedIntegrationApplication) AdapterRequest() IntegrationAdapterRequest {
 	return IntegrationAdapterRequest{
-		OperationID: reserved.OperationID, Strategy: reserved.Strategy,
-		Target: reserved.Target, Candidate: reserved.Candidate,
+		OperationID: reserved.OperationID, RecoveryOperationID: reserved.RecoveryOperationID,
+		Strategy: reserved.Strategy,
+		Target:   reserved.Target, Candidate: reserved.Candidate,
 	}
 }
 
@@ -137,6 +141,7 @@ type IntegrationCompletion struct {
 // IntegrationApplicationResult is the durable, replayable candidate outcome.
 type IntegrationApplicationResult struct {
 	OperationID           string                        `json:"operationId"`
+	RecoveryOperationID   string                        `json:"recoveryOperationId,omitempty"`
 	InitiativeHandle      string                        `json:"initiativeHandle"`
 	IntegrationTaskHandle string                        `json:"integrationTaskHandle"`
 	Candidate             IntegrationCandidateReference `json:"candidate"`
@@ -231,7 +236,7 @@ func (integrations *Integrations) ApplyCandidate(
 		}
 		return cloneIntegrationResult(*reserved.Result), nil
 	}
-	if !at.Before(reserved.EvidenceExpiresAt) {
+	if reserved.RecoveryOperationID == "" && !at.Before(reserved.EvidenceExpiresAt) {
 		return IntegrationApplicationResult{}, mutationValidationFailure("integration candidate evidence expired")
 	}
 	adapterResult, err := integrations.adapter.ApplyIntegrationCandidate(ctx, reserved.AdapterRequest())
@@ -280,7 +285,10 @@ func (strategy IntegrationStrategy) valid() bool {
 }
 
 func validateIntegrationCommand(command ApplyIntegrationCandidateCommand) error {
-	if domain.ValidateOperationID(command.OperationID) != nil || domain.ValidateTaskHandle(command.InitiativeHandle) != nil ||
+	if domain.ValidateOperationID(command.OperationID) != nil ||
+		(command.RecoveryOperationID != "" && (domain.ValidateOperationID(command.RecoveryOperationID) != nil ||
+			command.RecoveryOperationID == command.OperationID)) ||
+		domain.ValidateTaskHandle(command.InitiativeHandle) != nil ||
 		domain.ValidateTaskHandle(command.IntegrationTaskHandle) != nil || domain.ValidateTaskHandle(command.CandidateTaskHandle) != nil ||
 		command.IntegrationTaskHandle == command.CandidateTaskHandle || domain.ValidateGitRevision(command.CandidateHead) != nil ||
 		domain.ValidateGitRevision(command.ExpectedIntegrationHead) != nil {
@@ -297,6 +305,7 @@ func validateIntegrationReservation(
 	subjectDigest string,
 ) error {
 	if reserved.OperationID != command.OperationID || reserved.SubjectDigest != subjectDigest ||
+		reserved.RecoveryOperationID != command.RecoveryOperationID ||
 		reserved.InitiativeHandle != command.InitiativeHandle || reserved.IntegrationTaskHandle != command.IntegrationTaskHandle ||
 		reserved.PolicyID != policyID || reserved.Strategy != strategy || reserved.Candidate.TaskHandle != command.CandidateTaskHandle ||
 		reserved.Candidate.HeadRevision != command.CandidateHead || reserved.Target.ExpectedHead != command.ExpectedIntegrationHead ||
@@ -308,7 +317,7 @@ func validateIntegrationReservation(
 	}
 	if domain.ValidateBriefRevisionHash(reserved.Candidate.EvidenceDigest) != nil || reserved.EvidenceExpiresAt.IsZero() ||
 		reserved.EvidenceExpiresAt.Location() != time.UTC || reserved.ReservedAt.IsZero() || reserved.ReservedAt.Location() != time.UTC ||
-		!reserved.ReservedAt.Before(reserved.EvidenceExpiresAt) {
+		(reserved.RecoveryOperationID == "" && !reserved.ReservedAt.Before(reserved.EvidenceExpiresAt)) {
 		return errors.New("reserved integration evidence is invalid")
 	}
 	return nil
@@ -338,7 +347,8 @@ func validateIntegrationAdapterResult(result IntegrationAdapterResult, reserved 
 }
 
 func validateIntegrationResult(result IntegrationApplicationResult, reserved ReservedIntegrationApplication) error {
-	if result.OperationID != reserved.OperationID || result.InitiativeHandle != reserved.InitiativeHandle ||
+	if result.OperationID != reserved.OperationID || result.RecoveryOperationID != reserved.RecoveryOperationID ||
+		result.InitiativeHandle != reserved.InitiativeHandle ||
 		result.IntegrationTaskHandle != reserved.IntegrationTaskHandle || result.Candidate != reserved.Candidate ||
 		result.Strategy != reserved.Strategy || result.PreviousHead != reserved.Target.ExpectedHead || result.StateVersion < 1 ||
 		result.CompletedAt.IsZero() || result.CompletedAt.Location() != time.UTC {

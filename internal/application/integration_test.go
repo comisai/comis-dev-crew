@@ -125,6 +125,41 @@ func TestIntegrationEvidenceExpiryBlocksNewMutationButNotCompletedReplay(t *test
 	}
 }
 
+func TestIntegrationConflictRecoveryUsesNewOperationAfterEvidenceExpiry(t *testing.T) {
+	command := integrationCommand()
+	command.OperationID = "integration-resolution-0001"
+	command.RecoveryOperationID = "integration-conflict-0001"
+	reserved := integrationReservation(command, IntegrationRebase)
+	at := reserved.EvidenceExpiresAt.Add(time.Hour)
+	reserved.ReservedAt = at
+	store := &integrationStore{
+		policyID: "integration-reviewed", reservation: reserved,
+		completed: integrationResult(reserved, IntegrationApplied, strings.Repeat("d", 40), nil, at),
+	}
+	adapter := &integrationAdapter{result: IntegrationAdapterResult{
+		Outcome: IntegrationApplied, PreviousHead: command.ExpectedIntegrationHead,
+		ResultingHead: strings.Repeat("d", 40),
+	}}
+	integrations, err := NewIntegrations(IntegrationConfig{
+		Store: store, Adapter: adapter,
+		Policies: func(string) (IntegrationStrategy, error) { return IntegrationRebase, nil },
+		Clock:    func() time.Time { return at },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := integrations.ApplyCandidate(context.Background(), command)
+	if err != nil {
+		t.Fatalf("ApplyCandidate(recovery) error = %v", err)
+	}
+	if result.OperationID != command.OperationID || result.RecoveryOperationID != command.RecoveryOperationID ||
+		result.Outcome != IntegrationApplied || len(adapter.requests) != 1 ||
+		adapter.requests[0].OperationID != command.OperationID ||
+		adapter.requests[0].RecoveryOperationID != command.RecoveryOperationID {
+		t.Fatalf("recovery result/request = %#v / %#v", result, adapter.requests)
+	}
+}
+
 func TestIntegrationReservationPreservesDurablePreconditionFailure(t *testing.T) {
 	at := time.Unix(1_800_000_000, 0).UTC()
 	store := &integrationStore{
@@ -240,6 +275,11 @@ func TestIntegrationRefusesInvalidOrUntrustedBoundaryResults(t *testing.T) {
 		result   IntegrationAdapterResult
 	}{
 		{name: "invalid command", command: ApplyIntegrationCandidateCommand{}, strategy: IntegrationMerge},
+		{name: "recovery reuses operation", command: func() ApplyIntegrationCandidateCommand {
+			invalid := command
+			invalid.RecoveryOperationID = invalid.OperationID
+			return invalid
+		}(), strategy: IntegrationMerge},
 		{name: "unknown strategy", command: command, strategy: "shell_fragment"},
 		{name: "changed previous head", command: command, strategy: IntegrationMerge, result: IntegrationAdapterResult{
 			Outcome: IntegrationApplied, PreviousHead: strings.Repeat("9", 40), ResultingHead: strings.Repeat("c", 40),
@@ -288,7 +328,8 @@ func integrationCommand() ApplyIntegrationCandidateCommand {
 
 func integrationReservation(command ApplyIntegrationCandidateCommand, strategy IntegrationStrategy) ReservedIntegrationApplication {
 	return ReservedIntegrationApplication{
-		OperationID: command.OperationID, SubjectDigest: strings.Repeat("1", 64),
+		OperationID: command.OperationID, RecoveryOperationID: command.RecoveryOperationID,
+		SubjectDigest:    strings.Repeat("1", 64),
 		InitiativeHandle: command.InitiativeHandle, IntegrationTaskHandle: command.IntegrationTaskHandle,
 		PolicyID: "integration-reviewed", Strategy: strategy,
 		Target: IntegrationTargetReference{
@@ -313,7 +354,8 @@ func integrationResult(
 	at time.Time,
 ) IntegrationApplicationResult {
 	return IntegrationApplicationResult{
-		OperationID: reserved.OperationID, InitiativeHandle: reserved.InitiativeHandle,
+		OperationID: reserved.OperationID, RecoveryOperationID: reserved.RecoveryOperationID,
+		InitiativeHandle:      reserved.InitiativeHandle,
 		IntegrationTaskHandle: reserved.IntegrationTaskHandle, Candidate: reserved.Candidate,
 		Strategy: reserved.Strategy, Outcome: outcome, PreviousHead: reserved.Target.ExpectedHead,
 		ResultingHead: resultingHead, ConflictPaths: conflicts, StateVersion: 17, CompletedAt: at,

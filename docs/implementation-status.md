@@ -748,10 +748,13 @@ content, so one service diagnostic identifies the broken contract safely.
 The official MCP facade exposes the same operation as
 `apply_integration_candidate`, marks it idempotent and mutating, and keeps policy,
 strategy selection, repository paths, and argv out of its input schema. A new
-application uses the authenticated call operation. After an uncertain failure,
-the optional `recoveryOperationId` can resume only that exact bounded operation;
-the service's existing subject digest rejects any changed initiative, task, or
-head before Git.
+application uses the authenticated call operation, while transport uncertainty
+retries that exact operation automatically. For a staged rebase conflict, the
+optional `recoveryOperationId` names the immutable conflicted receipt and the
+authenticated call supplies a separate durable resolution operation. The service
+revalidates the original target ref and rebase sequencer, advances the branch by
+compare-and-swap, and reattaches the worktree; changed or incomplete state is
+preserved and refused.
 The operator CLI reaches the identical boundary through `initiative integrate`
 and rejects authority-bearing or self-retargeting contract fields before opening
 the service socket.

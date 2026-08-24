@@ -46,6 +46,9 @@ func (registry *Registry) ApplyIntegrationCandidate(
 	if replay, found, err := registry.replayConflictedIntegration(ctx, request, repository, conflictedRef); err != nil || found {
 		return replay, err
 	}
+	if request.RecoveryOperationID != "" {
+		return registry.resumeRebaseIntegration(ctx, request, repository)
+	}
 
 	target, candidate, err := registry.inspectIntegrationInputs(ctx, request, repository)
 	if err != nil {
@@ -96,7 +99,9 @@ func (registry *Registry) ApplyIntegrationCandidate(
 func validateIntegrationRequest(request application.IntegrationAdapterRequest) error {
 	validStrategy := request.Strategy == application.IntegrationMerge || request.Strategy == application.IntegrationRebase ||
 		request.Strategy == application.IntegrationCherryPick
-	if domain.ValidateOperationID(request.OperationID) != nil || !validStrategy ||
+	if domain.ValidateOperationID(request.OperationID) != nil ||
+		(request.RecoveryOperationID != "" && (domain.ValidateOperationID(request.RecoveryOperationID) != nil ||
+			request.RecoveryOperationID == request.OperationID)) || !validStrategy ||
 		domain.ValidateTaskHandle(request.Target.TaskHandle) != nil || domain.ValidateTaskHandle(request.Candidate.TaskHandle) != nil ||
 		request.Target.TaskHandle == request.Candidate.TaskHandle || !repositoryIDPattern.MatchString(request.Target.RepositoryID) ||
 		request.Target.RepositoryID != request.Candidate.RepositoryID || request.Target.WorktreePath == request.Candidate.WorktreePath ||
@@ -165,6 +170,9 @@ func (registry *Registry) runRebaseIntegration(ctx context.Context, request appl
 		"symbolic-ref", "--quiet", "HEAD")
 	if err != nil || !strings.HasPrefix(targetRef, "refs/heads/") || strings.ContainsAny(targetRef, "\x00\r\n\t ") {
 		return errors.New("apply integration candidate: target branch identity is unavailable")
+	}
+	if err := registry.recordIntegrationTargetRef(ctx, request, targetRef); err != nil {
+		return err
 	}
 	configuration := []string{
 		"--no-optional-locks", "-C", request.Target.WorktreePath,

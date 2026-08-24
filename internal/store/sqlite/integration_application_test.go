@@ -108,6 +108,64 @@ func TestIntegrationReservationSurvivesRestartBeforeGitCompletion(t *testing.T) 
 	}
 }
 
+func TestIntegrationRebaseConflictRecoveryIsASeparateDurableOperation(t *testing.T) {
+	fixture := newStoredIntegrationFixture(t)
+	initialRequest := fixture.reservationRequest("integration-rebase-conflict-store", application.IntegrationRebase)
+	initial, err := fixture.store.ReserveIntegrationApplication(context.Background(), initialRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflicted, err := fixture.store.CompleteIntegrationApplication(context.Background(), application.IntegrationCompletion{
+		Reservation: initial,
+		AdapterResult: application.IntegrationAdapterResult{
+			Outcome: application.IntegrationConflicted, PreviousHead: initial.Target.ExpectedHead,
+			ConflictPaths: []string{"fixture.txt"},
+		},
+		At: initialRequest.At.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveryRequest := fixture.reservationRequest("integration-rebase-recovery-store", application.IntegrationRebase)
+	recoveryRequest.Command.RecoveryOperationID = initial.OperationID
+	recoveryRequest.SubjectDigest = strings.Repeat("8", 64)
+	recoveryRequest.At = fixture.evidenceExpiresAt.Add(time.Hour)
+	recovery, err := fixture.store.ReserveIntegrationApplication(context.Background(), recoveryRequest)
+	if err != nil {
+		t.Fatalf("ReserveIntegrationApplication(recovery) error = %v", err)
+	}
+	if recovery.OperationID != recoveryRequest.Command.OperationID ||
+		recovery.RecoveryOperationID != initial.OperationID || recovery.Result != nil ||
+		!recovery.ReservedAt.Equal(recoveryRequest.At) {
+		t.Fatalf("recovery reservation = %#v", recovery)
+	}
+	resolved, err := fixture.store.CompleteIntegrationApplication(context.Background(), application.IntegrationCompletion{
+		Reservation: recovery,
+		AdapterResult: application.IntegrationAdapterResult{
+			Outcome: application.IntegrationApplied, PreviousHead: recovery.Target.ExpectedHead,
+			ResultingHead: strings.Repeat("d", 40),
+		},
+		At: recoveryRequest.At,
+	})
+	if err != nil || resolved.RecoveryOperationID != initial.OperationID || resolved.Outcome != application.IntegrationApplied {
+		t.Fatalf("CompleteIntegrationApplication(recovery) = %#v, %v", resolved, err)
+	}
+	initialReplay, err := fixture.store.ReserveIntegrationApplication(context.Background(), initialRequest)
+	if err != nil || initialReplay.Result == nil || !reflect.DeepEqual(*initialReplay.Result, conflicted) {
+		t.Fatalf("initial conflict replay = %#v, %v", initialReplay, err)
+	}
+	recoveryReplay, err := fixture.store.ReserveIntegrationApplication(context.Background(), recoveryRequest)
+	if err != nil || recoveryReplay.Result == nil || !reflect.DeepEqual(*recoveryReplay.Result, resolved) {
+		t.Fatalf("recovery replay = %#v, %v", recoveryReplay, err)
+	}
+	duplicate := recoveryRequest
+	duplicate.Command.OperationID = "integration-rebase-second-recovery"
+	duplicate.SubjectDigest = strings.Repeat("7", 64)
+	if _, err := fixture.store.ReserveIntegrationApplication(context.Background(), duplicate); !errors.Is(err, application.ErrIntegrationApplicationExists) {
+		t.Fatalf("ReserveIntegrationApplication(duplicate recovery) error = %v", err)
+	}
+}
+
 func TestIntegrationReservationRejectsAnotherOperationForTheSameCandidate(t *testing.T) {
 	for _, outcome := range []string{"reserved", string(application.IntegrationApplied), string(application.IntegrationConflicted)} {
 		t.Run(outcome, func(t *testing.T) {

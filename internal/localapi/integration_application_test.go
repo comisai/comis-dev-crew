@@ -82,6 +82,44 @@ func TestServerClientAppliesExactCandidateWithoutProjectingHostPaths(t *testing.
 	}
 }
 
+func TestServerClientCarriesSeparateIntegrationRecoveryIdentity(t *testing.T) {
+	completedAt := time.Date(2026, time.August, 24, 12, 0, 0, 0, time.UTC)
+	integrations := &apiIntegrations{result: application.IntegrationApplicationResult{
+		OperationID: "operation-integration-resolution", RecoveryOperationID: "operation-integration-conflict",
+		InitiativeHandle: "initiative-api", IntegrationTaskHandle: "task-integration",
+		Candidate: application.IntegrationCandidateReference{
+			TaskHandle: "task-candidate", RepositoryID: "repo-api", WorktreePath: "/private/worktrees/candidate",
+			BaseRevision: strings.Repeat("a", 40), HeadRevision: strings.Repeat("b", 40),
+			EvidenceDigest: strings.Repeat("e", 64),
+		},
+		Strategy: application.IntegrationRebase, Outcome: application.IntegrationApplied,
+		PreviousHead: strings.Repeat("c", 40), ResultingHead: strings.Repeat("d", 40),
+		StateVersion: 32, CompletedAt: completedAt,
+	}}
+	handler, err := NewHandler(HandlerConfig{
+		Queries: &apiQueries{}, Integrations: integrations,
+		ServiceInstanceID: "service-instance-api", Clock: time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := NewClient(startHandlerServer(t, handler, CallerMCPFacade), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := ApplyIntegrationCandidateInput{
+		InitiativeHandle: "initiative-api", RecoveryOperationID: "operation-integration-conflict",
+		IntegrationTaskHandle: "task-integration", CandidateTaskHandle: "task-candidate",
+		CandidateHead: strings.Repeat("b", 40), ExpectedIntegrationHead: strings.Repeat("c", 40),
+	}
+	result, err := client.ApplyIntegrationCandidate(context.Background(), "operation-integration-resolution", input)
+	if err != nil || integrations.command.OperationID != "operation-integration-resolution" ||
+		integrations.command.RecoveryOperationID != input.RecoveryOperationID ||
+		result.OperationID != "operation-integration-resolution" || result.RecoveryOperationID != input.RecoveryOperationID {
+		t.Fatalf("ApplyIntegrationCandidate(recovery) = %#v, %v; command=%#v", result, err, integrations.command)
+	}
+}
+
 func TestIntegrationApplicationBoundaryRejectsBroadenedInputAndIncompleteResult(t *testing.T) {
 	integrations := &apiIntegrations{}
 	handler, err := NewHandler(HandlerConfig{

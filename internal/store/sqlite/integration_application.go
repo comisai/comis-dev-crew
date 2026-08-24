@@ -51,6 +51,7 @@ VALUES (39, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 
 type integrationApplicationRow struct {
 	operationID           string
+	recoveryOperationID   string
 	subjectDigest         string
 	initiativeHandle      string
 	integrationTaskHandle string
@@ -215,6 +216,9 @@ func resolveIntegrationReservation(
 	transaction *sql.Tx,
 	request application.IntegrationReservationRequest,
 ) (integrationApplicationRow, error) {
+	if request.Command.RecoveryOperationID != "" {
+		return resolveIntegrationRecoveryReservation(ctx, transaction, request)
+	}
 	initiative, err := getInitiative(ctx, transaction, request.Command.InitiativeHandle)
 	if err != nil {
 		return integrationApplicationRow{}, err
@@ -330,7 +334,11 @@ func latestCandidateEvidenceRow(ctx context.Context, source queryer, taskHandle 
 func validateIntegrationReservationRequest(request application.IntegrationReservationRequest) error {
 	strategyValid := request.Strategy == application.IntegrationMerge || request.Strategy == application.IntegrationRebase ||
 		request.Strategy == application.IntegrationCherryPick
-	if domain.ValidateOperationID(request.Command.OperationID) != nil || domain.ValidateTaskHandle(request.Command.InitiativeHandle) != nil ||
+	if domain.ValidateOperationID(request.Command.OperationID) != nil ||
+		(request.Command.RecoveryOperationID != "" &&
+			(domain.ValidateOperationID(request.Command.RecoveryOperationID) != nil ||
+				request.Command.RecoveryOperationID == request.Command.OperationID)) ||
+		domain.ValidateTaskHandle(request.Command.InitiativeHandle) != nil ||
 		domain.ValidateTaskHandle(request.Command.IntegrationTaskHandle) != nil || domain.ValidateTaskHandle(request.Command.CandidateTaskHandle) != nil ||
 		request.Command.IntegrationTaskHandle == request.Command.CandidateTaskHandle || domain.ValidateGitRevision(request.Command.CandidateHead) != nil ||
 		domain.ValidateGitRevision(request.Command.ExpectedIntegrationHead) != nil || domain.ValidateTaskHandle(request.PolicyID) != nil ||

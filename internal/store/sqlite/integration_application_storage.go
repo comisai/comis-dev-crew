@@ -17,13 +17,13 @@ func insertIntegrationApplication(ctx context.Context, target execer, row integr
 		return errors.New("insert integration application: conflicts cannot be encoded")
 	}
 	const statement = `INSERT INTO integration_applications (
-        operation_id, subject_digest, initiative_handle, integration_task_handle, candidate_task_handle,
+		operation_id, recovery_operation_id, subject_digest, initiative_handle, integration_task_handle, candidate_task_handle,
         repository_id, policy_id, strategy, target_worktree, expected_target_head,
         candidate_worktree, candidate_base, candidate_head, evidence_digest, evidence_expires_at,
         status, resulting_head, conflicts_json, reserved_at, completed_at, state_version
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, '', 0)`
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, '', 0)`
 	_, err = target.ExecContext(ctx, statement,
-		row.operationID, row.subjectDigest, row.initiativeHandle, row.integrationTaskHandle, row.candidateTaskHandle,
+		row.operationID, row.recoveryOperationID, row.subjectDigest, row.initiativeHandle, row.integrationTaskHandle, row.candidateTaskHandle,
 		row.repositoryID, row.policyID, row.strategy, row.targetWorktree, row.expectedTargetHead,
 		row.candidateWorktree, row.candidateBase, row.candidateHead, row.evidenceDigest, formatTime(row.evidenceExpiresAt),
 		row.status, string(conflicts), formatTime(row.reservedAt),
@@ -54,7 +54,7 @@ func updateIntegrationApplication(ctx context.Context, target execer, row integr
 }
 
 func findIntegrationApplication(ctx context.Context, source queryer, operationID string) (integrationApplicationRow, bool, error) {
-	const query = `SELECT operation_id, subject_digest, initiative_handle, integration_task_handle,
+	const query = `SELECT operation_id, recovery_operation_id, subject_digest, initiative_handle, integration_task_handle,
         candidate_task_handle, repository_id, policy_id, strategy, target_worktree, expected_target_head,
         candidate_worktree, candidate_base, candidate_head, evidence_digest, evidence_expires_at,
         status, resulting_head, conflicts_json, reserved_at, completed_at, state_version
@@ -77,7 +77,7 @@ func findCandidateIntegrationApplication(
 	candidateTaskHandle string,
 	candidateHead string,
 ) (integrationApplicationRow, bool, error) {
-	const query = `SELECT operation_id, subject_digest, initiative_handle, integration_task_handle,
+	const query = `SELECT operation_id, recovery_operation_id, subject_digest, initiative_handle, integration_task_handle,
         candidate_task_handle, repository_id, policy_id, strategy, target_worktree, expected_target_head,
         candidate_worktree, candidate_base, candidate_head, evidence_digest, evidence_expires_at,
         status, resulting_head, conflicts_json, reserved_at, completed_at, state_version
@@ -98,11 +98,31 @@ func findCandidateIntegrationApplication(
 	return row, true, nil
 }
 
+func findIntegrationRecoveryApplication(
+	ctx context.Context,
+	source queryer,
+	recoveryOperationID string,
+) (integrationApplicationRow, bool, error) {
+	const query = `SELECT operation_id, recovery_operation_id, subject_digest, initiative_handle, integration_task_handle,
+        candidate_task_handle, repository_id, policy_id, strategy, target_worktree, expected_target_head,
+        candidate_worktree, candidate_base, candidate_head, evidence_digest, evidence_expires_at,
+        status, resulting_head, conflicts_json, reserved_at, completed_at, state_version
+        FROM integration_applications WHERE recovery_operation_id = ?`
+	row, err := scanIntegrationApplication(source.QueryRowContext(ctx, query, recoveryOperationID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return integrationApplicationRow{}, false, nil
+	}
+	if err != nil {
+		return integrationApplicationRow{}, false, fmt.Errorf("read integration recovery application: %w", err)
+	}
+	return row, true, nil
+}
+
 func scanIntegrationApplication(scanner rowScanner) (integrationApplicationRow, error) {
 	var row integrationApplicationRow
 	var evidenceExpiresAt, conflicts, reservedAt, completedAt string
 	if err := scanner.Scan(
-		&row.operationID, &row.subjectDigest, &row.initiativeHandle, &row.integrationTaskHandle,
+		&row.operationID, &row.recoveryOperationID, &row.subjectDigest, &row.initiativeHandle, &row.integrationTaskHandle,
 		&row.candidateTaskHandle, &row.repositoryID, &row.policyID, &row.strategy,
 		&row.targetWorktree, &row.expectedTargetHead, &row.candidateWorktree, &row.candidateBase,
 		&row.candidateHead, &row.evidenceDigest, &evidenceExpiresAt, &row.status,
@@ -132,7 +152,9 @@ func scanIntegrationApplication(scanner rowScanner) (integrationApplicationRow, 
 }
 
 func validIntegrationRow(row integrationApplicationRow) bool {
-	if domain.ValidateOperationID(row.operationID) != nil || domain.ValidateBriefRevisionHash(row.subjectDigest) != nil ||
+	if domain.ValidateOperationID(row.operationID) != nil ||
+		(row.recoveryOperationID != "" && (domain.ValidateOperationID(row.recoveryOperationID) != nil ||
+			row.recoveryOperationID == row.operationID)) || domain.ValidateBriefRevisionHash(row.subjectDigest) != nil ||
 		domain.ValidateTaskHandle(row.initiativeHandle) != nil || domain.ValidateTaskHandle(row.integrationTaskHandle) != nil ||
 		domain.ValidateTaskHandle(row.candidateTaskHandle) != nil || domain.ValidateRepositoryID(row.repositoryID) != nil ||
 		domain.ValidateTaskHandle(row.policyID) != nil || domain.ValidateGitRevision(row.expectedTargetHead) != nil ||
@@ -157,7 +179,8 @@ func validIntegrationRow(row integrationApplicationRow) bool {
 
 func integrationReservationFromRow(row integrationApplicationRow) application.ReservedIntegrationApplication {
 	reserved := application.ReservedIntegrationApplication{
-		OperationID: row.operationID, SubjectDigest: row.subjectDigest,
+		OperationID: row.operationID, RecoveryOperationID: row.recoveryOperationID,
+		SubjectDigest:    row.subjectDigest,
 		InitiativeHandle: row.initiativeHandle, IntegrationTaskHandle: row.integrationTaskHandle,
 		PolicyID: row.policyID, Strategy: row.strategy,
 		Target: application.IntegrationTargetReference{
@@ -180,7 +203,8 @@ func integrationReservationFromRow(row integrationApplicationRow) application.Re
 
 func integrationResultFromRow(row integrationApplicationRow) application.IntegrationApplicationResult {
 	return application.IntegrationApplicationResult{
-		OperationID: row.operationID, InitiativeHandle: row.initiativeHandle,
+		OperationID: row.operationID, RecoveryOperationID: row.recoveryOperationID,
+		InitiativeHandle:      row.initiativeHandle,
 		IntegrationTaskHandle: row.integrationTaskHandle,
 		Candidate: application.IntegrationCandidateReference{
 			TaskHandle: row.candidateTaskHandle, RepositoryID: row.repositoryID,
@@ -195,7 +219,8 @@ func integrationResultFromRow(row integrationApplicationRow) application.Integra
 }
 
 func integrationRowMatchesRequest(row integrationApplicationRow, request application.IntegrationReservationRequest) bool {
-	return row.operationID == request.Command.OperationID && row.subjectDigest == request.SubjectDigest &&
+	return row.operationID == request.Command.OperationID && row.recoveryOperationID == request.Command.RecoveryOperationID &&
+		row.subjectDigest == request.SubjectDigest &&
 		row.initiativeHandle == request.Command.InitiativeHandle && row.integrationTaskHandle == request.Command.IntegrationTaskHandle &&
 		row.candidateTaskHandle == request.Command.CandidateTaskHandle && row.policyID == request.PolicyID && row.strategy == request.Strategy &&
 		row.candidateHead == request.Command.CandidateHead && row.expectedTargetHead == request.Command.ExpectedIntegrationHead
@@ -204,6 +229,7 @@ func integrationRowMatchesRequest(row integrationApplicationRow, request applica
 func integrationRowMatchesReservation(row integrationApplicationRow, reserved application.ReservedIntegrationApplication) bool {
 	left := integrationReservationFromRow(row)
 	return left.OperationID == reserved.OperationID && left.SubjectDigest == reserved.SubjectDigest &&
+		left.RecoveryOperationID == reserved.RecoveryOperationID &&
 		left.InitiativeHandle == reserved.InitiativeHandle && left.IntegrationTaskHandle == reserved.IntegrationTaskHandle &&
 		left.PolicyID == reserved.PolicyID && left.Strategy == reserved.Strategy && left.Target == reserved.Target &&
 		left.Candidate == reserved.Candidate && left.EvidenceExpiresAt.Equal(reserved.EvidenceExpiresAt) &&

@@ -16,6 +16,7 @@ import (
 // Host paths, policy selection, and Git strategy remain service-owned.
 type ApplyIntegrationCandidateInput struct {
 	InitiativeHandle        string `json:"initiativeHandle"`
+	RecoveryOperationID     string `json:"recoveryOperationId,omitempty"`
 	IntegrationTaskHandle   string `json:"integrationTaskHandle"`
 	CandidateTaskHandle     string `json:"candidateTaskHandle"`
 	CandidateHead           string `json:"candidateHead"`
@@ -23,6 +24,7 @@ type ApplyIntegrationCandidateInput struct {
 }
 
 type applyIntegrationCandidateContract struct {
+	RecoveryOperationID     string `json:"recoveryOperationId,omitempty"`
 	IntegrationTaskHandle   string `json:"integrationTaskHandle"`
 	CandidateTaskHandle     string `json:"candidateTaskHandle"`
 	CandidateHead           string `json:"candidateHead"`
@@ -40,6 +42,7 @@ func DecodeApplyIntegrationCandidateInput(data []byte) (ApplyIntegrationCandidat
 		return ApplyIntegrationCandidateInput{}, err
 	}
 	return ApplyIntegrationCandidateInput{
+		RecoveryOperationID:   contract.RecoveryOperationID,
 		IntegrationTaskHandle: contract.IntegrationTaskHandle,
 		CandidateTaskHandle:   contract.CandidateTaskHandle, CandidateHead: contract.CandidateHead,
 		ExpectedIntegrationHead: contract.ExpectedIntegrationHead,
@@ -50,6 +53,7 @@ func DecodeApplyIntegrationCandidateInput(data []byte) (ApplyIntegrationCandidat
 type ApplyIntegrationCandidateResult struct {
 	SchemaVersion         int                             `json:"schemaVersion"`
 	OperationID           string                          `json:"operationId"`
+	RecoveryOperationID   string                          `json:"recoveryOperationId,omitempty"`
 	InitiativeHandle      string                          `json:"initiativeHandle"`
 	IntegrationTaskHandle string                          `json:"integrationTaskHandle"`
 	CandidateTaskHandle   string                          `json:"candidateTaskHandle"`
@@ -92,7 +96,8 @@ func (handler *Handler) dispatchIntegrationApplication(ctx context.Context, requ
 		), true
 	}
 	result, err := handler.integrations.ApplyCandidate(ctx, application.ApplyIntegrationCandidateCommand{
-		OperationID: request.OperationID, InitiativeHandle: input.InitiativeHandle,
+		OperationID: request.OperationID, RecoveryOperationID: input.RecoveryOperationID,
+		InitiativeHandle:      input.InitiativeHandle,
 		IntegrationTaskHandle: input.IntegrationTaskHandle, CandidateTaskHandle: input.CandidateTaskHandle,
 		CandidateHead: input.CandidateHead, ExpectedIntegrationHead: input.ExpectedIntegrationHead,
 	})
@@ -106,7 +111,7 @@ func (handler *Handler) dispatchIntegrationApplication(ctx context.Context, requ
 		), true
 	}
 	projection := ApplyIntegrationCandidateResult{
-		SchemaVersion: 1, OperationID: result.OperationID,
+		SchemaVersion: 1, OperationID: result.OperationID, RecoveryOperationID: result.RecoveryOperationID,
 		InitiativeHandle: result.InitiativeHandle, IntegrationTaskHandle: result.IntegrationTaskHandle,
 		CandidateTaskHandle: result.Candidate.TaskHandle, RepositoryID: result.Candidate.RepositoryID,
 		CandidateHead: result.Candidate.HeadRevision, EvidenceDigest: result.Candidate.EvidenceDigest,
@@ -123,7 +128,8 @@ func validIntegrationApplicationResult(
 	operationID string,
 	input ApplyIntegrationCandidateInput,
 ) bool {
-	if result.OperationID != operationID || result.InitiativeHandle != input.InitiativeHandle ||
+	if result.OperationID != operationID || result.RecoveryOperationID != input.RecoveryOperationID ||
+		result.InitiativeHandle != input.InitiativeHandle ||
 		result.IntegrationTaskHandle != input.IntegrationTaskHandle || result.Candidate.TaskHandle != input.CandidateTaskHandle ||
 		result.Candidate.HeadRevision != input.CandidateHead || result.PreviousHead != input.ExpectedIntegrationHead ||
 		domain.ValidateRepositoryID(result.Candidate.RepositoryID) != nil ||

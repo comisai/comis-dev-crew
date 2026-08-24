@@ -246,6 +246,7 @@ func (client *integrationMCPClient) ApplyIntegrationCandidate(
 	client.operationID = operationID
 	client.input = input
 	client.result.OperationID = operationID
+	client.result.RecoveryOperationID = input.RecoveryOperationID
 	if len(client.errors) == 0 {
 		return client.result, nil
 	}

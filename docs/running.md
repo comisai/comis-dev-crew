@@ -299,10 +299,11 @@ resolves policy, strategy, repository, and worktrees; the visible result contain
 only the reviewed strategy, evidence digest, applied head or bounded conflicts,
 and durable state version. An uncertain call retries the exact reserved operation,
 whose receipt-backed Git adapter either replays one known result or refuses
-ambiguity. If that call ends before reconciliation completes, a later call may
-set `recoveryOperationId` to the exact failed operation identity. It resumes the
-same reservation; changing any initiative, task, or head remains a precondition
-failure before Git.
+ambiguity. `recoveryOperationId` is reserved for a staged rebase-conflict
+resolution: it names the immutable conflicted operation while the authenticated
+call contributes a distinct operation ID. Changing any initiative, task, head,
+policy, evidence, worktree, or rebase state remains a refusal before the target
+branch moves.
 Submitting a different operation for a candidate task and head that already has
 a reserved, applied, or conflicted application is a precondition failure before
 Git. Reuse the original operation or continue from its durable receipt.
@@ -593,17 +594,25 @@ cancel print the durable per-member JSON result; they never summarize a partial
 distributed outcome as one atomic success.
 `initiative integrate` derives the initiative from the visible command and reads
 the integration-owner task, candidate task, candidate head, and expected target
-head from one strict bounded JSON contract. The contract cannot select policy,
-strategy, repository, worktree, or argv, and the command emits JSON only.
+head from one strict bounded JSON contract. A rebase-conflict resolution adds
+the exact prior `recoveryOperationId` while the command uses a new operation ID.
+The contract cannot select policy, strategy, repository, worktree, or argv, and
+the command emits JSON only.
 Apply component candidates with current accepted evidence before launching a dependency-ready
 integration owner. This lets the confined worker start from the exact applied or
 conflicted worktree instead of snapshotting an earlier Git state. Candidate
 handoff then accepts only a clean private commit that fast-forwards that exact
 server-owned integration head; divergent history remains a refusal. For a
-conflicted application, DevCrew's index already contains every non-conflicting
-candidate change. The worker edits only the recorded conflict paths, stages
-those resolutions, and commits the complete index. Committing only a conflict
-path while leaving other candidate changes staged remains dirty and is refused.
+conflicted merge or cherry-pick, DevCrew's index already contains every
+non-conflicting candidate change. The worker edits only the recorded conflict
+paths, stages those resolutions, and commits the complete index. For a rebase
+conflict, the worker stages the recorded resolutions but does not continue or
+commit the rebase itself. A separate integration operation naming the conflicted
+receipt revalidates the durable task, evidence, worktree, rebase sequencer, and
+original target branch; DevCrew then continues the fixed rebase command, advances
+that branch with compare-and-swap, and reattaches the worktree. An unresolved
+index, changed branch, missing sequencer, altered candidate, or ambiguous receipt
+preserves the worktree and refuses recovery.
 The ordering does not authorize the next action. An apply-only operator request
 ends after the durable receipt; launch-plan and terminal operations require
 separate explicit authorization.

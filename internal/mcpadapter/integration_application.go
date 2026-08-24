@@ -20,14 +20,14 @@ type ApplyIntegrationCandidateInput struct {
 	CandidateTaskHandle     string `json:"candidateTaskHandle" jsonschema:"opaque handle of one accepted component task"`
 	CandidateHead           string `json:"candidateHead" jsonschema:"exact accepted 40-character lowercase hexadecimal candidate revision"`
 	ExpectedIntegrationHead string `json:"expectedIntegrationHead" jsonschema:"exact current 40-character lowercase hexadecimal integration revision"`
-	RecoveryOperationID     string `json:"recoveryOperationId,omitempty" jsonschema:"exact failed integration operation identity to resume; omit for a new application"`
+	RecoveryOperationID     string `json:"recoveryOperationId,omitempty" jsonschema:"exact conflicted rebase application identity to resolve with this separate operation; omit for a new application"`
 }
 
 func (input ApplyIntegrationCandidateInput) local() localapi.ApplyIntegrationCandidateInput {
 	return localapi.ApplyIntegrationCandidateInput{
 		InitiativeHandle: input.InitiativeHandle, IntegrationTaskHandle: input.IntegrationTaskHandle,
 		CandidateTaskHandle: input.CandidateTaskHandle, CandidateHead: input.CandidateHead,
-		ExpectedIntegrationHead: input.ExpectedIntegrationHead,
+		ExpectedIntegrationHead: input.ExpectedIntegrationHead, RecoveryOperationID: input.RecoveryOperationID,
 	}
 }
 
@@ -42,10 +42,9 @@ func (facade *Facade) applyIntegrationCandidate(
 	}
 	operationID := string(callContext.OperationID)
 	if input.RecoveryOperationID != "" {
-		if domain.ValidateOperationID(input.RecoveryOperationID) != nil {
+		if domain.ValidateOperationID(input.RecoveryOperationID) != nil || input.RecoveryOperationID == operationID {
 			return nil, localapi.ApplyIntegrationCandidateResult{}, invalidOperationFailure()
 		}
-		operationID = input.RecoveryOperationID
 	}
 	localInput := input.local()
 	result, err := facade.client.ApplyIntegrationCandidate(ctx, operationID, localInput)
@@ -56,6 +55,7 @@ func (facade *Facade) applyIntegrationCandidate(
 		return nil, localapi.ApplyIntegrationCandidateResult{}, err
 	}
 	if result.SchemaVersion != 1 || result.OperationID != operationID ||
+		result.RecoveryOperationID != input.RecoveryOperationID ||
 		result.InitiativeHandle != input.InitiativeHandle || result.IntegrationTaskHandle != input.IntegrationTaskHandle ||
 		result.CandidateTaskHandle != input.CandidateTaskHandle || result.CandidateHead != input.CandidateHead ||
 		result.PreviousHead != input.ExpectedIntegrationHead || domain.ValidateRepositoryID(result.RepositoryID) != nil ||
