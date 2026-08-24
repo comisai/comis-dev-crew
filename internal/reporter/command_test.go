@@ -177,6 +177,20 @@ func TestRunCommand_BriefHelpAndVersionExposeNoAuthoritySelector(t *testing.T) {
 	}
 }
 
+func TestRunCommand_ReadsTaskScopedContractArtifact(t *testing.T) {
+	capability := &commandCapability{
+		artifactContent: []byte("schema: component.contract.v1\nname: payments\n"),
+	}
+	var stdout, stderr bytes.Buffer
+	exit := reporter.RunCommand(context.Background(), []string{
+		"artifact", "--handle", "contract-payments-v1",
+	}, &stdout, &stderr, reporter.CommandConfig{Capability: capability})
+	if exit != 0 || stderr.Len() != 0 || stdout.String() != string(capability.artifactContent) ||
+		capability.artifactCalls != 1 || capability.artifactHandle != "contract-payments-v1" {
+		t.Fatalf("RunCommand(artifact) = %d stdout=%q stderr=%q capability=%#v", exit, stdout.String(), stderr.String(), capability)
+	}
+}
+
 func TestRunCommand_AcknowledgesCanonicalWorkingDirectoryWithoutAuthoritySelectors(t *testing.T) {
 	capability := &commandCapability{}
 	var stdout, stderr bytes.Buffer
@@ -290,6 +304,10 @@ type commandCapability struct {
 	callOrder          int
 	reportOrder        int
 	awaitDecisionOrder int
+	artifactContent    []byte
+	artifactErr        error
+	artifactCalls      int
+	artifactHandle     string
 }
 
 func (capability *commandCapability) Brief(context.Context) (domain.WorkerBrief, error) {
@@ -317,6 +335,12 @@ func (capability *commandCapability) Acknowledge(_ context.Context, workingDirec
 	capability.acknowledgeCalls++
 	capability.workingDirectory = workingDirectory
 	return capability.acknowledgeErr
+}
+
+func (capability *commandCapability) ReadContractArtifact(_ context.Context, artifactHandle string) ([]byte, error) {
+	capability.artifactCalls++
+	capability.artifactHandle = artifactHandle
+	return append([]byte(nil), capability.artifactContent...), capability.artifactErr
 }
 
 func commandBrief() domain.WorkerBrief {
