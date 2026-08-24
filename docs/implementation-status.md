@@ -1171,11 +1171,11 @@ plus a clean tree. That rule is unchanged.
 
 What changed is that work can now land. With `merge_after_approval` and a
 separate merge credential, the three reachability questions became answerable,
-so the proof they need is built and tested: reachability from any
-remote-tracking branch including a fork remote, a merged pull request looked up
-BY HEAD BRANCH whose exact recorded head proves squash and rebase merges even
-when ancestry was rewritten, and exact commit containment in an up-to-date
-default branch. Unreadable forge truth refuses rather than
+so the proof they need is built and tested: authenticated reachability of the
+exact task branch on the configured forge repository, a merged pull request
+looked up BY HEAD BRANCH whose exact recorded head proves squash and rebase
+merges even when ancestry was rewritten, and exact commit containment in an
+up-to-date default branch. Unreadable forge truth refuses rather than
 letting a later route answer a question the earlier one never asked, and every
 refusal names the evidence gap.
 

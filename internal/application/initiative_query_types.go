@@ -73,7 +73,8 @@ type BacklogFilter struct {
 	Limit        int                     `json:"limit,omitempty"`
 }
 
-// BacklogList is the versioned bounded-request projection.
+// BacklogList is the versioned bounded-request projection. NextCursor is set
+// only when a later matching page exists.
 type BacklogList struct {
 	SchemaVersion int                  `json:"schemaVersion"`
 	CapturedAtMs  int64                `json:"capturedAtMs"`

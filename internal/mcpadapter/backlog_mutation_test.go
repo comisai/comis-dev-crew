@@ -114,11 +114,12 @@ func TestFacadeBacklogSchemasExcludeProvenanceAndHostAuthority(t *testing.T) {
 		}
 		seen++
 		semantics := inspectSchemaSemantics(t, listed.InputSchema)
+		root := semantics.objectAt(t)
 		if listed.Name == ToolAddBacklog {
-			requireSchemaFields(t, semantics,
+			requireSchemaFields(t, root,
 				"repositoryId", "shape", "requestedOutcome", "dependsOn", "priority", "readiness")
 		} else {
-			requireSchemaFields(t, semantics,
+			requireSchemaFields(t, root,
 				"backlogHandle", "baseRevision", "acceptanceCriteria", "constraints",
 				"validationProfile", "deliveryMode", "workerProfileId")
 		}

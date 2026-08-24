@@ -349,42 +349,44 @@ func listBacklogPage(
 	case filter.RepositoryID != "" && filter.Readiness != "":
 		rows, err = source.QueryContext(ctx,
 			selectPage+` WHERE handle > ? AND repository_id = ? AND readiness = ?`+pageOrder,
-			filter.AfterHandle, filter.RepositoryID, filter.Readiness, filter.Limit,
+			filter.AfterHandle, filter.RepositoryID, filter.Readiness, filter.Limit+1,
 		)
 	case filter.RepositoryID != "":
 		rows, err = source.QueryContext(ctx,
 			selectPage+` WHERE handle > ? AND repository_id = ?`+pageOrder,
-			filter.AfterHandle, filter.RepositoryID, filter.Limit,
+			filter.AfterHandle, filter.RepositoryID, filter.Limit+1,
 		)
 	case filter.Readiness != "":
 		rows, err = source.QueryContext(ctx,
 			selectPage+` WHERE handle > ? AND readiness = ?`+pageOrder,
-			filter.AfterHandle, filter.Readiness, filter.Limit,
+			filter.AfterHandle, filter.Readiness, filter.Limit+1,
 		)
 	default:
 		rows, err = source.QueryContext(ctx,
 			selectPage+` WHERE handle > ?`+pageOrder,
-			filter.AfterHandle, filter.Limit,
+			filter.AfterHandle, filter.Limit+1,
 		)
 	}
 	if err != nil {
 		return nil, "", fmt.Errorf("list backlog page: %w", err)
 	}
 	defer func() { resultErr = errors.Join(resultErr, rows.Close()) }()
-	items = make([]domain.BacklogItem, 0, filter.Limit)
-	nextCursor = filter.AfterHandle
+	items = make([]domain.BacklogItem, 0, filter.Limit+1)
 	for rows.Next() {
 		item, err := scanBacklogItem(rows)
 		if err != nil {
 			return nil, "", fmt.Errorf("list backlog page: %w", err)
 		}
 		items = append(items, item)
-		nextCursor = item.Handle
 	}
 	if err := rows.Err(); err != nil {
 		return nil, "", fmt.Errorf("list backlog page: %w", err)
 	}
-	return items, nextCursor, nil
+	if len(items) <= filter.Limit {
+		return items, "", nil
+	}
+	nextCursor = items[filter.Limit-1].Handle
+	return items[:filter.Limit], nextCursor, nil
 }
 
 func scanBacklogItem(row rowScanner) (domain.BacklogItem, error) {

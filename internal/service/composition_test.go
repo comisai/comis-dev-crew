@@ -48,6 +48,11 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 		configured.validationPollInterval != 25*time.Millisecond {
 		t.Fatalf("installed candidate validation configuration = %#v", configured)
 	}
+	landedAdapter, landedOK := configured.cleanupLanded.(*forge.GitHubAdapter)
+	deliveryAdapter, deliveryOK := configured.pullRequests.(*forge.GitHubAdapter)
+	if !landedOK || !deliveryOK || landedAdapter != deliveryAdapter {
+		t.Fatalf("installed landed evidence does not use the authenticated forge adapter")
+	}
 	adapter, err := configured.WorkerHarnesses.ResolveWorkerHarness("codex-reviewed")
 	if err != nil {
 		t.Fatalf("ResolveWorkerHarness() error = %v", err)

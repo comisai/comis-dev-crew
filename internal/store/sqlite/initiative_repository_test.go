@@ -131,7 +131,7 @@ func TestInitiativeAndBacklogQuerySnapshotsCarryOneDurableVersion(t *testing.T) 
 	items, cursor, version, err := repository.BacklogSnapshot(ctx, application.BacklogFilter{
 		Limit: application.MaximumBacklogPage,
 	})
-	if err != nil || version != 12 || cursor != backlog.Handle ||
+	if err != nil || version != 12 || cursor != "" ||
 		len(items) != 1 || items[0].Handle != backlog.Handle {
 		t.Fatalf("BacklogSnapshot() = %#v, %q, %d, %v", items, cursor, version, err)
 	}
@@ -240,12 +240,12 @@ func TestBacklogSnapshotFiltersAndPaginatesBeforeMaterializing(t *testing.T) {
 	}
 	filter.AfterHandle = cursor
 	second, cursor, _, err := store.BacklogSnapshot(ctx, filter)
-	if err != nil || len(second) != 1 || second[0].Handle != expected[16] || cursor != expected[16] {
+	if err != nil || len(second) != 1 || second[0].Handle != expected[16] || cursor != "" {
 		t.Fatalf("BacklogSnapshot(second) = %#v, cursor %q, %v", second, cursor, err)
 	}
-	filter.AfterHandle = cursor
+	filter.AfterHandle = expected[16]
 	empty, cursor, _, err := store.BacklogSnapshot(ctx, filter)
-	if err != nil || len(empty) != 0 || cursor != filter.AfterHandle {
+	if err != nil || len(empty) != 0 || cursor != "" {
 		t.Fatalf("BacklogSnapshot(empty) = %#v, cursor %q, %v", empty, cursor, err)
 	}
 	filter.Limit = application.MaximumBacklogPage + 1

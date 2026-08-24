@@ -47,8 +47,8 @@ type LandedProof struct {
 // "Landed" is proven, never assumed, and inconclusive evidence refuses. Three
 // routes can each carry the proof on their own:
 //
-//   - the head is reachable from any remote-tracking branch, a fork remote
-//     included, so an upstream-contribution pull request qualifies;
+//   - an authenticated remote ref supplied by the evidence adapter reaches the
+//     head, including a fork when that adapter owns the fork's remote truth;
 //   - a MERGED pull request, looked up by head branch, whose recorded head is
 //     exact or whose merge commit contains it — a missing local record never
 //     refuses by itself; or
@@ -104,5 +104,5 @@ func landedGap(evidence LandedEvidence) string {
 	if evidence.DefaultBranchContainsHead && !evidence.DefaultBranchUpToDate {
 		return "the default branch contains the head but was not refreshed, so containment is a claim about an old snapshot"
 	}
-	return "no remote-tracking branch reaches this head, no merged pull request was found for its head branch, and the default branch does not contain it"
+	return "no authenticated remote ref reaches this head, no merged pull request was found for its head branch, and the default branch does not contain it"
 }

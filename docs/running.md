@@ -282,7 +282,7 @@ The facade defines twenty-six tools: `prepare_task`, `prepare_initiative`,
 `explain_task`, `get_launch_plan`, `worker_profiles`, and `doctor`.
 `backlog_list` accepts optional repository and readiness filters, an
 `afterHandle` cursor, and a page `limit`; the service caps each page at sixteen
-handle-ordered records and returns the next cursor with the projection.
+handle-ordered records and returns a cursor only when another matching page exists.
 `prepare_initiative` returns the private managed-run group registration, including
 each canonical public relay identity, through the MCP result extension while
 keeping nonces and host resource paths out of

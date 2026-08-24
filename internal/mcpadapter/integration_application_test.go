@@ -61,7 +61,7 @@ func TestFacadeAppliesExactCandidateAndKeepsPolicyAndPathsPrivate(t *testing.T) 
 		}
 		found = true
 		semantics := inspectSchemaSemantics(t, listed.InputSchema)
-		requireSchemaFields(t, semantics,
+		requireSchemaFields(t, semantics.objectAt(t),
 			"initiativeHandle", "integrationTaskHandle", "candidateTaskHandle",
 			"candidateHead", "expectedIntegrationHead")
 		forbidSchemaFields(t, semantics, "strategy", "policy", "worktree", "baseRevision", "argv")

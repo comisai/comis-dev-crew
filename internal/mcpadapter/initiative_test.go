@@ -117,8 +117,14 @@ func TestFacade_PrepareInitiativeSchemaCannotSelectServiceOrHostAuthority(t *tes
 			continue
 		}
 		semantics := inspectSchemaSemantics(t, listed.InputSchema)
-		requireSchemaFields(t, semantics,
-			"baseRevisionSet", "components", "tasks", "contract", "integrationPolicyId")
+		requireSchemaFields(t, semantics.objectAt(t),
+			"titleRef", "baseRevisionSet", "components", "edges", "contractArtifacts", "integrationPolicyId")
+		requireSchemaFields(t, semantics.objectAt(t, "baseRevisionSet"), "repositoryId", "revision")
+		requireSchemaFields(t, semantics.objectAt(t, "components"),
+			"componentHandle", "repositoryId", "responsibilityRef", "tasks")
+		requireSchemaFields(t, semantics.objectAt(t, "components", "tasks"), "taskRef", "contract")
+		requireSchemaFields(t, semantics.objectAt(t, "components", "tasks", "contract"),
+			"shape", "acceptanceCriteria", "constraints", "validationProfile", "deliveryMode", "workerProfileId")
 		forbidSchemaFields(t, semantics, "serviceInstanceId", "managedRunGroupId", "registrationNonce")
 		return
 	}

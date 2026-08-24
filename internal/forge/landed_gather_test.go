@@ -68,6 +68,49 @@ func TestGatherLandedEvidenceFindsAMergedPullRequestByHeadBranch(t *testing.T) {
 	}
 }
 
+func TestGatherLandedEvidenceUsesOnlyAuthenticatedRemoteBranchTruth(t *testing.T) {
+	head := strings.Repeat("b", 40)
+	other := strings.Repeat("c", 40)
+	for _, test := range []struct {
+		name       string
+		remoteHead string
+		wantRef    bool
+	}{
+		{name: "exact", remoteHead: head, wantRef: true},
+		{name: "different", remoteHead: other, wantRef: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			adapter, closeServer := landedAdapter(t, func(response http.ResponseWriter, request *http.Request) {
+				response.Header().Set("Content-Type", "application/json")
+				switch request.Method + " " + request.URL.Path {
+				case "GET /repos/comisai/fixture/git/ref/heads/devcrew/task-fixture":
+					_, _ = response.Write([]byte(`{"ref":"refs/heads/devcrew/task-fixture","object":{"type":"commit","sha":"` + test.remoteHead + `"}}`))
+				case "GET /repos/comisai/fixture/pulls":
+					_, _ = response.Write([]byte(`[]`))
+				case "GET /repos/comisai/fixture/compare/main..." + head:
+					_, _ = response.Write([]byte(`{"status":"diverged"}`))
+				default:
+					http.NotFound(response, request)
+				}
+			})
+			defer closeServer()
+
+			truth, err := adapter.GatherLandedEvidence(context.Background(), application.LandedEvidenceRequest{
+				RepositoryID: "fixture-repository", Branch: "devcrew/task-fixture", HeadRevision: head,
+			})
+			if err != nil || !truth.Available {
+				t.Fatalf("GatherLandedEvidence() = %+v, %v", truth, err)
+			}
+			if got := len(truth.ReachableFromRemoteRefs) != 0; got != test.wantRef {
+				t.Fatalf("remote reachability = %#v, want proof %t", truth.ReachableFromRemoteRefs, test.wantRef)
+			}
+			if proof := ProveLandedFromForge(truth); proof.Landed != test.wantRef {
+				t.Fatalf("proof = %+v, want landed %t", proof, test.wantRef)
+			}
+		})
+	}
+}
+
 func TestGatherLandedEvidenceProvesARewrittenMergeFromTheExactPullHead(t *testing.T) {
 	head := strings.Repeat("b", 40)
 	merge := strings.Repeat("c", 40)

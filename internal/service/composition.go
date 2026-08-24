@@ -264,7 +264,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 		config.mergeMethod = application.PullRequestMergeMethod(forgeConfig.MergeMethod)
 		config.mergeOperatorEnabled = true
 	}
-	config.cleanupLanded = landedEvidenceComposition{remotes: registry, forge: pullRequests}
+	config.cleanupLanded = pullRequests
 	if config.FixtureComposition != nil {
 		config.fixtureCandidatePreparer = registry
 	}

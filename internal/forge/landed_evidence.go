@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -58,6 +59,16 @@ type githubComparison struct {
 	Status string `json:"status"`
 }
 
+type githubReference struct {
+	Ref    string                `json:"ref"`
+	Object githubReferenceObject `json:"object"`
+}
+
+type githubReferenceObject struct {
+	Type string `json:"type"`
+	SHA  string `json:"sha"`
+}
+
 // containedStatuses are the comparison results that mean "already contains".
 // `behind` means the base is behind the head's ancestor set — the content is in
 // — and `identical` is the same thing with nothing left over. `ahead` and
@@ -77,8 +88,13 @@ func (adapter *GitHubAdapter) GatherLandedEvidence(
 	ctx context.Context,
 	request application.LandedEvidenceRequest,
 ) (application.LandedEvidenceTruth, error) {
-	if adapter == nil || request.RepositoryID != adapter.config.RepositoryIdentity {
-		return application.LandedEvidenceTruth{}, errors.New("gather landed evidence: repository identity differs")
+	if adapter == nil || ctx == nil || request.RepositoryID != adapter.config.RepositoryIdentity ||
+		!branchPattern.MatchString(request.Branch) || strings.Contains(request.Branch, "..") ||
+		!revisionPattern.MatchString(request.HeadRevision) {
+		return application.LandedEvidenceTruth{}, errors.New("gather landed evidence: request identity differs")
+	}
+	if err := ctx.Err(); err != nil {
+		return application.LandedEvidenceTruth{}, err
 	}
 	credential, err := adapter.config.ReadCredentials.Resolve(ctx)
 	if err != nil || !validReadCredential(credential) {
@@ -86,6 +102,15 @@ func (adapter *GitHubAdapter) GatherLandedEvidence(
 	}
 
 	truth := application.LandedEvidenceTruth{WorkHead: request.HeadRevision}
+	var reference githubReference
+	if err := adapter.requestJSON(ctx, credential.Secret, http.MethodGet,
+		adapter.repositoryPath("git", "ref", "heads", request.Branch), nil, nil, &reference); err == nil {
+		truth.Available = true
+		if reference.Ref == "refs/heads/"+request.Branch && reference.Object.Type == "commit" &&
+			reference.Object.SHA == request.HeadRevision {
+			truth.ReachableFromRemoteRefs = []string{"github/" + request.Branch}
+		}
+	}
 
 	// The pull request is looked up BY HEAD BRANCH across every state. A record
 	// that was never written, or written and lost, must not make landed work
