@@ -86,6 +86,21 @@ func TestRegistry_ReconcilesInterruptedRebaseConflictBeforeReceipt(t *testing.T)
 		"rebase", "--no-autostash", "--no-stat", "--onto", targetHead, request.Candidate.BaseRevision)
 
 	restarted := newLifecycleRegistry(t, fixture.repository)
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"update-ref", targetRef, candidateHead, targetHead)
+	if _, err := restarted.ApplyIntegrationCandidate(context.Background(), request); err == nil {
+		t.Fatal("ApplyIntegrationCandidate(conflict with moved target) error = nil")
+	}
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"update-ref", targetRef, targetHead, candidateHead)
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"update-ref", "ORIG_HEAD", targetHead, candidateHead)
+	if _, err := restarted.ApplyIntegrationCandidate(context.Background(), request); err == nil {
+		t.Fatal("ApplyIntegrationCandidate(conflict with changed origin) error = nil")
+	}
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"update-ref", "ORIG_HEAD", candidateHead, targetHead)
+
 	result, err := restarted.ApplyIntegrationCandidate(context.Background(), request)
 	if err != nil || result.Outcome != application.IntegrationConflicted ||
 		result.PreviousHead != targetHead || !reflect.DeepEqual(result.ConflictPaths, []string{"fixture.txt"}) {
@@ -94,6 +109,76 @@ func TestRegistry_ReconcilesInterruptedRebaseConflictBeforeReceipt(t *testing.T)
 	replayed, err := restarted.ApplyIntegrationCandidate(context.Background(), request)
 	if err != nil || !reflect.DeepEqual(replayed, result) {
 		t.Fatalf("ApplyIntegrationCandidate(interrupted conflict replay) = %#v, %v", replayed, err)
+	}
+}
+
+func TestRegistry_ReconcilesCompletedRebaseBeforeConflictReceipt(t *testing.T) {
+	fixture := newIntegrationFixture(t)
+	candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "fixture.txt", "candidate\n")
+	targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "fixture.txt", "integration\n")
+	request := fixture.request("integration-rebase-completed-before-receipt", application.IntegrationRebase, candidateHead, targetHead)
+	targetRef := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "symbolic-ref", "HEAD")
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"symbolic-ref", integrationReceiptRefForTest("target", request), targetRef)
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"checkout", "--detach", "--no-guess", candidateHead)
+	runIntegrationGitExpectFailure(t, fixture.repository.gitExecutable,
+		"--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
+		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
+		"rebase", "--no-autostash", "--no-stat", "--onto", targetHead, request.Candidate.BaseRevision)
+	if err := os.WriteFile(filepath.Join(fixture.target.CanonicalPath, "fixture.txt"), []byte("resolved\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"add", "--", "fixture.txt")
+	runGit(t, fixture.repository.gitExecutable,
+		"--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", "-c", "core.editor=true",
+		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
+		"rebase", "--continue")
+	rebasedHead := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "rev-parse", "HEAD")
+
+	restarted := newLifecycleRegistry(t, fixture.repository)
+	dirtyPath := filepath.Join(fixture.target.CanonicalPath, "untracked.txt")
+	if err := os.WriteFile(dirtyPath, []byte("untracked\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restarted.ApplyIntegrationCandidate(context.Background(), request); err == nil {
+		t.Fatal("ApplyIntegrationCandidate(dirty completed rebase) error = nil")
+	}
+	if err := os.Remove(dirtyPath); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"update-ref", targetRef, candidateHead, targetHead)
+	if _, err := restarted.ApplyIntegrationCandidate(context.Background(), request); err == nil {
+		t.Fatal("ApplyIntegrationCandidate(moved target before reconciliation) error = nil")
+	}
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"update-ref", targetRef, targetHead, candidateHead)
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"update-ref", "refs/tags/invalid-recovery-attachment", rebasedHead)
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"symbolic-ref", "HEAD", "refs/tags/invalid-recovery-attachment")
+	if _, err := restarted.ApplyIntegrationCandidate(context.Background(), request); err == nil {
+		t.Fatal("ApplyIntegrationCandidate(invalid recovery attachment) error = nil")
+	}
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"symbolic-ref", "HEAD", "refs/heads/missing-recovery-attachment")
+	if _, err := restarted.ApplyIntegrationCandidate(context.Background(), request); err == nil {
+		t.Fatal("ApplyIntegrationCandidate(missing recovery head) error = nil")
+	}
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"checkout", "--detach", "--no-guess", rebasedHead)
+
+	result, err := restarted.ApplyIntegrationCandidate(context.Background(), request)
+	if err != nil || result.Outcome != application.IntegrationApplied || result.PreviousHead != targetHead ||
+		result.ResultingHead == "" || result.ResultingHead == targetHead {
+		t.Fatalf("ApplyIntegrationCandidate(completed before receipt) = %#v, %v", result, err)
+	}
+	if branch := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "symbolic-ref", "HEAD"); branch != targetRef {
+		t.Fatalf("reconciled target ref = %q, want %q", branch, targetRef)
 	}
 }
 
