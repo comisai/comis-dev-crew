@@ -30,3 +30,34 @@ func TestInitiativeLaunchAuthorizationDoesNotClaimStandaloneTasks(t *testing.T) 
 		t.Fatalf("authorizeInitiativeTaskStart(standalone) error = %v", err)
 	}
 }
+
+func TestInitiativeLaunchAuthorizationDoesNotReadHistoricalArtifactBodies(t *testing.T) {
+	ctx := context.Background()
+	store, _, activation := preparedInitiativeActivationStore(t)
+	active := commitActiveInitiativeForTest(t, ctx, store, activation)
+	historical := preparedContractArtifact(
+		active.Initiative, "artifact-historical-api", activation.Members[0].ExternalRunRef,
+		domain.ArtifactAPISchema, "application/json", []byte(`{"version":1}`),
+	)
+	if err := insertInitiativeContractArtifact(ctx, store.db, historical); err != nil {
+		t.Fatalf("insert historical contract artifact: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE initiative_contract_artifacts
+		SET content = X'00' WHERE initiative_handle = ? AND artifact_handle = ?`,
+		active.Initiative.Handle, historical.Artifact.ArtifactHandle,
+	); err != nil {
+		t.Fatalf("corrupt irrelevant historical artifact body: %v", err)
+	}
+	task, err := store.GetTask(ctx, activation.Members[0].ExternalRunRef)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx() error = %v", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	if err := authorizeInitiativeTaskStart(ctx, transaction, task, initiativeTestSchedulingLimits(2)); err != nil {
+		t.Fatalf("authorizeInitiativeTaskStart(with corrupt historical body) error = %v", err)
+	}
+}
