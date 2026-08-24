@@ -32,6 +32,9 @@ func authorizeInitiativeTaskStart(
 	if containing.State != domain.InitiativeActive {
 		return fmt.Errorf("authorize initiative task start: initiative is not active: %w", application.ErrPrecondition)
 	}
+	if err := refreshInitiativeLaunchFacts(ctx, transaction, containing); err != nil {
+		return fmt.Errorf("authorize initiative task start facts: %w", err)
+	}
 	usage, err := initiativeSchedulingUsage(ctx, transaction)
 	if err != nil {
 		return fmt.Errorf("authorize initiative task start capacity: %w", err)
@@ -42,7 +45,21 @@ func authorizeInitiativeTaskStart(
 	if usage.Host >= limits.MaxConcurrentTasks {
 		return fmt.Errorf("authorize initiative task start: %s: %w", application.ScheduleResourceQueued, application.ErrPrecondition)
 	}
-	launchable, reason, err := initiativeSchedulingFrontier(ctx, transaction, task, containing, *limits, usage)
+	_, reason, err := initiativeSchedulingCandidates(ctx, transaction, containing, task.Handle, *limits, usage)
+	if err != nil {
+		return fmt.Errorf("authorize initiative task start decision: %w", err)
+	}
+	targetFact, structurallyLaunchable, err := initiativeLaunchFactForTask(ctx, transaction, task)
+	if err != nil {
+		return fmt.Errorf("authorize initiative task start target fact: %w", err)
+	}
+	if structurallyLaunchable {
+		if targetFact.initiativeHandle != containing.Handle {
+			return errors.New("authorize initiative task start: launch fact initiative differs")
+		}
+		reason = application.ScheduleResourceQueued
+	}
+	launchable, reason, err := initiativeSchedulingFrontier(ctx, transaction, task, reason, *limits, usage)
 	if err != nil {
 		return fmt.Errorf("authorize initiative task start fleet: %w", err)
 	}
@@ -67,66 +84,43 @@ func initiativeSchedulingFrontier(
 	ctx context.Context,
 	source queryer,
 	target domain.Task,
-	containing domain.DevelopmentInitiative,
+	targetReason application.InitiativeScheduleReason,
 	limits application.InitiativeSchedulingLimits,
 	usage application.InitiativeSchedulingUsage,
 ) (bool, application.InitiativeScheduleReason, error) {
-	targetReason := application.InitiativeScheduleReason("")
 	selected := 0
 	available := limits.MaxConcurrentTasks - usage.Host
 	for round := 0; round < domain.MaximumInitiativeMembers; round++ {
-		cursorAt, cursorHandle := "", ""
-		eligible := 0
+		cursorAt, cursorInitiative, cursorTask := "", "", ""
 		for {
-			page, err := initiativeSchedulingPage(ctx, source, cursorAt, cursorHandle, initiativeSchedulingPageSize)
+			page, err := initiativeLaunchFactPage(
+				ctx, source, round, cursorAt, cursorInitiative, cursorTask,
+				limits, usage, initiativeSchedulingPageSize,
+			)
 			if err != nil {
 				return false, "", err
 			}
 			if len(page) == 0 {
 				break
 			}
-			for _, item := range page {
-				initiative, err := getInitiative(ctx, source, item.handle)
-				if err != nil {
-					return false, "", err
+			for _, fact := range page {
+				if usage.Repositories[fact.repositoryID] >= limits.MaxConcurrentTasksPerRepository ||
+					usage.WorkerProfiles[fact.workerProfileID] >= limits.WorkerProfileLimits[fact.workerProfileID] {
+					continue
 				}
-				candidates, reason, err := initiativeSchedulingCandidates(
-					ctx, source, initiative, target.Handle, limits, usage,
-				)
-				if err != nil {
-					return false, "", err
+				usage.Host++
+				usage.Repositories[fact.repositoryID]++
+				usage.WorkerProfiles[fact.workerProfileID]++
+				selected++
+				if fact.taskHandle == target.Handle {
+					return true, application.ScheduleResourceQueued, nil
 				}
-				if initiative.Handle == containing.Handle {
-					targetReason = reason
+				if selected == available {
+					return false, application.ScheduleResourceQueued, nil
 				}
-				for _, candidate := range candidates {
-					if candidate.round != round {
-						continue
-					}
-					if usage.Repositories[candidate.task.RepositoryID] >= limits.MaxConcurrentTasksPerRepository ||
-						usage.WorkerProfiles[candidate.task.WorkerProfileID] >= limits.WorkerProfileLimits[candidate.task.WorkerProfileID] {
-						if candidate.task.Handle == target.Handle {
-							return false, application.ScheduleResourceQueued, nil
-						}
-						continue
-					}
-					eligible++
-					if eligible > maximumInitiativeSchedulingFrontier {
-						return false, application.ScheduleResourceQueued, nil
-					}
-					usage.Host++
-					usage.Repositories[candidate.task.RepositoryID]++
-					usage.WorkerProfiles[candidate.task.WorkerProfileID]++
-					selected++
-					if candidate.task.Handle == target.Handle {
-						return true, application.ScheduleResourceQueued, nil
-					}
-					if selected == available {
-						return false, application.ScheduleResourceQueued, nil
-					}
-				}
-				cursorAt, cursorHandle = item.createdAt, item.handle
 			}
+			last := page[len(page)-1]
+			cursorAt, cursorInitiative, cursorTask = last.createdAt, last.initiativeHandle, last.taskHandle
 			if len(page) < initiativeSchedulingPageSize {
 				break
 			}

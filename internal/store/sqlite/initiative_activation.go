@@ -359,5 +359,5 @@ func updateInitiativeRecord(
 	if err != nil || rows != 1 {
 		return errors.New("update initiative record: exact initiative was not updated")
 	}
-	return nil
+	return refreshInitiativeLaunchFacts(ctx, target, initiative)
 }

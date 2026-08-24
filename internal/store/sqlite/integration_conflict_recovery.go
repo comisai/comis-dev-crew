@@ -163,10 +163,6 @@ func integrationOwnerWritableForRecovery(
 	initiative domain.DevelopmentInitiative,
 	integrationTask domain.Task,
 ) (bool, error) {
-	if integrationTask.State == domain.TaskWorking || integrationTask.State == domain.TaskAwaitingDecision ||
-		integrationTask.State == domain.TaskBlocked {
-		return true, nil
-	}
 	if integrationTask.State != domain.TaskReady {
 		return false, nil
 	}

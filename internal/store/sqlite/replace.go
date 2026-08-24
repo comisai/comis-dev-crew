@@ -194,7 +194,7 @@ func updateTaskBriefAndWorker(ctx context.Context, transaction *sql.Tx, task dom
 	if err != nil || rows != 1 {
 		return errors.New("update task brief and worker: exact task was not updated")
 	}
-	return nil
+	return refreshInitiativeLaunchFactsForTask(ctx, transaction, task.Handle)
 }
 
 // recordTaskReplacement writes the durable trail of one swap.

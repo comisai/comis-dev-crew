@@ -45,7 +45,7 @@ func refreshInitiativeAggregate(
 		return fmt.Errorf("refresh initiative aggregate state: %w", err)
 	}
 	if state == containing.State {
-		return nil
+		return refreshInitiativeLaunchFacts(ctx, transaction, containing)
 	}
 	if stateVersion < containing.StateVersion || at.Location() != time.UTC || at.Before(containing.UpdatedAt) {
 		return errors.New("refresh initiative aggregate: member version or time precedes the initiative")

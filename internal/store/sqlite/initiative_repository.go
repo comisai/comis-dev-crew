@@ -68,7 +68,7 @@ func (store *Store) CreateInitiative(ctx context.Context, initiative domain.Deve
 	return nil
 }
 
-func insertInitiative(ctx context.Context, target execer, initiative domain.DevelopmentInitiative) error {
+func insertInitiative(ctx context.Context, target queryExecer, initiative domain.DevelopmentInitiative) error {
 	if err := initiative.Validate(); err != nil {
 		return err
 	}
@@ -105,7 +105,10 @@ func insertInitiative(ctx context.Context, target execer, initiative domain.Deve
 	if err != nil {
 		return err
 	}
-	return insertInitiativeMembership(ctx, target, initiative)
+	if err := insertInitiativeMembership(ctx, target, initiative); err != nil {
+		return err
+	}
+	return refreshInitiativeLaunchFactsIfComplete(ctx, target, initiative)
 }
 
 // GetInitiative returns one validated initiative by its opaque handle.
