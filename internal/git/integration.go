@@ -177,13 +177,17 @@ func (registry *Registry) runRebaseIntegration(ctx context.Context, request appl
 	if err := registry.recordIntegrationTargetRef(ctx, request, targetRef); err != nil {
 		return err
 	}
+	if err := registry.recordIntegrationRebaseProof(ctx, request); err != nil {
+		return err
+	}
 	configuration := []string{
 		"--no-optional-locks", "-C", request.Target.WorktreePath,
 		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
 		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
 	}
+	proofRef := integrationRebaseProofRef(request)
 	if _, err := runGitBytes(ctx, registry.gitExecutable, append(configuration,
-		"checkout", "--detach", "--no-guess", request.Candidate.HeadRevision)...); err != nil {
+		"checkout", "--no-guess", strings.TrimPrefix(proofRef, "refs/heads/"))...); err != nil {
 		return err
 	}
 	if _, err := runGitBytes(ctx, registry.gitExecutable, append(configuration,
@@ -191,10 +195,9 @@ func (registry *Registry) runRebaseIntegration(ctx context.Context, request appl
 		request.Candidate.BaseRevision)...); err != nil {
 		return err
 	}
-	resultingHead, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-		"rev-parse", "--verify", "HEAD^{commit}")
-	if err != nil || !gitRevisionPattern.MatchString(resultingHead) || resultingHead == request.Target.ExpectedHead {
-		return errors.New("apply integration candidate: rebased head is invalid")
+	resultingHead, err := registry.validRecoveredRebaseHead(ctx, request)
+	if err != nil {
+		return err
 	}
 	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
 		"update-ref", targetRef, resultingHead, request.Target.ExpectedHead); err != nil {
@@ -203,6 +206,9 @@ func (registry *Registry) runRebaseIntegration(ctx context.Context, request appl
 	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
 		"symbolic-ref", "HEAD", targetRef); err != nil {
 		return errors.New("apply integration candidate: rebased target could not be reattached")
+	}
+	if err := registry.retireIntegrationRebaseProof(ctx, request, resultingHead); err != nil {
+		return err
 	}
 	return nil
 }
@@ -232,6 +238,16 @@ func integrationReceiptRef(outcome string, request application.IntegrationAdapte
 	canonical, _ := json.Marshal(request)
 	digest := sha256.Sum256(canonical)
 	return fmt.Sprintf("refs/comis/integration/%s/%x", outcome, digest)
+}
+
+func integrationRebaseProofRef(request application.IntegrationAdapterRequest) string {
+	if request.RecoveryOperationID != "" {
+		request.OperationID = request.RecoveryOperationID
+		request.RecoveryOperationID = ""
+	}
+	canonical, _ := json.Marshal(request)
+	digest := sha256.Sum256(canonical)
+	return fmt.Sprintf("refs/heads/comis-integration-proof-%x", digest)
 }
 
 func (registry *Registry) createIntegrationReceipt(
@@ -398,7 +414,15 @@ func (registry *Registry) integrationReceiptHead(
 	repository Repository,
 	reference string,
 ) (string, bool, error) {
-	receipt, err := registry.inspectIntegrationReceipt(ctx, repository.PrimaryCheckout, reference)
+	return registry.integrationReceiptHeadAtPath(ctx, repository.PrimaryCheckout, reference)
+}
+
+func (registry *Registry) integrationReceiptHeadAtPath(
+	ctx context.Context,
+	worktreePath string,
+	reference string,
+) (string, bool, error) {
+	receipt, err := registry.inspectIntegrationReceipt(ctx, worktreePath, reference)
 	if err != nil {
 		return "", false, err
 	}
@@ -408,7 +432,7 @@ func (registry *Registry) integrationReceiptHead(
 	case integrationReceiptSymbolic:
 		return "", false, errors.New("apply integration candidate: receipt is symbolic")
 	case integrationReceiptDirect:
-		objectType, typeErr := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", repository.PrimaryCheckout,
+		objectType, typeErr := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
 			"cat-file", "-t", receipt.value)
 		if typeErr != nil || objectType != "commit" {
 			return "", false, errors.New("apply integration candidate: receipt is invalid")

@@ -79,7 +79,9 @@ func TestRegistry_ReconcilesInterruptedRebaseConflictBeforeReceipt(t *testing.T)
 	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
 		"symbolic-ref", integrationReceiptRefForTest("target", request), targetRef)
 	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
-		"checkout", "--detach", "--no-guess", candidateHead)
+		"update-ref", integrationRebaseProofRefForTest(request), candidateHead)
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"checkout", "--no-guess", strings.TrimPrefix(integrationRebaseProofRefForTest(request), "refs/heads/"))
 	runIntegrationGitExpectFailure(t, fixture.repository.gitExecutable,
 		"--no-optional-locks", "-C", fixture.target.CanonicalPath,
 		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
@@ -122,7 +124,9 @@ func TestRegistry_ReconcilesCompletedRebaseBeforeConflictReceipt(t *testing.T) {
 	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
 		"symbolic-ref", integrationReceiptRefForTest("target", request), targetRef)
 	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
-		"checkout", "--detach", "--no-guess", candidateHead)
+		"update-ref", integrationRebaseProofRefForTest(request), candidateHead)
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"checkout", "--no-guess", strings.TrimPrefix(integrationRebaseProofRefForTest(request), "refs/heads/"))
 	runIntegrationGitExpectFailure(t, fixture.repository.gitExecutable,
 		"--no-optional-locks", "-C", fixture.target.CanonicalPath,
 		"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
@@ -181,6 +185,12 @@ func TestRegistry_ReconcilesCompletedRebaseBeforeConflictReceipt(t *testing.T) {
 	if branch := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "symbolic-ref", "HEAD"); branch != targetRef {
 		t.Fatalf("reconciled target ref = %q, want %q", branch, targetRef)
 	}
+	if head := integrationGitOutput(t, fixture, fixture.repository.primary, "rev-parse",
+		integrationReceiptRefForTest("rebased", request)); head != result.ResultingHead {
+		t.Fatalf("rebased receipt = %q, want %q", head, result.ResultingHead)
+	}
+	runIntegrationGitExpectFailure(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C",
+		fixture.repository.primary, "show-ref", "--verify", "--quiet", integrationRebaseProofRefForTest(request))
 }
 
 func TestRegistry_ReconcilesCompletedRecoveryBeforeRebasedReceipt(t *testing.T) {
@@ -214,6 +224,12 @@ func TestRegistry_ReconcilesCompletedRecoveryBeforeRebasedReceipt(t *testing.T) 
 	if branch := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "symbolic-ref", "--short", "HEAD"); branch != fixture.target.Branch {
 		t.Fatalf("reconciled target branch = %q, want %q", branch, fixture.target.Branch)
 	}
+	if head := integrationGitOutput(t, fixture, fixture.repository.primary, "rev-parse",
+		integrationReceiptRefForTest("rebased", recovery)); head != result.ResultingHead {
+		t.Fatalf("recovery rebased receipt = %q, want %q", head, result.ResultingHead)
+	}
+	runIntegrationGitExpectFailure(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C",
+		fixture.repository.primary, "show-ref", "--verify", "--quiet", integrationRebaseProofRefForTest(request))
 }
 
 func TestRegistry_RebaseRecoveryRefusesUnresolvedOrChangedTarget(t *testing.T) {
@@ -348,36 +364,49 @@ func TestRegistry_RejectsDanglingOutcomeReceiptBeforeMutation(t *testing.T) {
 }
 
 func TestRegistry_RefusesCleanPartialRebaseCompletion(t *testing.T) {
-	for _, recovery := range []bool{false, true} {
-		name := "original operation"
-		if recovery {
-			name = "recovery operation"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		recovery bool
+		quit     bool
+	}{
+		{name: "active original operation"},
+		{name: "active recovery operation", recovery: true},
+		{name: "quit original operation", quit: true},
+		{name: "quit recovery operation", recovery: true, quit: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			fixture := newIntegrationFixture(t)
 			commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "candidate-one.txt", "one\n")
 			candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "candidate-two.txt", "two\n")
 			targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "target.txt", "target\n")
-			request := fixture.request("integration-clean-partial-rebase", application.IntegrationRebase, candidateHead, targetHead)
+			request := fixture.request("integration-clean-partial-"+strings.ReplaceAll(test.name, " ", "-"),
+				application.IntegrationRebase, candidateHead, targetHead)
 			targetRef := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "symbolic-ref", "HEAD")
 			runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
 				"symbolic-ref", integrationReceiptRefForTest("target", request), targetRef)
-			if recovery {
+			runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+				"update-ref", integrationRebaseProofRefForTest(request), candidateHead)
+			if test.recovery {
 				runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.repository.primary,
 					"update-ref", integrationReceiptRefForTest("conflicted", request), targetHead)
 			}
 			runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
-				"checkout", "--detach", "--no-guess", candidateHead)
+				"checkout", "--no-guess", strings.TrimPrefix(integrationRebaseProofRefForTest(request), "refs/heads/"))
 			runIntegrationGitExpectFailure(t, fixture.repository.gitExecutable,
 				"--no-optional-locks", "-C", fixture.target.CanonicalPath,
 				"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
 				"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
-				"rebase", "--no-autostash", "--no-stat", "--exec=false", "--onto", targetHead, request.Candidate.BaseRevision)
+				"rebase", "--no-autostash", "--no-stat", "--exec=false",
+				"--onto", targetHead, request.Candidate.BaseRevision)
 			if _, err := os.Stat(filepath.Join(fixture.target.CanonicalPath, "candidate-two.txt")); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("pending candidate content exists: %v", err)
 			}
+			if test.quit {
+				runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+					"rebase", "--quit")
+			}
 			attempt := request
-			if recovery {
+			if test.recovery {
 				attempt.OperationID = "integration-clean-partial-rebase-recovery"
 				attempt.RecoveryOperationID = request.OperationID
 			}
@@ -467,6 +496,16 @@ func integrationReceiptRefForTest(outcome string, request application.Integratio
 	canonical, _ := json.Marshal(request)
 	digest := sha256.Sum256(canonical)
 	return fmt.Sprintf("refs/comis/integration/%s/%x", outcome, digest)
+}
+
+func integrationRebaseProofRefForTest(request application.IntegrationAdapterRequest) string {
+	if request.RecoveryOperationID != "" {
+		request.OperationID = request.RecoveryOperationID
+		request.RecoveryOperationID = ""
+	}
+	canonical, _ := json.Marshal(request)
+	digest := sha256.Sum256(canonical)
+	return fmt.Sprintf("refs/heads/comis-integration-proof-%x", digest)
 }
 
 func lockIntegrationReceiptForTest(t *testing.T, fixture integrationFixture, receipt string) {

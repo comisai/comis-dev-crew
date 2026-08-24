@@ -60,9 +60,6 @@ func (registry *Registry) resumeRebaseIntegration(
 		return registry.finalizeRecoveredRebase(ctx, request, repository, targetRef, resultingHead)
 	}
 	if resultingHead, completedErr := registry.completedRebaseContinuation(ctx, request, targetRef); completedErr == nil {
-		if err := registry.createIntegrationReceipt(ctx, repository, rebasedRef, resultingHead); err != nil {
-			return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: rebased head receipt could not be recorded")
-		}
 		return registry.finalizeRecoveredRebase(ctx, request, repository, targetRef, resultingHead)
 	}
 	conflicts, err := registry.validateRecoverableRebase(ctx, request, targetRef)
@@ -88,10 +85,29 @@ func (registry *Registry) resumeRebaseIntegration(
 	if err != nil {
 		return application.IntegrationAdapterResult{}, err
 	}
-	if err := registry.createIntegrationReceipt(ctx, repository, rebasedRef, resultingHead); err != nil {
-		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: rebased head receipt could not be recorded")
-	}
 	return registry.finalizeRecoveredRebase(ctx, request, repository, targetRef, resultingHead)
+}
+
+func (registry *Registry) recordIntegrationRebaseProof(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+) error {
+	proofRef := integrationRebaseProofRef(request)
+	proofHead, found, err := registry.integrationReceiptHeadAtPath(ctx, request.Target.WorktreePath, proofRef)
+	if err != nil {
+		return errors.New("apply integration candidate: rebase completion proof is unavailable")
+	}
+	if found {
+		if proofHead != request.Candidate.HeadRevision {
+			return errors.New("apply integration candidate: rebase completion proof differs")
+		}
+		return nil
+	}
+	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"update-ref", proofRef, request.Candidate.HeadRevision, integrationZeroRevision); err != nil {
+		return errors.New("apply integration candidate: rebase completion proof could not be recorded")
+	}
+	return nil
 }
 
 func (registry *Registry) integrationTargetRef(
@@ -175,13 +191,14 @@ func (registry *Registry) reconcileInterruptedRebase(
 	if err := registry.validateRebaseOrigin(ctx, request); err != nil {
 		return application.IntegrationAdapterResult{}, true, err
 	}
+	proofRef := integrationRebaseProofRef(request)
 	resultingHead, err := registry.validRecoveredRebaseHead(ctx, request)
 	if err != nil {
 		return application.IntegrationAdapterResult{}, true, err
 	}
 	branchHead, err := registry.integrationBranchHead(ctx, request.Target.WorktreePath, targetRef)
 	if err != nil || (branchHead != request.Target.ExpectedHead && branchHead != resultingHead) ||
-		(attached && (headRef != targetRef || branchHead != resultingHead)) {
+		(attached && headRef != proofRef && (headRef != targetRef || branchHead != resultingHead)) {
 		return application.IntegrationAdapterResult{}, true, errors.New("apply integration candidate: interrupted rebase posture differs")
 	}
 	result, err := registry.finalizeRecoveredRebase(ctx, request, repository, targetRef, resultingHead)
@@ -196,8 +213,9 @@ func (registry *Registry) completedRebaseContinuation(
 	if err := registry.validateRebaseOrigin(ctx, request); err != nil {
 		return "", err
 	}
-	if _, attached, err := registry.integrationHeadRef(ctx, request.Target.WorktreePath); err != nil || attached {
-		return "", errors.New("apply integration candidate: completed rebase continuation is not detached")
+	headRef, attached, err := registry.integrationHeadRef(ctx, request.Target.WorktreePath)
+	if err != nil || (attached && headRef != integrationRebaseProofRef(request)) {
+		return "", errors.New("apply integration candidate: completed rebase continuation attachment differs")
 	}
 	branchHead, err := registry.integrationBranchHead(ctx, request.Target.WorktreePath, targetRef)
 	if err != nil || branchHead != request.Target.ExpectedHead {
@@ -300,7 +318,65 @@ func (registry *Registry) validRecoveredRebaseHead(
 	if err != nil || !targetContains {
 		return "", errors.New("apply integration candidate: recovered rebase omits target history")
 	}
+	if err := registry.promoteCompletedRebaseProof(ctx, request, resultingHead); err != nil {
+		return "", err
+	}
 	return resultingHead, nil
+}
+
+func (registry *Registry) promoteCompletedRebaseProof(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+	resultingHead string,
+) error {
+	rebasedRef := integrationReceiptRef("rebased", request)
+	rebasedHead, rebasedFound, err := registry.integrationReceiptHeadAtPath(
+		ctx, request.Target.WorktreePath, rebasedRef,
+	)
+	if err != nil {
+		return errors.New("apply integration candidate: rebased head receipt is unavailable")
+	}
+	proofRef := integrationRebaseProofRef(request)
+	proofHead, proofFound, err := registry.integrationReceiptHeadAtPath(
+		ctx, request.Target.WorktreePath, proofRef,
+	)
+	if err != nil {
+		return errors.New("apply integration candidate: rebase completion proof is unavailable")
+	}
+	if rebasedFound {
+		if rebasedHead != resultingHead || (proofFound && proofHead != resultingHead) {
+			return errors.New("apply integration candidate: rebase completion proof differs")
+		}
+	} else {
+		if !proofFound || proofHead != resultingHead {
+			return errors.New("apply integration candidate: rebase completion proof is unavailable")
+		}
+		if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+			"update-ref", rebasedRef, resultingHead, integrationZeroRevision); err != nil {
+			return errors.New("apply integration candidate: rebased head receipt could not be recorded")
+		}
+	}
+	return nil
+}
+
+func (registry *Registry) retireIntegrationRebaseProof(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+	resultingHead string,
+) error {
+	proofRef := integrationRebaseProofRef(request)
+	proofHead, found, err := registry.integrationReceiptHeadAtPath(ctx, request.Target.WorktreePath, proofRef)
+	if err != nil || (found && proofHead != resultingHead) {
+		return errors.New("apply integration candidate: rebase completion proof differs")
+	}
+	if !found {
+		return nil
+	}
+	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"update-ref", "-d", proofRef, resultingHead); err != nil {
+		return errors.New("apply integration candidate: rebase completion proof could not be retired")
+	}
+	return nil
 }
 
 func (registry *Registry) ensureRebaseSequencerAbsent(ctx context.Context, worktreePath string) error {
@@ -348,6 +424,9 @@ func (registry *Registry) finalizeRecoveredRebase(
 	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
 		"symbolic-ref", "HEAD", targetRef); err != nil {
 		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: recovered target could not be reattached")
+	}
+	if err := registry.retireIntegrationRebaseProof(ctx, request, resultingHead); err != nil {
+		return application.IntegrationAdapterResult{}, err
 	}
 	final, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
 		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,

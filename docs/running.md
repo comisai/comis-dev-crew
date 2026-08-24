@@ -614,10 +614,11 @@ paths, stages those resolutions, and commits the complete index. For a rebase
 conflict, the worker stages the recorded resolutions but does not continue or
 commit the rebase itself. A separate integration operation naming the conflicted
 receipt revalidates the durable task, evidence, worktree, rebase sequencer, and
-original target branch; DevCrew then continues the fixed rebase command, advances
-that branch with compare-and-swap, and reattaches the worktree. An unresolved
-index, changed branch, missing sequencer, altered candidate, or ambiguous receipt
-preserves the worktree and refuses recovery.
+Git-updated terminal proof for the original target branch; DevCrew then continues
+the fixed rebase command, advances that branch with compare-and-swap, and
+reattaches the worktree. An unresolved index, changed branch, missing or unfinished
+terminal proof, altered candidate, or ambiguous receipt preserves the worktree and
+refuses recovery.
 The ordering does not authorize the next action. An apply-only operator request
 ends after the durable receipt; launch-plan and terminal operations require
 separate explicit authorization.

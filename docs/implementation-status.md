@@ -726,9 +726,10 @@ Git result and its SQLite completion. Exact applied and conflicted calls replay
 without repeating Git. Merge and cherry-pick still refuse a changed worktree
 when no exact outcome receipt exists. Rebase records the exact target branch
 before mutation, so an exact operation replay can reconstruct an interrupted
-conflict or clean completion only when the origin, sequencer, target, and current
-head all agree; the separate resolution operation applies the same checks if
-`rebase --continue` settled before its receipt was written. Every ambiguous or
+conflict or clean completion only when the origin, sequencer, Git-updated terminal
+proof, target, and current head all agree; the separate resolution operation
+applies the same checks if `rebase --continue` settled before its receipt was
+written. Every ambiguous or
 altered posture preserves the worktree and refuses recovery. Completion updates
 the application row and transitions the existing operation-ledger claim in one
 transaction. Accepted evidence expiry blocks a new mutation without invalidating
