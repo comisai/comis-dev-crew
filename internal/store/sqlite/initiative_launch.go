@@ -19,40 +19,33 @@ func authorizeInitiativeTaskStart(
 	task domain.Task,
 	limits *application.InitiativeSchedulingLimits,
 ) error {
-	initiatives, err := listInitiatives(ctx, transaction)
+	containing, found, err := initiativeForTask(ctx, transaction, task.Handle)
 	if err != nil {
-		return fmt.Errorf("authorize initiative task start: %w", err)
+		return fmt.Errorf("authorize initiative task start membership: %w", err)
 	}
-	initiativeHandle := ""
-	for _, initiative := range initiatives {
-		if !initiative.ContainsTask(task.Handle) {
-			continue
-		}
-		if initiativeHandle != "" {
-			return errors.New("authorize initiative task start: task belongs to multiple initiatives")
-		}
-		initiativeHandle = initiative.Handle
-	}
-	if initiativeHandle == "" {
+	if !found {
 		return nil
 	}
 	if limits == nil {
 		return fmt.Errorf("authorize initiative task start: reviewed scheduling limits are unavailable: %w", application.ErrPrecondition)
 	}
-	tasks, err := listTasks(ctx, transaction)
+	if containing.State != domain.InitiativeActive {
+		return fmt.Errorf("authorize initiative task start: initiative is not active: %w", application.ErrPrecondition)
+	}
+	initiatives, tasks, artifacts, err := initiativeSchedulingFleet(ctx, transaction)
 	if err != nil {
 		return fmt.Errorf("authorize initiative task start fleet: %w", err)
 	}
-	artifacts, err := listInitiativeContractArtifactMetadata(ctx, transaction, "")
+	usage, err := initiativeSchedulingUsage(ctx, transaction)
 	if err != nil {
-		return fmt.Errorf("authorize initiative task start artifacts: %w", err)
+		return fmt.Errorf("authorize initiative task start capacity: %w", err)
 	}
-	schedules, err := application.ScheduleInitiatives(initiatives, tasks, artifacts, *limits)
+	schedules, err := application.ScheduleInitiativesWithUsage(initiatives, tasks, artifacts, *limits, usage)
 	if err != nil {
 		return fmt.Errorf("authorize initiative task start schedule: %w", err)
 	}
 	for _, schedule := range schedules {
-		if schedule.InitiativeHandle != initiativeHandle {
+		if schedule.InitiativeHandle != containing.Handle {
 			continue
 		}
 		for _, decision := range schedule.Tasks {
@@ -69,4 +62,80 @@ func authorizeInitiativeTaskStart(
 		}
 	}
 	return errors.New("authorize initiative task start: scheduler omitted the initiative member")
+}
+
+func initiativeSchedulingFleet(
+	ctx context.Context,
+	source queryer,
+) ([]domain.DevelopmentInitiative, []domain.Task, []domain.ComponentContractArtifact, error) {
+	initiatives := make([]domain.DevelopmentInitiative, 0)
+	afterHandle := ""
+	for {
+		page, next, err := listInitiativePage(ctx, source, application.InitiativeFilter{
+			State: domain.InitiativeActive, AfterHandle: afterHandle, Limit: application.MaximumInitiativePage,
+		})
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		initiatives = append(initiatives, page...)
+		if next == "" {
+			break
+		}
+		afterHandle = next
+	}
+	tasks := make([]domain.Task, 0)
+	artifacts := make([]domain.ComponentContractArtifact, 0)
+	for _, initiative := range initiatives {
+		for _, taskHandle := range initiativeTaskHandles(initiative) {
+			task, err := getTask(ctx, source, taskHandle)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			tasks = append(tasks, task)
+		}
+		current, err := listInitiativeContractArtifactMetadata(ctx, source, initiative.Handle)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		artifacts = append(artifacts, current...)
+	}
+	return initiatives, tasks, artifacts, nil
+}
+
+func initiativeSchedulingUsage(
+	ctx context.Context,
+	source queryer,
+) (application.InitiativeSchedulingUsage, error) {
+	const query = `SELECT repository_id, worker_profile_id, COUNT(*)
+		FROM tasks WHERE state IN (?, ?, ?, ?, ?, ?, ?)
+		GROUP BY repository_id, worker_profile_id ORDER BY repository_id, worker_profile_id`
+	rows, err := source.QueryContext(ctx, query,
+		domain.TaskLaunching, domain.TaskWorking, domain.TaskAwaitingDecision, domain.TaskBlocked,
+		domain.TaskPaused, domain.TaskReconciling, domain.TaskUnknown,
+	)
+	if err != nil {
+		return application.InitiativeSchedulingUsage{}, err
+	}
+	defer rows.Close()
+	usage := application.InitiativeSchedulingUsage{
+		Repositories: make(map[string]int), WorkerProfiles: make(map[string]int),
+	}
+	for rows.Next() {
+		var repositoryID, profileID string
+		var used int
+		if err := rows.Scan(&repositoryID, &profileID, &used); err != nil {
+			return application.InitiativeSchedulingUsage{}, err
+		}
+		if domain.ValidateRepositoryID(repositoryID) != nil ||
+			domain.ValidateAuthorityReference("workerProfileId", profileID) != nil || used < 1 {
+			return application.InitiativeSchedulingUsage{}, errors.New("stored scheduling capacity is invalid")
+		}
+		usage.Host += used
+		usage.Repositories[repositoryID] += used
+		usage.WorkerProfiles[profileID] += used
+	}
+	if err := rows.Err(); err != nil {
+		return application.InitiativeSchedulingUsage{}, err
+	}
+	return usage, nil
 }

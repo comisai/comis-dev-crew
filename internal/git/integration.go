@@ -82,6 +82,9 @@ func (registry *Registry) ApplyIntegrationCandidate(
 		)
 	}
 	if err := registry.runIntegrationStrategy(ctx, request, repository); err != nil {
+		if errors.Is(err, application.ErrIntegrationMutationNotStarted) {
+			return application.IntegrationAdapterResult{}, err
+		}
 		conflicts, conflictErr := registry.integrationConflictPaths(ctx, request.Target.WorktreePath)
 		if conflictErr != nil || len(conflicts) == 0 {
 			if ctx.Err() != nil {

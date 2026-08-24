@@ -92,3 +92,35 @@ func TestInitiativeLaunchAuthorizationStillRejectsInvalidArtifactMetadata(t *tes
 		t.Fatal("authorizeInitiativeTaskStart(with invalid artifact metadata) error = nil")
 	}
 }
+
+func TestInitiativeLaunchAuthorizationDoesNotMaterializeTerminalHistory(t *testing.T) {
+	ctx := context.Background()
+	store, _, activation := preparedInitiativeActivationStore(t)
+	commitActiveInitiativeForTest(t, ctx, store, activation)
+	unrelated := persistenceInitiative("initiative-terminal-launch-history", domain.InitiativeDelivered, 3)
+	unrelated.Components[0].TaskHandles = []string{"task-terminal-launch-a"}
+	unrelated.Components[1].TaskHandles = []string{"task-terminal-launch-b"}
+	unrelated.Edges[0].FromTaskHandle = "task-terminal-launch-a"
+	unrelated.Edges[0].ToTaskHandle = "task-terminal-launch-b"
+	unrelated.IntegrationOwnerTask = "task-terminal-launch-b"
+	if err := store.CreateInitiative(ctx, unrelated); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx,
+		"UPDATE initiatives SET components_json = '{' WHERE handle = ?", unrelated.Handle,
+	); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.GetTask(ctx, activation.Members[0].ExternalRunRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	if err := authorizeInitiativeTaskStart(ctx, transaction, task, initiativeTestSchedulingLimits(2)); err != nil {
+		t.Fatalf("authorizeInitiativeTaskStart(unrelated terminal history) error = %v", err)
+	}
+}

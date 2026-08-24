@@ -11,7 +11,7 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/application"
 )
 
-const maximumServerRebaseProofBytes = 600000
+const maximumServerRebaseProofBytes = 1100000
 
 func serverRebaseProofPath(
 	repository Repository,
@@ -167,8 +167,10 @@ func readServerRebaseProof(path string) (serverRebaseProof, bool, error) {
 
 func encodeServerRebaseProof(proof serverRebaseProof) []byte {
 	var builder strings.Builder
-	builder.WriteString("version 2\ncandidates ")
+	builder.WriteString("version 3\ncandidates ")
 	writeRebaseProofCommits(&builder, proof.candidateCommits)
+	builder.WriteString("patches ")
+	writeRebaseProofCommits(&builder, proof.candidatePatches)
 	builder.WriteString("resolved ")
 	writeRebaseProofCommits(&builder, proof.resolvedCommits)
 	builder.WriteString("results ")
@@ -197,11 +199,15 @@ func decodeServerRebaseProof(contents []byte) (serverRebaseProof, error) {
 		return serverRebaseProof{}, errors.New("apply integration candidate: server rebase proof is malformed")
 	}
 	lines := strings.Split(strings.TrimSuffix(string(contents), "\n"), "\n")
-	if len(lines) < 5 || lines[0] != "version 2" {
+	if len(lines) < 6 || lines[0] != "version 3" {
 		return serverRebaseProof{}, errors.New("apply integration candidate: server rebase proof is malformed")
 	}
 	position := 1
 	candidates, next, err := decodeRebaseProofCommits(lines, position, "candidates", 1, maximumRebaseProofCommits)
+	if err != nil {
+		return serverRebaseProof{}, err
+	}
+	patches, next, err := decodeRebaseProofPatches(lines, next, len(candidates))
 	if err != nil {
 		return serverRebaseProof{}, err
 	}
@@ -215,7 +221,8 @@ func decodeServerRebaseProof(contents []byte) (serverRebaseProof, error) {
 	}
 	result := strings.TrimPrefix(lines[next], "result ")
 	proof := serverRebaseProof{
-		candidateCommits: candidates, resolvedCommits: resolved, resultCommits: results,
+		candidateCommits: candidates, candidatePatches: patches,
+		resolvedCommits: resolved, resultCommits: results,
 	}
 	if result == "-" {
 		if len(results) != 0 {
@@ -228,6 +235,23 @@ func decodeServerRebaseProof(contents []byte) (serverRebaseProof, error) {
 	}
 	proof.resultingHead = result
 	return proof, nil
+}
+
+func decodeRebaseProofPatches(lines []string, position int, expected int) ([]string, int, error) {
+	if position >= len(lines) || !strings.HasPrefix(lines[position], "patches ") {
+		return nil, position, errors.New("apply integration candidate: server rebase proof is malformed")
+	}
+	count, err := strconv.Atoi(strings.TrimPrefix(lines[position], "patches "))
+	if err != nil || count != expected || position+count >= len(lines) {
+		return nil, position, errors.New("apply integration candidate: server rebase proof is malformed")
+	}
+	patches := append([]string(nil), lines[position+1:position+1+count]...)
+	for _, patch := range patches {
+		if patch != "-" && !gitRevisionPattern.MatchString(patch) {
+			return nil, position, errors.New("apply integration candidate: server rebase proof is malformed")
+		}
+	}
+	return patches, position + count + 1, nil
 }
 
 func decodeRebaseProofCommits(
@@ -259,11 +283,13 @@ func decodeRebaseProofCommits(
 }
 
 func sameServerRebaseProofIdentity(left, right serverRebaseProof) bool {
-	return sameRebaseCommits(left.candidateCommits, right.candidateCommits)
+	return sameRebaseCommits(left.candidateCommits, right.candidateCommits) &&
+		sameRebaseCommits(left.candidatePatches, right.candidatePatches)
 }
 
 func sameServerRebaseProof(left, right serverRebaseProof) bool {
 	return sameRebaseCommits(left.candidateCommits, right.candidateCommits) &&
+		sameRebaseCommits(left.candidatePatches, right.candidatePatches) &&
 		sameRebaseCommits(left.resolvedCommits, right.resolvedCommits) &&
 		sameRebaseCommits(left.resultCommits, right.resultCommits) && left.resultingHead == right.resultingHead
 }

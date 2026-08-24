@@ -248,11 +248,17 @@ func (integrations *Integrations) ApplyCandidate(
 	adapterResult, err := integrations.adapter.ApplyIntegrationCandidate(ctx, reserved.AdapterRequest())
 	if err != nil {
 		if errors.Is(err, ErrIntegrationMutationNotStarted) {
+			settlementAt := integrations.clock().UTC()
+			if settlementAt.IsZero() || settlementAt.Before(reserved.ReservedAt) {
+				return IntegrationApplicationResult{}, &dependencyFailure{
+					message: "integration pre-mutation failure settlement time is invalid", cause: err,
+				}
+			}
 			invalidated := IntegrationAdapterResult{
 				Outcome: IntegrationInvalidated, PreviousHead: reserved.Target.ExpectedHead,
 			}
 			completed, completionErr := integrations.store.CompleteIntegrationApplication(ctx, IntegrationCompletion{
-				Reservation: reserved, AdapterResult: invalidated, At: at,
+				Reservation: reserved, AdapterResult: invalidated, At: settlementAt,
 			})
 			if completionErr != nil {
 				return IntegrationApplicationResult{}, &dependencyFailure{

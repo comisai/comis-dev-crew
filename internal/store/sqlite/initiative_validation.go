@@ -2,7 +2,6 @@ package sqlite
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
@@ -14,21 +13,11 @@ func requireInitiativeValidationDependencies(
 	source queryer,
 	taskHandle string,
 ) error {
-	initiatives, err := listInitiatives(ctx, source)
+	containing, found, err := initiativeForTask(ctx, source, taskHandle)
 	if err != nil {
 		return fmt.Errorf("read initiative validation dependencies: %w", err)
 	}
-	var containing *domain.DevelopmentInitiative
-	for index := range initiatives {
-		if !initiatives[index].ContainsTask(taskHandle) {
-			continue
-		}
-		if containing != nil {
-			return errors.New("validate initiative member: task belongs to multiple initiatives")
-		}
-		containing = &initiatives[index]
-	}
-	if containing == nil {
+	if !found {
 		return nil
 	}
 	for _, edge := range containing.Edges {

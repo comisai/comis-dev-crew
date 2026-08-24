@@ -60,21 +60,11 @@ func readPinnedTaskContractArtifact(
 	if pin == nil {
 		return domain.ContractArtifactContent{}, fmt.Errorf("read task contract artifact: artifact is not pinned: %w", application.ErrNotFound)
 	}
-	initiatives, err := listInitiatives(ctx, source)
+	containing, found, err := initiativeForTask(ctx, source, taskHandle)
 	if err != nil {
-		return domain.ContractArtifactContent{}, fmt.Errorf("read task contract artifact initiatives: %w", err)
+		return domain.ContractArtifactContent{}, fmt.Errorf("read task contract artifact initiative: %w", err)
 	}
-	var containing *domain.DevelopmentInitiative
-	for index := range initiatives {
-		if !initiatives[index].ContainsTask(taskHandle) {
-			continue
-		}
-		if containing != nil {
-			return domain.ContractArtifactContent{}, errors.New("read task contract artifact: task belongs to multiple initiatives")
-		}
-		containing = &initiatives[index]
-	}
-	if containing == nil || !containsArtifactHandle(containing.ContractArtifacts, artifactHandle) {
+	if !found || !containsArtifactHandle(containing.ContractArtifacts, artifactHandle) {
 		return domain.ContractArtifactContent{}, errors.New("read task contract artifact: pinned artifact inventory is unavailable")
 	}
 	content, err := getInitiativeContractArtifactContent(ctx, source, containing.Handle, artifactHandle)

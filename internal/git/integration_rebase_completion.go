@@ -15,6 +15,7 @@ const (
 
 type serverRebaseProof struct {
 	candidateCommits []string
+	candidatePatches []string
 	resolvedCommits  []string
 	resultCommits    []string
 	resultingHead    string
@@ -53,10 +54,13 @@ func (registry *Registry) runRebaseIntegration(
 	targetRef, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
 		"symbolic-ref", "--quiet", "HEAD")
 	if err != nil || targetRef != "refs/heads/"+expectedIntegrationTargetBranch(request) {
-		return errors.New("apply integration candidate: target branch identity is unavailable")
+		return errors.Join(
+			errors.New("apply integration candidate: target branch identity is unavailable"),
+			application.ErrIntegrationMutationNotStarted,
+		)
 	}
 	if err := registry.prepareServerRebaseProof(ctx, repository, request); err != nil {
-		return err
+		return errors.Join(err, application.ErrIntegrationMutationNotStarted)
 	}
 	if err := registry.recordIntegrationTargetRef(ctx, request, targetRef); err != nil {
 		return err
@@ -102,7 +106,20 @@ func (registry *Registry) prepareServerRebaseProof(
 		ctx, repository, request.Candidate.BaseRevision, request.Candidate.HeadRevision,
 	)
 	if err != nil {
-		return errors.New("apply integration candidate: rebase range proof is unavailable")
+		return errors.Join(
+			errors.New("apply integration candidate: rebase range proof is unavailable"),
+			application.ErrIntegrationMutationNotStarted,
+		)
+	}
+	patches := make([]string, len(commits))
+	for index, commit := range commits {
+		patches[index], err = registry.rebasePatchIdentity(ctx, repository, commit)
+		if err != nil {
+			return errors.Join(
+				errors.New("apply integration candidate: candidate patch proof is unavailable"),
+				application.ErrIntegrationMutationNotStarted,
+			)
+		}
 	}
 	directory, path, err := serverRebaseProofPath(repository, request)
 	if err != nil {
@@ -111,7 +128,7 @@ func (registry *Registry) prepareServerRebaseProof(
 	if err := ensureServerRebaseProofDirectory(repository.WorktreeRoot, directory); err != nil {
 		return err
 	}
-	want := serverRebaseProof{candidateCommits: commits}
+	want := serverRebaseProof{candidateCommits: commits, candidatePatches: patches}
 	existing, found, err := readServerRebaseProof(path)
 	if err != nil {
 		return err
@@ -278,14 +295,59 @@ func (registry *Registry) reconcileReceiptOnlyCompletedRebase(
 	if err := registry.ensureRebaseSequencerAbsent(ctx, request.Target.WorktreePath); err != nil {
 		return application.IntegrationAdapterResult{}, true, err
 	}
+	targetRef, found, err := registry.recordedIntegrationTargetRef(ctx, request)
+	if err != nil || !found {
+		return application.IntegrationAdapterResult{}, true,
+			errors.New("apply integration candidate: receipt-only target receipt is unavailable")
+	}
+	rebasedHead, found, err := registry.integrationReceiptHeadAtPath(
+		ctx, request.Target.WorktreePath, integrationReceiptRef("rebased", request),
+	)
+	if err != nil || !found || rebasedHead != proof.resultingHead {
+		return application.IntegrationAdapterResult{}, true,
+			errors.New("apply integration candidate: receipt-only rebased receipt differs")
+	}
+	proofRef := integrationRebaseProofRef(request)
+	proofHead, proofFound, err := registry.integrationReceiptHeadAtPath(
+		ctx, request.Target.WorktreePath, proofRef,
+	)
+	if err != nil || proofFound && proofHead != proof.resultingHead {
+		return application.IntegrationAdapterResult{}, true,
+			errors.New("apply integration candidate: receipt-only proof receipt differs")
+	}
+	targetHead, err := registry.integrationBranchHead(ctx, request.Target.WorktreePath, targetRef)
+	if err != nil || targetHead != proof.resultingHead {
+		return application.IntegrationAdapterResult{}, true,
+			errors.New("apply integration candidate: receipt-only target branch differs")
+	}
 	target, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
 		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
 		WorktreePath: request.Target.WorktreePath,
 	})
-	if err != nil || target.Cleanliness != CandidateClean || target.HeadRevision != proof.resultingHead ||
-		target.Branch != expectedIntegrationTargetBranch(request) {
+	if err != nil || target.Cleanliness != CandidateClean || target.HeadRevision != proof.resultingHead {
 		return application.IntegrationAdapterResult{}, true,
 			errors.New("apply integration candidate: receipt-only completed rebase differs")
+	}
+	expectedBranch := expectedIntegrationTargetBranch(request)
+	if target.Branch != expectedBranch {
+		if !proofFound || target.Branch != strings.TrimPrefix(proofRef, "refs/heads/") {
+			return application.IntegrationAdapterResult{}, true,
+				errors.New("apply integration candidate: receipt-only completed rebase differs")
+		}
+		if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+			"symbolic-ref", "HEAD", targetRef); err != nil {
+			return application.IntegrationAdapterResult{}, true,
+				errors.New("apply integration candidate: receipt-only target could not be reattached")
+		}
+		target, err = registry.InspectCandidate(ctx, CandidateSnapshotRequest{
+			TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
+			WorktreePath: request.Target.WorktreePath,
+		})
+		if err != nil || target.Cleanliness != CandidateClean || target.HeadRevision != proof.resultingHead ||
+			target.Branch != expectedBranch {
+			return application.IntegrationAdapterResult{}, true,
+				errors.New("apply integration candidate: receipt-only reattached target differs")
+		}
 	}
 	return application.IntegrationAdapterResult{
 		Outcome: application.IntegrationApplied, PreviousHead: request.Target.ExpectedHead,
@@ -317,9 +379,8 @@ func (registry *Registry) verifyServerRebaseSemantics(
 		if _, allowed := resolved[candidate]; allowed {
 			continue
 		}
-		candidatePatch, candidateErr := registry.rebasePatchIdentity(ctx, repository, candidate)
 		resultPatch, resultErr := registry.rebasePatchIdentity(ctx, repository, results[index])
-		if candidateErr != nil || resultErr != nil || candidatePatch != resultPatch {
+		if resultErr != nil || proof.candidatePatches[index] != resultPatch {
 			return nil, errors.New("apply integration candidate: rebased result differs from candidate content")
 		}
 	}

@@ -77,6 +77,20 @@ func ScheduleInitiatives(
 	if err := validateSchedulingLimits(limits); err != nil {
 		return nil, err
 	}
+	tasksByHandle, usage, err := indexSchedulingTasks(tasks, limits)
+	if err != nil {
+		return nil, err
+	}
+	return scheduleInitiatives(initiatives, tasksByHandle, artifacts, limits, usage)
+}
+
+func scheduleInitiatives(
+	initiatives []domain.DevelopmentInitiative,
+	tasksByHandle map[string]domain.Task,
+	artifacts []domain.ComponentContractArtifact,
+	limits InitiativeSchedulingLimits,
+	usage schedulingUsage,
+) ([]InitiativeSchedule, error) {
 	ordered := append([]domain.DevelopmentInitiative(nil), initiatives...)
 	sort.Slice(ordered, func(left, right int) bool {
 		if !ordered[left].CreatedAt.Equal(ordered[right].CreatedAt) {
@@ -84,10 +98,6 @@ func ScheduleInitiatives(
 		}
 		return ordered[left].Handle < ordered[right].Handle
 	})
-	tasksByHandle, usage, err := indexSchedulingTasks(tasks, limits)
-	if err != nil {
-		return nil, err
-	}
 	artifactsByInitiative, err := indexSchedulingArtifacts(ordered, artifacts)
 	if err != nil {
 		return nil, err
@@ -182,19 +192,12 @@ func indexSchedulingTasks(
 	tasks []domain.Task,
 	limits InitiativeSchedulingLimits,
 ) (map[string]domain.Task, schedulingUsage, error) {
-	indexed := make(map[string]domain.Task, len(tasks))
+	indexed, err := indexSchedulingTaskSet(tasks, limits)
+	if err != nil {
+		return nil, schedulingUsage{}, err
+	}
 	usage := schedulingUsage{repositories: make(map[string]int), profiles: make(map[string]int)}
-	for _, task := range tasks {
-		if err := task.Validate(); err != nil {
-			return nil, schedulingUsage{}, fmt.Errorf("schedule task %q: %w", task.Handle, err)
-		}
-		if _, exists := indexed[task.Handle]; exists {
-			return nil, schedulingUsage{}, errors.New("schedule initiatives: task handles must be unique")
-		}
-		if _, configured := limits.WorkerProfileLimits[task.WorkerProfileID]; !configured {
-			return nil, schedulingUsage{}, errors.New("schedule initiatives: task worker profile has no concurrency limit")
-		}
-		indexed[task.Handle] = task
+	for _, task := range indexed {
 		if taskConsumesWorker(task.State) {
 			usage.host++
 			usage.repositories[task.RepositoryID]++

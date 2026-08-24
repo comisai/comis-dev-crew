@@ -2,12 +2,8 @@ package git_test
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -674,111 +670,5 @@ func TestRegistry_RebaseRecoveryRefusesRepointedWorktreeBeforeMutation(t *testin
 	}
 	if head := integrationGitOutput(t, fixture, fixture.repository.primary, "rev-parse", "refs/heads/"+fixture.target.Branch); head != targetHead {
 		t.Fatalf("target branch head after refused recovery = %q, want %q", head, targetHead)
-	}
-}
-
-func integrationReceiptRefForTest(outcome string, request application.IntegrationAdapterRequest) string {
-	canonical, _ := json.Marshal(request)
-	digest := sha256.Sum256(canonical)
-	return fmt.Sprintf("refs/comis/integration/%s/%x", outcome, digest)
-}
-
-func integrationRebaseProofRefForTest(request application.IntegrationAdapterRequest) string {
-	if request.RecoveryOperationID != "" {
-		request.OperationID = request.RecoveryOperationID
-		request.RecoveryOperationID = ""
-	}
-	canonical, _ := json.Marshal(request)
-	digest := sha256.Sum256(canonical)
-	return fmt.Sprintf("refs/heads/comis-integration-proof-%x", digest)
-}
-
-func writeServerRebaseProofForTest(
-	t *testing.T,
-	fixture integrationFixture,
-	request application.IntegrationAdapterRequest,
-	resultingHead string,
-	resolvedCommits ...string,
-) {
-	t.Helper()
-	commits := strings.Fields(integrationGitOutput(
-		t, fixture, fixture.repository.primary, "rev-list", "--reverse",
-		request.Candidate.BaseRevision+".."+request.Candidate.HeadRevision,
-	))
-	directory := filepath.Join(fixture.repository.worktreeRoot, ".comis-integration-proofs")
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	digest := strings.TrimPrefix(integrationRebaseProofRefForTest(request), "refs/heads/comis-integration-proof-")
-	var proof strings.Builder
-	resultCommits := []string(nil)
-	if resultingHead != "" {
-		resultCommits = strings.Fields(integrationGitOutput(
-			t, fixture, fixture.repository.primary, "rev-list", "--reverse",
-			request.Target.ExpectedHead+".."+resultingHead,
-		))
-	}
-	proof.WriteString("version 2\ncandidates ")
-	proof.WriteString(fmt.Sprintf("%d", len(commits)))
-	proof.WriteByte('\n')
-	for _, commit := range commits {
-		proof.WriteString(commit)
-		proof.WriteByte('\n')
-	}
-	proof.WriteString("resolved ")
-	proof.WriteString(fmt.Sprintf("%d", len(resolvedCommits)))
-	proof.WriteByte('\n')
-	for _, commit := range resolvedCommits {
-		proof.WriteString(commit)
-		proof.WriteByte('\n')
-	}
-	proof.WriteString("results ")
-	proof.WriteString(fmt.Sprintf("%d", len(resultCommits)))
-	proof.WriteByte('\n')
-	for _, commit := range resultCommits {
-		proof.WriteString(commit)
-		proof.WriteByte('\n')
-	}
-	proof.WriteString("result ")
-	if resultingHead == "" {
-		proof.WriteByte('-')
-	} else {
-		proof.WriteString(resultingHead)
-	}
-	proof.WriteByte('\n')
-	if err := os.WriteFile(filepath.Join(directory, digest), []byte(proof.String()), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func serverRebaseProofPathForTest(
-	fixture integrationFixture,
-	request application.IntegrationAdapterRequest,
-) string {
-	digest := strings.TrimPrefix(integrationRebaseProofRefForTest(request), "refs/heads/comis-integration-proof-")
-	return filepath.Join(fixture.repository.worktreeRoot, ".comis-integration-proofs", digest)
-}
-
-func lockIntegrationReceiptForTest(t *testing.T, fixture integrationFixture, receipt string) {
-	t.Helper()
-	lockPath := integrationGitOutput(t, fixture, fixture.target.CanonicalPath,
-		"rev-parse", "--git-path", receipt) + ".lock"
-	if !filepath.IsAbs(lockPath) {
-		lockPath = filepath.Join(fixture.target.CanonicalPath, lockPath)
-	}
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(lockPath, []byte("locked"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func runIntegrationGitExpectFailure(t *testing.T, executable string, arguments ...string) {
-	t.Helper()
-	command := exec.Command(executable, arguments...)
-	command.Env = gitTestEnvironment(nil)
-	if output, err := command.CombinedOutput(); err == nil {
-		t.Fatalf("Git fixture command unexpectedly succeeded: %s", output)
 	}
 }

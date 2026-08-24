@@ -62,6 +62,23 @@ func TestReadTaskContractArtifactReturnsOnlyExactPinnedContent(t *testing.T) {
 	if err != nil || string(reloaded.Content) != string(content) {
 		t.Fatalf("ReadTaskContractArtifact(reload) = %#v, %v", reloaded, err)
 	}
+	unrelated := persistenceInitiative("initiative-unrelated-artifact-read", domain.InitiativeDelivered, 3)
+	unrelated.Components[0].TaskHandles = []string{"task-unrelated-artifact-producer"}
+	unrelated.Components[1].TaskHandles = []string{"task-unrelated-artifact-consumer"}
+	unrelated.Edges[0].FromTaskHandle = "task-unrelated-artifact-producer"
+	unrelated.Edges[0].ToTaskHandle = "task-unrelated-artifact-consumer"
+	unrelated.IntegrationOwnerTask = "task-unrelated-artifact-consumer"
+	if err := store.CreateInitiative(ctx, unrelated); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx,
+		"UPDATE initiatives SET components_json = '{' WHERE handle = ?", unrelated.Handle,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if exact, err := store.ReadTaskContractArtifact(ctx, consumer.Handle, prepared.Artifact.ArtifactHandle); err != nil || string(exact.Content) != string(content) {
+		t.Fatalf("ReadTaskContractArtifact(unrelated corrupt history) = %#v, %v", exact, err)
+	}
 	if _, err := store.ReadTaskContractArtifact(
 		ctx, mutation.Members[0].Task.Handle, prepared.Artifact.ArtifactHandle,
 	); !errors.Is(err, application.ErrNotFound) {
