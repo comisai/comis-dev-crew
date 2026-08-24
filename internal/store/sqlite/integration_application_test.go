@@ -166,6 +166,82 @@ func TestIntegrationRebaseConflictRecoveryIsASeparateDurableOperation(t *testing
 	}
 }
 
+func TestIntegrationRebaseConflictRecoveryRevalidatesEveryStoredAuthority(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(t *testing.T, fixture *storedIntegrationFixture, request *application.IntegrationReservationRequest)
+	}{
+		{name: "missing conflict operation", mutate: func(_ *testing.T, _ *storedIntegrationFixture, request *application.IntegrationReservationRequest) {
+			request.Command.RecoveryOperationID = "integration-rebase-conflict-missing"
+		}},
+		{name: "stored strategy changed", mutate: func(t *testing.T, fixture *storedIntegrationFixture, request *application.IntegrationReservationRequest) {
+			mustExecIntegrationTest(t, fixture, `UPDATE integration_applications SET strategy = 'merge' WHERE operation_id = ?`, request.Command.RecoveryOperationID)
+		}},
+		{name: "requested policy changed", mutate: func(_ *testing.T, _ *storedIntegrationFixture, request *application.IntegrationReservationRequest) {
+			request.PolicyID = "integration-other"
+		}},
+		{name: "recovery predates conflict", mutate: func(_ *testing.T, fixture *storedIntegrationFixture, request *application.IntegrationReservationRequest) {
+			request.At = fixture.at
+		}},
+		{name: "initiative unknown", mutate: func(t *testing.T, fixture *storedIntegrationFixture, _ *application.IntegrationReservationRequest) {
+			mustExecIntegrationTest(t, fixture, `UPDATE initiatives SET state = 'unknown'`)
+		}},
+		{name: "initiative policy changed", mutate: func(t *testing.T, fixture *storedIntegrationFixture, _ *application.IntegrationReservationRequest) {
+			mustExecIntegrationTest(t, fixture, `UPDATE initiatives SET integration_policy_id = 'integration-other'`)
+		}},
+		{name: "candidate state changed", mutate: func(t *testing.T, fixture *storedIntegrationFixture, _ *application.IntegrationReservationRequest) {
+			mustExecIntegrationTest(t, fixture, `UPDATE tasks SET state = 'failed' WHERE handle = 'task-component-a'`)
+		}},
+		{name: "owner not writable", mutate: func(t *testing.T, fixture *storedIntegrationFixture, _ *application.IntegrationReservationRequest) {
+			mustExecIntegrationTest(t, fixture, `UPDATE tasks SET state = 'paused' WHERE handle = 'task-integration'`)
+		}},
+		{name: "target preparation missing", mutate: func(t *testing.T, fixture *storedIntegrationFixture, _ *application.IntegrationReservationRequest) {
+			mustExecIntegrationTest(t, fixture, `DELETE FROM task_preparations WHERE task_handle = 'task-integration'`)
+		}},
+		{name: "candidate preparation missing", mutate: func(t *testing.T, fixture *storedIntegrationFixture, _ *application.IntegrationReservationRequest) {
+			mustExecIntegrationTest(t, fixture, `DELETE FROM task_preparations WHERE task_handle = 'task-component-a'`)
+		}},
+		{name: "target preparation closed", mutate: func(t *testing.T, fixture *storedIntegrationFixture, _ *application.IntegrationReservationRequest) {
+			mustExecIntegrationTest(t, fixture, `UPDATE task_preparations SET state = 'abandoned' WHERE task_handle = 'task-integration'`)
+		}},
+		{name: "candidate workspace changed", mutate: func(t *testing.T, fixture *storedIntegrationFixture, _ *application.IntegrationReservationRequest) {
+			mustExecIntegrationTest(t, fixture, `UPDATE task_preparations SET requested_workspace_root = '/approved/workspaces/changed' WHERE task_handle = 'task-component-a'`)
+		}},
+		{name: "candidate evidence missing", mutate: func(t *testing.T, fixture *storedIntegrationFixture, _ *application.IntegrationReservationRequest) {
+			mustExecIntegrationTest(t, fixture, `DELETE FROM candidate_evidence WHERE task_handle = 'task-component-a'`)
+		}},
+		{name: "candidate evidence rejected", mutate: func(t *testing.T, fixture *storedIntegrationFixture, _ *application.IntegrationReservationRequest) {
+			mustExecIntegrationTest(t, fixture, `UPDATE candidate_evidence SET outcome = 'rejected' WHERE task_handle = 'task-component-a'`)
+		}},
+		{name: "candidate evidence identity changed", mutate: func(t *testing.T, fixture *storedIntegrationFixture, request *application.IntegrationReservationRequest) {
+			mustExecIntegrationTest(t, fixture, `UPDATE integration_applications SET evidence_digest = ? WHERE operation_id = ?`,
+				strings.Repeat("f", 64), request.Command.RecoveryOperationID)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newStoredIntegrationFixture(t)
+			recovery := storedRebaseRecoveryRequest(t, &fixture)
+			test.mutate(t, &fixture, &recovery)
+			if _, err := fixture.store.ReserveIntegrationApplication(context.Background(), recovery); err == nil {
+				t.Fatal("ReserveIntegrationApplication(altered recovery authority) error = nil")
+			}
+		})
+	}
+}
+
+func TestIntegrationRebaseConflictRecoveryAcceptsReadyOwnerAfterRestart(t *testing.T) {
+	fixture := newStoredIntegrationFixture(t)
+	recovery := storedRebaseRecoveryRequest(t, &fixture)
+	mustExecIntegrationTest(t, &fixture, `UPDATE tasks SET state = CASE handle
+		WHEN 'task-integration' THEN 'ready'
+		WHEN 'task-component-a' THEN 'delivered'
+		ELSE state END`)
+	reserved, err := fixture.store.ReserveIntegrationApplication(context.Background(), recovery)
+	if err != nil || reserved.RecoveryOperationID != recovery.Command.RecoveryOperationID {
+		t.Fatalf("ReserveIntegrationApplication(ready recovery owner) = %#v, %v", reserved, err)
+	}
+}
+
 func TestIntegrationReservationRejectsAnotherOperationForTheSameCandidate(t *testing.T) {
 	for _, outcome := range []string{"reserved", string(application.IntegrationApplied), string(application.IntegrationConflicted)} {
 		t.Run(outcome, func(t *testing.T) {
@@ -386,5 +462,39 @@ func (fixture storedIntegrationFixture) reservationRequest(
 		},
 		PolicyID: "integration-default", Strategy: strategy,
 		SubjectDigest: strings.Repeat("9", 64), At: fixture.at,
+	}
+}
+
+func storedRebaseRecoveryRequest(
+	t *testing.T,
+	fixture *storedIntegrationFixture,
+) application.IntegrationReservationRequest {
+	t.Helper()
+	initialRequest := fixture.reservationRequest("integration-rebase-authority-conflict", application.IntegrationRebase)
+	initial, err := fixture.store.ReserveIntegrationApplication(context.Background(), initialRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.store.CompleteIntegrationApplication(context.Background(), application.IntegrationCompletion{
+		Reservation: initial,
+		AdapterResult: application.IntegrationAdapterResult{
+			Outcome: application.IntegrationConflicted, PreviousHead: initial.Target.ExpectedHead,
+			ConflictPaths: []string{"fixture.txt"},
+		},
+		At: initialRequest.At.Add(time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recovery := fixture.reservationRequest("integration-rebase-authority-recovery", application.IntegrationRebase)
+	recovery.Command.RecoveryOperationID = initial.OperationID
+	recovery.SubjectDigest = strings.Repeat("8", 64)
+	recovery.At = fixture.evidenceExpiresAt.Add(time.Hour)
+	return recovery
+}
+
+func mustExecIntegrationTest(t *testing.T, fixture *storedIntegrationFixture, statement string, arguments ...any) {
+	t.Helper()
+	if _, err := fixture.store.db.Exec(statement, arguments...); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -39,6 +39,19 @@ func TestReadTaskContractArtifactReturnsOnlyExactPinnedContent(t *testing.T) {
 	if _, err := store.CommitPreparedInitiative(ctx, mutation); err != nil {
 		t.Fatalf("CommitPreparedInitiative() error = %v", err)
 	}
+	//lint:ignore SA1012 The store boundary rejects nil before beginning a read transaction.
+	if _, err := store.ReadTaskContractArtifact(nil, consumer.Handle, prepared.Artifact.ArtifactHandle); err == nil {
+		t.Fatal("ReadTaskContractArtifact(nil context) error = nil")
+	}
+	for _, selector := range [][2]string{
+		{"bad task", prepared.Artifact.ArtifactHandle},
+		{consumer.Handle, "bad artifact"},
+		{"task-contract-missing", prepared.Artifact.ArtifactHandle},
+	} {
+		if _, err := store.ReadTaskContractArtifact(ctx, selector[0], selector[1]); err == nil {
+			t.Fatalf("ReadTaskContractArtifact(%q, %q) error = nil", selector[0], selector[1])
+		}
+	}
 
 	got, err := store.ReadTaskContractArtifact(ctx, consumer.Handle, prepared.Artifact.ArtifactHandle)
 	if err != nil || got.Artifact != prepared.Artifact || string(got.Content) != string(content) {
@@ -58,6 +71,44 @@ func TestReadTaskContractArtifactReturnsOnlyExactPinnedContent(t *testing.T) {
 		t.Fatalf("ReadTaskContractArtifact(unpinned handle) error = %v, want ErrNotFound", err)
 	}
 
+	overlap := mutation.Initiative
+	overlap.Handle = "initiative-artifact-overlap"
+	overlap.ManagedRunGroupID = ""
+	if err := store.CreateInitiative(ctx, overlap); err != nil {
+		t.Fatalf("CreateInitiative(overlap) error = %v", err)
+	}
+	if _, err := store.ReadTaskContractArtifact(ctx, consumer.Handle, prepared.Artifact.ArtifactHandle); err == nil {
+		t.Fatal("ReadTaskContractArtifact(overlapping initiatives) error = nil")
+	}
+	if _, err := store.db.ExecContext(ctx, `DELETE FROM initiatives WHERE handle = ?`, overlap.Handle); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE initiatives SET contract_artifacts_json = '[]' WHERE handle = ?`, mutation.Initiative.Handle); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReadTaskContractArtifact(ctx, consumer.Handle, prepared.Artifact.ArtifactHandle); err == nil {
+		t.Fatal("ReadTaskContractArtifact(missing inventory) error = nil")
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE initiatives SET contract_artifacts_json = ? WHERE handle = ?`,
+		`["`+prepared.Artifact.ArtifactHandle+`"]`, mutation.Initiative.Handle); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx,
+		`UPDATE initiative_contract_artifacts SET kind = ? WHERE initiative_handle = ? AND artifact_handle = ?`,
+		domain.ArtifactGeneratedClient, mutation.Initiative.Handle, prepared.Artifact.ArtifactHandle,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReadTaskContractArtifact(ctx, consumer.Handle, prepared.Artifact.ArtifactHandle); err == nil {
+		t.Fatal("ReadTaskContractArtifact(mismatched pin metadata) error = nil")
+	}
+	if _, err := store.db.ExecContext(ctx,
+		`UPDATE initiative_contract_artifacts SET kind = ? WHERE initiative_handle = ? AND artifact_handle = ?`,
+		domain.ArtifactAPISchema, mutation.Initiative.Handle, prepared.Artifact.ArtifactHandle,
+	); err != nil {
+		t.Fatal(err)
+	}
+
 	if _, err := store.db.ExecContext(ctx,
 		`UPDATE initiative_contract_artifacts SET content = ? WHERE initiative_handle = ? AND artifact_handle = ?`,
 		[]byte(`{"version":2}`), mutation.Initiative.Handle, prepared.Artifact.ArtifactHandle,
@@ -66,5 +117,20 @@ func TestReadTaskContractArtifactReturnsOnlyExactPinnedContent(t *testing.T) {
 	}
 	if _, err := store.ReadTaskContractArtifact(ctx, consumer.Handle, prepared.Artifact.ArtifactHandle); err == nil {
 		t.Fatal("ReadTaskContractArtifact(corrupt bytes) error = nil")
+	}
+	if _, err := store.db.ExecContext(ctx,
+		`DELETE FROM initiative_contract_artifacts WHERE initiative_handle = ? AND artifact_handle = ?`,
+		mutation.Initiative.Handle, prepared.Artifact.ArtifactHandle,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReadTaskContractArtifact(ctx, consumer.Handle, prepared.Artifact.ArtifactHandle); !errors.Is(err, application.ErrNotFound) {
+		t.Fatalf("ReadTaskContractArtifact(missing content row) error = %v, want ErrNotFound", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReadTaskContractArtifact(ctx, consumer.Handle, prepared.Artifact.ArtifactHandle); err == nil {
+		t.Fatal("ReadTaskContractArtifact(closed store) error = nil")
 	}
 }
