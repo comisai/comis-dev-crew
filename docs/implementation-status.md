@@ -525,7 +525,9 @@ that does not resolve to the exact handle, kind, producer, and digest.
 Initiative list, detail, dependency graph, and backlog list projections read
 their records and advertised state version from one read-only SQLite snapshot.
 State and backlog-readiness filters reject unknown vocabulary instead of
-returning an ambiguous empty list. Detail reads require every durable member,
+returning an ambiguous empty list. Backlog reads apply their filters inside that
+snapshot and return at most sixteen handle-ordered records with an opaque
+after-handle cursor. Detail reads require every durable member,
 carry the graph's source/confidence/completeness envelope, and return closed
 non-executable next-action identifiers. The running service publishes these
 through the strict local boundary as `ListInitiatives`, `GetInitiative`, and

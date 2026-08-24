@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -85,12 +86,15 @@ func TestFacade_InitiativeToolsPreserveCanonicalAuthorityAndSideEffects(t *testi
 	}
 	if _, err := session.CallTool(context.Background(), &mcp.CallToolParams{
 		Meta: callMeta("list-backlog-mcp", "service-instance-0001"), Name: ToolBacklogList,
-		Arguments: BacklogListInput{RepositoryID: "repo-primary", Readiness: domain.BacklogReady},
+		Arguments: BacklogListInput{
+			RepositoryID: "repo-primary", Readiness: domain.BacklogReady,
+			AfterHandle: "backlog-before", Limit: 7,
+		},
 	}); err != nil {
 		t.Fatalf("CallTool(backlog_list) error = %v", err)
 	}
 	if got := strings.Join(client.calls, ","); got !=
-		"prepare-initiative:prepare-initiative-mcp,get-initiative:get-initiative-mcp:initiative-mcp,list-backlog:list-backlog-mcp:repo-primary:ready" {
+		"prepare-initiative:prepare-initiative-mcp,get-initiative:get-initiative-mcp:initiative-mcp,list-backlog:list-backlog-mcp:repo-primary:ready:backlog-before:7" {
 		t.Fatalf("canonical initiative calls = %q", got)
 	}
 }
@@ -317,7 +321,8 @@ func (client *initiativeMCPClient) ListBacklog(
 	operationID string,
 	input localapi.ListBacklogInput,
 ) (application.BacklogList, error) {
-	client.calls = append(client.calls, "list-backlog:"+operationID+":"+input.RepositoryID+":"+string(input.Readiness))
+	client.calls = append(client.calls, "list-backlog:"+operationID+":"+input.RepositoryID+":"+
+		string(input.Readiness)+":"+input.AfterHandle+":"+strconv.Itoa(input.Limit))
 	return client.backlog, nil
 }
 

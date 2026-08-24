@@ -6,6 +6,12 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
+const (
+	// MaximumBacklogPage bounds one durable backlog page.
+	MaximumBacklogPage = 16
+	defaultBacklogPage = MaximumBacklogPage
+)
+
 // InitiativeNextAction is a closed, non-executable initiative action.
 type InitiativeNextAction string
 
@@ -48,10 +54,12 @@ type InitiativeDetail struct {
 	NextSafeActions []InitiativeNextAction       `json:"nextSafeActions"`
 }
 
-// BacklogFilter scopes the durable backlog without granting work authority.
+// BacklogFilter scopes and pages the durable backlog without granting work authority.
 type BacklogFilter struct {
 	RepositoryID string                  `json:"repositoryId,omitempty"`
 	Readiness    domain.BacklogReadiness `json:"readiness,omitempty"`
+	AfterHandle  string                  `json:"afterHandle,omitempty"`
+	Limit        int                     `json:"limit,omitempty"`
 }
 
 // BacklogList is the versioned bounded-request projection.
@@ -59,5 +67,6 @@ type BacklogList struct {
 	SchemaVersion int                  `json:"schemaVersion"`
 	CapturedAtMs  int64                `json:"capturedAtMs"`
 	StateVersion  int64                `json:"stateVersion"`
+	NextCursor    string               `json:"nextCursor,omitempty"`
 	Items         []domain.BacklogItem `json:"items"`
 }

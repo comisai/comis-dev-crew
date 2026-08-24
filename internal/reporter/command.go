@@ -71,7 +71,10 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 			writeRuntimeFailure(stderr)
 			return 1
 		}
-		_, _ = io.WriteString(stdout, brief.Content)
+		if !writeExact(stdout, []byte(brief.Content)) {
+			writeRuntimeFailure(stderr)
+			return 1
+		}
 		return 0
 	}
 	if args[0] == "artifact" {
@@ -94,7 +97,10 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 			writeRuntimeFailure(stderr)
 			return 1
 		}
-		_, _ = stdout.Write(content)
+		if !writeExact(stdout, content) {
+			writeRuntimeFailure(stderr)
+			return 1
+		}
 		return 0
 	}
 	if args[0] == "acknowledge" {
@@ -245,6 +251,11 @@ func readCommandBrief(ctx context.Context, capability RuntimeCapability) (domain
 		return domain.WorkerBrief{}, errors.New("runtime brief is unavailable")
 	}
 	return brief, nil
+}
+
+func writeExact(output io.Writer, content []byte) bool {
+	written, err := output.Write(content)
+	return err == nil && written == len(content)
 }
 
 func writeCommandUsage(output io.Writer) {

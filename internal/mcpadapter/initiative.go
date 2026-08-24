@@ -68,6 +68,7 @@ func (facade *Facade) listBacklog(
 	}
 	result, err := facade.client.ListBacklog(ctx, string(callContext.OperationID), localapi.ListBacklogInput{
 		RepositoryID: input.RepositoryID, Readiness: input.Readiness,
+		AfterHandle: input.AfterHandle, Limit: input.Limit,
 	})
 	return nil, result, err
 }

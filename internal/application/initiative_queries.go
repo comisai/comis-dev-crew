@@ -12,7 +12,7 @@ import (
 type InitiativeQueryStore interface {
 	InitiativeSnapshot(context.Context) ([]domain.DevelopmentInitiative, int64, error)
 	InitiativeObservation(context.Context, string) (domain.DevelopmentInitiative, []domain.Task, int64, error)
-	BacklogSnapshot(context.Context) ([]domain.BacklogItem, int64, error)
+	BacklogSnapshot(context.Context, BacklogFilter) ([]domain.BacklogItem, string, int64, error)
 }
 
 // InitiativeQueryConfig binds the read-only initiative and backlog authority.
@@ -108,24 +108,28 @@ func (queries *InitiativeQueries) ListBacklog(
 	if filter.Readiness != "" && domain.ValidateBacklogReadiness(filter.Readiness) != nil {
 		return BacklogList{}, invalidReferenceFailure("backlog readiness", errors.New("readiness is not known"))
 	}
-	items, stateVersion, err := queries.store.BacklogSnapshot(ctx)
+	if filter.AfterHandle != "" && domain.ValidateBacklogHandle(filter.AfterHandle) != nil {
+		return BacklogList{}, invalidReferenceFailure("backlog cursor", errors.New("cursor is invalid"))
+	}
+	if filter.Limit < 0 {
+		return BacklogList{}, invalidReferenceFailure("backlog limit", errors.New("limit must not be negative"))
+	}
+	if filter.Limit == 0 {
+		filter.Limit = defaultBacklogPage
+	}
+	if filter.Limit > MaximumBacklogPage {
+		filter.Limit = MaximumBacklogPage
+	}
+	items, nextCursor, stateVersion, err := queries.store.BacklogSnapshot(ctx, filter)
 	if err != nil {
 		return BacklogList{}, translateReadError(err, "backlog")
 	}
-	filtered := make([]domain.BacklogItem, 0, len(items))
-	for _, item := range items {
-		if filter.RepositoryID != "" && item.RepositoryID != filter.RepositoryID {
-			continue
-		}
-		if filter.Readiness != "" && item.Readiness != filter.Readiness {
-			continue
-		}
-		filtered = append(filtered, item)
+	if items == nil {
+		items = []domain.BacklogItem{}
 	}
-	sort.Slice(filtered, func(left, right int) bool { return filtered[left].Handle < filtered[right].Handle })
 	return BacklogList{
 		SchemaVersion: 1, CapturedAtMs: queries.clock().UTC().UnixMilli(),
-		StateVersion: stateVersion, Items: filtered,
+		StateVersion: stateVersion, NextCursor: nextCursor, Items: items,
 	}, nil
 }
 

@@ -63,10 +63,8 @@ func TestInitiativeQueriesProjectFilteredListsAndDetailedGraph(t *testing.T) {
 func TestInitiativeQueriesScopeBacklogWithoutInventingRunAuthority(t *testing.T) {
 	observedAt := time.Date(2026, time.August, 20, 16, 0, 0, 0, time.UTC)
 	ready := queryBacklogItem("backlog-ready", "repo-primary", domain.BacklogReady)
-	otherRepository := queryBacklogItem("backlog-other", "repo-other", domain.BacklogReady)
-	needsRefinement := queryBacklogItem("backlog-refine", "repo-primary", domain.BacklogNeedsRefinement)
 	store := &initiativeQueryStoreFixture{
-		backlog: []domain.BacklogItem{otherRepository, needsRefinement, ready}, stateVersion: 14,
+		backlog: []domain.BacklogItem{ready}, nextCursor: ready.Handle, stateVersion: 14,
 	}
 	queries, err := NewInitiativeQueries(InitiativeQueryConfig{
 		Store: store, Clock: func() time.Time { return observedAt },
@@ -76,14 +74,25 @@ func TestInitiativeQueriesScopeBacklogWithoutInventingRunAuthority(t *testing.T)
 	}
 
 	list, err := queries.ListBacklog(context.Background(), BacklogFilter{
-		RepositoryID: "repo-primary", Readiness: domain.BacklogReady,
+		RepositoryID: "repo-primary", Readiness: domain.BacklogReady, AfterHandle: "backlog-before",
 	})
 	if err != nil {
 		t.Fatalf("ListBacklog() error = %v", err)
 	}
 	if list.SchemaVersion != 1 || list.StateVersion != 14 || list.CapturedAtMs != observedAt.UnixMilli() ||
-		len(list.Items) != 1 || !reflect.DeepEqual(list.Items[0], ready) {
+		list.NextCursor != ready.Handle || len(list.Items) != 1 || !reflect.DeepEqual(list.Items[0], ready) {
 		t.Fatalf("ListBacklog() = %#v", list)
+	}
+	if store.backlogFilter != (BacklogFilter{
+		RepositoryID: "repo-primary", Readiness: domain.BacklogReady,
+		AfterHandle: "backlog-before", Limit: MaximumBacklogPage,
+	}) {
+		t.Fatalf("BacklogSnapshot() filter = %#v", store.backlogFilter)
+	}
+	if _, err := queries.ListBacklog(context.Background(), BacklogFilter{
+		RepositoryID: "repo-primary", Limit: MaximumBacklogPage + 10,
+	}); err != nil || store.backlogFilter.Limit != MaximumBacklogPage {
+		t.Fatalf("ListBacklog(oversized limit) filter = %#v, %v", store.backlogFilter, err)
 	}
 	for _, field := range domain.BacklogItemFieldNames(list.Items[0]) {
 		switch field {
@@ -109,6 +118,14 @@ func TestInitiativeQueriesRejectInvalidScopesAndTranslateStoreFailures(t *testin
 	}(), domain.ErrorInvalidArgument)
 	assertFailureCode(t, func() error {
 		_, err := queries.ListBacklog(context.Background(), BacklogFilter{RepositoryID: "bad repository"})
+		return err
+	}(), domain.ErrorInvalidArgument)
+	assertFailureCode(t, func() error {
+		_, err := queries.ListBacklog(context.Background(), BacklogFilter{AfterHandle: "bad cursor"})
+		return err
+	}(), domain.ErrorInvalidArgument)
+	assertFailureCode(t, func() error {
+		_, err := queries.ListBacklog(context.Background(), BacklogFilter{Limit: -1})
 		return err
 	}(), domain.ErrorInvalidArgument)
 	if store.snapshotCalls != 0 {
@@ -158,6 +175,8 @@ type initiativeQueryStoreFixture struct {
 	initiative    domain.DevelopmentInitiative
 	tasks         []domain.Task
 	backlog       []domain.BacklogItem
+	nextCursor    string
+	backlogFilter BacklogFilter
 	stateVersion  int64
 	err           error
 	snapshotCalls int
@@ -179,10 +198,12 @@ func (store *initiativeQueryStoreFixture) InitiativeObservation(
 }
 
 func (store *initiativeQueryStoreFixture) BacklogSnapshot(
-	context.Context,
-) ([]domain.BacklogItem, int64, error) {
+	_ context.Context,
+	filter BacklogFilter,
+) ([]domain.BacklogItem, string, int64, error) {
 	store.snapshotCalls++
-	return append([]domain.BacklogItem(nil), store.backlog...), store.stateVersion, store.err
+	store.backlogFilter = filter
+	return append([]domain.BacklogItem(nil), store.backlog...), store.nextCursor, store.stateVersion, store.err
 }
 
 type applicationQueryTestError string

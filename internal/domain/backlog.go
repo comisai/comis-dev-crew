@@ -69,12 +69,17 @@ type BacklogItem struct {
 	UpdatedAt             time.Time        `json:"updatedAt"`
 }
 
+// ValidateBacklogHandle rejects backlog references that are not bounded opaque IDs.
+func ValidateBacklogHandle(value string) error {
+	return validateOpaqueID("backlogHandle", value)
+}
+
 // Validate enforces the strict backlog record.
 func (item BacklogItem) Validate() error {
 	if item.SchemaVersion != 1 {
 		return &ValidationError{Field: "schemaVersion", Reason: "must equal 1"}
 	}
-	if err := validateOpaqueID("backlogHandle", item.Handle); err != nil {
+	if err := ValidateBacklogHandle(item.Handle); err != nil {
 		return err
 	}
 	if err := ValidateRepositoryID(item.RepositoryID); err != nil {

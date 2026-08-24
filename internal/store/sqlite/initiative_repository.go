@@ -289,6 +289,59 @@ func listBacklogItems(
 	return items, nil
 }
 
+func listBacklogPage(
+	ctx context.Context,
+	source queryer,
+	filter application.BacklogFilter,
+) (items []domain.BacklogItem, nextCursor string, resultErr error) {
+	const selectPage = `SELECT handle, schema_version, repository_id, shape, requested_outcome,
+        depends_on_json, priority, readiness, source_conversation_ref, created_at, updated_at
+        FROM backlog_items`
+	const pageOrder = ` ORDER BY handle LIMIT ?`
+	var rows *sql.Rows
+	var err error
+	switch {
+	case filter.RepositoryID != "" && filter.Readiness != "":
+		rows, err = source.QueryContext(ctx,
+			selectPage+` WHERE handle > ? AND repository_id = ? AND readiness = ?`+pageOrder,
+			filter.AfterHandle, filter.RepositoryID, filter.Readiness, filter.Limit,
+		)
+	case filter.RepositoryID != "":
+		rows, err = source.QueryContext(ctx,
+			selectPage+` WHERE handle > ? AND repository_id = ?`+pageOrder,
+			filter.AfterHandle, filter.RepositoryID, filter.Limit,
+		)
+	case filter.Readiness != "":
+		rows, err = source.QueryContext(ctx,
+			selectPage+` WHERE handle > ? AND readiness = ?`+pageOrder,
+			filter.AfterHandle, filter.Readiness, filter.Limit,
+		)
+	default:
+		rows, err = source.QueryContext(ctx,
+			selectPage+` WHERE handle > ?`+pageOrder,
+			filter.AfterHandle, filter.Limit,
+		)
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("list backlog page: %w", err)
+	}
+	defer func() { resultErr = errors.Join(resultErr, rows.Close()) }()
+	items = make([]domain.BacklogItem, 0, filter.Limit)
+	nextCursor = filter.AfterHandle
+	for rows.Next() {
+		item, err := scanBacklogItem(rows)
+		if err != nil {
+			return nil, "", fmt.Errorf("list backlog page: %w", err)
+		}
+		items = append(items, item)
+		nextCursor = item.Handle
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("list backlog page: %w", err)
+	}
+	return items, nextCursor, nil
+}
+
 func scanBacklogItem(row rowScanner) (domain.BacklogItem, error) {
 	var item domain.BacklogItem
 	var dependencies, createdAt, updatedAt string

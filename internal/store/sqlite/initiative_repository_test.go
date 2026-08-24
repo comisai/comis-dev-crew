@@ -25,7 +25,7 @@ type initiativeBacklogRepository interface {
 type initiativeQuerySnapshotRepository interface {
 	InitiativeSnapshot(context.Context) ([]domain.DevelopmentInitiative, int64, error)
 	InitiativeObservation(context.Context, string) (domain.DevelopmentInitiative, []domain.Task, int64, error)
-	BacklogSnapshot(context.Context) ([]domain.BacklogItem, int64, error)
+	BacklogSnapshot(context.Context, application.BacklogFilter) ([]domain.BacklogItem, string, int64, error)
 }
 
 func TestInitiativeAndBacklogRecordsSurviveAnExactStoreRestart(t *testing.T) {
@@ -125,9 +125,12 @@ func TestInitiativeAndBacklogQuerySnapshotsCarryOneDurableVersion(t *testing.T) 
 		len(tasks) != 1 || tasks[0].Handle != member.Handle {
 		t.Fatalf("InitiativeObservation() = %#v, %#v, %d, %v", gotInitiative, tasks, version, err)
 	}
-	items, version, err := repository.BacklogSnapshot(ctx)
-	if err != nil || version != 12 || len(items) != 1 || items[0].Handle != backlog.Handle {
-		t.Fatalf("BacklogSnapshot() = %#v, %d, %v", items, version, err)
+	items, cursor, version, err := repository.BacklogSnapshot(ctx, application.BacklogFilter{
+		Limit: application.MaximumBacklogPage,
+	})
+	if err != nil || version != 12 || cursor != backlog.Handle ||
+		len(items) != 1 || items[0].Handle != backlog.Handle {
+		t.Fatalf("BacklogSnapshot() = %#v, %q, %d, %v", items, cursor, version, err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
@@ -138,8 +141,62 @@ func TestInitiativeAndBacklogQuerySnapshotsCarryOneDurableVersion(t *testing.T) 
 	if _, _, _, err := repository.InitiativeObservation(ctx, initiative.Handle); err == nil {
 		t.Fatal("InitiativeObservation(closed) error = nil")
 	}
-	if _, _, err := repository.BacklogSnapshot(ctx); err == nil {
+	if _, _, _, err := repository.BacklogSnapshot(ctx, application.BacklogFilter{
+		Limit: application.MaximumBacklogPage,
+	}); err == nil {
 		t.Fatal("BacklogSnapshot(closed) error = nil")
+	}
+}
+
+func TestBacklogSnapshotFiltersAndPaginatesBeforeMaterializing(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	expected := make([]string, 0, 17)
+	for index := 0; index < 25; index++ {
+		item := persistenceBacklogItem(fmt.Sprintf("backlog-page-%02d", index))
+		switch index % 7 {
+		case 0:
+			item.RepositoryID = "repo-other"
+		case 1:
+			item.Readiness = domain.BacklogNeedsRefinement
+		default:
+			expected = append(expected, item.Handle)
+		}
+		if err := store.CreateBacklogItem(ctx, item); err != nil {
+			t.Fatalf("CreateBacklogItem(%q) error = %v", item.Handle, err)
+		}
+	}
+	filter := application.BacklogFilter{
+		RepositoryID: "repo-primary", Readiness: domain.BacklogReady,
+		Limit: application.MaximumBacklogPage,
+	}
+	first, cursor, _, err := store.BacklogSnapshot(ctx, filter)
+	if err != nil || len(first) != application.MaximumBacklogPage || cursor != expected[15] {
+		t.Fatalf("BacklogSnapshot(first) = %d items, cursor %q, %v", len(first), cursor, err)
+	}
+	for index, item := range first {
+		if item.Handle != expected[index] || item.RepositoryID != filter.RepositoryID ||
+			item.Readiness != filter.Readiness {
+			t.Fatalf("BacklogSnapshot(first)[%d] = %#v", index, item)
+		}
+	}
+	filter.AfterHandle = cursor
+	second, cursor, _, err := store.BacklogSnapshot(ctx, filter)
+	if err != nil || len(second) != 1 || second[0].Handle != expected[16] || cursor != expected[16] {
+		t.Fatalf("BacklogSnapshot(second) = %#v, cursor %q, %v", second, cursor, err)
+	}
+	filter.AfterHandle = cursor
+	empty, cursor, _, err := store.BacklogSnapshot(ctx, filter)
+	if err != nil || len(empty) != 0 || cursor != filter.AfterHandle {
+		t.Fatalf("BacklogSnapshot(empty) = %#v, cursor %q, %v", empty, cursor, err)
+	}
+	filter.Limit = application.MaximumBacklogPage + 1
+	if _, _, _, err := store.BacklogSnapshot(ctx, filter); err == nil {
+		t.Fatal("BacklogSnapshot(oversized limit) error = nil")
 	}
 }
 

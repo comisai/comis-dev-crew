@@ -11,10 +11,12 @@ type InitiativeInput struct {
 	InitiativeHandle string `json:"initiativeHandle" jsonschema:"opaque initiative handle"`
 }
 
-// BacklogListInput scopes bounded requests without carrying execution authority.
+// BacklogListInput scopes and pages bounded requests without carrying execution authority.
 type BacklogListInput struct {
 	RepositoryID string                  `json:"repositoryId,omitempty" jsonschema:"optional operator-configured repository identity"`
 	Readiness    domain.BacklogReadiness `json:"readiness,omitempty" jsonschema:"optional readiness; use needs_refinement, ready, promoted, or dropped"`
+	AfterHandle  string                  `json:"afterHandle,omitempty" jsonschema:"optional opaque cursor returned by the previous backlog page"`
+	Limit        int                     `json:"limit,omitempty" jsonschema:"optional page size; values above 16 are capped"`
 }
 
 type PrepareInitiativeBaseRevision struct {

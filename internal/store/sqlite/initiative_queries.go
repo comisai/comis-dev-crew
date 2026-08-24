@@ -69,22 +69,44 @@ func (store *Store) InitiativeObservation(
 	return initiative, tasks, stateVersion, nil
 }
 
-// BacklogSnapshot reads bounded requests and their advertised version from one snapshot.
-func (store *Store) BacklogSnapshot(ctx context.Context) ([]domain.BacklogItem, int64, error) {
+// BacklogSnapshot reads one filtered page and its advertised version from one snapshot.
+func (store *Store) BacklogSnapshot(
+	ctx context.Context,
+	filter application.BacklogFilter,
+) ([]domain.BacklogItem, string, int64, error) {
+	if err := validateBacklogSnapshotFilter(filter); err != nil {
+		return nil, "", 0, err
+	}
 	transaction, err := store.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return nil, 0, fmt.Errorf("begin backlog snapshot: %w", err)
+		return nil, "", 0, fmt.Errorf("begin backlog snapshot: %w", err)
 	}
-	items, err := listBacklogItems(ctx, transaction)
+	items, nextCursor, err := listBacklogPage(ctx, transaction, filter)
 	if err != nil {
-		return nil, 0, errors.Join(err, transaction.Rollback())
+		return nil, "", 0, errors.Join(err, transaction.Rollback())
 	}
 	stateVersion, err := currentStateVersion(ctx, transaction)
 	if err != nil {
-		return nil, 0, errors.Join(err, transaction.Rollback())
+		return nil, "", 0, errors.Join(err, transaction.Rollback())
 	}
 	if err := transaction.Commit(); err != nil {
-		return nil, 0, fmt.Errorf("commit backlog snapshot: %w", err)
+		return nil, "", 0, fmt.Errorf("commit backlog snapshot: %w", err)
 	}
-	return items, stateVersion, nil
+	return items, nextCursor, stateVersion, nil
+}
+
+func validateBacklogSnapshotFilter(filter application.BacklogFilter) error {
+	if filter.RepositoryID != "" && domain.ValidateRepositoryID(filter.RepositoryID) != nil {
+		return errors.New("validate backlog snapshot: repository is invalid")
+	}
+	if filter.Readiness != "" && domain.ValidateBacklogReadiness(filter.Readiness) != nil {
+		return errors.New("validate backlog snapshot: readiness is invalid")
+	}
+	if filter.AfterHandle != "" && domain.ValidateBacklogHandle(filter.AfterHandle) != nil {
+		return errors.New("validate backlog snapshot: cursor is invalid")
+	}
+	if filter.Limit < 1 || filter.Limit > application.MaximumBacklogPage {
+		return errors.New("validate backlog snapshot: limit is invalid")
+	}
+	return nil
 }

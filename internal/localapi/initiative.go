@@ -24,10 +24,12 @@ type ListInitiativesInput struct {
 	State domain.InitiativeState `json:"state,omitempty"`
 }
 
-// ListBacklogInput scopes bounded requests without carrying run authority.
+// ListBacklogInput scopes and pages bounded requests without carrying run authority.
 type ListBacklogInput struct {
 	RepositoryID string                  `json:"repositoryId,omitempty"`
 	Readiness    domain.BacklogReadiness `json:"readiness,omitempty"`
+	AfterHandle  string                  `json:"afterHandle,omitempty"`
+	Limit        int                     `json:"limit,omitempty"`
 }
 
 type getInitiativeInput struct {
@@ -82,7 +84,7 @@ func (client *Client) GetInitiative(
 	return result, err
 }
 
-// ListBacklog reads bounded requests under an optional repository/readiness scope.
+// ListBacklog reads one bounded page under an optional repository/readiness scope.
 func (client *Client) ListBacklog(
 	ctx context.Context,
 	operationID string,

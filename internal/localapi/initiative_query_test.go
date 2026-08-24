@@ -2,7 +2,9 @@ package localapi
 
 import (
 	"context"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,7 +57,10 @@ func TestServerClient_InitiativeAndBacklogReadsUseCanonicalProjections(t *testin
 	if err != nil || !reflect.DeepEqual(detail, reads.detail) || reads.handle != "initiative-query" {
 		t.Fatalf("GetInitiative() = %#v, %v; handle = %q", detail, err, reads.handle)
 	}
-	filter := application.BacklogFilter{RepositoryID: "repo-primary", Readiness: domain.BacklogReady}
+	filter := application.BacklogFilter{
+		RepositoryID: "repo-primary", Readiness: domain.BacklogReady,
+		AfterHandle: "backlog-before", Limit: 7,
+	}
 	backlog, err := client.ListBacklog(context.Background(), "read-backlog-list", ListBacklogInput(filter))
 	if err != nil || !reflect.DeepEqual(backlog, reads.backlog) || !reflect.DeepEqual(reads.filter, filter) {
 		t.Fatalf("ListBacklog() = %#v, %v; filter = %#v", backlog, err, reads.filter)
@@ -65,6 +70,54 @@ func TestServerClient_InitiativeAndBacklogReadsUseCanonicalProjections(t *testin
 		if !method.valid() || method.SideEffect() != SideEffectRead {
 			t.Fatalf("method %q posture = %v/%q", method, method.valid(), method.SideEffect())
 		}
+	}
+}
+
+func TestServerClient_BacklogPageStaysWithinResponseLimit(t *testing.T) {
+	now := time.Date(2026, time.August, 20, 18, 0, 0, 0, time.UTC)
+	dependencies := make([]string, 64)
+	for index := range dependencies {
+		dependencies[index] = fmt.Sprintf("dependency-%02d-%s", index, strings.Repeat("a", 49))
+	}
+	items := make([]domain.BacklogItem, application.MaximumBacklogPage)
+	for index := range items {
+		items[index] = domain.BacklogItem{
+			SchemaVersion:         1,
+			Handle:                fmt.Sprintf("backlog-page-%02d-%s", index, strings.Repeat("a", 47)),
+			RepositoryID:          "repository-" + strings.Repeat("a", 52),
+			Shape:                 domain.ShapeShip,
+			RequestedOutcome:      strings.Repeat("\x01", 8192),
+			DependsOn:             append([]string(nil), dependencies...),
+			Priority:              domain.BacklogPriorityHigh,
+			Readiness:             domain.BacklogReady,
+			SourceConversationRef: "c" + strings.Repeat("a", 255),
+			CreatedAt:             now,
+			UpdatedAt:             now,
+		}
+		if err := items[index].Validate(); err != nil {
+			t.Fatalf("BacklogItem[%d].Validate() error = %v", index, err)
+		}
+	}
+	reads := &apiInitiativeQueries{backlog: application.BacklogList{
+		SchemaVersion: 1, CapturedAtMs: now.UnixMilli(), StateVersion: 22,
+		NextCursor: items[len(items)-1].Handle, Items: items,
+	}}
+	handler, err := NewHandler(HandlerConfig{
+		Queries: &apiQueries{}, InitiativeQueries: reads, Clock: time.Now,
+	})
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	client, err := NewClient(startHandlerServer(t, handler, CallerMCPFacade), time.Second)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	page, err := client.ListBacklog(context.Background(), "read-backlog-page", ListBacklogInput{
+		Limit: application.MaximumBacklogPage,
+	})
+	if err != nil || len(page.Items) != application.MaximumBacklogPage ||
+		page.NextCursor != items[len(items)-1].Handle {
+		t.Fatalf("ListBacklog(maximum page) = %d items, cursor %q, %v", len(page.Items), page.NextCursor, err)
 	}
 }
 

@@ -216,6 +216,42 @@ func TestRunCommand_ReadsTaskScopedContractArtifact(t *testing.T) {
 	}
 }
 
+func TestRunCommand_RejectsIncompleteRawOutput(t *testing.T) {
+	brief := commandBrief()
+	artifact := []byte("schema: component.contract.v1\nname: payments\n")
+	capability := &commandCapability{brief: brief, artifactContent: artifact}
+	commands := []struct {
+		name    string
+		args    []string
+		content []byte
+	}{
+		{name: "brief", args: []string{"brief"}, content: []byte(brief.Content)},
+		{name: "artifact", args: []string{"artifact", "--handle", "contract-payments-v1"}, content: artifact},
+	}
+	privateFailure := errors.New("private output failure")
+	for _, command := range commands {
+		for _, failure := range []struct {
+			name   string
+			writer incompleteOutputWriter
+		}{
+			{name: "short", writer: incompleteOutputWriter{written: len(command.content) - 1}},
+			{name: "error", writer: incompleteOutputWriter{err: privateFailure}},
+		} {
+			t.Run(command.name+"/"+failure.name, func(t *testing.T) {
+				var stderr bytes.Buffer
+				exit := reporter.RunCommand(
+					context.Background(), command.args, failure.writer, &stderr,
+					reporter.CommandConfig{Capability: capability},
+				)
+				if exit != 1 || !strings.Contains(stderr.String(), "runtime attachment") ||
+					strings.Contains(stderr.String(), privateFailure.Error()) {
+					t.Fatalf("RunCommand() = %d stderr=%q", exit, stderr.String())
+				}
+			})
+		}
+	}
+}
+
 func TestRunCommand_AcknowledgesCanonicalWorkingDirectoryWithoutAuthoritySelectors(t *testing.T) {
 	capability := &commandCapability{}
 	var stdout, stderr bytes.Buffer
@@ -366,6 +402,15 @@ func (capability *commandCapability) ReadContractArtifact(_ context.Context, art
 	capability.artifactCalls++
 	capability.artifactHandle = artifactHandle
 	return append([]byte(nil), capability.artifactContent...), capability.artifactErr
+}
+
+type incompleteOutputWriter struct {
+	written int
+	err     error
+}
+
+func (writer incompleteOutputWriter) Write([]byte) (int, error) {
+	return writer.written, writer.err
 }
 
 func commandBrief() domain.WorkerBrief {
