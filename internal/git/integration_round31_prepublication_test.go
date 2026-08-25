@@ -50,6 +50,45 @@ func TestRegistry_RejectsUnsupportedTopologyBeforeSharedObjectPublication(t *tes
 	}
 }
 
+func TestRegistry_RejectsLiveTopologyBlockerBeforeSharedObjectPublication(t *testing.T) {
+	for _, strategy := range []application.IntegrationStrategy{
+		application.IntegrationMerge,
+		application.IntegrationCherryPick,
+		application.IntegrationRebase,
+	} {
+		t.Run(string(strategy), func(t *testing.T) {
+			fixture := newIntegrationFixture(t)
+			candidateHead := commitIntegrationFile(
+				t, fixture, fixture.candidate.CanonicalPath, "candidate-added.txt", "candidate addition\n",
+			)
+			targetHead := commitIntegrationFile(
+				t, fixture, fixture.target.CanonicalPath, "target-only.txt", "target only\n",
+			)
+			if err := os.Mkdir(filepath.Join(fixture.target.CanonicalPath, "candidate-added.txt"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			objects := filepath.Join(gitOutput(t, fixture.repository.gitExecutable,
+				"--no-optional-locks", "-C", fixture.target.CanonicalPath,
+				"rev-parse", "--path-format=absolute", "--git-common-dir"), "objects")
+			before := snapshotObjectDatabase(t, objects)
+
+			operationID := "live-blocker-" + strings.ReplaceAll(string(strategy), "_", "-")
+			request := fixture.request(operationID, strategy, candidateHead, targetHead)
+			if _, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request); err == nil ||
+				!errors.Is(err, application.ErrIntegrationMutationNotStarted) {
+				t.Fatalf("ApplyIntegrationCandidate(live blocker) error = %v", err)
+			}
+			after := snapshotObjectDatabase(t, objects)
+			if !reflect.DeepEqual(after, before) {
+				t.Fatalf("shared object database changed before live blocker refusal: before=%d after=%d", len(before), len(after))
+			}
+			if head := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "rev-parse", "HEAD"); head != targetHead {
+				t.Fatalf("target head = %q, want %q", head, targetHead)
+			}
+		})
+	}
+}
+
 func snapshotObjectDatabase(t *testing.T, root string) map[string][sha256.Size]byte {
 	t.Helper()
 	snapshot := make(map[string][sha256.Size]byte)
