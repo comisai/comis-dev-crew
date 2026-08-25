@@ -100,61 +100,6 @@ func (registry *Registry) validateIsolatedRebaseResult(
 	return isolatedRebaseResult{head: results[len(results)-1], commits: results}, nil
 }
 
-func importIsolatedGitObjects(source, destination string) error {
-	if !filepath.IsAbs(source) || !filepath.IsAbs(destination) || source == destination {
-		return errors.New("apply integration candidate: isolated object boundary is invalid")
-	}
-	changedDirectories := make(map[string]struct{})
-	err := filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil || !info.Mode().IsRegular() {
-			return errors.New("isolated object entry is invalid")
-		}
-		relative, err := filepath.Rel(source, path)
-		if err != nil {
-			return err
-		}
-		parts := strings.Split(filepath.ToSlash(relative), "/")
-		if len(parts) != 2 || len(parts[0]) != 2 || len(parts[1]) != 38 && len(parts[1]) != 62 ||
-			!lowerHex(parts[0]+parts[1]) {
-			return errors.New("isolated object identity is invalid")
-		}
-		directory := filepath.Join(destination, parts[0])
-		if err := os.MkdirAll(directory, 0o755); err != nil {
-			return err
-		}
-		target := filepath.Join(directory, parts[1])
-		if existing, err := os.Lstat(target); err == nil {
-			if !existing.Mode().IsRegular() {
-				return errors.New("shared object identity is invalid")
-			}
-			return nil
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		if err := os.Link(path, target); err != nil {
-			return err
-		}
-		changedDirectories[directory] = struct{}{}
-		return nil
-	})
-	if err != nil {
-		return errors.New("apply integration candidate: isolated result objects could not be imported")
-	}
-	for directory := range changedDirectories {
-		if err := syncDirectory(directory); err != nil {
-			return err
-		}
-	}
-	return syncDirectory(destination)
-}
-
 func lowerHex(value string) bool {
 	for _, character := range value {
 		if character < '0' || character > '9' {

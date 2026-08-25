@@ -165,6 +165,9 @@ func initiativeSchedulingFrontier(
 				return true, application.ScheduleResourceQueued, nil
 			}
 			if selected == available {
+				if targetReason != "" && targetReason != application.ScheduleResourceQueued {
+					return false, targetReason, nil
+				}
 				return false, application.ScheduleResourceQueued, nil
 			}
 			if usage.Repositories[fact.repositoryID] < limits.MaxConcurrentTasksPerRepository &&

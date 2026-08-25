@@ -3,7 +3,6 @@ package git
 import (
 	"context"
 	"errors"
-	"path/filepath"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 )
@@ -25,6 +24,9 @@ func (registry *Registry) applyIsolatedRebaseResult(
 	targetRef string,
 	resultingHead string,
 ) error {
+	if err := registry.authorizeRebaseFinalization(ctx, request, resultingHead); err != nil {
+		return err
+	}
 	proofRef := integrationRebaseProofRef(request)
 	proof, err := registry.inspectIntegrationReceipt(ctx, request.Target.WorktreePath, proofRef)
 	if err != nil {
@@ -51,45 +53,14 @@ func (registry *Registry) applyIsolatedRebaseResult(
 	if err := registry.materializeIntegrationResult(ctx, request, targetRef, resultingHead); err != nil {
 		return err
 	}
+	if err := registry.authorizeRebaseFinalization(ctx, request, resultingHead); err != nil {
+		return err
+	}
 	if err := registry.promoteCompletedRebaseProof(ctx, request, resultingHead); err != nil {
 		return err
 	}
+	if err := registry.authorizeRebaseFinalization(ctx, request, resultingHead); err != nil {
+		return err
+	}
 	return registry.retireIntegrationRebaseProof(ctx, request, resultingHead)
-}
-
-func (registry *Registry) materializeIntegrationResult(
-	ctx context.Context,
-	request application.IntegrationAdapterRequest,
-	targetRef string,
-	resultingHead string,
-) error {
-	gitDirectory, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-		"rev-parse", "--absolute-git-dir")
-	if err != nil || !filepath.IsAbs(gitDirectory) {
-		return errors.New("apply integration candidate: target index identity is unavailable")
-	}
-	workspace := gitWorkspaceEnvironment{
-		gitDir: gitDirectory, gitWorkTree: request.Target.WorktreePath, gitIndex: filepath.Join(gitDirectory, "index"),
-	}
-	if request.Strategy != application.IntegrationRebase {
-		if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
-			return errors.Join(err, application.ErrIntegrationMutationNotStarted)
-		}
-		if err := registry.validateIntegrationMutationDeadline(request); err != nil {
-			return err
-		}
-	}
-	if _, err := runGitBytesInWorkspace(ctx, registry.gitExecutable, workspace,
-		"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-		"read-tree", "--reset", "-u", resultingHead); err != nil {
-		return errors.New("apply integration candidate: proved result could not be materialized")
-	}
-	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-		"update-ref", targetRef, resultingHead, request.Target.ExpectedHead); err != nil {
-		_, _ = runGitBytesInWorkspace(ctx, registry.gitExecutable, workspace,
-			"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-			"read-tree", "--reset", "-u", request.Target.ExpectedHead)
-		return errors.New("apply integration candidate: target branch changed before proved result")
-	}
-	return nil
 }

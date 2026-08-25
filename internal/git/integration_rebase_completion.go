@@ -59,31 +59,8 @@ func (registry *Registry) runIntegrationStrategy(
 		}
 		return registry.materializeIntegrationResult(ctx, request, targetRef, plan.ResultingHead)
 	}
-	if request.Strategy == application.IntegrationCherryPick {
-		return errors.Join(errors.New("apply integration candidate: cherry-pick range conflicts in isolation"),
-			application.ErrIntegrationMutationNotStarted)
-	}
-	if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
-		return errors.Join(err, application.ErrIntegrationMutationNotStarted)
-	}
-	if err := registry.validateIntegrationMutationDeadline(request); err != nil {
-		return err
-	}
-	arguments := []string{
-		"--no-optional-locks", "-C", request.Target.WorktreePath,
-		"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false",
-		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
-	}
-	switch request.Strategy {
-	case application.IntegrationMerge:
-		arguments = append(arguments, "merge", "--no-ff", "--no-edit", "--no-verify", "--no-stat", request.Candidate.HeadRevision)
-	case application.IntegrationCherryPick:
-		arguments = append(arguments, "cherry-pick", request.Candidate.BaseRevision+".."+request.Candidate.HeadRevision)
-	default:
-		return errors.New("apply integration candidate: strategy is invalid")
-	}
-	_, err = runGitBytes(ctx, registry.gitExecutable, arguments...)
-	return err
+	return errors.Join(errors.New("apply integration candidate: strategy conflicts in isolation"),
+		application.ErrIntegrationMutationNotStarted)
 }
 
 func (registry *Registry) runRebaseIntegration(
@@ -143,13 +120,22 @@ func (registry *Registry) runRebaseIntegration(
 	if err != nil {
 		return err
 	}
+	if err := registry.authorizeRebaseFinalization(ctx, request, resultingHead); err != nil {
+		return err
+	}
 	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
 		"update-ref", targetRef, resultingHead, request.Target.ExpectedHead); err != nil {
 		return errors.New("apply integration candidate: target branch changed during rebase")
 	}
+	if err := registry.authorizeRebaseFinalization(ctx, request, resultingHead); err != nil {
+		return err
+	}
 	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
 		"symbolic-ref", "HEAD", targetRef); err != nil {
 		return errors.New("apply integration candidate: rebased target could not be reattached")
+	}
+	if err := registry.authorizeRebaseFinalization(ctx, request, resultingHead); err != nil {
+		return err
 	}
 	if err := registry.retireIntegrationRebaseProof(ctx, request, resultingHead); err != nil {
 		return err
@@ -295,25 +281,13 @@ func (registry *Registry) completeServiceRebase(
 	if err != nil {
 		return "", err
 	}
-	if err := registry.completeServerRebaseProof(ctx, repository, request, resultingHead); err != nil {
-		return "", err
-	}
-	if err := registry.promoteCompletedRebaseProof(ctx, request, resultingHead); err != nil {
-		return "", err
-	}
-	return resultingHead, nil
-}
-
-func (registry *Registry) validRecoveredRebaseHead(
-	ctx context.Context,
-	repository Repository,
-	request application.IntegrationAdapterRequest,
-) (string, error) {
-	resultingHead, err := registry.inspectRecoveredRebaseHead(ctx, request)
-	if err != nil {
+	if err := registry.authorizeRebaseFinalization(ctx, request, resultingHead); err != nil {
 		return "", err
 	}
 	if err := registry.completeServerRebaseProof(ctx, repository, request, resultingHead); err != nil {
+		return "", err
+	}
+	if err := registry.authorizeRebaseFinalization(ctx, request, resultingHead); err != nil {
 		return "", err
 	}
 	if err := registry.promoteCompletedRebaseProof(ctx, request, resultingHead); err != nil {

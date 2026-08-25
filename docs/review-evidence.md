@@ -59,22 +59,33 @@ it validates and backfills pages of 64.
   unsafe attributes.
 - The real merge, rebase, or cherry-pick engine runs in an isolated
   service-owned repository. Successful result objects and their exact semantic
-  proof are persisted before the shared worktree consumes them with an
-  expected-head compare-and-swap; conflict continuations bind the staged tree
-  and produced commit before another continuation can be accepted.
+  proof are persisted before the shared worktree consumes them. Isolated
+  conflicts refuse without shared mutation. Loose objects are content-validated
+  and copied independently onto the destination filesystem before atomic
+  publication.
+- Shared result adoption persists the expected index, expected and result trees,
+  result proof, and pending transition before the target compare-and-swap. Only
+  an unchanged expected worktree can then be safely materialized; a crash after
+  the compare-and-swap resumes from that transition, while developer edits and
+  divergent refs remain untouched.
 - Recovery validates the complete original and recovery receipt set through
   non-recursive tri-state inspection. A completed result can be reconciled
-  after the target compare-and-swap, while stale evidence or contradictory
-  receipts refuse before continuation.
+  after the target compare-and-swap. Every completion posture rechecks the
+  deadline and state-specific receipt set before its next ref, index, or
+  worktree mutation.
 - Pre-mutation policy and topology refusals settle as `aborted`, distinct from
   candidate evidence invalidation, so the exact reservation is released
-  without claiming the evidence changed.
+  without claiming the evidence changed. An aborted recovery releases conflict
+  exclusivity for a corrected operation while the same operation still replays
+  its terminal receipt.
 - Scheduling persists one priority head per round, repository, and worker
   profile and advances that resource's indexed frontier for every available
   slot. Capped resources therefore cannot cause an unbounded priority scan,
   while global ordering still chooses the oldest eligible task.
 - Missing, malformed, stale, contradictory, or incomplete graph, Git, migration,
   or scheduling evidence refuses mutation and preserves work.
+- Capacity deferral never replaces a requested task's dependency, contract, or
+  integration blocker with `resource_queued`.
 
 The Round 21 behavioral regressions are preserved in test-only commit
 `ed472b56765db9f071aa0b8477846c7a68fd69de`. The exact RED commands were:
@@ -93,3 +104,22 @@ was accepted, cherry-pick partially mutated the target, tracked-symlink cleanup
 failed, and unexpected recovery receipts were accepted. The focused application
 and SQLite commands also observed `invalidated` instead of `aborted` and queued
 the second older same-resource task behind later work.
+
+The Round 22 behavioral regressions are preserved in test-only commit
+`ffc45417db2866df860a444bcc541cf21334d41c`. The exact RED commands were:
+
+```text
+go test ./internal/git -run 'TestRegistry_(CompletedInitialRebaseRechecksDeadlineBeforeMutation|CompletedRecoveryRechecksEveryReceiptAndDeadline)$' -count=1
+go test ./internal/git -run 'TestRegistry_(MaterializationPreservesEditsAcrossCASFailures|ReconcilesCrashAfterResultCAS)$' -count=1
+go test ./internal/git -run '^TestRegistry_IsolatedMergeConflictRefusesSharedMutation$' -count=1
+go test ./internal/git -run '^TestImportIsolatedGitObjectsCopiesAndValidatesLooseObjects$' -count=1
+go test ./internal/store/sqlite -run '^TestIntegrationAbortedRecoveryReleasesConflictForCorrectedOperation$' -count=1
+go test ./internal/store/sqlite -run '^TestInitiativeLaunchAuthorizationPreservesRequestedTaskBlockerWhenCapacityFills$' -count=1
+```
+
+Before implementation, completed initial and recovery rebases succeeded with an
+expired deadline or a dangling original completion receipt; failed result CAS
+boundaries overwrote developer edits; a post-CAS retry remained stranded; an
+isolated merge conflict was rerun in the shared worktree; aborted recovery still
+blocked a corrected operation; imported objects shared source inodes and corrupt
+objects were accepted; and a dependency blocker was reported as capacity.

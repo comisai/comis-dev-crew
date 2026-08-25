@@ -123,6 +123,11 @@ func (registry *Registry) ApplyIntegrationCandidate(
 		final.Branch != expectedBranch {
 		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: resulting target is unverified")
 	}
+	if request.Strategy == application.IntegrationRebase {
+		if err := registry.authorizeRebaseFinalization(ctx, request, final.HeadRevision); err != nil {
+			return application.IntegrationAdapterResult{}, err
+		}
+	}
 	if err := registry.createIntegrationReceipt(ctx, repository, appliedRef, final.HeadRevision); err != nil {
 		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: applied receipt could not be recorded")
 	}

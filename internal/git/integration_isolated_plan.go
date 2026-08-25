@@ -255,6 +255,26 @@ func (registry *Registry) reconcileCompletedIntegrationPlan(
 	if !serverIntegrationPlanMatches(plan, request) {
 		return application.IntegrationAdapterResult{}, true, errors.New("apply integration candidate: isolated operation proof differs")
 	}
+	targetRef := "refs/heads/" + expectedIntegrationTargetBranch(request)
+	if found, err := registry.reconcileIntegrationMaterialization(
+		ctx, request, targetRef, plan.ResultingHead,
+	); err != nil {
+		return application.IntegrationAdapterResult{}, true, err
+	} else if found {
+		target, inspectErr := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
+			TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
+			WorktreePath: request.Target.WorktreePath,
+		})
+		if inspectErr != nil || target.HeadRevision != plan.ResultingHead || target.Cleanliness != CandidateClean ||
+			target.Branch != expectedIntegrationTargetBranch(request) {
+			return application.IntegrationAdapterResult{}, true,
+				errors.New("apply integration candidate: completed materialization is unverified")
+		}
+		return application.IntegrationAdapterResult{
+			Outcome: application.IntegrationApplied, PreviousHead: request.Target.ExpectedHead,
+			ResultingHead: plan.ResultingHead,
+		}, true, nil
+	}
 	target, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
 		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
 		WorktreePath: request.Target.WorktreePath,

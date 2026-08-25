@@ -68,6 +68,9 @@ func (registry *Registry) reconcileReceiptOnlyCompletedRebase(
 			return application.IntegrationAdapterResult{}, true,
 				errors.New("apply integration candidate: receipt-only completed rebase differs")
 		}
+		if err := registry.authorizeRebaseFinalization(ctx, request, proof.resultingHead); err != nil {
+			return application.IntegrationAdapterResult{}, true, err
+		}
 		if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
 			"symbolic-ref", "HEAD", targetRef); err != nil {
 			return application.IntegrationAdapterResult{}, true,

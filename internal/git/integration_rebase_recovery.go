@@ -63,7 +63,7 @@ func (registry *Registry) resumeRebaseIntegration(
 	} else if found {
 		return registry.finalizeRecoveredRebase(ctx, request, repository, targetRef, resultingHead)
 	}
-	if resultingHead, completedErr := registry.completedRebaseContinuation(ctx, request, repository, targetRef); completedErr == nil {
+	if resultingHead, completedErr := registry.completedRebaseContinuation(ctx, request, targetRef); completedErr == nil {
 		return registry.finalizeRecoveredRebase(ctx, request, repository, targetRef, resultingHead)
 	}
 	conflicts, err := registry.validateRecoverableRebase(ctx, request, targetRef)
@@ -294,7 +294,7 @@ func (registry *Registry) reconcileInterruptedRebase(
 		return application.IntegrationAdapterResult{}, true, err
 	}
 	proofRef := integrationRebaseProofRef(request)
-	resultingHead, err := registry.validRecoveredRebaseHead(ctx, repository, request)
+	resultingHead, err := registry.inspectRecoveredRebaseHead(ctx, request)
 	if err != nil {
 		return application.IntegrationAdapterResult{}, true, err
 	}
@@ -310,7 +310,6 @@ func (registry *Registry) reconcileInterruptedRebase(
 func (registry *Registry) completedRebaseContinuation(
 	ctx context.Context,
 	request application.IntegrationAdapterRequest,
-	repository Repository,
 	targetRef string,
 ) (string, error) {
 	if err := registry.validateRebaseOrigin(ctx, request); err != nil {
@@ -324,7 +323,7 @@ func (registry *Registry) completedRebaseContinuation(
 	if err != nil || branchHead != request.Target.ExpectedHead {
 		return "", errors.New("apply integration candidate: completed rebase continuation changed the target branch")
 	}
-	return registry.validRecoveredRebaseHead(ctx, repository, request)
+	return registry.inspectRecoveredRebaseHead(ctx, request)
 }
 
 func (registry *Registry) validateRebaseOrigin(

@@ -27,7 +27,7 @@ func resolveIntegrationRecoveryReservation(
 	if !integrationRecoveryMatchesRequest(previous, request) || request.At.Before(previous.completedAt) {
 		return integrationApplicationRow{}, fmt.Errorf("integration recovery identity differs: %w", application.ErrConflict)
 	}
-	if existing, found, err := findIntegrationRecoveryApplication(
+	if existing, found, err := findOpenIntegrationRecoveryApplication(
 		ctx, transaction, previous.operationID,
 	); err != nil {
 		return integrationApplicationRow{}, err

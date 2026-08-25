@@ -149,7 +149,7 @@ func findCandidateIntegrationApplication(
 	return row, true, nil
 }
 
-func findIntegrationRecoveryApplication(
+func findOpenIntegrationRecoveryApplication(
 	ctx context.Context,
 	source queryer,
 	recoveryOperationID string,
@@ -158,13 +158,15 @@ func findIntegrationRecoveryApplication(
         candidate_task_handle, repository_id, policy_id, strategy, target_worktree, expected_target_head,
         candidate_worktree, candidate_base, candidate_head, evidence_digest, evidence_expires_at,
         status, resulting_head, conflicts_json, reserved_at, completed_at, state_version
-        FROM integration_applications WHERE recovery_operation_id = ?`
-	row, err := scanIntegrationApplication(source.QueryRowContext(ctx, query, recoveryOperationID))
+        FROM integration_applications WHERE recovery_operation_id = ? AND status != ?`
+	row, err := scanIntegrationApplication(source.QueryRowContext(
+		ctx, query, recoveryOperationID, application.IntegrationAborted,
+	))
 	if errors.Is(err, sql.ErrNoRows) {
 		return integrationApplicationRow{}, false, nil
 	}
 	if err != nil {
-		return integrationApplicationRow{}, false, fmt.Errorf("read integration recovery application: %w", err)
+		return integrationApplicationRow{}, false, fmt.Errorf("read open integration recovery application: %w", err)
 	}
 	return row, true, nil
 }
