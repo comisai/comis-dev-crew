@@ -78,19 +78,24 @@ it validates and backfills pages of 64.
   dependency readiness, and only the durable `ready` owner posture permits a
   mutation or conflict continuation.
 - Integration inspects local and worktree Git configuration without includes
-  before status or mutation. It rejects hooks, merge drivers, filters, diff
-  commands, editors, credential helpers, and file-system monitors, as well as
-  unsafe attributes. Every repository-aware Git child also receives fixed
-  service-owned command overrides, so a configuration race cannot activate a
-  hook, file-system monitor, editor, signer, helper, diff command, or automatic
-  maintenance route after inspection.
+  before mutation. Candidate cleanliness and operator diff summaries use raw
+  commit trees, index trees, bounded blob reads, and rooted no-follow worktree
+  comparison rather than Git status or content diff in the worker-controlled
+  repository. Dynamically named filters, text converters, external diff
+  commands, info attributes, and configuration races therefore cannot execute
+  during candidate inspection. Repository-aware Git children still receive
+  fixed service-owned configuration; the generic bounded process seam receives
+  its caller's exact argument vector.
 - The real merge, rebase, or cherry-pick engine runs in an isolated
   service-owned repository. Successful result objects and their exact semantic
   proof are persisted before the shared worktree consumes them. Isolated
   conflicts for every strategy refuse without proof-ref, receipt, index,
   worktree, or target-ref mutation. Automatic Git maintenance and object
-  packing are disabled in every isolated engine. Loose objects are
-  content-validated and copied independently onto the destination filesystem;
+  packing are disabled in every isolated engine. The complete loose-object set
+  is validated before publication with closed object-count, per-object,
+  aggregate compressed, aggregate decompressed, and result-tree bounds. Loose
+  objects are copied independently onto the destination filesystem only after
+  that bounded plan succeeds;
   a rooted directory handle preserves the validated object-database identity
   through exclusive temporary creation, fsync, collision checks, and atomic
   publication even if its ambient path is replaced.
@@ -100,11 +105,13 @@ it validates and backfills pages of 64.
   then be safely materialized. Tree entry, per-blob, and aggregate bounds are
   enforced before compare-and-swap. Untrusted regular files are compared through
   rooted no-follow handles with size-first bounded streaming and replacement
-  detection. Each changed entry is atomically displaced into task-owned recovery
-  evidence, verified against the expected snapshot, and replaced through an
-  atomic no-replace publication. Racing developer entries and service stages are
-  preserved for exact restart reconciliation; unsupported file/directory shape
-  changes refuse before mutation. No post-CAS Git
+  detection. Existing regular files are journaled and rewritten through their
+  identity-checked authoritative inode, so writes through an already-open
+  developer descriptor remain visible in the worktree and are detected before
+  recovery evidence can retire. Additions use atomic no-replace publication;
+  deletions and existing-entry type changes refuse before target publication.
+  Racing developer entries and service stages are preserved for exact restart
+  reconciliation. No post-CAS Git
   checkout consumes mutable repository configuration or info attributes, so a
   racing dynamically named filter cannot execute with service authority. A
   crash after the compare-and-swap resumes from that transition, while partial
@@ -112,6 +119,11 @@ it validates and backfills pages of 64.
   Evidence freshness and strategy-specific receipts are reauthorized
   immediately before post-CAS index/worktree materialization; expiry preserves
   the pending transition and expected worktree for a later authorized retry.
+  Fresh merge and cherry-pick materialization validates the complete closed
+  original/recovery receipt and proof family before target, index, and worktree
+  mutation, after each mutation boundary, and around terminal applied-receipt
+  publication. Any dangling, symbolic, altered, or contradictory sibling keeps
+  the durable transition unknown instead of returning success.
 - Prepared rebase and conflict-recovery restoration publish immutable source,
   target, tree, index, branch, and proof identity before the first index,
   worktree, or HEAD mutation. Restart accepts only the closed original,
@@ -265,4 +277,37 @@ The focused GREEN command on the fixed tree is:
 ```text
 go test ./internal/git -run 'TestRegistry_(CompletedMaterializationRejectsContradictoryReceiptFamily|AppliedReplayRejectsUnexpectedProofRef|MaterializationIgnoresRacingDynamicFilter|MaterializationPreservesEditsAcrossCASFailures|ReconcilesCrashAfterResultCAS|FreshOperationAdoptsExactPendingMaterialization|FreshPendingMaterializationNeverOverwritesEdits|PostCASMaterializationRequiresFreshAuthorization|PendingRecoverySettlesAfterPostMaterializationExpiry|RebasePreflightCleansTrackedSymlinkWorkspace|ReceiptOnlyReconcilesCompletedMaterializationBeforeRebasedReceipt|AppliedReplayRejectsContradictorySiblingReceipts|CandidateInspectionIgnoresRacingFSMonitor)' -count=1
 ok github.com/comisai/comis-dev-crew/internal/git 76.011s
+```
+
+## Round 29 materialization and inspection authority
+
+The five behavioral RED slices are preserved independently:
+
+- `b5ed7ea` proves writes through open tracked descriptors disappeared at both
+  publication boundaries while materialization returned success.
+- `747e35f` proves fresh merge and cherry-pick materialization returned applied
+  after racing dangling sibling receipts at index and terminal boundaries.
+- `8219592` proves a racing dynamically named filter process executed during
+  candidate inspection.
+- `14ca2d5` proves oversized and excessive isolated loose-object sets were
+  published without a pre-publication resource refusal.
+- `67b71a1` proves the generic bounded child seam received Git configuration
+  arguments instead of its exact caller-supplied vector.
+
+The exact RED commands were:
+
+```text
+go test ./internal/git -run '^TestMaterializationPreservesWritesThroughOpenTrackedDescriptor$' -count=1
+go test ./internal/git -run '^TestRegistry_FreshMaterializationRejectsRacingReceiptFamily$' -count=1
+go test ./internal/git -run '^TestRegistry_Candidate(InspectionIgnoresRacingDynamicFilterProcess|DiffIgnoresDynamicTextConversionDriver)$' -count=1
+go test ./internal/git -run '^TestImportIsolatedGitObjectsRejectsOversizedObjectBeforePublication$' -count=1
+go test ./internal/git -run '^TestBoundedChildProcessPreservesExactArguments$' -count=1
+```
+
+The focused GREEN command covers those regressions plus their adjacent public
+candidate-diff, runner, import, crash-replay, and receipt-family contracts:
+
+```text
+go test ./internal/git -run 'Test(MaterializationPreservesWritesThroughOpenTrackedDescriptor|Registry_FreshMaterializationRejectsRacingReceiptFamily|Registry_CandidateInspectionIgnoresRacingDynamicFilterProcess|Registry_CandidateDiffIgnoresDynamicTextConversionDriver|ImportIsolatedGitObjects|BoundedChildProcessPreservesExactArguments|GitInspectionRunner_IsBoundedCancellableAndContentFreeOnFailure|WorkspaceGitRunner_PropagatesEnvironmentAndNormalizesCommandOutcomes|Registry_InspectCandidateDiff|Registry_AppliesEveryReviewedIntegrationStrategyAndReplays|MaterializationRetryRetiresCrashRecoveryEvidence)' -count=1
+ok github.com/comisai/comis-dev-crew/internal/git 42.800s
 ```
