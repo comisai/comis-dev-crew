@@ -372,3 +372,37 @@ The focused GREEN command passed in 33.514 seconds:
 go test ./internal/git -run 'TestRegistry_(InspectCandidateRejectsDirtyGitlinks|InspectCandidateRejectsDirtyNestedGitlink|InspectCandidateGitlinkIgnoresWorkerCommandConfiguration|InspectCandidateSupportsBuiltInAttributes|InspectCandidateReportsDirtyBuiltInNormalization|InspectCandidateDiffAcceptsLargeTreesAndGitlinks|RejectsUnsupportedTopologyBeforeSharedObjectPublication|InspectCandidatePreservesStatusCleanlinessSemantics|CandidateInspectionIgnoresRacingDynamicFilterProcess|CandidateDiffIgnoresDynamicTextConversionDriver|AppliesEveryReviewedIntegrationStrategyAndReplays)|TestCandidate(ContentChangePreservesFinalNewlineIdentity|WorktreeSnapshotBoundsAggregateRetainedContent|RenameMatchingHasBoundedWork|ContentChange.*)' -count=1
 ok github.com/comisai/comis-dev-crew/internal/git 33.514s
 ```
+
+## Round 32 receipt, topology, and metadata boundaries
+
+Commit `8484f88` preserves executable RED evidence for a direct receipt changed
+to a symbolic ref between Git queries, an untracked empty-directory blocker
+discovered only after isolated object publication, and valid tree metadata that
+exceeded the former whole-output buffer. Receipt authority now comes from a
+bounded, non-dereferencing snapshot of every original and recovery receipt and
+proof member, with stable before-and-after comparisons around terminal replay.
+Symbolic targets are inspected as immediate values and are never resolved as
+direct commit receipts.
+
+The isolated engine proves the live rooted target topology while result objects
+remain private, then repeats that proof before target publication. Static
+filesystem blockers therefore remain a mutation-not-started refusal; races
+after shared publication remain unknown. Candidate index and tree metadata are
+consumed as supervised NUL-delimited records with per-record, count, ordering,
+path, type, cancellation, and stderr bounds, without retaining Git's complete
+machine output.
+
+The focused RED commands were:
+
+```text
+go test ./internal/git -run '^TestRegistry_AppliedReplayRejectsDirectToSymbolicReceiptRace$' -count=1
+go test ./internal/git -run '^TestRegistry_RejectsLiveTopologyBlockerBeforeSharedObjectPublication$' -count=1
+go test ./internal/git -run 'TestCandidate(RevisionSnapshotStreamsTreeMetadataBeyondLegacyBuffer|TreeMetadataRejectsUnterminatedAndUnorderedRecords)$' -count=1
+```
+
+The focused GREEN command passed in 35.317 seconds:
+
+```text
+go test ./internal/git -run 'Test(Registry_(AppliedReplayRejectsDirectToSymbolicReceiptRace|RejectsLiveTopologyBlockerBeforeSharedObjectPublication|RejectsUnsupportedTopologyBeforeSharedObjectPublication|ReconcilesCompletedRecoveryBeforeRebasedReceipt|RebaseTargetReceiptRejectsAlteredOrAmbiguousIdentity|InspectCandidatePreservesStatusCleanlinessSemantics|InspectCandidateDiffAcceptsLargeTreesAndGitlinks)|Candidate(RevisionSnapshotStreamsTreeMetadataBeyondLegacyBuffer|TreeMetadataRejectsUnterminatedAndUnorderedRecords))$' -count=1
+ok github.com/comisai/comis-dev-crew/internal/git 35.317s
+```

@@ -64,15 +64,7 @@ func (registry *Registry) candidateRevisionSnapshot(
 	worktreePath string,
 	revision string,
 ) (candidateDiffSnapshot, error) {
-	listing, err := runGitBytesWithLimit(
-		ctx, maximumIntegrationTreeListing, registry.gitExecutable,
-		"--no-optional-locks", "-C", worktreePath,
-		"ls-tree", "-r", "-z", "--full-tree", "--long", revision,
-	)
-	if err != nil {
-		return nil, errors.New("inspect task diff: tree metadata is unavailable")
-	}
-	snapshot, err := parseCandidateDiffTree(listing)
+	snapshot, err := registry.streamCandidateDiffTree(ctx, worktreePath, revision)
 	if err != nil {
 		return nil, err
 	}
@@ -83,39 +75,21 @@ func (registry *Registry) candidateRevisionSnapshot(
 }
 
 func parseCandidateDiffTree(listing []byte) (candidateDiffSnapshot, error) {
+	if len(listing) != 0 && listing[len(listing)-1] != 0 {
+		return nil, errors.New("inspect task diff: tree metadata has trailing data")
+	}
 	snapshot := make(candidateDiffSnapshot)
+	previous := ""
 	for _, record := range bytes.Split(listing, []byte{0}) {
 		if len(record) == 0 {
 			continue
 		}
-		metadata, encodedPath, found := bytes.Cut(record, []byte{'\t'})
-		fields := bytes.Fields(metadata)
-		if !found || len(fields) != 4 || len(snapshot) == maximumIntegrationTreeEntries {
-			return nil, errors.New("inspect task diff: tree metadata is malformed")
+		name, entry, err := parseCandidateDiffTreeRecord(record)
+		if err != nil || len(snapshot) == maximumIntegrationTreeEntries || previous != "" && name <= previous {
+			return nil, errors.New("inspect task diff: tree metadata is duplicated, unordered, or malformed")
 		}
-		mode, objectType, objectID := string(fields[0]), string(fields[1]), string(fields[2])
-		name := string(encodedPath)
-		if !candidateTrackedMode(mode) || !gitRevisionPattern.MatchString(objectID) ||
-			!validIntegrationTreePath(name) || mode == "160000" && objectType != "commit" ||
-			mode != "160000" && objectType != "blob" {
-			return nil, errors.New("inspect task diff: tree metadata is unsafe")
-		}
-		size := int64(0)
-		if mode == "160000" {
-			if string(fields[3]) != "-" {
-				return nil, errors.New("inspect task diff: gitlink metadata is malformed")
-			}
-		} else {
-			var err error
-			size, err = strconv.ParseInt(string(fields[3]), 10, 64)
-			if err != nil || size < 0 || size > maximumCandidateReportedBlobBytes {
-				return nil, errors.New("inspect task diff: blob metadata exceeds its bound")
-			}
-		}
-		if _, duplicate := snapshot[name]; duplicate {
-			return nil, errors.New("inspect task diff: tree metadata is duplicated")
-		}
-		snapshot[name] = candidateDiffEntry{mode: mode, objectID: objectID, size: size}
+		previous = name
+		snapshot[name] = entry
 	}
 	return snapshot, nil
 }

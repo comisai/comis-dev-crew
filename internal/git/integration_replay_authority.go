@@ -14,29 +14,21 @@ func (registry *Registry) integrationReplayStatePristine(
 	repository Repository,
 	request application.IntegrationAdapterRequest,
 ) (bool, error) {
+	snapshot, err := registry.integrationReceiptFamilySnapshot(ctx, request)
+	if err != nil {
+		return false, err
+	}
 	requests := []application.IntegrationAdapterRequest{request}
 	if request.RecoveryOperationID != "" {
 		requests = append(requests, originalIntegrationRequest(request))
 	}
 	for _, identity := range requests {
-		for _, outcome := range []string{"target", "conflicted", "applied", "rebased"} {
-			receipt, err := registry.inspectIntegrationReceipt(
-				ctx, request.Target.WorktreePath, integrationReceiptRef(outcome, identity),
-			)
-			if err != nil {
-				return false, err
-			}
-			if receipt.kind != integrationReceiptAbsent {
+		for _, outcome := range []string{"applied", "conflicted", "rebased", "target"} {
+			if snapshot[integrationReceiptRef(outcome, identity)].kind != integrationReceiptAbsent {
 				return false, nil
 			}
 		}
-		proof, err := registry.inspectIntegrationReceipt(
-			ctx, request.Target.WorktreePath, integrationRebaseProofRef(identity),
-		)
-		if err != nil {
-			return false, err
-		}
-		if proof.kind != integrationReceiptAbsent {
+		if snapshot[integrationRebaseProofRef(identity)].kind != integrationReceiptAbsent {
 			return false, nil
 		}
 		paths, err := integrationReplayArtifactPaths(repository, identity)

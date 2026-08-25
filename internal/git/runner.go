@@ -279,26 +279,7 @@ func executeChildWithEnvironmentInputAndOutputLimit(
 		commandArguments = hermeticGitArguments(arguments)
 	}
 	command := exec.CommandContext(ctx, executable, commandArguments...)
-	command.Env = []string{
-		"GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_NO_REPLACE_OBJECTS=1",
-		"GIT_OPTIONAL_LOCKS=0",
-		"LC_ALL=C",
-	}
-	if workspace != nil {
-		command.Env = append(command.Env,
-			"GIT_DIR="+workspace.gitDir,
-			"GIT_WORK_TREE="+workspace.gitWorkTree,
-			"GIT_INDEX_FILE="+workspace.gitIndex,
-		)
-		if workspace.gitObjectDirectory != "" {
-			command.Env = append(command.Env,
-				"GIT_OBJECT_DIRECTORY="+workspace.gitObjectDirectory,
-				"GIT_ALTERNATE_OBJECT_DIRECTORIES="+workspace.gitAlternateObjectDirectory,
-			)
-		}
-	}
+	command.Env = hermeticGitEnvironment(workspace)
 	command.WaitDelay = time.Second
 	if input != nil {
 		command.Stdin = bytes.NewReader(input)
@@ -328,6 +309,30 @@ func executeChildWithEnvironmentInputAndOutputLimit(
 		return nil, -1, fmt.Errorf("git command execution failed: %w", errGitInfrastructure)
 	}
 	return append([]byte(nil), stdout.buffer.Bytes()...), 0, nil
+}
+
+func hermeticGitEnvironment(workspace *gitWorkspaceEnvironment) []string {
+	environment := []string{
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_NO_REPLACE_OBJECTS=1",
+		"GIT_OPTIONAL_LOCKS=0",
+		"LC_ALL=C",
+	}
+	if workspace != nil {
+		environment = append(environment,
+			"GIT_DIR="+workspace.gitDir,
+			"GIT_WORK_TREE="+workspace.gitWorkTree,
+			"GIT_INDEX_FILE="+workspace.gitIndex,
+		)
+		if workspace.gitObjectDirectory != "" {
+			environment = append(environment,
+				"GIT_OBJECT_DIRECTORY="+workspace.gitObjectDirectory,
+				"GIT_ALTERNATE_OBJECT_DIRECTORIES="+workspace.gitAlternateObjectDirectory,
+			)
+		}
+	}
+	return environment
 }
 
 func hermeticGitArguments(arguments []string) []string {

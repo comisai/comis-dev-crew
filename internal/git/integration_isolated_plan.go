@@ -102,6 +102,9 @@ func (registry *Registry) runIsolatedIntegration(
 			); err != nil {
 				return err
 			}
+			if err := registry.validateLiveMaterializationBaseBeforeImport(ctx, request); err != nil {
+				return err
+			}
 			attempted, err := importIsolatedGitObjectsWithAuthorityState(
 				workspace.gitObjectDirectory, workspace.gitAlternateObjectDirectory,
 			)

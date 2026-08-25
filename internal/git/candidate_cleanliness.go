@@ -44,27 +44,17 @@ func (registry *Registry) candidateWorkspaceCleanAtCommit(
 	returnErr = registry.withCandidateInspectionWorkspaceAt(
 		ctx, worktreePath, commonDirectory, head, scratchParent, expectedGitDirectory,
 		func(workspace gitWorkspaceEnvironment) error {
-			indexOutput, err := runGitBytesInWorkspaceWithLimit(
-				ctx, registry.gitExecutable, workspace, maximumIntegrationTreeListing,
-				"ls-files", "--stage", "-z",
+			index, err := registry.streamCandidateTrackedEntries(
+				ctx, workspace, true, "ls-files", "--stage", "-z",
 			)
 			if err != nil {
 				return errors.New("candidate index is unavailable")
 			}
-			index, err := parseCandidateTrackedEntries(indexOutput, true)
-			if err != nil {
-				return err
-			}
-			treeOutput, err := runGitBytesInWorkspaceWithLimit(
-				ctx, registry.gitExecutable, workspace, maximumIntegrationTreeListing,
-				"ls-tree", "-r", "-z", "--full-tree", head,
+			tree, err := registry.streamCandidateTrackedEntries(
+				ctx, workspace, false, "ls-tree", "-r", "-z", "--full-tree", head,
 			)
 			if err != nil {
 				return errors.New("candidate head tree is unavailable")
-			}
-			tree, err := parseCandidateTrackedEntries(treeOutput, false)
-			if err != nil {
-				return err
 			}
 			if !sameCandidateTrackedEntries(index, tree) {
 				clean = false
@@ -98,34 +88,21 @@ func (registry *Registry) candidateWorkspaceCleanAtCommit(
 }
 
 func parseCandidateTrackedEntries(output []byte, index bool) (map[string]candidateTrackedEntry, error) {
+	if len(output) != 0 && output[len(output)-1] != 0 {
+		return nil, errors.New("candidate tracked entry response is unterminated")
+	}
 	entries := make(map[string]candidateTrackedEntry)
+	previous := ""
 	for _, record := range bytes.Split(output, []byte{0}) {
 		if len(record) == 0 {
 			continue
 		}
-		metadata, encodedPath, found := bytes.Cut(record, []byte{'\t'})
-		fields := bytes.Fields(metadata)
-		if !found || len(fields) != 3 || len(entries) == maximumIntegrationTreeEntries {
-			return nil, errors.New("candidate tracked entry is malformed")
+		entryPath, entry, err := parseCandidateTrackedRecord(record, index)
+		if err != nil || len(entries) == maximumIntegrationTreeEntries || previous != "" && entryPath <= previous {
+			return nil, errors.New("candidate tracked entry is duplicated, unordered, or malformed")
 		}
-		mode, objectID, entryPath := string(fields[0]), string(fields[1]), string(encodedPath)
-		if !index {
-			objectID = string(fields[2])
-		}
-		if index && string(fields[2]) != "0" || !candidateTrackedMode(mode) ||
-			!gitRevisionPattern.MatchString(objectID) || !validIntegrationTreePath(entryPath) {
-			return nil, errors.New("candidate tracked entry is unsafe")
-		}
-		if !index {
-			objectType := string(fields[1])
-			if mode == "160000" && objectType != "commit" || mode != "160000" && objectType != "blob" {
-				return nil, errors.New("candidate tracked entry type differs")
-			}
-		}
-		if _, duplicate := entries[entryPath]; duplicate {
-			return nil, errors.New("candidate tracked entry is duplicated")
-		}
-		entries[entryPath] = candidateTrackedEntry{mode: mode, objectID: objectID}
+		previous = entryPath
+		entries[entryPath] = entry
 	}
 	return entries, nil
 }

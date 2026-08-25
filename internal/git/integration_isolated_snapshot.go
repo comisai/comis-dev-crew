@@ -6,6 +6,8 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+
+	"github.com/comisai/comis-dev-crew/internal/application"
 )
 
 func (registry *Registry) validateIsolatedMaterializationSnapshot(
@@ -32,6 +34,31 @@ func (registry *Registry) validateIsolatedMaterializationTopology(
 		return err
 	}
 	return validateIntegrationMaterializationTopology(expected, resulting)
+}
+
+func (registry *Registry) validateLiveMaterializationBaseBeforeImport(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+) error {
+	tree, err := registry.integrationCommitTree(
+		ctx, request.Target.WorktreePath, request.Target.ExpectedHead,
+	)
+	if err != nil {
+		return err
+	}
+	snapshot, err := registry.loadIntegrationTreeSnapshot(ctx, request.Target.WorktreePath, tree)
+	if err != nil {
+		return err
+	}
+	matches, err := integrationWorktreeMatchesMaterializationSnapshot(request.Target.WorktreePath, snapshot)
+	if err != nil || !matches {
+		return errors.New("apply integration candidate: live materialization topology is blocked")
+	}
+	indexTree, err := registry.integrationIndexTree(ctx, request.Target.WorktreePath)
+	if err != nil || indexTree != tree {
+		return errors.New("apply integration candidate: live materialization index differs")
+	}
+	return nil
 }
 
 func (registry *Registry) loadIsolatedMaterializationSnapshot(

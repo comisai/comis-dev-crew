@@ -289,38 +289,11 @@ func (registry *Registry) inspectIntegrationReceipt(
 	worktreePath string,
 	reference string,
 ) (inspectedIntegrationReceipt, error) {
-	output, exitCode, err := executeHermeticGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
-		"symbolic-ref", "--quiet", "--no-recurse", reference)
+	snapshot, err := registry.integrationReceiptSnapshot(ctx, worktreePath, []string{reference})
 	if err != nil {
 		return inspectedIntegrationReceipt{}, err
 	}
-	if exitCode == 0 {
-		target := strings.TrimSuffix(string(output), "\n")
-		if target == "" || strings.ContainsAny(target, "\x00\r\n\t ") {
-			return inspectedIntegrationReceipt{}, errors.New("apply integration candidate: symbolic receipt is invalid")
-		}
-		return inspectedIntegrationReceipt{kind: integrationReceiptSymbolic, value: target}, nil
-	}
-	if exitCode != 1 {
-		return inspectedIntegrationReceipt{}, errors.New("apply integration candidate: symbolic receipt inspection failed")
-	}
-	_, exitCode, err = executeHermeticGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
-		"show-ref", "--verify", "--quiet", reference)
-	if err != nil {
-		return inspectedIntegrationReceipt{}, err
-	}
-	if exitCode == 1 {
-		return inspectedIntegrationReceipt{kind: integrationReceiptAbsent}, nil
-	}
-	if exitCode != 0 {
-		return inspectedIntegrationReceipt{}, errors.New("apply integration candidate: direct receipt inspection failed")
-	}
-	head, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
-		"show-ref", "--verify", "--hash", reference)
-	if err != nil || !gitRevisionPattern.MatchString(head) {
-		return inspectedIntegrationReceipt{}, errors.New("apply integration candidate: direct receipt is invalid")
-	}
-	return inspectedIntegrationReceipt{kind: integrationReceiptDirect, value: head}, nil
+	return snapshot[reference], nil
 }
 
 func (registry *Registry) replayAppliedIntegration(
@@ -348,6 +321,9 @@ func (registry *Registry) replayAppliedIntegration(
 	if err != nil || target.Cleanliness != CandidateClean || target.HeadRevision != head ||
 		target.Branch != expectedIntegrationTargetBranch(request) {
 		return application.IntegrationAdapterResult{}, false, errors.New("apply integration candidate: applied receipt differs from target")
+	}
+	if err := registry.validateAppliedIntegrationReceiptFamily(ctx, request, head); err != nil {
+		return application.IntegrationAdapterResult{}, false, err
 	}
 	return application.IntegrationAdapterResult{
 		Outcome: application.IntegrationApplied, PreviousHead: request.Target.ExpectedHead, ResultingHead: head,
