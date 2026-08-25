@@ -55,7 +55,7 @@ func writeServerRebaseProofForTest(
 			request.Target.ExpectedHead+".."+resultingHead,
 		))
 	}
-	proof.WriteString("version 5\noperation ")
+	proof.WriteString("version 6\noperation ")
 	if request.RecoveryOperationID != "" {
 		proof.WriteString(request.RecoveryOperationID)
 	} else {
@@ -86,9 +86,22 @@ func writeServerRebaseProofForTest(
 	proof.WriteString(fmt.Sprintf("%d", len(resolvedCommits)))
 	proof.WriteByte('\n')
 	for _, commit := range resolvedCommits {
+		resultCommit := "-"
+		resultTree := "-"
+		for index, candidate := range commits {
+			if candidate == commit && index < len(resultCommits) {
+				resultCommit = resultCommits[index]
+				resultTree = integrationGitOutput(t, fixture, fixture.repository.primary,
+					"rev-parse", resultCommit+"^{tree}")
+			}
+		}
 		proof.WriteString(commit)
 		proof.WriteByte(' ')
 		proof.WriteString(strings.Repeat("0", 64))
+		proof.WriteByte(' ')
+		proof.WriteString(resultTree)
+		proof.WriteByte(' ')
+		proof.WriteString(resultCommit)
 		proof.WriteString(" 1\nZml4dHVyZS50eHQ\n")
 	}
 	proof.WriteString("continued 0\n")

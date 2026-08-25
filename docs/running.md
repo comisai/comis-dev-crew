@@ -635,6 +635,9 @@ validation produces evidence for the new exact head. Accepted
 `candidate_complete` evidence satisfies the initiative dependency immediately;
 host delivery acknowledgement settles independently and is not an integration
 precondition.
+An `aborted` outcome instead records an unchanged candidate whose reviewed
+mutation precondition failed before Git mutation; its accepted evidence remains
+current.
 
 The stream records transitions, not writes. A task that is still waiting is
 rewritten on every supervisor pass to refresh its liveness, and those rewrites

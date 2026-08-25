@@ -53,13 +53,43 @@ it validates and backfills pages of 64.
   supplied candidate to the destination owner, every predecessor must satisfy
   dependency readiness, and only the durable `ready` owner posture permits a
   mutation or conflict continuation.
-- Integration rejects repository configuration and attributes capable of
-  launching hooks, merge drivers, filters, diff commands, editors, credentials,
-  or file-system monitors. Rebase preflight uses the real rebase engine in an
-  isolated repository before any target receipt or worktree mutation.
+- Integration inspects local and worktree Git configuration without includes
+  before status or mutation. It rejects hooks, merge drivers, filters, diff
+  commands, editors, credential helpers, and file-system monitors, as well as
+  unsafe attributes.
+- The real merge, rebase, or cherry-pick engine runs in an isolated
+  service-owned repository. Successful result objects and their exact semantic
+  proof are persisted before the shared worktree consumes them with an
+  expected-head compare-and-swap; conflict continuations bind the staged tree
+  and produced commit before another continuation can be accepted.
+- Recovery validates the complete original and recovery receipt set through
+  non-recursive tri-state inspection. A completed result can be reconciled
+  after the target compare-and-swap, while stale evidence or contradictory
+  receipts refuse before continuation.
+- Pre-mutation policy and topology refusals settle as `aborted`, distinct from
+  candidate evidence invalidation, so the exact reservation is released
+  without claiming the evidence changed.
 - Scheduling persists one priority head per round, repository, and worker
-  profile. A capped repository therefore contributes a bounded resource head,
-  not an unbounded history scan, while the global priority index still chooses
-  the oldest eligible task.
+  profile and advances that resource's indexed frontier for every available
+  slot. Capped resources therefore cannot cause an unbounded priority scan,
+  while global ordering still chooses the oldest eligible task.
 - Missing, malformed, stale, contradictory, or incomplete graph, Git, migration,
   or scheduling evidence refuses mutation and preserves work.
+
+The Round 21 behavioral regressions are preserved in test-only commit
+`ed472b56765db9f071aa0b8477846c7a68fd69de`. The exact RED commands were:
+
+```text
+go test ./internal/git -run 'TestRegistry_(RejectsWorktreeFSMonitorBeforeStatus|RechecksEvidenceImmediatelyBeforeEveryInitialMutation|RechecksEvidenceBeforeRebaseContinuation|IsolatedRebaseDoesNotUpdateUnrelatedRefs|ReconcilesCleanRebaseCrashBeforeProofCompletion|RebaseRecoveryRejectsRewrittenResolvedCommitAfterCrash|CherryPickRefusesPartialRangeBeforeTargetMutation|RebasePreflightCleansTrackedSymlinkWorkspace|RecoveryRejectsEveryUnexpectedCompletionReceipt)' -count=1
+go test ./internal/application -run TestIntegrationSettlesPreconditionRefusalsWithoutInvalidatingEvidence -count=1
+go test ./internal/store/sqlite -run 'Test(InitiativeLaunchAuthorizationAdvancesWithinResourceForEverySlot|IntegrationAbortedSettlementPreservesCandidateEvidence)' -count=1
+```
+
+Before the implementation, the focused Git command reported that a
+worktree `core.fsmonitor` marker executed, expired merge, cherry-pick, and
+recovery operations returned no error, an unrelated ref moved during rebase,
+clean rebase crash recovery lacked a server proof, a rewritten continued commit
+was accepted, cherry-pick partially mutated the target, tracked-symlink cleanup
+failed, and unexpected recovery receipts were accepted. The focused application
+and SQLite commands also observed `invalidated` instead of `aborted` and queued
+the second older same-resource task behind later work.

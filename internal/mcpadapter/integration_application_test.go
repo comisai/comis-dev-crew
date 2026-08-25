@@ -185,6 +185,12 @@ func TestIntegrationMCPOutcomeValidationCoversConflictsAndUnknownValues(t *testi
 	if !validIntegrationMCPOutcome(invalidated) {
 		t.Fatal("valid invalidated outcome was rejected")
 	}
+	aborted := integrationMCPResult()
+	aborted.Outcome = application.IntegrationAborted
+	aborted.ResultingHead = ""
+	if !validIntegrationMCPOutcome(aborted) {
+		t.Fatal("valid aborted outcome was rejected")
+	}
 	unknown := integrationMCPResult()
 	unknown.Outcome = application.IntegrationOutcome("unknown")
 	if validIntegrationMCPOutcome(unknown) {

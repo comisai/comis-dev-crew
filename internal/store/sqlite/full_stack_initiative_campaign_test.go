@@ -158,6 +158,18 @@ func TestFullStackInitiativeCampaignPreservesParallelLanesAndExactHeadAuthority(
 	}); err == nil || adapter.calls != staleCalls {
 		t.Fatalf("non-owner integration = calls:%d error:%v", adapter.calls, err)
 	}
+	if _, err := integrations.ApplyCandidate(ctx, application.ApplyIntegrationCandidateCommand{
+		OperationID: "campaign-integrate-frontend-blocked", InitiativeHandle: fixture.initiativeHandle,
+		IntegrationTaskHandle: integration.Handle, CandidateTaskHandle: frontend.Handle,
+		CandidateHead: frontendHead, ExpectedIntegrationHead: targetHead,
+	}); err == nil || adapter.calls != staleCalls {
+		t.Fatalf("integration with validating predecessor = calls:%d error:%v", adapter.calls, err)
+	}
+	backendHead = strings.Repeat("e", 40)
+	backend = acceptCampaignCandidate(
+		t, fixture, invalidatedBackend, backendHead, fixture.at.Add(25*time.Minute),
+	)
+	integrationAt = fixture.at.Add(26 * time.Minute)
 
 	frontendResult, err := integrations.ApplyCandidate(ctx, application.ApplyIntegrationCandidateCommand{
 		OperationID: "campaign-integrate-frontend", InitiativeHandle: fixture.initiativeHandle,
@@ -167,11 +179,7 @@ func TestFullStackInitiativeCampaignPreservesParallelLanesAndExactHeadAuthority(
 	if err != nil || frontendResult.Outcome != application.IntegrationApplied {
 		t.Fatalf("ApplyCandidate(unaffected frontend) = %#v, %v", frontendResult, err)
 	}
-	backendHead = strings.Repeat("e", 40)
-	backend = acceptCampaignCandidate(
-		t, fixture, invalidatedBackend, backendHead, fixture.at.Add(25*time.Minute),
-	)
-	integrationAt = fixture.at.Add(26 * time.Minute)
+	integrationAt = fixture.at.Add(27 * time.Minute)
 	backendResult, err := integrations.ApplyCandidate(ctx, application.ApplyIntegrationCandidateCommand{
 		OperationID: "campaign-integrate-backend-current", InitiativeHandle: fixture.initiativeHandle,
 		IntegrationTaskHandle: integration.Handle, CandidateTaskHandle: backend.Handle,

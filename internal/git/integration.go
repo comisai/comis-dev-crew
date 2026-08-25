@@ -41,12 +41,18 @@ func (registry *Registry) ApplyIntegrationCandidate(
 	if err := registry.preflightIntegrationWorktrees(ctx, request); err != nil {
 		return application.IntegrationAdapterResult{}, err
 	}
+	if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
+		return application.IntegrationAdapterResult{}, errors.Join(err, application.ErrIntegrationMutationNotStarted)
+	}
 	appliedRef := integrationReceiptRef("applied", request)
 	conflictedRef := integrationReceiptRef("conflicted", request)
 	if replay, found, err := registry.replayAppliedIntegration(ctx, request, repository, appliedRef); err != nil || found {
 		return replay, err
 	}
 	if replay, found, err := registry.replayConflictedIntegration(ctx, request, repository, conflictedRef); err != nil || found {
+		return replay, err
+	}
+	if replay, found, err := registry.reconcileCompletedIntegrationPlan(ctx, repository, request); err != nil || found {
 		return replay, err
 	}
 	if request.ReceiptOnly {
@@ -264,6 +270,19 @@ func (registry *Registry) createIntegrationReceipt(
 	_, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", repository.PrimaryCheckout,
 		"update-ref", reference, head, integrationZeroRevision)
 	return err
+}
+
+func (registry *Registry) validateIntegrationMutationDeadline(
+	request application.IntegrationAdapterRequest,
+) error {
+	mutationAt := registry.clock().UTC()
+	if mutationAt.IsZero() || !mutationAt.Before(request.EvidenceExpiresAt) {
+		return errors.Join(
+			errors.New("apply integration candidate: candidate evidence expired before mutation"),
+			application.ErrIntegrationMutationNotStarted,
+		)
+	}
+	return nil
 }
 
 type integrationReceiptKind uint8

@@ -1,10 +1,12 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
@@ -104,7 +106,119 @@ func (registry *Registry) validateServerRebaseConflictResolution(
 	if err != nil || len(changed) != 0 {
 		return errors.New("apply integration candidate: conflict resolution is not fully staged")
 	}
+	resolvedTree, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"write-tree")
+	if err != nil || !gitRevisionPattern.MatchString(resolvedTree) {
+		return errors.New("apply integration candidate: conflict resolution tree is unavailable")
+	}
+	want := proof
+	want.conflicts = append([]serverRebaseConflict(nil), proof.conflicts...)
+	for index := range want.conflicts {
+		if want.conflicts[index].commit != rebaseHead {
+			continue
+		}
+		if want.conflicts[index].resolvedTree != "" && want.conflicts[index].resolvedTree != resolvedTree {
+			return errors.New("apply integration candidate: conflict resolution proof differs")
+		}
+		want.conflicts[index].resolvedTree = resolvedTree
+		if sameServerRebaseProof(want, proof) {
+			return nil
+		}
+		directory, _, pathErr := serverRebaseProofPath(repository, request)
+		if pathErr != nil {
+			return pathErr
+		}
+		return replaceServerRebaseProof(directory, path, proof, want)
+	}
+	return errors.New("apply integration candidate: conflict resolution snapshot is unavailable")
+}
+
+type rebaseCommitContent struct {
+	tree      string
+	parent    string
+	author    string
+	committer string
+	message   []byte
+}
+
+func (registry *Registry) validateRebaseConflictResult(
+	ctx context.Context,
+	repository Repository,
+	candidate string,
+	parent string,
+	tree string,
+	result string,
+) error {
+	candidateContent, err := registry.rebaseCommitContent(ctx, repository, candidate)
+	if err != nil {
+		return err
+	}
+	resultContent, err := registry.rebaseCommitContent(ctx, repository, result)
+	if err != nil {
+		return err
+	}
+	committer := strings.TrimPrefix(resultContent.committer,
+		"DevCrew Integration <integration@example.invalid> ")
+	committerFields := strings.Fields(committer)
+	if resultContent.tree != tree || resultContent.parent != parent ||
+		resultContent.author != candidateContent.author || !bytes.Equal(resultContent.message, candidateContent.message) ||
+		len(committerFields) != 2 || !validRebaseCommitTime(committerFields[0], committerFields[1]) {
+		return errors.New("apply integration candidate: continued conflict result differs")
+	}
 	return nil
+}
+
+func (registry *Registry) rebaseCommitContent(
+	ctx context.Context,
+	repository Repository,
+	revision string,
+) (rebaseCommitContent, error) {
+	raw, err := runGitBytesWithLimit(ctx, maximumRebasePatchBytes, registry.gitExecutable,
+		"--no-optional-locks", "-C", repository.PrimaryCheckout, "cat-file", "commit", revision)
+	if err != nil {
+		return rebaseCommitContent{}, errors.New("apply integration candidate: conflict commit identity is unavailable")
+	}
+	separator := bytes.Index(raw, []byte("\n\n"))
+	if separator < 1 {
+		return rebaseCommitContent{}, errors.New("apply integration candidate: conflict commit identity is invalid")
+	}
+	var content rebaseCommitContent
+	counts := map[string]int{}
+	for _, line := range strings.Split(string(raw[:separator]), "\n") {
+		name, value, found := strings.Cut(line, " ")
+		if !found {
+			return rebaseCommitContent{}, errors.New("apply integration candidate: conflict commit identity is invalid")
+		}
+		counts[name]++
+		switch name {
+		case "tree":
+			content.tree = value
+		case "parent":
+			content.parent = value
+		case "author":
+			content.author = value
+		case "committer":
+			content.committer = value
+		default:
+			return rebaseCommitContent{}, errors.New("apply integration candidate: conflict commit headers are unsupported")
+		}
+	}
+	if counts["tree"] != 1 || counts["parent"] != 1 || counts["author"] != 1 || counts["committer"] != 1 {
+		return rebaseCommitContent{}, errors.New("apply integration candidate: conflict commit identity is invalid")
+	}
+	content.message = append([]byte(nil), raw[separator+2:]...)
+	return content, nil
+}
+
+func validRebaseCommitTime(timestamp, timezone string) bool {
+	if _, err := strconv.ParseInt(timestamp, 10, 64); err != nil {
+		return false
+	}
+	if len(timezone) != 5 || timezone[0] != '+' && timezone[0] != '-' {
+		return false
+	}
+	_, err := strconv.ParseUint(timezone[1:], 10, 16)
+	return err == nil
 }
 
 func serverRebaseConflictsWereResolved(resolved []string, conflicts []serverRebaseConflict) bool {
@@ -126,7 +240,27 @@ func sameServerRebaseConflicts(left, right []serverRebaseConflict) bool {
 	}
 	for index := range left {
 		if left[index].commit != right[index].commit || left[index].indexDigest != right[index].indexDigest ||
+			left[index].resolvedTree != right[index].resolvedTree ||
+			left[index].expectedResult != right[index].expectedResult ||
 			!sameRebaseCommits(left[index].paths, right[index].paths) {
+			return false
+		}
+	}
+	return true
+}
+
+func validServerRebaseConflictBindings(resolved []string, conflicts []serverRebaseConflict) bool {
+	byCommit := make(map[string]serverRebaseConflict, len(conflicts))
+	for _, conflict := range conflicts {
+		if _, duplicate := byCommit[conflict.commit]; duplicate ||
+			conflict.resolvedTree == "" && conflict.expectedResult != "" {
+			return false
+		}
+		byCommit[conflict.commit] = conflict
+	}
+	for _, commit := range resolved {
+		conflict, found := byCommit[commit]
+		if !found || conflict.expectedResult == "" {
 			return false
 		}
 	}

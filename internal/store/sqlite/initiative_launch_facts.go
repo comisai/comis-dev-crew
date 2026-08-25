@@ -385,3 +385,30 @@ func initiativeLaunchFactPage(
 	}
 	return facts, nil
 }
+
+func initiativeLaunchFactAfterResource(
+	ctx context.Context,
+	source queryer,
+	after initiativeLaunchFact,
+) (initiativeLaunchFact, bool, error) {
+	fact, err := scanInitiativeLaunchFact(source.QueryRowContext(ctx, `SELECT
+		task_handle, initiative_handle, initiative_created_at, scheduling_round,
+		repository_id, worker_profile_id FROM initiative_launch_facts
+		WHERE scheduling_round = ? AND repository_id = ? AND worker_profile_id = ?
+		  AND (initiative_created_at, initiative_handle, task_handle) > (?, ?, ?)
+		ORDER BY initiative_created_at, initiative_handle, task_handle LIMIT 1`,
+		after.round, after.repositoryID, after.workerProfileID,
+		after.createdAt, after.initiativeHandle, after.taskHandle,
+	))
+	if errors.Is(err, sql.ErrNoRows) {
+		return initiativeLaunchFact{}, false, nil
+	}
+	if err != nil {
+		return initiativeLaunchFact{}, false, err
+	}
+	if fact.round != after.round || fact.repositoryID != after.repositoryID ||
+		fact.workerProfileID != after.workerProfileID {
+		return initiativeLaunchFact{}, false, errors.New("stored initiative resource frontier differs")
+	}
+	return fact, true, nil
+}

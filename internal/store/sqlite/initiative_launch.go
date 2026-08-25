@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"container/heap"
 	"context"
 	"database/sql"
 	"errors"
@@ -80,6 +81,25 @@ type initiativeLaunchCandidate struct {
 	round int
 }
 
+type initiativeLaunchFactQueue []initiativeLaunchFact
+
+func (queue initiativeLaunchFactQueue) Len() int { return len(queue) }
+func (queue initiativeLaunchFactQueue) Less(left, right int) bool {
+	return compareInitiativeLaunchFacts(queue[left], queue[right]) < 0
+}
+func (queue initiativeLaunchFactQueue) Swap(left, right int) {
+	queue[left], queue[right] = queue[right], queue[left]
+}
+func (queue *initiativeLaunchFactQueue) Push(value any) {
+	*queue = append(*queue, value.(initiativeLaunchFact))
+}
+func (queue *initiativeLaunchFactQueue) Pop() any {
+	old := *queue
+	last := old[len(old)-1]
+	*queue = old[:len(old)-1]
+	return last
+}
+
 func initiativeSchedulingFrontier(
 	ctx context.Context,
 	source queryer,
@@ -92,41 +112,96 @@ func initiativeSchedulingFrontier(
 	available := limits.MaxConcurrentTasks - usage.Host
 	for round := 0; round < domain.MaximumInitiativeMembers; round++ {
 		cursorAt, cursorInitiative, cursorTask := "", "", ""
-		for {
+		frontier := &initiativeLaunchFactQueue{}
+		heap.Init(frontier)
+		moreHeads := true
+		var boundary initiativeLaunchFact
+		loadHeads := func() error {
 			page, err := initiativeLaunchFactPage(
 				ctx, source, round, cursorAt, cursorInitiative, cursorTask,
 				limits, usage, initiativeSchedulingPageSize,
 			)
 			if err != nil {
-				return false, "", err
+				return err
 			}
 			if len(page) == 0 {
-				break
+				moreHeads = false
+				return nil
 			}
 			for _, fact := range page {
-				if usage.Repositories[fact.repositoryID] >= limits.MaxConcurrentTasksPerRepository ||
-					usage.WorkerProfiles[fact.workerProfileID] >= limits.WorkerProfileLimits[fact.workerProfileID] {
-					continue
-				}
-				usage.Host++
-				usage.Repositories[fact.repositoryID]++
-				usage.WorkerProfiles[fact.workerProfileID]++
-				selected++
-				if fact.taskHandle == target.Handle {
-					return true, application.ScheduleResourceQueued, nil
-				}
-				if selected == available {
-					return false, application.ScheduleResourceQueued, nil
-				}
+				heap.Push(frontier, fact)
 			}
 			last := page[len(page)-1]
 			cursorAt, cursorInitiative, cursorTask = last.createdAt, last.initiativeHandle, last.taskHandle
-			if len(page) < initiativeSchedulingPageSize {
-				break
+			boundary = last
+			moreHeads = len(page) == initiativeSchedulingPageSize
+			return nil
+		}
+		if err := loadHeads(); err != nil {
+			return false, "", err
+		}
+		for frontier.Len() > 0 || moreHeads {
+			if frontier.Len() == 0 {
+				if err := loadHeads(); err != nil {
+					return false, "", err
+				}
+				continue
+			}
+			for moreHeads && compareInitiativeLaunchFacts((*frontier)[0], boundary) > 0 {
+				if err := loadHeads(); err != nil {
+					return false, "", err
+				}
+			}
+			fact := heap.Pop(frontier).(initiativeLaunchFact)
+			if usage.Repositories[fact.repositoryID] >= limits.MaxConcurrentTasksPerRepository ||
+				usage.WorkerProfiles[fact.workerProfileID] >= limits.WorkerProfileLimits[fact.workerProfileID] {
+				continue
+			}
+			usage.Host++
+			usage.Repositories[fact.repositoryID]++
+			usage.WorkerProfiles[fact.workerProfileID]++
+			selected++
+			if fact.taskHandle == target.Handle {
+				return true, application.ScheduleResourceQueued, nil
+			}
+			if selected == available {
+				return false, application.ScheduleResourceQueued, nil
+			}
+			if usage.Repositories[fact.repositoryID] < limits.MaxConcurrentTasksPerRepository &&
+				usage.WorkerProfiles[fact.workerProfileID] < limits.WorkerProfileLimits[fact.workerProfileID] {
+				next, found, err := initiativeLaunchFactAfterResource(ctx, source, fact)
+				if err != nil {
+					return false, "", err
+				}
+				if found {
+					heap.Push(frontier, next)
+				}
 			}
 		}
 	}
 	return false, targetReason, nil
+}
+
+func compareInitiativeLaunchFacts(left, right initiativeLaunchFact) int {
+	if left.createdAt != right.createdAt {
+		if left.createdAt < right.createdAt {
+			return -1
+		}
+		return 1
+	}
+	if left.initiativeHandle != right.initiativeHandle {
+		if left.initiativeHandle < right.initiativeHandle {
+			return -1
+		}
+		return 1
+	}
+	if left.taskHandle < right.taskHandle {
+		return -1
+	}
+	if left.taskHandle > right.taskHandle {
+		return 1
+	}
+	return 0
 }
 
 type initiativeSchedulingPageItem struct {

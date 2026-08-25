@@ -419,6 +419,10 @@ func validateIntegrationCompletion(completion application.IntegrationCompletion)
 		if result.ResultingHead != "" || len(result.ConflictPaths) != 0 {
 			return errors.New("invalidated integration completion is invalid")
 		}
+	case application.IntegrationAborted:
+		if result.ResultingHead != "" || len(result.ConflictPaths) != 0 {
+			return errors.New("aborted integration completion is invalid")
+		}
 	default:
 		return errors.New("integration completion outcome is invalid")
 	}

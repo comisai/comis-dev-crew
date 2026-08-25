@@ -147,7 +147,7 @@ func validIntegrationApplicationResult(
 		return domain.ValidateGitRevision(result.ResultingHead) == nil && result.ResultingHead != result.PreviousHead && len(result.ConflictPaths) == 0
 	case application.IntegrationConflicted:
 		return result.ResultingHead == "" && validIntegrationConflictPaths(result.ConflictPaths)
-	case application.IntegrationInvalidated:
+	case application.IntegrationInvalidated, application.IntegrationAborted:
 		return result.ResultingHead == "" && len(result.ConflictPaths) == 0
 	default:
 		return false

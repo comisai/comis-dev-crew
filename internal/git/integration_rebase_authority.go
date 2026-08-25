@@ -28,20 +28,20 @@ func (registry *Registry) preflightRebaseSequence(
 	directory string,
 	commits []string,
 	patches []string,
-) error {
+) (isolatedRebaseResult, error) {
 	mergeCommits, err := runGitBytesWithLimit(ctx, maximumRebaseProofCommits*66, registry.gitExecutable,
 		"--no-optional-locks", "-C", repository.PrimaryCheckout, "rev-list", "--min-parents=2",
 		request.Candidate.BaseRevision+".."+request.Candidate.HeadRevision)
 	if err != nil || len(mergeCommits) != 0 {
-		return errors.New("apply integration candidate: rebase range has unsupported merge topology")
+		return isolatedRebaseResult{}, errors.New("apply integration candidate: rebase range has unsupported merge topology")
 	}
 	seenPatches := make(map[string]struct{}, len(patches))
 	for _, patch := range patches {
 		if patch == "-" {
-			return errors.New("apply integration candidate: rebase range contains an empty commit")
+			return isolatedRebaseResult{}, errors.New("apply integration candidate: rebase range contains an empty commit")
 		}
 		if _, duplicate := seenPatches[patch]; duplicate {
-			return errors.New("apply integration candidate: rebase range contains duplicate content")
+			return isolatedRebaseResult{}, errors.New("apply integration candidate: rebase range contains duplicate content")
 		}
 		seenPatches[patch] = struct{}{}
 	}
@@ -49,25 +49,34 @@ func (registry *Registry) preflightRebaseSequence(
 		"--no-optional-locks", "-C", repository.PrimaryCheckout, "cherry",
 		request.Target.ExpectedHead, request.Candidate.HeadRevision, request.Candidate.BaseRevision)
 	if err != nil {
-		return errors.New("apply integration candidate: rebase uniqueness proof is unavailable")
+		return isolatedRebaseResult{}, errors.New("apply integration candidate: rebase uniqueness proof is unavailable")
 	}
 	unique := make(map[string]struct{}, len(commits))
 	for _, line := range strings.Split(strings.TrimSuffix(string(cherry), "\n"), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) != 2 || fields[0] != "+" || !gitRevisionPattern.MatchString(fields[1]) {
-			return errors.New("apply integration candidate: target already represents candidate content")
+			return isolatedRebaseResult{}, errors.New("apply integration candidate: target already represents candidate content")
 		}
 		unique[fields[1]] = struct{}{}
 	}
 	if len(unique) != len(commits) {
-		return errors.New("apply integration candidate: rebase uniqueness proof differs")
+		return isolatedRebaseResult{}, errors.New("apply integration candidate: rebase uniqueness proof differs")
 	}
 	for _, commit := range commits {
 		if _, found := unique[commit]; !found {
-			return errors.New("apply integration candidate: rebase uniqueness proof differs")
+			return isolatedRebaseResult{}, errors.New("apply integration candidate: rebase uniqueness proof differs")
 		}
 	}
-	return registry.preflightRebasePatches(ctx, repository, request, directory, commits, patches)
+	result, err := registry.preflightRebasePatches(ctx, repository, request, directory, commits, patches)
+	if err != nil {
+		return isolatedRebaseResult{}, err
+	}
+	if result.conflicted {
+		if _, err := registry.rebaseCommitContent(ctx, repository, commits[len(commits)-1]); err != nil {
+			return isolatedRebaseResult{}, err
+		}
+	}
+	return result, nil
 }
 
 func (registry *Registry) validateReceiptOnlyRebaseReceipts(

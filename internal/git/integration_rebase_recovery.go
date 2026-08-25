@@ -3,8 +3,6 @@ package git
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
@@ -29,6 +27,9 @@ func (registry *Registry) recordIntegrationTargetRef(
 		return nil
 	}
 	receipt := integrationReceiptRef("target", request)
+	if err := registry.validateIntegrationMutationDeadline(request); err != nil {
+		return err
+	}
 	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
 		"symbolic-ref", receipt, targetRef); err != nil {
 		return errors.New("apply integration candidate: target branch receipt could not be recorded")
@@ -79,6 +80,12 @@ func (registry *Registry) resumeRebaseIntegration(
 		return application.IntegrationAdapterResult{}, err
 	}
 	if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
+		return application.IntegrationAdapterResult{}, errors.Join(err, application.ErrIntegrationMutationNotStarted)
+	}
+	if err := registry.validateActiveRebaseRecoveryReceipts(ctx, request); err != nil {
+		return application.IntegrationAdapterResult{}, errors.Join(err, application.ErrIntegrationMutationNotStarted)
+	}
+	if err := registry.validateIntegrationMutationDeadline(request); err != nil {
 		return application.IntegrationAdapterResult{}, err
 	}
 	configuration := []string{
@@ -101,6 +108,44 @@ func (registry *Registry) resumeRebaseIntegration(
 		return application.IntegrationAdapterResult{}, err
 	}
 	return registry.finalizeRecoveredRebase(ctx, request, repository, targetRef, resultingHead)
+}
+
+func (registry *Registry) validateActiveRebaseRecoveryReceipts(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+) error {
+	original := originalIntegrationRequest(request)
+	expectedTarget := "refs/heads/" + expectedIntegrationTargetBranch(request)
+	target, err := registry.inspectIntegrationReceipt(
+		ctx, request.Target.WorktreePath, integrationReceiptRef("target", original),
+	)
+	if err != nil || target.kind != integrationReceiptSymbolic || target.value != expectedTarget {
+		return errors.New("apply integration candidate: original target receipt differs")
+	}
+	conflicted, err := registry.inspectIntegrationReceipt(
+		ctx, request.Target.WorktreePath, integrationReceiptRef("conflicted", original),
+	)
+	if err != nil || conflicted.kind != integrationReceiptDirect || conflicted.value != request.Target.ExpectedHead {
+		return errors.New("apply integration candidate: original conflict receipt differs")
+	}
+	for _, identity := range []struct {
+		outcome string
+		request application.IntegrationAdapterRequest
+	}{
+		{outcome: "applied", request: original},
+		{outcome: "rebased", request: original},
+		{outcome: "target", request: request},
+		{outcome: "conflicted", request: request},
+		{outcome: "applied", request: request},
+		{outcome: "rebased", request: request},
+	} {
+		if err := registry.requireIntegrationReceiptAbsent(
+			ctx, request.Target.WorktreePath, integrationReceiptRef(identity.outcome, identity.request),
+		); err != nil {
+			return errors.New("apply integration candidate: recovery receipt set is contradictory")
+		}
+	}
+	return nil
 }
 
 func (registry *Registry) recordIntegrationRebaseProof(
@@ -226,6 +271,13 @@ func (registry *Registry) reconcileInterruptedRebase(
 	}
 	if rebasedFound && currentHead != rebasedHead {
 		return application.IntegrationAdapterResult{}, true, errors.New("apply integration candidate: rebased head receipt differs from worktree")
+	}
+	if proof, proofFound, proofErr := registry.serverRebaseProof(repository, request); proofErr != nil {
+		return application.IntegrationAdapterResult{}, true, proofErr
+	} else if proofFound && proof.resultingHead != "" && currentHead == proof.resultingHead &&
+		attached && (headRef == targetRef || headRef == integrationRebaseProofRef(request)) {
+		result, err := registry.finalizeRecoveredRebase(ctx, request, repository, targetRef, proof.resultingHead)
+		return result, true, err
 	}
 	if !rebasedFound {
 		restored, restoreErr := registry.restorePreparedRebaseTarget(
@@ -425,72 +477,4 @@ func (registry *Registry) retireIntegrationRebaseProof(
 		return errors.New("apply integration candidate: rebase completion proof could not be retired")
 	}
 	return nil
-}
-
-func (registry *Registry) ensureRebaseSequencerAbsent(ctx context.Context, worktreePath string) error {
-	gitDir, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
-		"rev-parse", "--absolute-git-dir")
-	if err != nil || !filepath.IsAbs(gitDir) {
-		return errors.New("apply integration candidate: rebase sequencer is unavailable")
-	}
-	for _, name := range []string{"rebase-merge", "rebase-apply"} {
-		_, statErr := os.Lstat(filepath.Join(gitDir, name))
-		if statErr == nil {
-			return errors.New("apply integration candidate: rebase sequencer is still active")
-		}
-		if !errors.Is(statErr, os.ErrNotExist) {
-			return errors.New("apply integration candidate: rebase sequencer is unavailable")
-		}
-	}
-	return nil
-}
-
-func (registry *Registry) finalizeRecoveredRebase(
-	ctx context.Context,
-	request application.IntegrationAdapterRequest,
-	repository Repository,
-	targetRef string,
-	resultingHead string,
-) (application.IntegrationAdapterResult, error) {
-	currentHead, err := registry.validRecoveredRebaseHead(ctx, repository, request)
-	if err != nil || currentHead != resultingHead {
-		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: rebased receipt differs from worktree")
-	}
-	branchHead, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-		"rev-parse", "--verify", targetRef+"^{commit}")
-	if err != nil {
-		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: target branch is unavailable")
-	}
-	if branchHead == request.Target.ExpectedHead {
-		if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-			"update-ref", targetRef, resultingHead, request.Target.ExpectedHead); err != nil {
-			return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: target branch changed during recovery")
-		}
-	} else if branchHead != resultingHead {
-		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: target branch differs from recovered head")
-	}
-	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-		"symbolic-ref", "HEAD", targetRef); err != nil {
-		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: recovered target could not be reattached")
-	}
-	if err := registry.retireIntegrationRebaseProof(ctx, request, resultingHead); err != nil {
-		return application.IntegrationAdapterResult{}, err
-	}
-	final, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
-		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
-		WorktreePath: request.Target.WorktreePath,
-	})
-	if err != nil || final.Cleanliness != CandidateClean || final.HeadRevision != resultingHead ||
-		final.Branch != expectedIntegrationTargetBranch(request) {
-		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: recovered target is unverified")
-	}
-	if err := registry.createIntegrationReceipt(
-		ctx, repository, integrationReceiptRef("applied", request), resultingHead,
-	); err != nil {
-		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: recovery applied receipt could not be recorded")
-	}
-	return application.IntegrationAdapterResult{
-		Outcome: application.IntegrationApplied, PreviousHead: request.Target.ExpectedHead,
-		ResultingHead: resultingHead,
-	}, nil
 }

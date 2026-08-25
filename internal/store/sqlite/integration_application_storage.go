@@ -224,6 +224,8 @@ func validIntegrationRow(row integrationApplicationRow) bool {
 		return row.resultingHead == "" && validStoredConflictPaths(row.conflicts) && !row.completedAt.IsZero() && row.stateVersion > 0
 	case string(application.IntegrationInvalidated):
 		return row.resultingHead == "" && len(row.conflicts) == 0 && !row.completedAt.IsZero() && row.stateVersion > 0
+	case string(application.IntegrationAborted):
+		return row.resultingHead == "" && len(row.conflicts) == 0 && !row.completedAt.IsZero() && row.stateVersion > 0
 	default:
 		return false
 	}

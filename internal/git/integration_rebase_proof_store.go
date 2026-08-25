@@ -172,7 +172,7 @@ func readServerRebaseProof(path string) (serverRebaseProof, bool, error) {
 
 func encodeServerRebaseProof(proof serverRebaseProof) []byte {
 	var builder strings.Builder
-	builder.WriteString("version 5\noperation ")
+	builder.WriteString("version 6\noperation ")
 	builder.WriteString(proof.operationID)
 	builder.WriteString("\ncandidates ")
 	writeRebaseProofCommits(&builder, proof.candidateCommits)
@@ -187,6 +187,18 @@ func encodeServerRebaseProof(proof serverRebaseProof) []byte {
 		builder.WriteString(conflict.commit)
 		builder.WriteByte(' ')
 		builder.WriteString(conflict.indexDigest)
+		builder.WriteByte(' ')
+		if conflict.resolvedTree == "" {
+			builder.WriteString("- -")
+		} else {
+			builder.WriteString(conflict.resolvedTree)
+			builder.WriteByte(' ')
+			if conflict.expectedResult == "" {
+				builder.WriteByte('-')
+			} else {
+				builder.WriteString(conflict.expectedResult)
+			}
+		}
 		builder.WriteByte(' ')
 		builder.WriteString(strconv.Itoa(len(conflict.paths)))
 		builder.WriteByte('\n')
@@ -223,7 +235,7 @@ func decodeServerRebaseProof(contents []byte) (serverRebaseProof, error) {
 		return serverRebaseProof{}, errors.New("apply integration candidate: server rebase proof is malformed")
 	}
 	lines := strings.Split(strings.TrimSuffix(string(contents), "\n"), "\n")
-	if len(lines) < 9 || lines[0] != "version 5" || !strings.HasPrefix(lines[1], "operation ") {
+	if len(lines) < 9 || lines[0] != "version 6" || !strings.HasPrefix(lines[1], "operation ") {
 		return serverRebaseProof{}, errors.New("apply integration candidate: server rebase proof is malformed")
 	}
 	operationID := strings.TrimPrefix(lines[1], "operation ")
@@ -244,7 +256,7 @@ func decodeServerRebaseProof(contents []byte) (serverRebaseProof, error) {
 		return serverRebaseProof{}, err
 	}
 	conflicts, next, err := decodeServerRebaseConflicts(lines, next, len(candidates))
-	if err != nil || !serverRebaseConflictsWereResolved(resolved, conflicts) {
+	if err != nil || !validServerRebaseConflictBindings(resolved, conflicts) {
 		return serverRebaseProof{}, errors.New("apply integration candidate: server rebase proof is malformed")
 	}
 	continued, next, err := decodeRebaseProofCommits(lines, next, "continued", 0, len(candidates))
@@ -340,11 +352,24 @@ func decodeServerRebaseConflicts(
 		}
 		fields := strings.Fields(lines[position])
 		position++
-		if len(fields) != 3 || !gitRevisionPattern.MatchString(fields[0]) ||
+		if len(fields) != 5 || !gitRevisionPattern.MatchString(fields[0]) ||
 			!gitRevisionPattern.MatchString(fields[1]) {
 			return nil, position, errors.New("apply integration candidate: server rebase proof is malformed")
 		}
-		pathCount, err := strconv.Atoi(fields[2])
+		resolvedTree, expectedResult := fields[2], fields[3]
+		if resolvedTree == "-" {
+			if expectedResult != "-" {
+				return nil, position, errors.New("apply integration candidate: server rebase proof is malformed")
+			}
+			resolvedTree, expectedResult = "", ""
+		} else if !gitRevisionPattern.MatchString(resolvedTree) {
+			return nil, position, errors.New("apply integration candidate: server rebase proof is malformed")
+		} else if expectedResult == "-" {
+			expectedResult = ""
+		} else if !gitRevisionPattern.MatchString(expectedResult) {
+			return nil, position, errors.New("apply integration candidate: server rebase proof is malformed")
+		}
+		pathCount, err := strconv.Atoi(fields[4])
 		if err != nil || pathCount < 1 || pathCount > 256 || position+pathCount > len(lines) {
 			return nil, position, errors.New("apply integration candidate: server rebase proof is malformed")
 		}
@@ -359,7 +384,8 @@ func decodeServerRebaseConflicts(
 		}
 		position += pathCount
 		conflicts = append(conflicts, serverRebaseConflict{
-			commit: fields[0], indexDigest: fields[1], paths: paths,
+			commit: fields[0], indexDigest: fields[1], resolvedTree: resolvedTree,
+			expectedResult: expectedResult, paths: paths,
 		})
 	}
 	return conflicts, position, nil

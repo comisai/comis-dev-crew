@@ -18,6 +18,7 @@ func TestIntegrationApplicationPersistsEveryClosedOutcomeAcrossRestart(t *testin
 		application.IntegrationApplied,
 		application.IntegrationConflicted,
 		application.IntegrationInvalidated,
+		application.IntegrationAborted,
 	} {
 		t.Run(string(outcome), func(t *testing.T) {
 			fixture := newStoredIntegrationFixture(t)

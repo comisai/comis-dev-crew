@@ -11,6 +11,12 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/application"
 )
 
+type isolatedRebaseResult struct {
+	head       string
+	commits    []string
+	conflicted bool
+}
+
 func (registry *Registry) preflightRebasePatches(
 	ctx context.Context,
 	repository Repository,
@@ -18,8 +24,9 @@ func (registry *Registry) preflightRebasePatches(
 	directory string,
 	commits []string,
 	patches []string,
-) error {
-	return registry.withIsolatedRebaseWorkspace(ctx, request.Target.WorktreePath, directory,
+) (isolatedRebaseResult, error) {
+	var result isolatedRebaseResult
+	err := registry.withIsolatedRebaseWorkspace(ctx, request.Target.WorktreePath, directory,
 		func(workspace gitWorkspaceEnvironment) error {
 			branch := "refs/heads/rebase-proof"
 			if _, err := runGitBytesInWorkspace(ctx, registry.gitExecutable, workspace,
@@ -49,13 +56,23 @@ func (registry *Registry) preflightRebasePatches(
 			}
 			switch exitCode {
 			case 0:
-				return registry.validateIsolatedRebaseResult(ctx, workspace, request, commits, patches)
+				var validationErr error
+				result, validationErr = registry.validateIsolatedRebaseResult(ctx, workspace, request, commits, patches)
+				if validationErr != nil {
+					return validationErr
+				}
+				return importIsolatedGitObjects(workspace.gitObjectDirectory, workspace.gitAlternateObjectDirectory)
 			case 1:
-				return registry.validateIsolatedRebaseConflict(ctx, repository, workspace, commits)
+				if err := registry.validateIsolatedRebaseConflict(ctx, repository, workspace, commits); err != nil {
+					return err
+				}
+				result.conflicted = true
+				return nil
 			default:
 				return errors.New("apply integration candidate: isolated rebase execution failed")
 			}
 		})
+	return result, err
 }
 
 func (registry *Registry) validateIsolatedRebaseResult(
@@ -64,23 +81,89 @@ func (registry *Registry) validateIsolatedRebaseResult(
 	request application.IntegrationAdapterRequest,
 	commits []string,
 	patches []string,
-) error {
+) (isolatedRebaseResult, error) {
 	output, err := runGitBytesInWorkspace(ctx, registry.gitExecutable, workspace,
 		"rev-list", "--reverse", request.Target.ExpectedHead+"..HEAD")
 	if err != nil {
-		return errors.New("apply integration candidate: isolated rebase result is unavailable")
+		return isolatedRebaseResult{}, errors.New("apply integration candidate: isolated rebase result is unavailable")
 	}
 	results := strings.Fields(string(output))
 	if len(results) != len(commits) {
-		return errors.New("apply integration candidate: isolated rebase dropped candidate commits")
+		return isolatedRebaseResult{}, errors.New("apply integration candidate: isolated rebase dropped candidate commits")
 	}
 	for index, result := range results {
 		identity, err := registry.rebasePatchIdentityInWorkspace(ctx, workspace, result)
 		if err != nil || identity != patches[index] {
-			return errors.New("apply integration candidate: isolated rebase content differs")
+			return isolatedRebaseResult{}, errors.New("apply integration candidate: isolated rebase content differs")
 		}
 	}
-	return nil
+	return isolatedRebaseResult{head: results[len(results)-1], commits: results}, nil
+}
+
+func importIsolatedGitObjects(source, destination string) error {
+	if !filepath.IsAbs(source) || !filepath.IsAbs(destination) || source == destination {
+		return errors.New("apply integration candidate: isolated object boundary is invalid")
+	}
+	changedDirectories := make(map[string]struct{})
+	err := filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			return errors.New("isolated object entry is invalid")
+		}
+		relative, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		parts := strings.Split(filepath.ToSlash(relative), "/")
+		if len(parts) != 2 || len(parts[0]) != 2 || len(parts[1]) != 38 && len(parts[1]) != 62 ||
+			!lowerHex(parts[0]+parts[1]) {
+			return errors.New("isolated object identity is invalid")
+		}
+		directory := filepath.Join(destination, parts[0])
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			return err
+		}
+		target := filepath.Join(directory, parts[1])
+		if existing, err := os.Lstat(target); err == nil {
+			if !existing.Mode().IsRegular() {
+				return errors.New("shared object identity is invalid")
+			}
+			return nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := os.Link(path, target); err != nil {
+			return err
+		}
+		changedDirectories[directory] = struct{}{}
+		return nil
+	})
+	if err != nil {
+		return errors.New("apply integration candidate: isolated result objects could not be imported")
+	}
+	for directory := range changedDirectories {
+		if err := syncDirectory(directory); err != nil {
+			return err
+		}
+	}
+	return syncDirectory(destination)
+}
+
+func lowerHex(value string) bool {
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			if character < 'a' || character > 'f' {
+				return false
+			}
+		}
+	}
+	return value != ""
 }
 
 func (registry *Registry) validateIsolatedRebaseConflict(
@@ -230,7 +313,13 @@ func (registry *Registry) withIsolatedRebaseWorkspace(
 	if err != nil {
 		return errors.New("apply integration candidate: isolated rebase workspace is unavailable")
 	}
-	defer func() { resultErr = errors.Join(resultErr, removeTemporaryRebaseObjects(root)) }()
+	rootInfo, err := os.Lstat(root)
+	if err != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
+		return errors.New("apply integration candidate: isolated rebase workspace is invalid")
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, removeIsolatedRebaseWorkspace(directory, root, rootInfo))
+	}()
 	if _, err := runGitBytes(ctx, registry.gitExecutable, "init", "--quiet", "--template=", root); err != nil {
 		return errors.New("apply integration candidate: isolated rebase repository is unavailable")
 	}
@@ -244,6 +333,24 @@ func (registry *Registry) withIsolatedRebaseWorkspace(
 		gitObjectDirectory:          filepath.Join(root, ".git", "objects"),
 		gitAlternateObjectDirectory: filepath.Join(commonDirectory, "objects"),
 	})
+}
+
+func removeIsolatedRebaseWorkspace(parent, root string, identity os.FileInfo) error {
+	if !filepath.IsAbs(parent) || !filepath.IsAbs(root) || filepath.Dir(root) != parent ||
+		!strings.HasPrefix(filepath.Base(root), ".rebase-workspace-") {
+		return errors.New("apply integration candidate: isolated rebase workspace is invalid")
+	}
+	info, err := os.Lstat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !os.SameFile(identity, info) {
+		return errors.New("apply integration candidate: isolated rebase workspace is invalid")
+	}
+	if err := os.RemoveAll(root); err != nil {
+		return errors.New("apply integration candidate: isolated rebase workspace could not be removed")
+	}
+	return nil
 }
 
 func (registry *Registry) withTemporaryRebaseIndex(

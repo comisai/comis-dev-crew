@@ -172,7 +172,7 @@ func TestIntegrationSettlesOnlyFailuresKnownToPrecedeGitMutation(t *testing.T) {
 			reserved := integrationReservation(command, IntegrationRebase)
 			store := &integrationStore{policyID: "integration-reviewed", reservation: reserved}
 			if test.wantSettled {
-				store.completed = integrationResult(reserved, IntegrationInvalidated, "", nil, at)
+				store.completed = integrationResult(reserved, IntegrationAborted, "", nil, at)
 			}
 			adapter := &integrationAdapter{err: test.adapterError}
 			integrations, err := NewIntegrations(IntegrationConfig{
@@ -193,7 +193,7 @@ func TestIntegrationSettlesOnlyFailuresKnownToPrecedeGitMutation(t *testing.T) {
 				t.Fatalf("store sequence = %q, want %q", store.sequence, test.wantSequence)
 			}
 			if test.wantSettled {
-				if store.completion.AdapterResult.Outcome != IntegrationInvalidated ||
+				if store.completion.AdapterResult.Outcome != IntegrationAborted ||
 					store.completion.AdapterResult.PreviousHead != command.ExpectedIntegrationHead {
 					t.Fatalf("pre-mutation settlement = %#v", store.completion)
 				}

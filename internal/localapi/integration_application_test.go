@@ -193,6 +193,12 @@ func TestIntegrationApplicationResultValidationCoversClosedOutcomesAndConflictPa
 	if !validIntegrationApplicationResult(invalidated, base.OperationID, input) {
 		t.Fatal("valid invalidated result was rejected")
 	}
+	aborted := base
+	aborted.Outcome = application.IntegrationAborted
+	aborted.ResultingHead = ""
+	if !validIntegrationApplicationResult(aborted, base.OperationID, input) {
+		t.Fatal("valid aborted result was rejected")
+	}
 	unknown := base
 	unknown.Outcome = application.IntegrationOutcome("unknown")
 	if validIntegrationApplicationResult(unknown, base.OperationID, input) {

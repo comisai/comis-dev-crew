@@ -25,18 +25,57 @@ func (registry *Registry) validateIntegrationExecutionPolicy(
 }
 
 func (registry *Registry) rejectCommandCapableGitConfig(ctx context.Context, worktree string) error {
-	output, exitCode, err := executeGit(ctx, registry.gitExecutable,
-		"--no-optional-locks", "-C", worktree, "config", "--local", "--name-only", "-z", "--list")
-	if err != nil || exitCode != 0 {
-		return errors.New("apply integration candidate: repository configuration is unavailable")
+	local, err := registry.integrationGitConfigKeys(ctx, worktree, "--local")
+	if err != nil {
+		return err
 	}
-	for _, encoded := range bytes.Split(bytes.TrimSuffix(output, []byte{0}), []byte{0}) {
-		key := strings.ToLower(string(encoded))
+	worktreeConfig := false
+	for _, key := range local {
+		if key == "extensions.worktreeconfig" {
+			worktreeConfig = true
+		}
 		if commandCapableGitConfigKey(key) {
 			return errors.New("apply integration candidate: repository configuration can execute commands")
 		}
 	}
+	if worktreeConfig {
+		keys, err := registry.integrationGitConfigKeys(ctx, worktree, "--worktree")
+		if err != nil {
+			return err
+		}
+		for _, key := range keys {
+			if commandCapableGitConfigKey(key) {
+				return errors.New("apply integration candidate: repository configuration can execute commands")
+			}
+		}
+	}
 	return nil
+}
+
+func (registry *Registry) integrationGitConfigKeys(
+	ctx context.Context,
+	worktree string,
+	scope string,
+) ([]string, error) {
+	output, exitCode, err := executeGit(ctx, registry.gitExecutable,
+		"--no-optional-locks", "-C", worktree, "config", "--no-includes", scope,
+		"--name-only", "-z", "--list")
+	if err != nil || exitCode != 0 {
+		return nil, errors.New("apply integration candidate: repository configuration is unavailable")
+	}
+	if len(output) == 0 {
+		return nil, nil
+	}
+	encoded := bytes.Split(bytes.TrimSuffix(output, []byte{0}), []byte{0})
+	keys := make([]string, 0, len(encoded))
+	for _, value := range encoded {
+		key := strings.ToLower(string(value))
+		if key == "" || strings.ContainsAny(key, "\x00\r\n\t ") {
+			return nil, errors.New("apply integration candidate: repository configuration is invalid")
+		}
+		keys = append(keys, key)
+	}
+	return keys, nil
 }
 
 func commandCapableGitConfigKey(key string) bool {

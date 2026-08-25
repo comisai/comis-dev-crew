@@ -17,7 +17,7 @@ import (
 var ErrIntegrationApplicationExists = fmt.Errorf("integration candidate already has a durable application operation: %w", ErrPrecondition)
 
 // ErrIntegrationMutationNotStarted marks an adapter failure that positively
-// proves no Git mutation began and permits atomic reservation invalidation.
+// proves no Git mutation began and permits atomic reservation settlement.
 var ErrIntegrationMutationNotStarted = errors.New("integration mutation did not start")
 
 // IntegrationStrategy is the closed set of operator-reviewed Git operations.
@@ -40,6 +40,9 @@ const (
 	// was accepted. No Git mutation occurred; the durable completion returns
 	// that exact candidate to validation before exposing this outcome.
 	IntegrationInvalidated IntegrationOutcome = "invalidated"
+	// IntegrationAborted means a reviewed mutation precondition failed before
+	// Git mutation. Candidate evidence remains current and unchanged.
+	IntegrationAborted IntegrationOutcome = "aborted"
 )
 
 // IntegrationPolicyResolver maps immutable operator policy identity onto one
@@ -254,11 +257,11 @@ func (integrations *Integrations) ApplyCandidate(
 					message: "integration pre-mutation failure settlement time is invalid", cause: err,
 				}
 			}
-			invalidated := IntegrationAdapterResult{
-				Outcome: IntegrationInvalidated, PreviousHead: reserved.Target.ExpectedHead,
+			aborted := IntegrationAdapterResult{
+				Outcome: IntegrationAborted, PreviousHead: reserved.Target.ExpectedHead,
 			}
 			completed, completionErr := integrations.store.CompleteIntegrationApplication(ctx, IntegrationCompletion{
-				Reservation: reserved, AdapterResult: invalidated, At: settlementAt,
+				Reservation: reserved, AdapterResult: aborted, At: settlementAt,
 			})
 			if completionErr != nil {
 				return IntegrationApplicationResult{}, &dependencyFailure{
@@ -267,7 +270,7 @@ func (integrations *Integrations) ApplyCandidate(
 				}
 			}
 			if validationErr := validateIntegrationResult(completed, reserved); validationErr != nil ||
-				completed.Outcome != IntegrationInvalidated || completed.ResultingHead != "" || len(completed.ConflictPaths) != 0 {
+				completed.Outcome != IntegrationAborted || completed.ResultingHead != "" || len(completed.ConflictPaths) != 0 {
 				if validationErr == nil {
 					validationErr = errors.New("integration pre-mutation settlement outcome differs")
 				}
@@ -379,6 +382,10 @@ func validateIntegrationAdapterResult(result IntegrationAdapterResult, reserved 
 	case IntegrationInvalidated:
 		if result.ResultingHead != "" || len(result.ConflictPaths) != 0 {
 			return errors.New("invalidated integration result is invalid")
+		}
+	case IntegrationAborted:
+		if result.ResultingHead != "" || len(result.ConflictPaths) != 0 {
+			return errors.New("aborted integration result is invalid")
 		}
 	default:
 		return errors.New("integration outcome is invalid")
