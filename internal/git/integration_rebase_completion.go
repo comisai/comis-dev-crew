@@ -257,30 +257,6 @@ func (registry *Registry) recordServerRebaseConflict(
 	return replaceServerRebaseProof(directory, path, proof, want)
 }
 
-func (registry *Registry) completeServiceRebase(
-	ctx context.Context,
-	repository Repository,
-	request application.IntegrationAdapterRequest,
-) (string, error) {
-	resultingHead, err := registry.inspectRecoveredRebaseHead(ctx, request)
-	if err != nil {
-		return "", err
-	}
-	if err := registry.authorizeRebaseFinalization(ctx, request, resultingHead); err != nil {
-		return "", err
-	}
-	if err := registry.completeServerRebaseProof(ctx, repository, request, resultingHead); err != nil {
-		return "", err
-	}
-	if err := registry.authorizeRebaseFinalization(ctx, request, resultingHead); err != nil {
-		return "", err
-	}
-	if err := registry.promoteCompletedRebaseProof(ctx, request, resultingHead); err != nil {
-		return "", err
-	}
-	return resultingHead, nil
-}
-
 func (registry *Registry) completeServerRebaseProof(
 	ctx context.Context,
 	repository Repository,

@@ -143,15 +143,6 @@ func isolatedObjectID(source, path string, entry os.DirEntry) (string, error) {
 	return parts[0] + parts[1], nil
 }
 
-func validateLooseGitObject(path, objectID string) error {
-	file, err := openRegularFile(path)
-	if err != nil {
-		return errors.New("loose object is unavailable")
-	}
-	defer func() { _ = file.Close() }()
-	return validateLooseGitObjectFile(file, objectID)
-}
-
 func validateLooseGitObjectFile(file *os.File, objectID string) error {
 	_, _, err := inspectLooseGitObject(file, objectID)
 	return err
@@ -293,15 +284,6 @@ func openRootRegularFile(root *os.Root, path string) (*os.File, error) {
 	return file, nil
 }
 
-func samePathAndRootFileBytes(source string, root *os.Root, target, objectID string) bool {
-	left, err := openRegularFile(source)
-	if err != nil {
-		return false
-	}
-	defer func() { _ = left.Close() }()
-	return sameRootFileBytes(left, root, target, objectID)
-}
-
 func sameBytesAndRootFile(contents []byte, root *os.Root, target, objectID string) bool {
 	rightFile, err := openRootRegularFile(root, target)
 	if err != nil {
@@ -330,43 +312,6 @@ func sameBytesAndRootFile(contents []byte, root *os.Root, target, objectID strin
 	var overflow [1]byte
 	read, readErr := rightFile.Read(overflow[:])
 	return read == 0 && readErr == io.EOF
-}
-
-func sameRootFileBytes(leftFile *os.File, root *os.Root, target, objectID string) bool {
-	rightFile, err := openRootRegularFile(root, target)
-	if err != nil {
-		return false
-	}
-	defer func() { _ = rightFile.Close() }()
-	if validateLooseGitObjectFile(rightFile, objectID) != nil {
-		return false
-	}
-	if _, err := leftFile.Seek(0, io.SeekStart); err != nil {
-		return false
-	}
-	if _, err := rightFile.Seek(0, io.SeekStart); err != nil {
-		return false
-	}
-	leftInfo, leftErr := leftFile.Stat()
-	rightInfo, rightErr := rightFile.Stat()
-	if leftErr != nil || rightErr != nil || leftInfo.Size() != rightInfo.Size() {
-		return false
-	}
-	leftBuffer := make([]byte, 32*1024)
-	rightBuffer := make([]byte, 32*1024)
-	for {
-		leftCount, leftErr := leftFile.Read(leftBuffer)
-		rightCount, rightErr := rightFile.Read(rightBuffer)
-		if leftCount != rightCount || !bytes.Equal(leftBuffer[:leftCount], rightBuffer[:rightCount]) {
-			return false
-		}
-		if leftErr == io.EOF && rightErr == io.EOF {
-			return true
-		}
-		if leftErr != nil || rightErr != nil {
-			return false
-		}
-	}
 }
 
 func syncObjectRoot(root *os.Root) error {

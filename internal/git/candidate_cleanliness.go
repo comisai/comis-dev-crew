@@ -87,26 +87,6 @@ func (registry *Registry) candidateWorkspaceCleanAtCommit(
 	return clean, returnErr
 }
 
-func parseCandidateTrackedEntries(output []byte, index bool) (map[string]candidateTrackedEntry, error) {
-	if len(output) != 0 && output[len(output)-1] != 0 {
-		return nil, errors.New("candidate tracked entry response is unterminated")
-	}
-	entries := make(map[string]candidateTrackedEntry)
-	previous := ""
-	for _, record := range bytes.Split(output, []byte{0}) {
-		if len(record) == 0 {
-			continue
-		}
-		entryPath, entry, err := parseCandidateTrackedRecord(record, index)
-		if err != nil || len(entries) == maximumIntegrationTreeEntries || previous != "" && entryPath <= previous {
-			return nil, errors.New("candidate tracked entry is duplicated, unordered, or malformed")
-		}
-		previous = entryPath
-		entries[entryPath] = entry
-	}
-	return entries, nil
-}
-
 func candidateTrackedMode(mode string) bool {
 	return mode == "100644" || mode == "100755" || mode == "120000" || mode == "160000"
 }
@@ -161,18 +141,6 @@ func candidateConversionAttributesSafe(
 		}
 	}
 	return true, nil
-}
-
-func (registry *Registry) withCandidateInspectionWorkspace(
-	ctx context.Context,
-	worktreePath string,
-	commonDirectory string,
-	head string,
-	inspect func(gitWorkspaceEnvironment) error,
-) (returnErr error) {
-	return registry.withCandidateInspectionWorkspaceAt(
-		ctx, worktreePath, commonDirectory, head, filepath.Dir(worktreePath), "", inspect,
-	)
 }
 
 func (registry *Registry) withCandidateInspectionWorkspaceAt(

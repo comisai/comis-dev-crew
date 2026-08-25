@@ -145,28 +145,6 @@ func (registry *Registry) validateActiveRebaseRecoveryReceipts(
 	return nil
 }
 
-func (registry *Registry) recordIntegrationRebaseProof(
-	ctx context.Context,
-	request application.IntegrationAdapterRequest,
-) error {
-	proofRef := integrationRebaseProofRef(request)
-	proofHead, found, err := registry.integrationReceiptHeadAtPath(ctx, request.Target.WorktreePath, proofRef)
-	if err != nil {
-		return errors.New("apply integration candidate: rebase completion proof is unavailable")
-	}
-	if found {
-		if proofHead != request.Candidate.HeadRevision {
-			return errors.New("apply integration candidate: rebase completion proof differs")
-		}
-		return nil
-	}
-	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-		"update-ref", proofRef, request.Candidate.HeadRevision, integrationZeroRevision); err != nil {
-		return errors.New("apply integration candidate: rebase completion proof could not be recorded")
-	}
-	return nil
-}
-
 func (registry *Registry) integrationTargetRef(
 	ctx context.Context,
 	request application.IntegrationAdapterRequest,

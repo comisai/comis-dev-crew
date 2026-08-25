@@ -10,15 +10,6 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/application"
 )
 
-func (registry *Registry) validateIsolatedMaterializationSnapshot(
-	ctx context.Context,
-	workspace gitWorkspaceEnvironment,
-	resultingHead string,
-) error {
-	_, err := registry.loadIsolatedMaterializationSnapshot(ctx, workspace, resultingHead)
-	return err
-}
-
 func (registry *Registry) validateIsolatedMaterializationTopology(
 	ctx context.Context,
 	workspace gitWorkspaceEnvironment,
