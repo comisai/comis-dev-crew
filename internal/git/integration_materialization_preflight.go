@@ -50,15 +50,9 @@ func validateIntegrationMaterializationTopology(
 		if previous.mode == result.mode && previous.objectID == result.objectID {
 			continue
 		}
-		if !regularIntegrationMode(previous.mode) || !regularIntegrationMode(result.mode) {
-			return errors.New("apply integration candidate: materialization type transition is unsupported")
-		}
+		return errors.New("apply integration candidate: existing entry materialization is unsupported")
 	}
 	return nil
-}
-
-func regularIntegrationMode(mode string) bool {
-	return mode == "100644" || mode == "100755"
 }
 
 func snapshotContainsMaterializationAncestor(

@@ -47,8 +47,20 @@ func TestMaterializationPreservesWritesThroughOpenTrackedDescriptor(t *testing.T
 						t.Fatal(err)
 					}
 				})
-			if !invoked {
-				t.Fatalf("materialization boundary %q was not reached: %v", boundary, materializeErr)
+			if materializeErr == nil {
+				t.Fatalf("materialization boundary %q returned nil error", boundary)
+			}
+			if invoked {
+				t.Fatalf("unsupported tracked rewrite reached boundary %q", boundary)
+			}
+			if _, err := writer.Seek(0, 0); err != nil {
+				t.Fatal(err)
+			}
+			if written, err := writer.Write(developer); err != nil || written != len(developer) {
+				t.Fatalf("open descriptor write = %d, %v", written, err)
+			}
+			if err := writer.Truncate(int64(len(developer))); err != nil {
+				t.Fatal(err)
 			}
 			contents, err := os.ReadFile(path)
 			if err != nil || string(contents) != string(developer) {

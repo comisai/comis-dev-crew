@@ -51,6 +51,31 @@ func TestRegistry_InspectCandidatePreservesStatusCleanlinessSemantics(t *testing
 		}
 		assertCleanCandidate(t, registry, request)
 	})
+
+	t.Run("repository exclude", func(t *testing.T) {
+		fixture, registry, request, worktree := preparedCandidateFixture(t, "exclude-status")
+		common := gitOutput(t, fixture.gitExecutable, "--no-optional-locks", "-C", worktree,
+			"rev-parse", "--path-format=absolute", "--git-common-dir")
+		if err := os.WriteFile(filepath.Join(common, "info", "exclude"), []byte("excluded-output\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(worktree, "excluded-output"), []byte("ignored\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		assertCleanCandidate(t, registry, request)
+	})
+
+	t.Run("configured conversion is unknown", func(t *testing.T) {
+		fixture, registry, request, worktree := preparedCandidateFixture(t, "conversion-status")
+		if err := os.WriteFile(filepath.Join(worktree, ".gitattributes"), []byte("fixture.txt filter=essential\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		commitCandidatePaths(t, fixture, worktree, "configured conversion", ".gitattributes")
+		if snapshot, err := registry.InspectCandidate(context.Background(), request); err == nil ||
+			snapshot.Cleanliness == devgit.CandidateClean {
+			t.Fatalf("InspectCandidate(configured conversion) = %#v, %v", snapshot, err)
+		}
+	})
 }
 
 func preparedCandidateFixture(

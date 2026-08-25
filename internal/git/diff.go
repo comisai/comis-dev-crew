@@ -92,11 +92,11 @@ func (registry *Registry) diffFiles(
 		}
 		return nil, false, fmt.Errorf("inspect task diff: change summary is unavailable: %w", err)
 	}
-	changes := candidateSnapshotChanges(before, after)
+	changes, extentTruncated := candidateSnapshotChanges(before, after)
 	if len(changes) > maximumDiffFiles {
 		return changes[:maximumDiffFiles], true, nil
 	}
-	return changes, false, nil
+	return changes, extentTruncated, nil
 }
 
 // parseNumstat decodes NUL-separated numeric change records.

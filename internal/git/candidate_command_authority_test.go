@@ -15,7 +15,7 @@ import (
 func TestRegistry_CandidateInspectionIgnoresRacingDynamicFilterProcess(t *testing.T) {
 	fixture := newIntegrationFixture(t)
 	commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "component.txt", "component\n")
-	wrapper, marker := writeRacingCandidateInspectionDriver(t, fixture, "filter")
+	wrapper, marker, armed := writeRacingCandidateInspectionDriver(t, fixture, "filter")
 	registry := newIntegrationRegistryWithExecutable(t, fixture, wrapper)
 
 	snapshot, err := registry.InspectCandidate(context.Background(), devgit.CandidateSnapshotRequest{
@@ -24,6 +24,9 @@ func TestRegistry_CandidateInspectionIgnoresRacingDynamicFilterProcess(t *testin
 	})
 	if _, statErr := os.Lstat(marker); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("candidate filter process executed: %v", statErr)
+	}
+	if _, statErr := os.Lstat(armed); statErr != nil {
+		t.Fatalf("candidate filter race was not armed: %v", statErr)
 	}
 	if err != nil || snapshot.HeadRevision == "" {
 		t.Fatalf("InspectCandidate(dynamic filter race) = %#v, %v", snapshot, err)
@@ -44,7 +47,7 @@ func TestRegistry_CandidateDiffIgnoresDynamicTextConversionDriver(t *testing.T) 
 		"add", "--", ".gitattributes", "component.bin")
 	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.candidate.CanonicalPath,
 		"-c", fixtureAuthorName, "-c", fixtureAuthorEmail, "commit", "-m", "fixture attributed change")
-	wrapper, marker := writeRacingCandidateInspectionDriver(t, fixture, "diff")
+	wrapper, marker, armed := writeRacingCandidateInspectionDriver(t, fixture, "diff")
 	registry := newIntegrationRegistryWithExecutable(t, fixture, wrapper)
 
 	diff, err := registry.InspectCandidateDiff(context.Background(), devgit.CandidateDiffRequest{
@@ -53,6 +56,9 @@ func TestRegistry_CandidateDiffIgnoresDynamicTextConversionDriver(t *testing.T) 
 	})
 	if _, statErr := os.Lstat(marker); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("candidate text conversion driver executed: %v", statErr)
+	}
+	if _, statErr := os.Lstat(armed); statErr != nil {
+		t.Fatalf("candidate diff race was not armed: %v", statErr)
 	}
 	if err != nil || len(diff.Committed) == 0 {
 		t.Fatalf("InspectCandidateDiff(dynamic text conversion) = %#v, %v", diff, err)
@@ -63,7 +69,7 @@ func writeRacingCandidateInspectionDriver(
 	t *testing.T,
 	fixture integrationFixture,
 	mode string,
-) (string, string) {
+) (string, string, string) {
 	t.Helper()
 	root := canonicalTempDir(t)
 	wrapper := filepath.Join(root, "git-candidate-inspection-race")
@@ -86,13 +92,17 @@ armed=%s
 mode=%s
 status=false
 diff=false
+lsfiles=false
+lstree=false
 for argument in "$@"; do
   if [ "$argument" = status ]; then status=true; fi
   if [ "$argument" = diff ]; then diff=true; fi
+  if [ "$argument" = ls-files ]; then lsfiles=true; fi
+  if [ "$argument" = ls-tree ]; then lstree=true; fi
 done
 fire=false
-if [ "$mode" = filter ] && [ "$status" = true ]; then fire=true; fi
-if [ "$mode" = diff ] && [ "$diff" = true ]; then fire=true; fi
+if [ "$mode" = filter ] && { [ "$status" = true ] || [ "$lsfiles" = true ]; }; then fire=true; fi
+if [ "$mode" = diff ] && { [ "$diff" = true ] || [ "$lstree" = true ]; }; then fire=true; fi
 if [ "$fire" = true ] && [ ! -f "$armed" ]; then
   : > "$armed"
   if [ "$mode" = filter ]; then
@@ -103,6 +113,7 @@ if [ "$fire" = true ] && [ ! -f "$armed" ]; then
   else
     "$real" --no-optional-locks -C "$candidate" config --local diff.reviewrace.textconv "$driver" || exit $?
     "$real" --no-optional-locks -C "$candidate" config --local diff.reviewrace.command "$driver" || exit $?
+    "$real" --no-optional-locks -C "$candidate" config --local diff.external "$driver" || exit $?
   fi
 fi
 exec "$real" "$@"
@@ -111,5 +122,5 @@ exec "$real" "$@"
 	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	return wrapper, marker
+	return wrapper, marker, armed
 }

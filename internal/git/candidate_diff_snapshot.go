@@ -11,6 +11,12 @@ import (
 	"sort"
 )
 
+const (
+	maximumCandidateDiffSnapshotBytes = 64 << 20
+	maximumCandidateDiffLines         = 65536
+	maximumCandidateLineDiffWork      = 4 << 20
+)
+
 func (registry *Registry) candidateDiffSnapshots(
 	ctx context.Context,
 	worktreePath string,
@@ -59,12 +65,17 @@ func candidateWorktreeSnapshot(
 	}
 	defer func() { returnErr = errors.Join(returnErr, root.Close()) }()
 	snapshot = make(integrationTreeSnapshot, len(index))
+	retainedBytes := 0
 	for name := range index {
 		entry, found, err := candidateWorktreeEntry(root, name)
 		if err != nil {
 			return nil, err
 		}
 		if found {
+			if len(entry.contents) > maximumCandidateDiffSnapshotBytes-retainedBytes {
+				return nil, errors.New("inspect task diff: worktree snapshot exceeds its aggregate bound")
+			}
+			retainedBytes += len(entry.contents)
 			snapshot[name] = entry
 		}
 	}
@@ -117,10 +128,11 @@ func candidateWorktreeEntry(root *os.Root, name string) (integrationTreeEntry, b
 	return integrationTreeEntry{mode: mode, objectID: hex.EncodeToString(digest[:]), contents: contents}, true, nil
 }
 
-func candidateSnapshotChanges(before, after integrationTreeSnapshot) []CandidateFileChange {
+func candidateSnapshotChanges(before, after integrationTreeSnapshot) ([]CandidateFileChange, bool) {
 	deleted := make(map[string]integrationTreeEntry)
 	added := make(map[string]integrationTreeEntry)
 	changes := make([]CandidateFileChange, 0)
+	truncated := false
 	for name, previous := range before {
 		result, exists := after[name]
 		if !exists {
@@ -128,7 +140,9 @@ func candidateSnapshotChanges(before, after integrationTreeSnapshot) []Candidate
 			continue
 		}
 		if previous.mode != result.mode || !bytes.Equal(previous.contents, result.contents) {
-			changes = append(changes, candidateContentChange(name, "", previous.contents, result.contents))
+			change, extentTruncated := candidateContentChangeExtent(name, "", previous.contents, result.contents)
+			changes = append(changes, change)
+			truncated = truncated || extentTruncated
 		}
 	}
 	for name, result := range after {
@@ -136,43 +150,66 @@ func candidateSnapshotChanges(before, after integrationTreeSnapshot) []Candidate
 			added[name] = result
 		}
 	}
-	changes = append(changes, candidateRenamesAndUnpaired(deleted, added)...)
+	unpaired, unpairedTruncated := candidateRenamesAndUnpaired(deleted, added)
+	changes = append(changes, unpaired...)
+	truncated = truncated || unpairedTruncated
 	sort.Slice(changes, func(left, right int) bool {
 		return changes[left].Path < changes[right].Path
 	})
-	return changes
+	return changes, truncated
 }
 
 func candidateRenamesAndUnpaired(
 	deleted map[string]integrationTreeEntry,
 	added map[string]integrationTreeEntry,
-) []CandidateFileChange {
+) ([]CandidateFileChange, bool) {
 	changes := make([]CandidateFileChange, 0, len(deleted)+len(added))
+	truncated := false
 	deletedNames := sortedSnapshotNames(deleted)
 	addedNames := sortedSnapshotNames(added)
+	type renameIdentity struct {
+		mode   string
+		size   int
+		digest [sha256.Size]byte
+	}
+	buckets := make(map[renameIdentity][]string, len(deletedNames))
+	for _, name := range deletedNames {
+		entry := deleted[name]
+		identity := renameIdentity{mode: entry.mode, size: len(entry.contents), digest: sha256.Sum256(entry.contents)}
+		buckets[identity] = append(buckets[identity], name)
+	}
 	for _, current := range addedNames {
 		result := added[current]
-		for _, previous := range deletedNames {
+		identity := renameIdentity{mode: result.mode, size: len(result.contents), digest: sha256.Sum256(result.contents)}
+		candidates := buckets[identity]
+		for len(candidates) > 0 {
+			previous := candidates[0]
+			candidates = candidates[1:]
 			prior, exists := deleted[previous]
-			if exists && prior.mode == result.mode && bytes.Equal(prior.contents, result.contents) {
+			if exists && bytes.Equal(prior.contents, result.contents) {
 				changes = append(changes, CandidateFileChange{Path: current, PreviousPath: previous})
 				delete(deleted, previous)
 				delete(added, current)
 				break
 			}
 		}
+		buckets[identity] = candidates
 	}
 	for _, name := range deletedNames {
 		if entry, exists := deleted[name]; exists {
-			changes = append(changes, candidateContentChange(name, "", entry.contents, nil))
+			change, extentTruncated := candidateContentChangeExtent(name, "", entry.contents, nil)
+			changes = append(changes, change)
+			truncated = truncated || extentTruncated
 		}
 	}
 	for _, name := range addedNames {
 		if entry, exists := added[name]; exists {
-			changes = append(changes, candidateContentChange(name, "", nil, entry.contents))
+			change, extentTruncated := candidateContentChangeExtent(name, "", nil, entry.contents)
+			changes = append(changes, change)
+			truncated = truncated || extentTruncated
 		}
 	}
-	return changes
+	return changes, truncated
 }
 
 func sortedSnapshotNames(snapshot map[string]integrationTreeEntry) []string {
@@ -185,33 +222,83 @@ func sortedSnapshotNames(snapshot map[string]integrationTreeEntry) []string {
 }
 
 func candidateContentChange(path, previous string, before, after []byte) CandidateFileChange {
+	change, _ := candidateContentChangeExtent(path, previous, before, after)
+	return change
+}
+
+func candidateContentChangeExtent(path, previous string, before, after []byte) (CandidateFileChange, bool) {
 	change := CandidateFileChange{Path: path, PreviousPath: previous}
 	if bytes.IndexByte(before, 0) >= 0 || bytes.IndexByte(after, 0) >= 0 {
 		change.Binary = true
-		return change
+		return change, false
 	}
-	beforeLines := bytes.Split(before, []byte{'\n'})
-	afterLines := bytes.Split(after, []byte{'\n'})
-	if len(before) == 0 {
-		beforeLines = nil
-	} else if len(beforeLines[len(beforeLines)-1]) == 0 {
-		beforeLines = beforeLines[:len(beforeLines)-1]
+	beforeLines, beforeBounded := candidateLines(before)
+	afterLines, afterBounded := candidateLines(after)
+	if !beforeBounded || !afterBounded {
+		return change, true
 	}
-	if len(after) == 0 {
-		afterLines = nil
-	} else if len(afterLines[len(afterLines)-1]) == 0 {
-		afterLines = afterLines[:len(afterLines)-1]
+	added, deleted, exact := candidateLineExtent(beforeLines, afterLines)
+	if !exact {
+		return change, true
 	}
-	prefix := 0
-	for prefix < len(beforeLines) && prefix < len(afterLines) && bytes.Equal(beforeLines[prefix], afterLines[prefix]) {
-		prefix++
+	change.Added, change.Deleted = added, deleted
+	return change, false
+}
+
+func candidateLines(contents []byte) ([][]byte, bool) {
+	if len(contents) == 0 {
+		return nil, true
 	}
-	suffix := 0
-	for suffix < len(beforeLines)-prefix && suffix < len(afterLines)-prefix &&
-		bytes.Equal(beforeLines[len(beforeLines)-1-suffix], afterLines[len(afterLines)-1-suffix]) {
-		suffix++
+	if bytes.Count(contents, []byte{'\n'}) > maximumCandidateDiffLines {
+		return nil, false
 	}
-	change.Deleted = len(beforeLines) - prefix - suffix
-	change.Added = len(afterLines) - prefix - suffix
-	return change
+	lines := bytes.Split(contents, []byte{'\n'})
+	if len(lines[len(lines)-1]) == 0 {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) > maximumCandidateDiffLines {
+		return nil, false
+	}
+	return lines, true
+}
+
+func candidateLineExtent(before, after [][]byte) (int, int, bool) {
+	maximum := len(before) + len(after)
+	if maximum == 0 {
+		return 0, 0, true
+	}
+	frontier := make([]int, 2*maximum+3)
+	offset := maximum + 1
+	work := 0
+	for distance := 0; distance <= maximum; distance++ {
+		for diagonal := -distance; diagonal <= distance; diagonal += 2 {
+			work++
+			if work > maximumCandidateLineDiffWork {
+				return 0, 0, false
+			}
+			position := offset + diagonal
+			var beforeIndex int
+			if diagonal == -distance || diagonal != distance && frontier[position-1] < frontier[position+1] {
+				beforeIndex = frontier[position+1]
+			} else {
+				beforeIndex = frontier[position-1] + 1
+			}
+			afterIndex := beforeIndex - diagonal
+			for beforeIndex < len(before) && afterIndex < len(after) &&
+				bytes.Equal(before[beforeIndex], after[afterIndex]) {
+				beforeIndex++
+				afterIndex++
+				work++
+				if work > maximumCandidateLineDiffWork {
+					return 0, 0, false
+				}
+			}
+			frontier[position] = beforeIndex
+			if beforeIndex >= len(before) && afterIndex >= len(after) {
+				common := (len(before) + len(after) - distance) / 2
+				return len(after) - common, len(before) - common, true
+			}
+		}
+	}
+	return 0, 0, false
 }

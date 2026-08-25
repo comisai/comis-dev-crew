@@ -231,12 +231,7 @@ func publishMaterializationEntry(
 	previous, hadPrevious := expected[name]
 	result, hasResult := resulting[name]
 	if hadPrevious {
-		if !hasResult {
-			return errors.New("apply integration candidate: materialization deletion is unsupported")
-		}
-		return publishExistingRegularMaterializationEntry(
-			root, target, recovery, name, previous, result, boundary,
-		)
+		return errors.New("apply integration candidate: existing entry materialization is unsupported")
 	}
 	captured, captureMatches, err := materializationEntryState(root, capture, previous)
 	if err != nil || captured && (!hadPrevious || !captureMatches) {

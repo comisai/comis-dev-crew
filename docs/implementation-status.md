@@ -795,6 +795,11 @@ order and metadata before reconstructing recovery in isolation. Pending
 materialization recovery requires the immutable expected/result/tree/index proof and a writer-free,
 unedited worktree before completing the transition; changed or incomplete state
 is preserved and refused.
+Because E0 cannot exclude direct writers or writes through an already-open
+descriptor, a proved result that changes or removes an existing worktree entry
+is refused before the target ref moves. Automatic publication is limited to
+unchanged entries and no-replace additions until a later stage ratifies writer
+custody.
 The operator CLI reaches the identical boundary through `initiative integrate`
 and rejects authority-bearing or self-retargeting contract fields before opening
 the service socket.

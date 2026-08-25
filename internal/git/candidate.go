@@ -45,7 +45,13 @@ func (registry *Registry) InspectCandidate(ctx context.Context, request Candidat
 		}
 		return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: head identity differs: %w", ErrCandidateWorktreeUnverified)
 	}
-	clean, err := registry.integrationWorktreeCleanAtCommit(ctx, request.WorktreePath, head)
+	repository, err := registry.Resolve(request.RepositoryID)
+	if err != nil {
+		return CandidateSnapshot{}, errors.New("inspect task candidate: repository is unavailable")
+	}
+	clean, err := registry.candidateWorktreeCleanAtCommit(
+		ctx, request.WorktreePath, repository.GitCommonDir, head,
+	)
 	if err != nil {
 		if ctx.Err() != nil {
 			return CandidateSnapshot{}, ctx.Err()
@@ -53,7 +59,10 @@ func (registry *Registry) InspectCandidate(ctx context.Context, request Candidat
 		if errors.Is(err, errGitInfrastructure) || errors.Is(err, errFilesystemInfrastructure) {
 			return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: status inspection failed: %w", err)
 		}
-		return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: worktree status is unavailable: %w", ErrCandidateWorktreeUnverified)
+		return CandidateSnapshot{}, fmt.Errorf(
+			"inspect task candidate: worktree status is unavailable: %w: %w",
+			ErrCandidateWorktreeUnverified, err,
+		)
 	}
 	cleanliness := CandidateDirty
 	if clean {

@@ -311,3 +311,36 @@ candidate-diff, runner, import, crash-replay, and receipt-family contracts:
 go test ./internal/git -run 'Test(MaterializationPreservesWritesThroughOpenTrackedDescriptor|Registry_FreshMaterializationRejectsRacingReceiptFamily|Registry_CandidateInspectionIgnoresRacingDynamicFilterProcess|Registry_CandidateDiffIgnoresDynamicTextConversionDriver|ImportIsolatedGitObjects|BoundedChildProcessPreservesExactArguments|GitInspectionRunner_IsBoundedCancellableAndContentFreeOnFailure|WorkspaceGitRunner_PropagatesEnvironmentAndNormalizesCommandOutcomes|Registry_InspectCandidateDiff|Registry_AppliesEveryReviewedIntegrationStrategyAndReplays|MaterializationRetryRetiresCrashRecoveryEvidence)' -count=1
 ok github.com/comisai/comis-dev-crew/internal/git 42.800s
 ```
+
+## Round 30 writer custody and candidate bounds
+
+Commit `39c6f21` preserves executable RED evidence for five shared defects. An
+existing tracked entry was rewritten despite an open writable descriptor;
+clean large trees, gitlinks, and ignored artifacts were rejected; worktree diff
+snapshots retained more than their aggregate bound; 32,000 deterministic rename
+pairs exceeded five seconds; and two separated edits around a retained line
+were reported as three additions and deletions instead of two.
+
+The combined RED command was:
+
+```text
+go test ./internal/git -run 'Test(MaterializationRejectsTrackedRewriteBeforePublication|Registry_InspectCandidatePreservesStatusCleanlinessSemantics|CandidateWorktreeSnapshotBoundsAggregateRetainedContent|CandidateRenameMatchingHasBoundedWork|CandidateContentChangeCountsInteriorMatchesExactly)$' -count=1
+```
+
+E0 therefore refuses modifications, removals, and type changes of existing
+worktree entries before target publication. Only unchanged entries and atomic
+no-replace additions are eligible for automatic materialization. Candidate
+cleanliness uses a copied index and repository exclude file in an empty,
+service-owned Git administration context; it streams raw tracked object
+identity without integration tree-size limits and does not expose configured
+filter or diff commands. Diff snapshots have a 64 MiB aggregate retained-byte
+bound, rename pairing uses content-identity buckets with exact verification,
+and line extents use a bounded exact edit calculation whose exhausted work is
+reported through the existing truncation signal.
+
+The focused GREEN command was:
+
+```text
+go test ./internal/git -run 'Test(MaterializationRejectsTrackedRewriteBeforePublication|MaterializationPreservesWritesThroughOpenTrackedDescriptor|Registry_(IntegrationRejectsTrackedRewriteBeforeTargetCAS|InspectCandidate.*|CandidateInspectionIgnoresRacingDynamicFilterProcess|CandidateDiffIgnoresDynamicTextConversionDriver)|CandidateWorktreeSnapshotBoundsAggregateRetainedContent|CandidateRenameMatchingHasBoundedWork|CandidateContentChange.*)$' -count=1
+ok github.com/comisai/comis-dev-crew/internal/git 24.511s
+```
