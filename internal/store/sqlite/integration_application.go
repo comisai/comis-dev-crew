@@ -119,7 +119,10 @@ func (store *Store) ReserveIntegrationApplication(
 		if err := verifyIntegrationOperation(ctx, transaction, row); err != nil {
 			return application.ReservedIntegrationApplication{}, err
 		}
-		reserved := integrationReservationFromRow(row)
+		reserved, reservationErr := integrationReservationWithRecoveryIdentity(ctx, transaction, row)
+		if reservationErr != nil {
+			return application.ReservedIntegrationApplication{}, reservationErr
+		}
 		if row.status == "reserved" {
 			current, authorityErr := resolveIntegrationReservation(ctx, transaction, request)
 			if authorityErr == nil {
@@ -161,10 +164,14 @@ func (store *Store) ReserveIntegrationApplication(
 	if err := insertIntegrationApplication(ctx, transaction, row); err != nil {
 		return application.ReservedIntegrationApplication{}, err
 	}
+	reserved, err := integrationReservationWithRecoveryIdentity(ctx, transaction, row)
+	if err != nil {
+		return application.ReservedIntegrationApplication{}, err
+	}
 	if err := transaction.Commit(); err != nil {
 		return application.ReservedIntegrationApplication{}, fmt.Errorf("commit integration reservation: %w", err)
 	}
-	return integrationReservationFromRow(row), nil
+	return reserved, nil
 }
 
 // CompleteIntegrationApplication atomically records either the exact applied
@@ -232,6 +239,25 @@ func (store *Store) CompleteIntegrationApplication(
 	}
 	if err := completeIntegrationOperation(ctx, transaction, row, completion.At); err != nil {
 		return application.IntegrationApplicationResult{}, err
+	}
+	if row.recoveryOperationID != "" && completion.AdapterResult.Outcome == application.IntegrationApplied {
+		original, found, readErr := findIntegrationApplication(ctx, transaction, row.recoveryOperationID)
+		if readErr != nil {
+			return application.IntegrationApplicationResult{}, readErr
+		}
+		if found && original.status == "reserved" {
+			original.status = row.status
+			original.resultingHead = row.resultingHead
+			original.conflicts = []string{}
+			original.completedAt = completion.At
+			original.stateVersion = stateVersion
+			if err := updateIntegrationApplication(ctx, transaction, original); err != nil {
+				return application.IntegrationApplicationResult{}, err
+			}
+			if err := completeIntegrationOperation(ctx, transaction, original, completion.At); err != nil {
+				return application.IntegrationApplicationResult{}, err
+			}
+		}
 	}
 	if err := transaction.Commit(); err != nil {
 		return application.IntegrationApplicationResult{}, fmt.Errorf("commit integration completion: %w", err)

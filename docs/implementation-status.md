@@ -773,11 +773,14 @@ The official MCP facade exposes the same operation as
 strategy selection, repository paths, and argv out of its input schema. A new
 application uses the authenticated call operation, while transport uncertainty
 retries that exact operation automatically. For a staged rebase conflict, the
-optional `recoveryOperationId` names the immutable conflicted receipt and the
-authenticated call supplies a separate durable resolution operation. The service
-revalidates the original target ref and rebase sequencer, advances the branch by
-compare-and-swap, and reattaches the worktree; changed or incomplete state is
-preserved and refused.
+optional `recoveryOperationId` names either the immutable conflicted receipt or
+an exact pending post-compare-and-swap materialization transition, and the
+authenticated call supplies a separate durable operation with fresh evidence.
+The service revalidates the original target ref and the exact sequencer command
+order and metadata before continuing a rebase. Pending materialization recovery
+requires the immutable expected/result/tree/index proof and a writer-free,
+unedited worktree before completing the transition; changed or incomplete state
+is preserved and refused.
 The operator CLI reaches the identical boundary through `initiative integrate`
 and rejects authority-bearing or self-retargeting contract fields before opening
 the service socket.

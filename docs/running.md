@@ -306,9 +306,10 @@ only the reviewed strategy, evidence digest, applied head or bounded conflicts,
 and durable state version. An uncertain call retries the exact reserved operation,
 whose global operation claim is already durable. The Git adapter either replays
 an exact receipt, reconciles an interrupted rebase from its recorded target and
-verified sequencer state, or refuses ambiguity. `recoveryOperationId` is reserved
-for a staged rebase-conflict resolution: it names the immutable conflicted
-operation while the authenticated call contributes a distinct operation ID.
+verified sequencer state, or refuses ambiguity. `recoveryOperationId` names
+either the immutable conflicted rebase operation or an exact pending
+materialization transition after a target compare-and-swap, while the
+authenticated call contributes a distinct operation ID and fresh evidence.
 Changing any initiative, task, head, policy, evidence, worktree, or rebase state
 remains a refusal before the target branch moves.
 The reservation also requires the candidate's exact `integrates_after` edge and
@@ -619,9 +620,9 @@ conflicted worktree instead of snapshotting an earlier Git state. Candidate
 handoff then accepts only a clean private commit that fast-forwards that exact
 server-owned integration head; divergent history remains a refusal. A newly
 isolated merge, cherry-pick, or rebase conflict is a pre-mutation refusal; E0
-does not materialize that conflict into the shared worktree. Recovery is limited
-to a previously authorized interrupted rebase that already has the exact durable
-conflict receipt. The worker stages only the recorded resolutions and does not
+does not materialize that conflict into the shared worktree. Conflict recovery is
+limited to a previously authorized interrupted rebase that already has the exact
+durable conflict receipt. The worker stages only the recorded resolutions and does not
 continue or commit the rebase itself. A separate integration operation naming
 that receipt revalidates the durable task, evidence, worktree, rebase sequencer,
 and Git-updated terminal proof for the original target branch; DevCrew then
@@ -629,6 +630,13 @@ continues the fixed rebase command, advances that branch with compare-and-swap,
 and reattaches the worktree. An unresolved index, changed branch, missing or
 unfinished terminal proof, altered candidate, or ambiguous receipt preserves
 the worktree and refuses recovery.
+The sequencer authorization binds the exact original pick order, completed and
+remaining ranges, stopped commit, onto/original heads, proof branch, and counters.
+Executable, ref-updating, dropped, reordered, extra, symbolic, or unknown
+sequencer state is rejected before Git continues. A separate fresh operation may
+also adopt an immutable pending materialization transition after revalidating
+the same candidate and a writer-free target; it never revives expired evidence
+or overwrites an edited index or worktree.
 The ordering does not authorize the next action. An apply-only operator request
 ends after the durable receipt; launch-plan and terminal operations require
 separate explicit authorization.

@@ -37,6 +37,14 @@ func (registry *Registry) reconcileReceiptOnlyCompletedRebase(
 	if err := registry.ensureRebaseSequencerAbsent(ctx, request.Target.WorktreePath); err != nil {
 		return application.IntegrationAdapterResult{}, true, err
 	}
+	if pristine, pristineErr := registry.provePristinePublishedRebaseProof(ctx, repository, request); pristineErr != nil {
+		return application.IntegrationAdapterResult{}, true, pristineErr
+	} else if pristine {
+		return application.IntegrationAdapterResult{}, true, errors.Join(
+			errors.New("apply integration candidate: rebase proof has no shared mutation"),
+			application.ErrIntegrationMutationNotStarted,
+		)
+	}
 	targetRef, rebasedFound, err := registry.validateReceiptOnlyRebaseReceipts(ctx, request, proof.resultingHead)
 	if err != nil {
 		return application.IntegrationAdapterResult{}, true, err

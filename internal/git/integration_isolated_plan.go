@@ -280,6 +280,15 @@ func (registry *Registry) reconcileCompletedIntegrationPlan(
 			ResultingHead: plan.ResultingHead,
 		}, true, nil
 	}
+	if request.ReceiptOnly {
+		if err := registry.provePristineIntegrationState(ctx, request, targetRef); err != nil {
+			return application.IntegrationAdapterResult{}, true, err
+		}
+		return application.IntegrationAdapterResult{}, true, errors.Join(
+			errors.New("apply integration candidate: isolated plan has no shared mutation"),
+			application.ErrIntegrationMutationNotStarted,
+		)
+	}
 	target, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
 		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
 		WorktreePath: request.Target.WorktreePath,

@@ -256,7 +256,9 @@ func (registry *Registry) authorizeIntegrationMaterializationAfterCAS(
 	resultingHead string,
 ) error {
 	var err error
-	if request.Strategy == application.IntegrationRebase {
+	if request.PendingMaterializationRecovery {
+		err = registry.authorizePendingMaterializationRecovery(ctx, request, resultingHead)
+	} else if request.Strategy == application.IntegrationRebase {
 		err = registry.authorizeRebaseFinalization(ctx, request, resultingHead)
 	} else {
 		if err = registry.validateIntegrationExecutionPolicy(ctx, request); err == nil {

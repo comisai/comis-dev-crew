@@ -258,6 +258,25 @@ func integrationReservationFromRow(row integrationApplicationRow) application.Re
 	return reserved
 }
 
+func integrationReservationWithRecoveryIdentity(
+	ctx context.Context,
+	source queryer,
+	row integrationApplicationRow,
+) (application.ReservedIntegrationApplication, error) {
+	reserved := integrationReservationFromRow(row)
+	if row.recoveryOperationID == "" {
+		return reserved, nil
+	}
+	original, found, err := findIntegrationApplication(ctx, source, row.recoveryOperationID)
+	if err != nil || !found {
+		return application.ReservedIntegrationApplication{}, errors.New("read original integration recovery identity: unavailable")
+	}
+	reserved.OriginalEvidenceDigest = original.evidenceDigest
+	reserved.OriginalEvidenceExpiresAt = original.evidenceExpiresAt
+	reserved.PendingMaterializationRecovery = original.status == "reserved"
+	return reserved, nil
+}
+
 func integrationResultFromRow(row integrationApplicationRow) application.IntegrationApplicationResult {
 	return application.IntegrationApplicationResult{
 		OperationID: row.operationID, RecoveryOperationID: row.recoveryOperationID,

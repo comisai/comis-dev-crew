@@ -55,6 +55,9 @@ func (registry *Registry) ApplyIntegrationCandidate(
 	if replay, found, err := registry.reconcileCompletedIntegrationPlan(ctx, repository, request); err != nil || found {
 		return replay, err
 	}
+	if replay, found, err := registry.resumePendingIntegrationMaterialization(ctx, repository, request); err != nil || found {
+		return replay, err
+	}
 	if request.ReceiptOnly {
 		if replay, found, err := registry.reconcileReceiptOnlyCompletedRebase(ctx, repository, request); err != nil || found {
 			return replay, err
@@ -151,6 +154,20 @@ func validateIntegrationRequest(request application.IntegrationAdapterRequest) e
 		domain.ValidateOperationID(request.Target.PreparationOperationID) != nil ||
 		request.EvidenceExpiresAt.IsZero() || request.EvidenceExpiresAt.Location() != time.UTC {
 		return errors.New("apply integration candidate: request is invalid")
+	}
+	if request.RecoveryOperationID != "" &&
+		((request.OriginalEvidenceDigest == "") != request.OriginalEvidenceExpiresAt.IsZero() ||
+			request.OriginalEvidenceDigest != "" &&
+				(domain.ValidateBriefRevisionHash(request.OriginalEvidenceDigest) != nil ||
+					request.OriginalEvidenceExpiresAt.Location() != time.UTC)) {
+		return errors.New("apply integration candidate: original evidence identity is invalid")
+	}
+	if request.RecoveryOperationID == "" &&
+		(request.OriginalEvidenceDigest != "" || !request.OriginalEvidenceExpiresAt.IsZero()) {
+		return errors.New("apply integration candidate: original evidence identity is unexpected")
+	}
+	if request.PendingMaterializationRecovery && request.RecoveryOperationID == "" {
+		return errors.New("apply integration candidate: materialization recovery identity is invalid")
 	}
 	return nil
 }
@@ -257,10 +274,7 @@ func integrationReceiptRef(outcome string, request application.IntegrationAdapte
 }
 
 func integrationRebaseProofRef(request application.IntegrationAdapterRequest) string {
-	if request.RecoveryOperationID != "" {
-		request.OperationID = request.RecoveryOperationID
-		request.RecoveryOperationID = ""
-	}
+	request = originalIntegrationRequest(request)
 	canonical, _ := json.Marshal(request)
 	digest := sha256.Sum256(canonical)
 	return fmt.Sprintf("refs/heads/comis-integration-proof-%x", digest)

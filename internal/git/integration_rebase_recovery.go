@@ -45,9 +45,7 @@ func (registry *Registry) resumeRebaseIntegration(
 	if request.Strategy != application.IntegrationRebase {
 		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: only a rebase conflict can be resumed")
 	}
-	previous := request
-	previous.OperationID = request.RecoveryOperationID
-	previous.RecoveryOperationID = ""
+	previous := originalIntegrationRequest(request)
 	conflictRef := integrationReceiptRef("conflicted", previous)
 	conflictHead, found, err := registry.integrationReceiptHead(ctx, repository, conflictRef)
 	if err != nil || !found || conflictHead != request.Target.ExpectedHead {
@@ -88,9 +86,14 @@ func (registry *Registry) resumeRebaseIntegration(
 	if err := registry.validateIntegrationMutationDeadline(request); err != nil {
 		return application.IntegrationAdapterResult{}, err
 	}
+	if err := registry.validateRebaseSequencerAuthority(ctx, repository, request); err != nil {
+		return application.IntegrationAdapterResult{}, errors.Join(err, application.ErrIntegrationMutationNotStarted)
+	}
 	configuration := []string{
 		"--no-optional-locks", "-C", request.Target.WorktreePath,
-		"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false", "-c", "core.editor=true",
+		"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false",
+		"-c", "core.editor=/usr/bin/true", "-c", "sequence.editor=/usr/bin/true",
+		"-c", "gc.auto=0", "-c", "maintenance.auto=false",
 		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
 	}
 	if _, err := runGitBytes(ctx, registry.gitExecutable, append(configuration, "rebase", "--continue")...); err != nil {

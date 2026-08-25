@@ -104,6 +104,16 @@ it validates and backfills pages of 64.
   after the target compare-and-swap. Every completion posture rechecks the
   deadline and state-specific receipt set before its next ref, index, or
   worktree mutation.
+- An expired post-compare-and-swap transition remains pending until a distinct
+  store-authorized operation revalidates current evidence, writer exclusion,
+  the immutable original transition, the advanced target, and the unchanged
+  expected index/worktree. A pristine published plan or rebase proof with no
+  transition or receipt is positively settled as mutation-not-started.
+- Rebase continuation consumes only a rooted, regular-file sequencer whose
+  completed and remaining picks, stopped commit, target/original heads, proof
+  branch, and counters exactly match the server proof. Executable, ref-updating,
+  dropped, reordered, extra, unknown, symbolic, or dangling metadata refuses
+  before `rebase --continue`.
 - Pre-mutation policy and topology refusals settle as `aborted`, distinct from
   candidate evidence invalidation, so the exact reservation is released
   without claiming the evidence changed. An aborted recovery releases conflict
@@ -167,3 +177,21 @@ post-CAS expiry still materialized the result, receipt-only recovery required a
 missing rebased receipt despite an exact completed transition, destination-path
 replacement interrupted object import, and automatic isolated object packing
 made valid imports fail.
+
+The Round 24 behavioral regressions are preserved in test-only commit
+`4bb319fed4fe5af9a5ef5fc946af0626e25c3848`. The exact RED command was:
+
+```text
+go test ./internal/git ./internal/store/sqlite -run 'TestRegistry_(FreshOperationAdoptsExactPendingMaterialization|FreshPendingMaterializationNeverOverwritesEdits|ReceiptOnlySettlesPristinePublishedPlan|ReceiptOnlySettlesPristinePublishedRebaseProof|RebaseRecoveryRejectsAlteredSequencerBeforeContinue|RebaseRecoveryRejectsReorderedRemainingCommits)|TestPendingIntegrationCanBeResumedByFreshAuthorizedOperation' -count=1
+```
+
+Before implementation, fresh pending recovery was rejected by both the Git and
+store boundaries, pristine published plans and rebase proofs could not settle,
+an injected sequencer `exec` directive ran, `update-ref` was accepted, and a
+reordered remaining sequence advanced past the protected conflict.
+The same named regressions are GREEN on the fixed tree:
+
+```text
+ok github.com/comisai/comis-dev-crew/internal/git
+ok github.com/comisai/comis-dev-crew/internal/store/sqlite
+```

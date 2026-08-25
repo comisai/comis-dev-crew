@@ -20,11 +20,15 @@ func resolveIntegrationRecoveryReservation(
 	if err != nil {
 		return integrationApplicationRow{}, err
 	}
-	if !found || previous.status != string(application.IntegrationConflicted) ||
-		previous.strategy != application.IntegrationRebase {
+	conflictRecovery := found && previous.status == string(application.IntegrationConflicted) &&
+		previous.strategy == application.IntegrationRebase
+	pendingRecovery := found && previous.status == "reserved"
+	if !conflictRecovery && !pendingRecovery {
 		return integrationApplicationRow{}, fmt.Errorf("integration recovery receipt is unavailable: %w", application.ErrPrecondition)
 	}
-	if !integrationRecoveryMatchesRequest(previous, request) || request.At.Before(previous.completedAt) {
+	if !integrationRecoveryMatchesRequest(previous, request) ||
+		(conflictRecovery && request.At.Before(previous.completedAt)) ||
+		(pendingRecovery && !request.At.After(previous.reservedAt)) {
 		return integrationApplicationRow{}, fmt.Errorf("integration recovery identity differs: %w", application.ErrConflict)
 	}
 	if existing, found, err := findOpenIntegrationRecoveryApplication(
@@ -34,13 +38,16 @@ func resolveIntegrationRecoveryReservation(
 	} else if found && existing.operationID != request.Command.OperationID {
 		return integrationApplicationRow{}, fmt.Errorf("integration conflict already has a recovery operation: %w", application.ErrIntegrationApplicationExists)
 	}
-	if err := validateCurrentIntegrationRecoveryAuthority(ctx, transaction, previous, request.At); err != nil {
+	evidence, err := validateCurrentIntegrationRecoveryAuthority(ctx, transaction, previous, request.At, pendingRecovery)
+	if err != nil {
 		return integrationApplicationRow{}, err
 	}
 	recovery := previous
 	recovery.operationID = request.Command.OperationID
 	recovery.recoveryOperationID = previous.operationID
 	recovery.subjectDigest = request.SubjectDigest
+	recovery.evidenceDigest = evidence.digest
+	recovery.evidenceExpiresAt = evidence.expiresAt
 	recovery.status = "reserved"
 	recovery.resultingHead = ""
 	recovery.conflicts = []string{}
@@ -64,55 +71,73 @@ func integrationRecoveryMatchesRequest(
 		previous.policyID == request.PolicyID && previous.strategy == request.Strategy
 }
 
+type currentIntegrationRecoveryEvidence struct {
+	digest    string
+	expiresAt time.Time
+}
+
 func validateCurrentIntegrationRecoveryAuthority(
 	ctx context.Context,
 	source queryer,
 	previous integrationApplicationRow,
 	at time.Time,
-) error {
+	requireFreshEvidence bool,
+) (currentIntegrationRecoveryEvidence, error) {
 	initiative, err := getInitiative(ctx, source, previous.initiativeHandle)
 	if err != nil {
-		return err
+		return currentIntegrationRecoveryEvidence{}, err
 	}
 	if (initiative.State != domain.InitiativeActive && initiative.State != domain.InitiativeIntegrating) ||
 		initiative.IntegrationPolicyID != previous.policyID ||
 		initiative.AuthorizeIntegrationWrite(previous.integrationTaskHandle) != nil {
-		return fmt.Errorf("integration recovery authority is unavailable: %w", application.ErrPrecondition)
+		return currentIntegrationRecoveryEvidence{}, fmt.Errorf("integration recovery authority is unavailable: %w", application.ErrPrecondition)
 	}
 	integrationTask, err := getTask(ctx, source, previous.integrationTaskHandle)
 	if err != nil {
-		return err
+		return currentIntegrationRecoveryEvidence{}, err
 	}
 	candidateTask, err := getTask(ctx, source, previous.candidateTaskHandle)
 	if err != nil {
-		return err
+		return currentIntegrationRecoveryEvidence{}, err
 	}
 	if !integrationRecoveryTasksMatch(initiative, integrationTask, candidateTask, previous) {
-		return fmt.Errorf("integration recovery task authority differs: %w", application.ErrPrecondition)
+		return currentIntegrationRecoveryEvidence{}, fmt.Errorf("integration recovery task authority differs: %w", application.ErrPrecondition)
+	}
+	if !initiativeHasIntegrationEdge(initiative, candidateTask.Handle, integrationTask.Handle) {
+		return currentIntegrationRecoveryEvidence{}, fmt.Errorf("integration recovery edge is unavailable: %w", application.ErrPrecondition)
 	}
 	if err := validateIntegrationRecoveryWorktrees(ctx, source, integrationTask, candidateTask, previous); err != nil {
-		return err
+		return currentIntegrationRecoveryEvidence{}, err
 	}
 	writable, err := integrationOwnerWritableForRecovery(ctx, source, initiative, integrationTask)
 	if err != nil {
-		return err
+		return currentIntegrationRecoveryEvidence{}, err
 	}
 	if !writable {
-		return fmt.Errorf("integration recovery owner is not writable: %w", application.ErrPrecondition)
+		return currentIntegrationRecoveryEvidence{}, fmt.Errorf("integration recovery owner is not writable: %w", application.ErrPrecondition)
 	}
 	evidence, err := latestCandidateEvidenceRow(ctx, source, candidateTask.Handle)
 	if err != nil {
-		return err
+		return currentIntegrationRecoveryEvidence{}, err
 	}
 	sealed, err := domain.ParseDeliveryEvidence(evidence.canonical, evidence.digest)
 	if err != nil || evidence.judgment.Outcome != domain.CandidateAccepted ||
-		evidence.digest != previous.evidenceDigest || sealed.Bundle().HeadRevision != previous.candidateHead {
-		return fmt.Errorf("integration recovery evidence differs: %w", application.ErrPrecondition)
+		(!requireFreshEvidence && evidence.digest != previous.evidenceDigest) {
+		return currentIntegrationRecoveryEvidence{}, fmt.Errorf("integration recovery evidence differs: %w", application.ErrPrecondition)
 	}
-	if at.IsZero() || at.Location() != time.UTC {
-		return errors.New("integration recovery time is invalid")
+	bundle := sealed.Bundle()
+	if bundle.HeadRevision != previous.candidateHead {
+		return currentIntegrationRecoveryEvidence{}, fmt.Errorf("integration recovery evidence differs: %w", application.ErrPrecondition)
 	}
-	return nil
+	if at.IsZero() || at.Location() != time.UTC || requireFreshEvidence && !at.Before(bundle.ExpiresAt) {
+		return currentIntegrationRecoveryEvidence{}, errors.New("integration recovery time is invalid")
+	}
+	if !requireFreshEvidence {
+		return currentIntegrationRecoveryEvidence{
+			digest: previous.evidenceDigest, expiresAt: previous.evidenceExpiresAt,
+		}, nil
+	}
+	return currentIntegrationRecoveryEvidence{digest: evidence.digest, expiresAt: bundle.ExpiresAt}, nil
 }
 
 func integrationRecoveryTasksMatch(

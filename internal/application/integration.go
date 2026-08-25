@@ -82,13 +82,16 @@ type IntegrationCandidateReference struct {
 
 // IntegrationAdapterRequest is the complete typed Git mutation contract.
 type IntegrationAdapterRequest struct {
-	OperationID         string
-	RecoveryOperationID string
-	ReceiptOnly         bool `json:"-"`
-	Strategy            IntegrationStrategy
-	Target              IntegrationTargetReference
-	Candidate           IntegrationCandidateReference
-	EvidenceExpiresAt   time.Time
+	OperationID                    string
+	RecoveryOperationID            string
+	OriginalEvidenceDigest         string    `json:"-"`
+	OriginalEvidenceExpiresAt      time.Time `json:"-"`
+	PendingMaterializationRecovery bool      `json:"-"`
+	ReceiptOnly                    bool      `json:"-"`
+	Strategy                       IntegrationStrategy
+	Target                         IntegrationTargetReference
+	Candidate                      IntegrationCandidateReference
+	EvidenceExpiresAt              time.Time
 }
 
 // IntegrationAdapterResult reports either one exact new head or bounded
@@ -118,26 +121,32 @@ type IntegrationReservationRequest struct {
 // ReservedIntegrationApplication contains only store-verified identities. A
 // result is present only when the exact operation already completed.
 type ReservedIntegrationApplication struct {
-	OperationID           string
-	RecoveryOperationID   string
-	ReceiptOnly           bool
-	SubjectDigest         string
-	InitiativeHandle      string
-	IntegrationTaskHandle string
-	PolicyID              string
-	Strategy              IntegrationStrategy
-	Target                IntegrationTargetReference
-	Candidate             IntegrationCandidateReference
-	EvidenceExpiresAt     time.Time
-	ReservedAt            time.Time
-	Result                *IntegrationApplicationResult
+	OperationID                    string
+	RecoveryOperationID            string
+	OriginalEvidenceDigest         string
+	OriginalEvidenceExpiresAt      time.Time
+	PendingMaterializationRecovery bool
+	ReceiptOnly                    bool
+	SubjectDigest                  string
+	InitiativeHandle               string
+	IntegrationTaskHandle          string
+	PolicyID                       string
+	Strategy                       IntegrationStrategy
+	Target                         IntegrationTargetReference
+	Candidate                      IntegrationCandidateReference
+	EvidenceExpiresAt              time.Time
+	ReservedAt                     time.Time
+	Result                         *IntegrationApplicationResult
 }
 
 // AdapterRequest projects a reservation onto the mutation boundary.
 func (reserved ReservedIntegrationApplication) AdapterRequest() IntegrationAdapterRequest {
 	return IntegrationAdapterRequest{
 		OperationID: reserved.OperationID, RecoveryOperationID: reserved.RecoveryOperationID,
-		ReceiptOnly: reserved.ReceiptOnly, Strategy: reserved.Strategy,
+		OriginalEvidenceDigest:         reserved.OriginalEvidenceDigest,
+		OriginalEvidenceExpiresAt:      reserved.OriginalEvidenceExpiresAt,
+		PendingMaterializationRecovery: reserved.PendingMaterializationRecovery,
+		ReceiptOnly:                    reserved.ReceiptOnly, Strategy: reserved.Strategy,
 		Target: reserved.Target, Candidate: reserved.Candidate,
 		EvidenceExpiresAt: reserved.EvidenceExpiresAt,
 	}
@@ -362,6 +371,20 @@ func validateIntegrationReservation(
 		reserved.EvidenceExpiresAt.Location() != time.UTC || reserved.ReservedAt.IsZero() || reserved.ReservedAt.Location() != time.UTC ||
 		(reserved.RecoveryOperationID == "" && !reserved.ReservedAt.Before(reserved.EvidenceExpiresAt)) {
 		return errors.New("reserved integration evidence is invalid")
+	}
+	if reserved.RecoveryOperationID != "" &&
+		((reserved.OriginalEvidenceDigest == "") != reserved.OriginalEvidenceExpiresAt.IsZero() ||
+			reserved.OriginalEvidenceDigest != "" &&
+				(domain.ValidateBriefRevisionHash(reserved.OriginalEvidenceDigest) != nil ||
+					reserved.OriginalEvidenceExpiresAt.Location() != time.UTC)) {
+		return errors.New("reserved original integration evidence is invalid")
+	}
+	if reserved.RecoveryOperationID == "" &&
+		(reserved.OriginalEvidenceDigest != "" || !reserved.OriginalEvidenceExpiresAt.IsZero()) {
+		return errors.New("reserved original integration evidence is unexpected")
+	}
+	if reserved.PendingMaterializationRecovery && reserved.RecoveryOperationID == "" {
+		return errors.New("reserved materialization recovery identity is invalid")
 	}
 	return nil
 }

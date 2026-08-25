@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 )
@@ -14,6 +15,13 @@ func originalIntegrationRequest(request application.IntegrationAdapterRequest) a
 	}
 	request.OperationID = request.RecoveryOperationID
 	request.RecoveryOperationID = ""
+	if request.OriginalEvidenceDigest != "" {
+		request.Candidate.EvidenceDigest = request.OriginalEvidenceDigest
+		request.EvidenceExpiresAt = request.OriginalEvidenceExpiresAt
+	}
+	request.OriginalEvidenceDigest = ""
+	request.OriginalEvidenceExpiresAt = time.Time{}
+	request.PendingMaterializationRecovery = false
 	return request
 }
 
