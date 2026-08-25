@@ -2,6 +2,7 @@ package git_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,6 +74,22 @@ func TestRegistry_InspectCandidateRejectsDirtyNestedGitlink(t *testing.T) {
 	}
 }
 
+func TestRegistry_InspectCandidateGitlinkIgnoresWorkerCommandConfiguration(t *testing.T) {
+	fixture, registry, request, worktree := preparedCandidateFixture(t, "gitlink-command-sentinel")
+	nested := createEmbeddedGitlink(t, fixture, worktree, "nested")
+	marker := filepath.Join(fixture.approvedRoot, "submodule-command-ran")
+	hook := filepath.Join(fixture.approvedRoot, "fsmonitor-sentinel")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\n: > \"$1\"\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", nested,
+		"config", "--local", "core.fsmonitor", hook+" "+marker)
+	assertCleanCandidate(t, registry, request)
+	if _, err := os.Lstat(marker); !os.IsNotExist(err) {
+		t.Fatalf("submodule command marker exists: %v", err)
+	}
+}
+
 func TestRegistry_InspectCandidateSupportsBuiltInAttributes(t *testing.T) {
 	for _, test := range []struct {
 		name       string
@@ -103,6 +120,24 @@ func TestRegistry_InspectCandidateSupportsBuiltInAttributes(t *testing.T) {
 	}
 }
 
+func TestRegistry_InspectCandidateReportsDirtyBuiltInNormalization(t *testing.T) {
+	fixture, registry, request, worktree := preparedCandidateFixture(t, "dirty-builtin-normalization")
+	if err := os.WriteFile(filepath.Join(worktree, ".gitattributes"), []byte("*.txt text eol=crlf\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, "normalized.txt"), []byte("first\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	commitCandidatePaths(t, fixture, worktree, "built-in normalization", ".gitattributes", "normalized.txt")
+	if err := os.WriteFile(filepath.Join(worktree, "normalized.txt"), []byte("changed\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := registry.InspectCandidate(context.Background(), request)
+	if err != nil || snapshot.Cleanliness != devgit.CandidateDirty {
+		t.Fatalf("InspectCandidate(dirty normalized file) = %#v, %v", snapshot, err)
+	}
+}
+
 func TestRegistry_InspectCandidateDiffAcceptsLargeTreesAndGitlinks(t *testing.T) {
 	t.Run("large blob and tree", func(t *testing.T) {
 		fixture, registry, request, worktree := preparedCandidateFixture(t, "large-diff")
@@ -125,6 +160,7 @@ func TestRegistry_InspectCandidateDiffAcceptsLargeTreesAndGitlinks(t *testing.T)
 		if len(diff.Committed) != 4 || !diff.FileListTruncated {
 			t.Fatalf("InspectCandidateDiff(large tree) = %#v", diff)
 		}
+		assertCandidateDiffDetailsTruncated(t, diff)
 	})
 
 	t.Run("gitlink identity", func(t *testing.T) {
@@ -141,7 +177,29 @@ func TestRegistry_InspectCandidateDiffAcceptsLargeTreesAndGitlinks(t *testing.T)
 		if len(diff.Committed) != 1 || diff.Committed[0].Path != "nested" {
 			t.Fatalf("InspectCandidateDiff(gitlink) = %#v", diff)
 		}
+		assertCandidateDiffDetailsTruncated(t, diff)
 	})
+}
+
+func assertCandidateDiffDetailsTruncated(t *testing.T, diff devgit.CandidateDiff) {
+	t.Helper()
+	encoded, err := json.Marshal(diff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var contract struct {
+		Committed []struct {
+			DetailTruncated bool `json:"detailTruncated"`
+		} `json:"committed"`
+	}
+	if err := json.Unmarshal(encoded, &contract); err != nil {
+		t.Fatal(err)
+	}
+	for index, change := range contract.Committed {
+		if !change.DetailTruncated {
+			t.Fatalf("committed change %d does not disclose truncated detail: %s", index, encoded)
+		}
+	}
 }
 
 func createEmbeddedGitlink(t *testing.T, fixture repositoryFixture, parent, name string) string {
