@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -234,6 +235,46 @@ func TestInitiativeLaunchAuthorizationAdvancesWithinResourceForEverySlot(t *test
 	}
 	if err := authorizeInitiativeTaskStart(ctx, transaction, items[2].task, limits); !errors.Is(err, application.ErrPrecondition) {
 		t.Fatalf("authorizeInitiativeTaskStart(later other-resource task) error = %v, want queued", err)
+	}
+}
+
+func TestInitiativeLaunchAuthorizationPreservesRequestedTaskBlockerWhenCapacityFills(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(canonicalTempDir(t), "target-blocker.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	created := time.Date(2026, time.August, 25, 14, 0, 0, 0, time.UTC)
+	older := schedulingTestTask("task-blocker-older-eligible", domain.TaskReady, 1)
+	producer := schedulingTestTask("task-blocker-producer", domain.TaskPrepared, 2)
+	target := schedulingTestTask("task-blocker-requested", domain.TaskReady, 3)
+	for _, task := range []domain.Task{older, producer, target} {
+		if err := insertTask(ctx, transaction, task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	olderInitiative := schedulingTestInitiative("initiative-blocker-older", created, []string{older.Handle})
+	if err := insertInitiative(ctx, transaction, olderInitiative); err != nil {
+		t.Fatal(err)
+	}
+	blockedInitiative := schedulingTestInitiative("initiative-blocker-requested", created.Add(time.Second),
+		[]string{producer.Handle, target.Handle})
+	blockedInitiative.Edges = []domain.InitiativeEdge{{
+		FromTaskHandle: producer.Handle, ToTaskHandle: target.Handle, Kind: domain.EdgeBlocksStart,
+	}}
+	if err := insertInitiative(ctx, transaction, blockedInitiative); err != nil {
+		t.Fatal(err)
+	}
+
+	err = authorizeInitiativeTaskStart(ctx, transaction, target, initiativeTestSchedulingLimits(1))
+	if !errors.Is(err, application.ErrPrecondition) || !strings.Contains(err.Error(), string(application.ScheduleDependencyBlocked)) {
+		t.Fatalf("authorizeInitiativeTaskStart(blocked target) error = %v, want dependency blocker", err)
 	}
 }
 

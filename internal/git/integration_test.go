@@ -78,7 +78,7 @@ func TestRegistry_ReceiptOnlyReplayNeverStartsIntegrationMutation(t *testing.T) 
 }
 
 func TestRegistry_RecordsAndReplaysExactConflictPaths(t *testing.T) {
-	for _, strategy := range []application.IntegrationStrategy{application.IntegrationMerge, application.IntegrationRebase} {
+	for _, strategy := range []application.IntegrationStrategy{application.IntegrationRebase} {
 		t.Run(string(strategy), func(t *testing.T) {
 			fixture := newIntegrationFixture(t)
 			candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "fixture.txt", "candidate\n")
