@@ -54,13 +54,14 @@ func (registry *Registry) materializeIntegrationResult(
 			return errors.New("apply integration candidate: materialization transition differs")
 		}
 	} else {
-		if request.Strategy == application.IntegrationRebase && request.RecoveryOperationID != "" {
+		if request.Strategy == application.IntegrationRebase && request.RecoveryOperationID != "" &&
+			!request.PreparedRestorationRecovery {
 			transition, err = registry.prepareRecoveryIntegrationMaterialization(ctx, request, targetRef, resultingHead)
 		} else {
 			transition, err = registry.prepareIntegrationMaterialization(ctx, request, targetRef, resultingHead)
 		}
 		if err != nil {
-			return err
+			return errors.Join(err, application.ErrIntegrationMutationNotStarted)
 		}
 		if err := ensureServerRebaseProofDirectory(repository.WorktreeRoot, directory); err != nil {
 			return err
@@ -195,7 +196,7 @@ func (registry *Registry) expectedMaterializationIdentity(
 	if err != nil {
 		return "", err
 	}
-	matches, err := integrationWorktreeMatchesSnapshot(request.Target.WorktreePath, snapshot)
+	matches, err := integrationWorktreeMatchesMaterializationSnapshot(request.Target.WorktreePath, snapshot)
 	if err != nil || !matches {
 		return "", errors.New("apply integration candidate: materialization worktree is not clean")
 	}
@@ -284,9 +285,10 @@ func (registry *Registry) advanceIntegrationMaterialization(
 		return nil
 	}
 	matchesExpected, err := integrationWorktreeMatchesSnapshot(request.Target.WorktreePath, expectedSnapshot)
-	if err != nil || !matchesExpected && !integrationMaterializationRecoveryAvailable(
+	recoveryAvailable, recoveryErr := integrationMaterializationRecoveryStatus(
 		request.Target.WorktreePath, expectedSnapshot, resultingSnapshot,
-	) {
+	)
+	if recoveryErr != nil || err != nil || !matchesExpected && !recoveryAvailable {
 		return errors.New("apply integration candidate: post-CAS worktree identity differs")
 	}
 	indexTree, err := registry.integrationIndexTree(ctx, request.Target.WorktreePath)
@@ -351,31 +353,6 @@ func (registry *Registry) authorizeIntegrationMaterializationAfterCAS(
 	return err
 }
 
-func (registry *Registry) completedMaterialization(
-	ctx context.Context,
-	request application.IntegrationAdapterRequest,
-	transition integrationMaterializationTransition,
-) bool {
-	headRef, attached, err := registry.integrationHeadRef(ctx, request.Target.WorktreePath)
-	if err != nil || !attached || headRef != transition.TargetRef {
-		return false
-	}
-	branchHead, err := registry.integrationBranchHead(ctx, request.Target.WorktreePath, transition.TargetRef)
-	if err != nil || branchHead != transition.ResultingHead {
-		return false
-	}
-	indexTree, err := registry.integrationIndexTree(ctx, request.Target.WorktreePath)
-	if err != nil || indexTree != transition.ResultingTree {
-		return false
-	}
-	snapshot, err := registry.loadIntegrationTreeSnapshot(ctx, request.Target.WorktreePath, transition.ResultingTree)
-	if err != nil {
-		return false
-	}
-	matches, err := integrationWorktreeMatchesSnapshot(request.Target.WorktreePath, snapshot)
-	return err == nil && matches
-}
-
 func (registry *Registry) verifyExpectedMaterializationState(
 	ctx context.Context,
 	request application.IntegrationAdapterRequest,
@@ -393,7 +370,7 @@ func (registry *Registry) verifyExpectedMaterializationState(
 	if err != nil {
 		return err
 	}
-	matches, err := integrationWorktreeMatchesSnapshot(request.Target.WorktreePath, snapshot)
+	matches, err := integrationWorktreeMatchesMaterializationSnapshot(request.Target.WorktreePath, snapshot)
 	if err != nil || !matches {
 		return errors.New("apply integration candidate: materialization worktree differs")
 	}

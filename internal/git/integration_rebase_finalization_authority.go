@@ -12,6 +12,9 @@ func (registry *Registry) authorizeRebaseFinalization(
 	request application.IntegrationAdapterRequest,
 	resultingHead string,
 ) error {
+	if request.PreparedRestorationRecovery {
+		return registry.authorizePreparedRestorationFinalization(ctx, request, resultingHead)
+	}
 	if err := registry.validateIntegrationMutationDeadline(request); err != nil {
 		return err
 	}
@@ -60,6 +63,55 @@ func (registry *Registry) authorizeRebaseFinalization(
 	if err != nil || rebased.kind != integrationReceiptAbsent &&
 		(rebased.kind != integrationReceiptDirect || rebased.value != resultingHead) {
 		return errors.New("apply integration candidate: rebased receipt differs")
+	}
+	return nil
+}
+
+func (registry *Registry) authorizePreparedRestorationFinalization(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+	resultingHead string,
+) error {
+	if request.RecoveryOperationID == "" || !gitRevisionPattern.MatchString(resultingHead) {
+		return errors.New("apply integration candidate: prepared recovery authority is invalid")
+	}
+	if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
+		return err
+	}
+	if err := registry.validateIntegrationMutationDeadline(request); err != nil {
+		return err
+	}
+	original := originalIntegrationRequest(request)
+	worktree := request.Target.WorktreePath
+	if err := registry.requireSymbolicIntegrationReceipt(
+		ctx, worktree, integrationReceiptRef("target", original),
+		"refs/heads/"+expectedIntegrationTargetBranch(request),
+	); err != nil {
+		return errors.New("apply integration candidate: prepared recovery target receipt differs")
+	}
+	for _, identity := range []struct {
+		outcome string
+		request application.IntegrationAdapterRequest
+	}{
+		{"conflicted", original}, {"applied", original}, {"rebased", original},
+		{"target", request}, {"conflicted", request}, {"applied", request},
+	} {
+		if err := registry.requireIntegrationReceiptAbsent(
+			ctx, worktree, integrationReceiptRef(identity.outcome, identity.request),
+		); err != nil {
+			return errors.New("apply integration candidate: prepared recovery receipt family is contradictory")
+		}
+	}
+	rebased, err := registry.inspectIntegrationReceipt(ctx, worktree, integrationReceiptRef("rebased", request))
+	if err != nil || rebased.kind != integrationReceiptAbsent &&
+		(rebased.kind != integrationReceiptDirect || rebased.value != resultingHead) {
+		return errors.New("apply integration candidate: prepared recovery rebased receipt differs")
+	}
+	proof, err := registry.inspectIntegrationReceipt(ctx, worktree, integrationRebaseProofRef(original))
+	if err != nil || proof.kind == integrationReceiptSymbolic ||
+		proof.kind == integrationReceiptDirect && proof.value != original.Candidate.HeadRevision && proof.value != resultingHead ||
+		proof.kind == integrationReceiptAbsent && rebased.kind != integrationReceiptDirect {
+		return errors.New("apply integration candidate: prepared recovery proof receipt differs")
 	}
 	return nil
 }

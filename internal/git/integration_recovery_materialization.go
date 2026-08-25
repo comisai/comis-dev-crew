@@ -120,7 +120,7 @@ func (registry *Registry) restoreRecoveryMaterializationBase(
 			if digestErr != nil || digest != transition.RecoveryIndexDigest {
 				return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery index changed")
 			}
-			if err := registry.authorizeRebaseFinalization(ctx, request, transition.ResultingHead); err != nil {
+			if err := registry.authorizeRecoveryRestoration(ctx, request, transition.ResultingHead); err != nil {
 				return integrationMaterializationTransition{}, err
 			}
 			workspace, err := registry.integrationMaterializationWorkspace(ctx, request.Target.WorktreePath)
@@ -131,8 +131,11 @@ func (registry *Registry) restoreRecoveryMaterializationBase(
 				"read-tree", "--reset", transition.ExpectedHead); err != nil {
 				return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery index could not be restored")
 			}
+			if err := registry.authorizeRecoveryRestoration(ctx, request, transition.ResultingHead); err != nil {
+				return integrationMaterializationTransition{}, err
+			}
 		case indexTree == transition.ExpectedTree && !expectedWorktree:
-			if err := registry.authorizeRebaseFinalization(ctx, request, transition.ResultingHead); err != nil {
+			if err := registry.authorizeRecoveryRestoration(ctx, request, transition.ResultingHead); err != nil {
 				return integrationMaterializationTransition{}, err
 			}
 			if err := materializeIntegrationWorktree(
@@ -140,19 +143,31 @@ func (registry *Registry) restoreRecoveryMaterializationBase(
 			); err != nil {
 				return integrationMaterializationTransition{}, err
 			}
+			if err := registry.authorizeRecoveryRestoration(ctx, request, transition.ResultingHead); err != nil {
+				return integrationMaterializationTransition{}, err
+			}
 		case indexTree == transition.ExpectedTree && expectedWorktree:
-			if err := registry.authorizeRebaseFinalization(ctx, request, transition.ResultingHead); err != nil {
+			if err := registry.authorizeRecoveryRestoration(ctx, request, transition.ResultingHead); err != nil {
 				return integrationMaterializationTransition{}, err
 			}
 			if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C",
 				request.Target.WorktreePath, "symbolic-ref", "HEAD", transition.TargetRef); err != nil {
 				return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery target could not be reattached")
 			}
+			if err := registry.authorizeRecoveryRestoration(ctx, request, transition.ResultingHead); err != nil {
+				return integrationMaterializationTransition{}, err
+			}
 		default:
 			return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery restoration state is contradictory")
 		}
 	}
+	if err := registry.authorizeRecoveryRestoration(ctx, request, transition.ResultingHead); err != nil {
+		return integrationMaterializationTransition{}, err
+	}
 	if err := registry.removeSharedRebaseSequencer(ctx, request.Target.WorktreePath); err != nil {
+		return integrationMaterializationTransition{}, err
+	}
+	if err := registry.authorizeRecoveryRestoration(ctx, request, transition.ResultingHead); err != nil {
 		return integrationMaterializationTransition{}, err
 	}
 	expectedIndex, err := registry.expectedMaterializationIdentity(ctx, request, transition.TargetRef)
@@ -166,10 +181,35 @@ func (registry *Registry) restoreRecoveryMaterializationBase(
 	pending.RecoveryHead = ""
 	pending.RecoveryTree = ""
 	pending.RecoveryIndexDigest = ""
+	if err := registry.authorizeRecoveryRestoration(ctx, request, transition.ResultingHead); err != nil {
+		return integrationMaterializationTransition{}, err
+	}
 	if err := registry.replaceIntegrationMaterialization(request, transition, pending); err != nil {
 		return integrationMaterializationTransition{}, err
 	}
+	if err := registry.authorizeRecoveryRestoration(ctx, request, transition.ResultingHead); err != nil {
+		return integrationMaterializationTransition{}, err
+	}
 	return pending, nil
+}
+
+func (registry *Registry) authorizeRecoveryRestoration(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+	resultingHead string,
+) error {
+	if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
+		return err
+	}
+	if err := registry.authorizeRebaseFinalization(ctx, request, resultingHead); err != nil {
+		return err
+	}
+	if err := registry.requireDirectIntegrationReceipt(
+		ctx, request.Target.WorktreePath, integrationRebaseProofRef(request), resultingHead,
+	); err != nil {
+		return errors.New("apply integration candidate: recovery restoration proof receipt differs")
+	}
+	return nil
 }
 
 func (registry *Registry) recoveryMaterializationWorktreeMatchesIndex(

@@ -139,16 +139,47 @@ func integrationWorktreeMatchesSnapshot(
 	worktreePath string,
 	snapshot integrationTreeSnapshot,
 ) (matches bool, returnErr error) {
+	return integrationWorktreeMatchesSnapshotTopology(worktreePath, snapshot, false)
+}
+
+func integrationWorktreeMatchesMaterializationSnapshot(
+	worktreePath string,
+	snapshot integrationTreeSnapshot,
+) (matches bool, returnErr error) {
+	return integrationWorktreeMatchesSnapshotTopology(worktreePath, snapshot, true)
+}
+
+func integrationWorktreeMatchesSnapshotTopology(
+	worktreePath string,
+	snapshot integrationTreeSnapshot,
+	strictDirectories bool,
+) (matches bool, returnErr error) {
 	root, err := os.OpenRoot(worktreePath)
 	if err != nil {
 		return false, errors.New("apply integration candidate: materialization root is unavailable")
 	}
 	defer func() { returnErr = errors.Join(returnErr, root.Close()) }()
-	return integrationRootMatchesSnapshot(root, snapshot)
+	return integrationRootMatchesSnapshotTopology(root, snapshot, strictDirectories)
 }
 
 func integrationRootMatchesSnapshot(root *os.Root, snapshot integrationTreeSnapshot) (bool, error) {
+	return integrationRootMatchesSnapshotTopology(root, snapshot, false)
+}
+
+func integrationRootMatchesSnapshotTopology(
+	root *os.Root,
+	snapshot integrationTreeSnapshot,
+	strictDirectories bool,
+) (bool, error) {
 	seen := make(map[string]struct{}, len(snapshot))
+	var directories map[string]struct{}
+	if strictDirectories {
+		var err error
+		directories, err = integrationSnapshotDirectories(snapshot)
+		if err != nil {
+			return false, err
+		}
+	}
 	err := fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -159,7 +190,20 @@ func integrationRootMatchesSnapshot(root *os.Root, snapshot integrationTreeSnaps
 			}
 			return nil
 		}
-		if name == "." || entry.IsDir() {
+		if name == "." {
+			return nil
+		}
+		if entry.IsDir() {
+			if !strictDirectories {
+				return nil
+			}
+			if _, expected := directories[name]; !expected {
+				return fs.ErrExist
+			}
+			info, err := root.Lstat(name)
+			if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return fs.ErrInvalid
+			}
 			return nil
 		}
 		expected, exists := snapshot[name]
@@ -201,6 +245,22 @@ func integrationRootMatchesSnapshot(root *os.Root, snapshot integrationTreeSnaps
 		return false, errors.New("apply integration candidate: materialization worktree is unavailable")
 	}
 	return len(seen) == len(snapshot), nil
+}
+
+func integrationSnapshotDirectories(snapshot integrationTreeSnapshot) (map[string]struct{}, error) {
+	directories := make(map[string]struct{})
+	for name := range snapshot {
+		for directory := path.Dir(name); directory != "."; directory = path.Dir(directory) {
+			if _, exists := directories[directory]; exists {
+				continue
+			}
+			if len(directories) == maximumIntegrationTreeEntries {
+				return nil, errors.New("apply integration candidate: materialization directory topology exceeds its bound")
+			}
+			directories[directory] = struct{}{}
+		}
+	}
+	return directories, nil
 }
 
 func integrationRegularFileMatches(

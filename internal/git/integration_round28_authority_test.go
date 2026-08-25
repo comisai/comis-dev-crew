@@ -19,7 +19,6 @@ func TestRegistry_PreparedRestorationExpiryNeverReportsMutationNotStarted(t *tes
 			baseline := time.Date(2099, time.January, 1, 0, 0, 0, 0, time.UTC)
 			fixture := newIntegrationFixture(t)
 			request, _, _ := stagePreparedRestorationCrash(t, fixture, boundary, baseline)
-			request.EvidenceExpiresAt = baseline.Add(time.Minute)
 			expired := newIntegrationRegistryWithExecutableAndClock(
 				t, fixture, fixture.repository.gitExecutable, func() time.Time { return request.EvidenceExpiresAt },
 			)

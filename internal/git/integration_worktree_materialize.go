@@ -75,6 +75,9 @@ func materializeIntegrationWorktreeAtBoundary(
 	if err != nil || !matches {
 		return errors.New("apply integration candidate: materialized worktree is unverified")
 	}
+	if boundary != nil {
+		boundary("before-recovery-retirement", "")
+	}
 	if err := retireMaterializationRecovery(common, recovery, changed); err != nil {
 		return err
 	}
@@ -128,20 +131,23 @@ func materializationRecoveryExists(root *os.Root, recovery string) (bool, error)
 	return true, nil
 }
 
-func integrationMaterializationRecoveryAvailable(
+func integrationMaterializationRecoveryStatus(
 	worktreePath string,
 	expected integrationTreeSnapshot,
 	resulting integrationTreeSnapshot,
-) bool {
+) (bool, error) {
 	root, err := os.OpenRoot(filepath.Dir(worktreePath))
 	if err != nil {
-		return false
+		return false, errors.New("apply integration candidate: materialization recovery root is unavailable")
 	}
 	recovery := filepath.Join(".comis-integration-materialization",
 		integrationMaterializationRecoveryIdentity(worktreePath, expected, resulting))
 	found, err := materializationRecoveryExists(root, recovery)
 	closeErr := root.Close()
-	return err == nil && closeErr == nil && found
+	if err != nil || closeErr != nil {
+		return false, errors.New("apply integration candidate: materialization recovery state is unavailable")
+	}
+	return found, nil
 }
 
 func createMaterializationRecovery(root *os.Root, parent string, recovery string) error {
@@ -277,7 +283,7 @@ func publishMaterializationEntry(
 		if targetFound {
 			return errors.New("apply integration candidate: materialization publication target changed")
 		}
-		if err := ensureMaterializationParents(root, filepath.Dir(target)); err != nil {
+		if err := ensureMaterializationParents(root, worktree, filepath.Dir(target), boundary); err != nil {
 			return err
 		}
 		if err := discardMaterializationEvidenceTemporary(root, publication+".pending"); err != nil {
@@ -321,7 +327,8 @@ func restoreCapturedMaterializationEntry(root *os.Root, capture string, target s
 	if _, err := root.Lstat(target); !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := ensureMaterializationParents(root, filepath.Dir(target)); err != nil {
+	worktree := strings.Split(filepath.Clean(target), string(filepath.Separator))[0]
+	if err := ensureMaterializationParents(root, worktree, filepath.Dir(target), nil); err != nil {
 		return err
 	}
 	if err := root.Link(capture, target); err != nil {
@@ -444,42 +451,4 @@ func retireMaterializationRecovery(
 		return errors.New("apply integration candidate: materialization recovery could not be retired")
 	}
 	return syncMaterializationDirectory(root, ".")
-}
-
-func ensureMaterializationParents(root *os.Root, directory string) error {
-	if directory == "." {
-		return nil
-	}
-	current := ""
-	for _, component := range strings.Split(filepath.Clean(directory), string(filepath.Separator)) {
-		if current == "" {
-			current = component
-		} else {
-			current = filepath.Join(current, component)
-		}
-		info, err := root.Lstat(current)
-		if errors.Is(err, os.ErrNotExist) {
-			if err := root.Mkdir(current, 0o700); err != nil {
-				return errors.New("apply integration candidate: materialization directory could not be created")
-			}
-			info, err = root.Lstat(current)
-		}
-		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return errors.New("apply integration candidate: materialization parent is unsafe")
-		}
-	}
-	return nil
-}
-
-func syncMaterializationDirectory(root *os.Root, directory string) error {
-	file, err := root.Open(directory)
-	if err != nil {
-		return errors.New("apply integration candidate: materialization directory is unavailable")
-	}
-	syncErr := file.Sync()
-	closeErr := file.Close()
-	if syncErr != nil || closeErr != nil {
-		return errors.New("apply integration candidate: materialization directory could not be synchronized")
-	}
-	return nil
 }

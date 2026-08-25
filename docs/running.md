@@ -324,7 +324,11 @@ strategy-specific receipts are reauthorized immediately before the worktree is
 materialized. Result-tree bounds are proved before the compare-and-swap. Exact
 entry capture and no-replace publication preserve racing developer writes, and
 durable prepared/recovery restoration identity resumes only known partial index,
-worktree, and HEAD states. Reproducible recovery and bounded-migration evidence is recorded
+worktree, and HEAD states. Expired restoration authority remains unknown after
+journaling and can be adopted only by a fresh exact recovery operation. Blocking
+filesystem topology is refused before target compare-and-swap, and success
+requires durable parent publication plus retirement of exact recovery evidence.
+Reproducible recovery and bounded-migration evidence is recorded
 in [review-evidence.md](review-evidence.md).
 Submitting a different operation for a candidate task and head that already has
 a reserved, applied, or conflicted application is a precondition failure before

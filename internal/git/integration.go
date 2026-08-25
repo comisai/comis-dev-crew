@@ -62,6 +62,9 @@ func (registry *Registry) ApplyIntegrationCandidate(
 	if replay, found, err := registry.reconcileCompletedIntegrationPlan(ctx, repository, request); err != nil || found {
 		return replay, err
 	}
+	if replay, found, err := registry.resumePreparedRebaseRestoration(ctx, repository, request); err != nil || found {
+		return replay, err
+	}
 	if replay, found, err := registry.resumePendingIntegrationMaterialization(ctx, repository, request); err != nil || found {
 		return replay, err
 	}

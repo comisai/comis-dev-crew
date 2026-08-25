@@ -87,6 +87,7 @@ type IntegrationAdapterRequest struct {
 	OriginalEvidenceDigest         string    `json:"-"`
 	OriginalEvidenceExpiresAt      time.Time `json:"-"`
 	PendingMaterializationRecovery bool      `json:"-"`
+	PreparedRestorationRecovery    bool      `json:"-"`
 	ReceiptOnly                    bool      `json:"-"`
 	Strategy                       IntegrationStrategy
 	Target                         IntegrationTargetReference

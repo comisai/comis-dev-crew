@@ -23,6 +23,7 @@ type preparedRebaseRestoration struct {
 	CandidateIndex string `json:"candidateIndex"`
 	ExpectedHead   string `json:"expectedHead"`
 	ExpectedTree   string `json:"expectedTree"`
+	AdoptedBy      string `json:"adoptedBy,omitempty"`
 }
 
 func (registry *Registry) restorePreparedRebaseTarget(
@@ -60,16 +61,16 @@ func (registry *Registry) restorePreparedRebaseTarget(
 		if err := publishPreparedRebaseRestoration(directory, restorationPath, restoration); err != nil {
 			return false, err
 		}
-	} else if !preparedRebaseRestorationMatches(restoration, request, targetRef, proofRef) {
+	} else if !preparedRebaseRestorationMatches(restoration, request, targetRef, proofRef) || restoration.AdoptedBy != "" {
 		return false, errors.New("apply integration candidate: prepared restoration differs")
 	}
-	if err := registry.advancePreparedRebaseRestoration(ctx, request, restoration); err != nil {
+	if err := registry.advancePreparedRebaseRestoration(ctx, request, request, restoration); err != nil {
+		return false, withoutIntegrationMutationNotStarted(err)
+	}
+	if err := registry.authorizePreparedRestoration(ctx, request, request, restoration); err != nil {
 		return false, err
 	}
-	if err := os.Remove(restorationPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return false, errors.New("apply integration candidate: prepared restoration could not be retired")
-	}
-	if err := syncDirectory(directory); err != nil {
+	if err := retirePreparedRebaseRestoration(directory, restorationPath); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -136,18 +137,19 @@ func (registry *Registry) prepareRebaseRestoration(
 
 func (registry *Registry) advancePreparedRebaseRestoration(
 	ctx context.Context,
-	request application.IntegrationAdapterRequest,
+	authority application.IntegrationAdapterRequest,
+	identity application.IntegrationAdapterRequest,
 	restoration preparedRebaseRestoration,
 ) error {
 	candidateTree, candidateTreeErr := registry.integrationCommitTree(
-		ctx, request.Target.WorktreePath, restoration.CandidateHead,
+		ctx, identity.Target.WorktreePath, restoration.CandidateHead,
 	)
 	expectedTree, expectedTreeErr := registry.integrationCommitTree(
-		ctx, request.Target.WorktreePath, restoration.ExpectedHead,
+		ctx, identity.Target.WorktreePath, restoration.ExpectedHead,
 	)
-	branchHead, branchErr := registry.integrationBranchHead(ctx, request.Target.WorktreePath, restoration.TargetRef)
+	branchHead, branchErr := registry.integrationBranchHead(ctx, identity.Target.WorktreePath, restoration.TargetRef)
 	proofHead, proofFound, proofErr := registry.integrationReceiptHeadAtPath(
-		ctx, request.Target.WorktreePath, restoration.ProofRef,
+		ctx, identity.Target.WorktreePath, restoration.ProofRef,
 	)
 	if candidateTreeErr != nil || expectedTreeErr != nil || branchErr != nil || proofErr != nil || !proofFound ||
 		candidateTree != restoration.CandidateTree || expectedTree != restoration.ExpectedTree ||
@@ -155,31 +157,31 @@ func (registry *Registry) advancePreparedRebaseRestoration(
 		return errors.New("apply integration candidate: prepared restoration proof differs")
 	}
 	candidate, err := registry.loadIntegrationTreeSnapshot(
-		ctx, request.Target.WorktreePath, restoration.CandidateTree,
+		ctx, identity.Target.WorktreePath, restoration.CandidateTree,
 	)
 	if err != nil {
 		return err
 	}
-	expected, err := registry.loadIntegrationTreeSnapshot(ctx, request.Target.WorktreePath, restoration.ExpectedTree)
+	expected, err := registry.loadIntegrationTreeSnapshot(ctx, identity.Target.WorktreePath, restoration.ExpectedTree)
 	if err != nil {
 		return err
 	}
 	for {
 		currentHead, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C",
-			request.Target.WorktreePath, "rev-parse", "--verify", "HEAD^{commit}")
+			identity.Target.WorktreePath, "rev-parse", "--verify", "HEAD^{commit}")
 		if err != nil {
 			return errors.New("apply integration candidate: prepared restoration head is unavailable")
 		}
-		headRef, attached, err := registry.integrationHeadRef(ctx, request.Target.WorktreePath)
+		headRef, attached, err := registry.integrationHeadRef(ctx, identity.Target.WorktreePath)
 		if err != nil || !attached || headRef != restoration.ProofRef && headRef != restoration.TargetRef {
 			return errors.New("apply integration candidate: prepared restoration attachment differs")
 		}
-		indexTree, err := registry.integrationIndexTree(ctx, request.Target.WorktreePath)
+		indexTree, err := registry.integrationIndexTree(ctx, identity.Target.WorktreePath)
 		if err != nil {
 			return err
 		}
-		candidateWorktree, candidateErr := integrationWorktreeMatchesSnapshot(request.Target.WorktreePath, candidate)
-		expectedWorktree, expectedErr := integrationWorktreeMatchesSnapshot(request.Target.WorktreePath, expected)
+		candidateWorktree, candidateErr := integrationWorktreeMatchesSnapshot(identity.Target.WorktreePath, candidate)
+		expectedWorktree, expectedErr := integrationWorktreeMatchesSnapshot(identity.Target.WorktreePath, expected)
 		if candidateErr != nil || expectedErr != nil {
 			return errors.New("apply integration candidate: prepared restoration worktree is unavailable")
 		}
@@ -194,14 +196,14 @@ func (registry *Registry) advancePreparedRebaseRestoration(
 		}
 		switch {
 		case indexTree == restoration.CandidateTree && candidateWorktree:
-			digest, digestErr := registry.integrationIndexDigest(ctx, request.Target.WorktreePath)
+			digest, digestErr := registry.integrationIndexDigest(ctx, identity.Target.WorktreePath)
 			if digestErr != nil || digest != restoration.CandidateIndex {
 				return errors.New("apply integration candidate: prepared restoration index differs")
 			}
-			if err := registry.authorizePreparedRestoration(ctx, request); err != nil {
+			if err := registry.authorizePreparedRestoration(ctx, authority, identity, restoration); err != nil {
 				return err
 			}
-			workspace, err := registry.integrationMaterializationWorkspace(ctx, request.Target.WorktreePath)
+			workspace, err := registry.integrationMaterializationWorkspace(ctx, identity.Target.WorktreePath)
 			if err != nil {
 				return err
 			}
@@ -209,20 +211,29 @@ func (registry *Registry) advancePreparedRebaseRestoration(
 				"read-tree", "--reset", restoration.ExpectedHead); err != nil {
 				return errors.New("apply integration candidate: prepared rebase index could not be restored")
 			}
-		case indexTree == restoration.ExpectedTree && !expectedWorktree:
-			if err := registry.authorizePreparedRestoration(ctx, request); err != nil {
+			if err := registry.authorizePreparedRestoration(ctx, authority, identity, restoration); err != nil {
 				return err
 			}
-			if err := materializeIntegrationWorktree(request.Target.WorktreePath, candidate, expected); err != nil {
+		case indexTree == restoration.ExpectedTree && !expectedWorktree:
+			if err := registry.authorizePreparedRestoration(ctx, authority, identity, restoration); err != nil {
+				return err
+			}
+			if err := materializeIntegrationWorktree(identity.Target.WorktreePath, candidate, expected); err != nil {
+				return err
+			}
+			if err := registry.authorizePreparedRestoration(ctx, authority, identity, restoration); err != nil {
 				return err
 			}
 		case indexTree == restoration.ExpectedTree && expectedWorktree:
-			if err := registry.authorizePreparedRestoration(ctx, request); err != nil {
+			if err := registry.authorizePreparedRestoration(ctx, authority, identity, restoration); err != nil {
 				return err
 			}
 			if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C",
-				request.Target.WorktreePath, "symbolic-ref", "HEAD", restoration.TargetRef); err != nil {
+				identity.Target.WorktreePath, "symbolic-ref", "HEAD", restoration.TargetRef); err != nil {
 				return errors.New("apply integration candidate: prepared rebase target could not be restored")
+			}
+			if err := registry.authorizePreparedRestoration(ctx, authority, identity, restoration); err != nil {
+				return err
 			}
 		default:
 			return errors.New("apply integration candidate: prepared restoration state is contradictory")
@@ -232,12 +243,17 @@ func (registry *Registry) advancePreparedRebaseRestoration(
 
 func (registry *Registry) authorizePreparedRestoration(
 	ctx context.Context,
-	request application.IntegrationAdapterRequest,
+	authority application.IntegrationAdapterRequest,
+	identity application.IntegrationAdapterRequest,
+	restoration preparedRebaseRestoration,
 ) error {
-	if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
-		return err
+	if err := registry.validateIntegrationExecutionPolicy(ctx, authority); err != nil {
+		return withoutIntegrationMutationNotStarted(err)
 	}
-	return registry.validateIntegrationMutationDeadline(request)
+	if err := registry.validateIntegrationMutationDeadline(authority); err != nil {
+		return withoutIntegrationMutationNotStarted(err)
+	}
+	return registry.validatePreparedRestorationReceiptFamily(ctx, authority, identity, restoration)
 }
 
 func preparedRebaseRestorationPath(
@@ -268,16 +284,22 @@ func preparedRebaseRestorationMatches(
 		len(restoration.CandidateIndex) == 64 && lowerHex(restoration.CandidateIndex)
 }
 
+func retirePreparedRebaseRestoration(directory string, path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.New("apply integration candidate: prepared restoration could not be retired")
+	}
+	return syncDirectory(directory)
+}
+
 func publishPreparedRebaseRestoration(
 	directory string,
 	path string,
 	restoration preparedRebaseRestoration,
 ) error {
-	contents, err := json.Marshal(restoration)
+	contents, err := encodePreparedRebaseRestoration(restoration)
 	if err != nil {
-		return errors.New("apply integration candidate: prepared restoration cannot be encoded")
+		return err
 	}
-	contents = append(contents, '\n')
 	temporary := path + ".pending"
 	if err := discardServerRebaseProofTemporary(temporary); err != nil {
 		return err
@@ -289,6 +311,14 @@ func publishPreparedRebaseRestoration(
 		return errors.New("apply integration candidate: prepared restoration could not be published")
 	}
 	return syncDirectory(directory)
+}
+
+func encodePreparedRebaseRestoration(restoration preparedRebaseRestoration) ([]byte, error) {
+	contents, err := json.Marshal(restoration)
+	if err != nil {
+		return nil, errors.New("apply integration candidate: prepared restoration cannot be encoded")
+	}
+	return append(contents, '\n'), nil
 }
 
 func readPreparedRebaseRestoration(path string) (preparedRebaseRestoration, bool, error) {

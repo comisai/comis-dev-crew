@@ -724,10 +724,17 @@ by compare-and-swap. Rooted bounded comparison, atomic capture, and no-replace
 publication preserve a concurrent developer entry and retain exact recovery
 evidence across a crash. Prepared and conflict-recovery restoration journals
 bind their source index/worktree, target tree, proof branch, and HEAD before the
-first restoration mutation. Evidence and strategy-specific
-receipts are reauthorized immediately before worktree materialization. Expiry
-after the compare-and-swap preserves both the pending transition and unchanged
-worktree for an authorized retry.
+first restoration mutation. Evidence and strategy-specific receipts are
+reauthorized before and after each restoration mutation. Once a restoration
+journal exists, expiry preserves an unknown partial outcome instead of claiming
+that mutation did not start; a separate operation with fresh authority may
+adopt only the exact immutable journal and receipt family. The
+pre-compare-and-swap snapshot rejects untracked directory and symlink topology
+that could block result paths. Materialization synchronizes every newly created
+parent relationship and does not accept completion until its exact bounded
+recovery evidence has been durably retired. Expiry after the compare-and-swap
+preserves both the pending transition and unchanged worktree for an authorized
+retry.
 
 The reservation and its accepted canonical operation-ledger claim commit in one
 transaction before Git mutation. Startup reconciliation may mark that claim
