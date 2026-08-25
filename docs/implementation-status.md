@@ -719,7 +719,12 @@ packing disabled. Every newly isolated conflict refuses before any shared Git
 ref, index, or worktree mutation. A clean result is semantically proved, its
 loose objects are published through a rooted object-database handle, and a
 durable transition binds the expected and result trees and index identity. The
-target branch then advances by compare-and-swap; evidence and strategy-specific
+complete bounded result snapshot is validated before the target branch advances
+by compare-and-swap. Rooted bounded comparison, atomic capture, and no-replace
+publication preserve a concurrent developer entry and retain exact recovery
+evidence across a crash. Prepared and conflict-recovery restoration journals
+bind their source index/worktree, target tree, proof branch, and HEAD before the
+first restoration mutation. Evidence and strategy-specific
 receipts are reauthorized immediately before worktree materialization. Expiry
 after the compare-and-swap preserves both the pending transition and unchanged
 worktree for an authorized retry.

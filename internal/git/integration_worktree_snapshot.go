@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -70,6 +71,13 @@ func (registry *Registry) loadIntegrationTreeSnapshot(
 		entry.contents = contents[entry.objectID]
 		snapshot[entryPath] = entry
 	}
+	total := 0
+	for _, entry := range snapshot {
+		total += len(entry.contents)
+		if total > maximumIntegrationTreeBytes {
+			return nil, errors.New("apply integration candidate: materialization tree exceeds its bound")
+		}
+	}
 	return snapshot, nil
 }
 
@@ -127,12 +135,15 @@ func (registry *Registry) loadIntegrationBlobContents(
 	return contents, nil
 }
 
-func integrationWorktreeMatchesSnapshot(worktreePath string, snapshot integrationTreeSnapshot) (bool, error) {
+func integrationWorktreeMatchesSnapshot(
+	worktreePath string,
+	snapshot integrationTreeSnapshot,
+) (matches bool, returnErr error) {
 	root, err := os.OpenRoot(worktreePath)
 	if err != nil {
 		return false, errors.New("apply integration candidate: materialization root is unavailable")
 	}
-	defer root.Close()
+	defer func() { returnErr = errors.Join(returnErr, root.Close()) }()
 	return integrationRootMatchesSnapshot(root, snapshot)
 }
 
@@ -173,8 +184,8 @@ func integrationRootMatchesSnapshot(root *os.Root, snapshot integrationTreeSnaps
 				(expected.mode == "100755") != (info.Mode().Perm()&0o111 != 0) {
 				return fs.ErrInvalid
 			}
-			contents, err := root.ReadFile(name)
-			if err != nil || !bytes.Equal(contents, expected.contents) {
+			matches, err := integrationRegularFileMatches(root, name, info, expected.contents)
+			if err != nil || !matches {
 				return fs.ErrInvalid
 			}
 		default:
@@ -190,6 +201,63 @@ func integrationRootMatchesSnapshot(root *os.Root, snapshot integrationTreeSnaps
 		return false, errors.New("apply integration candidate: materialization worktree is unavailable")
 	}
 	return len(seen) == len(snapshot), nil
+}
+
+func integrationRegularFileMatches(
+	root *os.Root,
+	name string,
+	initial os.FileInfo,
+	expected []byte,
+) (bool, error) {
+	return integrationRegularFileMatchesAtBoundary(root, name, initial, expected, nil)
+}
+
+func integrationRegularFileMatchesAtBoundary(
+	root *os.Root,
+	name string,
+	initial os.FileInfo,
+	expected []byte,
+	boundary func(),
+) (matches bool, returnErr error) {
+	if int64(len(expected)) != initial.Size() {
+		return false, nil
+	}
+	file, err := root.Open(name)
+	if err != nil {
+		return false, err
+	}
+	defer func() { returnErr = errors.Join(returnErr, file.Close()) }()
+	opened, err := file.Stat()
+	if err != nil || !opened.Mode().IsRegular() || opened.Size() != int64(len(expected)) ||
+		!os.SameFile(initial, opened) {
+		return false, err
+	}
+	if boundary != nil {
+		boundary()
+	}
+	buffer := make([]byte, 32<<10)
+	for offset := 0; offset < len(expected); {
+		length := min(len(buffer), len(expected)-offset)
+		read, readErr := io.ReadFull(file, buffer[:length])
+		if readErr != nil || read != length || !bytes.Equal(buffer[:length], expected[offset:offset+length]) {
+			return false, nil
+		}
+		offset += length
+	}
+	var overflow [1]byte
+	if read, readErr := file.Read(overflow[:]); read != 0 || readErr != io.EOF {
+		return false, nil
+	}
+	finalPath, err := root.Lstat(name)
+	if err != nil {
+		return false, err
+	}
+	finalFile, err := file.Stat()
+	if err != nil || !os.SameFile(opened, finalFile) || !os.SameFile(finalPath, finalFile) ||
+		finalFile.Size() != int64(len(expected)) {
+		return false, err
+	}
+	return true, nil
 }
 
 func (registry *Registry) integrationIndexTree(ctx context.Context, worktreePath string) (string, error) {

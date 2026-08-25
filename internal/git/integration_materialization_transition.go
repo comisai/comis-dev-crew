@@ -27,6 +27,7 @@ type integrationMaterializationTransition struct {
 	ResultingHead       string                          `json:"resultingHead"`
 	ResultingTree       string                          `json:"resultingTree"`
 	RecoveryHead        string                          `json:"recoveryHead,omitempty"`
+	RecoveryTree        string                          `json:"recoveryTree,omitempty"`
 	RecoveryIndexDigest string                          `json:"recoveryIndexDigest,omitempty"`
 }
 
@@ -150,6 +151,9 @@ func (registry *Registry) prepareIntegrationMaterialization(
 	targetRef string,
 	resultingHead string,
 ) (integrationMaterializationTransition, error) {
+	if err := registry.validateIntegrationMaterializationResult(ctx, request, resultingHead); err != nil {
+		return integrationMaterializationTransition{}, err
+	}
 	expectedTree, err := registry.integrationCommitTree(ctx, request.Target.WorktreePath, request.Target.ExpectedHead)
 	if err != nil {
 		return integrationMaterializationTransition{}, err
@@ -213,6 +217,27 @@ func (registry *Registry) advanceIntegrationMaterialization(
 		resultingTree != transition.ResultingTree {
 		return errors.New("apply integration candidate: materialization tree proof differs")
 	}
+	var expectedSnapshot, resultingSnapshot integrationTreeSnapshot
+	expectedSnapshot, snapshotErr := registry.loadIntegrationTreeSnapshot(
+		ctx, request.Target.WorktreePath, transition.ExpectedTree,
+	)
+	if snapshotErr == nil {
+		resultingSnapshot, snapshotErr = registry.loadIntegrationTreeSnapshot(
+			ctx, request.Target.WorktreePath, transition.ResultingTree,
+		)
+		if snapshotErr == nil {
+			snapshotErr = validateIntegrationMaterializationTopology(expectedSnapshot, resultingSnapshot)
+		}
+	}
+	if snapshotErr != nil {
+		branchHead, branchErr := registry.integrationBranchHead(
+			ctx, request.Target.WorktreePath, transition.TargetRef,
+		)
+		if transition.State == "pending" && branchErr == nil && branchHead == transition.ExpectedHead {
+			return errors.Join(snapshotErr, application.ErrIntegrationMutationNotStarted)
+		}
+		return snapshotErr
+	}
 	recoveryTransition := transition.State == "recovery"
 	if recoveryTransition {
 		restored, restoreErr := registry.restoreRecoveryMaterializationBase(ctx, request, transition)
@@ -258,20 +283,10 @@ func (registry *Registry) advanceIntegrationMaterialization(
 	if registry.completedMaterialization(ctx, request, transition) {
 		return nil
 	}
-	expectedSnapshot, err := registry.loadIntegrationTreeSnapshot(
-		ctx, request.Target.WorktreePath, transition.ExpectedTree,
-	)
-	if err != nil {
-		return err
-	}
-	resultingSnapshot, err := registry.loadIntegrationTreeSnapshot(
-		ctx, request.Target.WorktreePath, transition.ResultingTree,
-	)
-	if err != nil {
-		return err
-	}
 	matchesExpected, err := integrationWorktreeMatchesSnapshot(request.Target.WorktreePath, expectedSnapshot)
-	if err != nil || !matchesExpected {
+	if err != nil || !matchesExpected && !integrationMaterializationRecoveryAvailable(
+		request.Target.WorktreePath, expectedSnapshot, resultingSnapshot,
+	) {
 		return errors.New("apply integration candidate: post-CAS worktree identity differs")
 	}
 	indexTree, err := registry.integrationIndexTree(ctx, request.Target.WorktreePath)
@@ -405,9 +420,10 @@ func integrationMaterializationMatches(
 	resultingHead string,
 ) bool {
 	validState := transition.Version == 1 && transition.State == "pending" &&
-		transition.RecoveryHead == "" && transition.RecoveryIndexDigest == "" ||
-		transition.Version == 2 && transition.State == "recovery" && request.RecoveryOperationID != "" &&
-			gitRevisionPattern.MatchString(transition.RecoveryHead) && len(transition.RecoveryIndexDigest) == 64 &&
+		transition.RecoveryHead == "" && transition.RecoveryTree == "" && transition.RecoveryIndexDigest == "" ||
+		transition.Version == 3 && transition.State == "recovery" && request.RecoveryOperationID != "" &&
+			gitRevisionPattern.MatchString(transition.RecoveryHead) &&
+			gitRevisionPattern.MatchString(transition.RecoveryTree) && len(transition.RecoveryIndexDigest) == 64 &&
 			lowerHex(transition.RecoveryIndexDigest)
 	return validState &&
 		transition.OperationID == request.OperationID && transition.Strategy == request.Strategy &&

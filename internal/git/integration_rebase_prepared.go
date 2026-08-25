@@ -1,11 +1,29 @@
 package git
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 )
+
+type preparedRebaseRestoration struct {
+	Version        int    `json:"version"`
+	OperationID    string `json:"operationId"`
+	TargetRef      string `json:"targetRef"`
+	ProofRef       string `json:"proofRef"`
+	CandidateHead  string `json:"candidateHead"`
+	CandidateTree  string `json:"candidateTree"`
+	CandidateIndex string `json:"candidateIndex"`
+	ExpectedHead   string `json:"expectedHead"`
+	ExpectedTree   string `json:"expectedTree"`
+}
 
 func (registry *Registry) restorePreparedRebaseTarget(
 	ctx context.Context,
@@ -15,67 +33,290 @@ func (registry *Registry) restorePreparedRebaseTarget(
 	headRef string,
 	attached bool,
 ) (bool, error) {
-	proofRef := integrationRebaseProofRef(request)
-	if !attached || headRef != proofRef || currentHead != request.Candidate.HeadRevision {
-		return false, nil
+	repository, err := registry.Resolve(request.Target.RepositoryID)
+	if err != nil {
+		return false, errors.New("apply integration candidate: restoration repository is unavailable")
 	}
-	if err := registry.ensureRebaseSequencerAbsent(ctx, request.Target.WorktreePath); err != nil {
+	directory, restorationPath, err := preparedRebaseRestorationPath(repository, request)
+	if err != nil {
 		return false, err
+	}
+	restoration, found, err := readPreparedRebaseRestoration(restorationPath)
+	if err != nil {
+		return false, err
+	}
+	proofRef := integrationRebaseProofRef(request)
+	if !found {
+		if !attached || headRef != proofRef || currentHead != request.Candidate.HeadRevision {
+			return false, nil
+		}
+		restoration, err = registry.prepareRebaseRestoration(ctx, request, targetRef, proofRef)
+		if err != nil {
+			return false, err
+		}
+		if err := ensureServerRebaseProofDirectory(repository.WorktreeRoot, directory); err != nil {
+			return false, err
+		}
+		if err := publishPreparedRebaseRestoration(directory, restorationPath, restoration); err != nil {
+			return false, err
+		}
+	} else if !preparedRebaseRestorationMatches(restoration, request, targetRef, proofRef) {
+		return false, errors.New("apply integration candidate: prepared restoration differs")
+	}
+	if err := registry.advancePreparedRebaseRestoration(ctx, request, restoration); err != nil {
+		return false, err
+	}
+	if err := os.Remove(restorationPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, errors.New("apply integration candidate: prepared restoration could not be retired")
+	}
+	if err := syncDirectory(directory); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (registry *Registry) prepareRebaseRestoration(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+	targetRef string,
+	proofRef string,
+) (preparedRebaseRestoration, error) {
+	if err := registry.ensureRebaseSequencerAbsent(ctx, request.Target.WorktreePath); err != nil {
+		return preparedRebaseRestoration{}, err
 	}
 	proofHead, found, err := registry.integrationReceiptHeadAtPath(ctx, request.Target.WorktreePath, proofRef)
 	if err != nil || !found || proofHead != request.Candidate.HeadRevision {
-		return false, errors.New("apply integration candidate: prepared rebase proof differs")
+		return preparedRebaseRestoration{}, errors.New("apply integration candidate: prepared rebase proof differs")
 	}
 	branchHead, err := registry.integrationBranchHead(ctx, request.Target.WorktreePath, targetRef)
 	if err != nil || branchHead != request.Target.ExpectedHead {
-		return false, errors.New("apply integration candidate: prepared rebase target differs")
+		return preparedRebaseRestoration{}, errors.New("apply integration candidate: prepared rebase target differs")
 	}
 	clean, err := registry.integrationWorktreeCleanAtCommit(
 		ctx, request.Target.WorktreePath, request.Candidate.HeadRevision,
 	)
 	if err != nil || !clean {
-		return false, errors.New("apply integration candidate: prepared rebase is not clean")
+		return preparedRebaseRestoration{}, errors.New("apply integration candidate: prepared rebase is not clean")
 	}
-	candidateTree, err := registry.integrationCommitTree(
-		ctx, request.Target.WorktreePath, request.Candidate.HeadRevision,
-	)
+	candidateTree, err := registry.integrationCommitTree(ctx, request.Target.WorktreePath, request.Candidate.HeadRevision)
 	if err != nil {
-		return false, err
+		return preparedRebaseRestoration{}, err
 	}
-	targetTree, err := registry.integrationCommitTree(ctx, request.Target.WorktreePath, request.Target.ExpectedHead)
+	expectedTree, err := registry.integrationCommitTree(ctx, request.Target.WorktreePath, request.Target.ExpectedHead)
 	if err != nil {
-		return false, err
+		return preparedRebaseRestoration{}, err
 	}
-	candidateSnapshot, err := registry.loadIntegrationTreeSnapshot(ctx, request.Target.WorktreePath, candidateTree)
+	candidate, err := registry.loadIntegrationTreeSnapshot(ctx, request.Target.WorktreePath, candidateTree)
 	if err != nil {
-		return false, err
+		return preparedRebaseRestoration{}, err
 	}
-	targetSnapshot, err := registry.loadIntegrationTreeSnapshot(ctx, request.Target.WorktreePath, targetTree)
+	expected, err := registry.loadIntegrationTreeSnapshot(ctx, request.Target.WorktreePath, expectedTree)
 	if err != nil {
-		return false, err
+		return preparedRebaseRestoration{}, err
+	}
+	if err := validateIntegrationMaterializationTopology(candidate, expected); err != nil {
+		return preparedRebaseRestoration{}, err
+	}
+	indexDigest, err := registry.integrationIndexDigest(ctx, request.Target.WorktreePath)
+	if err != nil {
+		return preparedRebaseRestoration{}, err
 	}
 	if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
-		return false, err
+		return preparedRebaseRestoration{}, err
 	}
 	if err := registry.validateIntegrationMutationDeadline(request); err != nil {
-		return false, err
+		return preparedRebaseRestoration{}, err
 	}
-	workspace, err := registry.integrationMaterializationWorkspace(ctx, request.Target.WorktreePath)
+	return preparedRebaseRestoration{
+		Version: 1, OperationID: request.OperationID, TargetRef: targetRef, ProofRef: proofRef,
+		CandidateHead: request.Candidate.HeadRevision, CandidateTree: candidateTree,
+		CandidateIndex: indexDigest, ExpectedHead: request.Target.ExpectedHead, ExpectedTree: expectedTree,
+	}, nil
+}
+
+func (registry *Registry) advancePreparedRebaseRestoration(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+	restoration preparedRebaseRestoration,
+) error {
+	candidateTree, candidateTreeErr := registry.integrationCommitTree(
+		ctx, request.Target.WorktreePath, restoration.CandidateHead,
+	)
+	expectedTree, expectedTreeErr := registry.integrationCommitTree(
+		ctx, request.Target.WorktreePath, restoration.ExpectedHead,
+	)
+	branchHead, branchErr := registry.integrationBranchHead(ctx, request.Target.WorktreePath, restoration.TargetRef)
+	proofHead, proofFound, proofErr := registry.integrationReceiptHeadAtPath(
+		ctx, request.Target.WorktreePath, restoration.ProofRef,
+	)
+	if candidateTreeErr != nil || expectedTreeErr != nil || branchErr != nil || proofErr != nil || !proofFound ||
+		candidateTree != restoration.CandidateTree || expectedTree != restoration.ExpectedTree ||
+		branchHead != restoration.ExpectedHead || proofHead != restoration.CandidateHead {
+		return errors.New("apply integration candidate: prepared restoration proof differs")
+	}
+	candidate, err := registry.loadIntegrationTreeSnapshot(
+		ctx, request.Target.WorktreePath, restoration.CandidateTree,
+	)
 	if err != nil {
-		return false, err
+		return err
 	}
-	if _, err := runGitBytesInWorkspace(ctx, registry.gitExecutable, workspace,
-		"read-tree", "--reset", request.Target.ExpectedHead); err != nil {
-		return false, errors.New("apply integration candidate: prepared rebase index could not be restored")
+	expected, err := registry.loadIntegrationTreeSnapshot(ctx, request.Target.WorktreePath, restoration.ExpectedTree)
+	if err != nil {
+		return err
 	}
-	if err := materializeIntegrationWorktree(
-		request.Target.WorktreePath, candidateSnapshot, targetSnapshot,
-	); err != nil {
-		return false, err
+	for {
+		currentHead, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C",
+			request.Target.WorktreePath, "rev-parse", "--verify", "HEAD^{commit}")
+		if err != nil {
+			return errors.New("apply integration candidate: prepared restoration head is unavailable")
+		}
+		headRef, attached, err := registry.integrationHeadRef(ctx, request.Target.WorktreePath)
+		if err != nil || !attached || headRef != restoration.ProofRef && headRef != restoration.TargetRef {
+			return errors.New("apply integration candidate: prepared restoration attachment differs")
+		}
+		indexTree, err := registry.integrationIndexTree(ctx, request.Target.WorktreePath)
+		if err != nil {
+			return err
+		}
+		candidateWorktree, candidateErr := integrationWorktreeMatchesSnapshot(request.Target.WorktreePath, candidate)
+		expectedWorktree, expectedErr := integrationWorktreeMatchesSnapshot(request.Target.WorktreePath, expected)
+		if candidateErr != nil || expectedErr != nil {
+			return errors.New("apply integration candidate: prepared restoration worktree is unavailable")
+		}
+		if headRef == restoration.TargetRef {
+			if currentHead != restoration.ExpectedHead || indexTree != restoration.ExpectedTree || !expectedWorktree {
+				return errors.New("apply integration candidate: completed prepared restoration differs")
+			}
+			return nil
+		}
+		if currentHead != restoration.CandidateHead {
+			return errors.New("apply integration candidate: prepared restoration head differs")
+		}
+		switch {
+		case indexTree == restoration.CandidateTree && candidateWorktree:
+			digest, digestErr := registry.integrationIndexDigest(ctx, request.Target.WorktreePath)
+			if digestErr != nil || digest != restoration.CandidateIndex {
+				return errors.New("apply integration candidate: prepared restoration index differs")
+			}
+			if err := registry.authorizePreparedRestoration(ctx, request); err != nil {
+				return err
+			}
+			workspace, err := registry.integrationMaterializationWorkspace(ctx, request.Target.WorktreePath)
+			if err != nil {
+				return err
+			}
+			if _, err := runGitBytesInWorkspace(ctx, registry.gitExecutable, workspace,
+				"read-tree", "--reset", restoration.ExpectedHead); err != nil {
+				return errors.New("apply integration candidate: prepared rebase index could not be restored")
+			}
+		case indexTree == restoration.ExpectedTree && !expectedWorktree:
+			if err := registry.authorizePreparedRestoration(ctx, request); err != nil {
+				return err
+			}
+			if err := materializeIntegrationWorktree(request.Target.WorktreePath, candidate, expected); err != nil {
+				return err
+			}
+		case indexTree == restoration.ExpectedTree && expectedWorktree:
+			if err := registry.authorizePreparedRestoration(ctx, request); err != nil {
+				return err
+			}
+			if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C",
+				request.Target.WorktreePath, "symbolic-ref", "HEAD", restoration.TargetRef); err != nil {
+				return errors.New("apply integration candidate: prepared rebase target could not be restored")
+			}
+		default:
+			return errors.New("apply integration candidate: prepared restoration state is contradictory")
+		}
 	}
-	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-		"symbolic-ref", "HEAD", targetRef); err != nil {
-		return false, errors.New("apply integration candidate: prepared rebase target could not be restored")
+}
+
+func (registry *Registry) authorizePreparedRestoration(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+) error {
+	if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
+		return err
 	}
-	return true, nil
+	return registry.validateIntegrationMutationDeadline(request)
+}
+
+func preparedRebaseRestorationPath(
+	repository Repository,
+	request application.IntegrationAdapterRequest,
+) (string, string, error) {
+	reference := integrationReceiptRef("restoration", request)
+	digest := strings.TrimPrefix(reference, "refs/comis/integration/restoration/")
+	if len(digest) != 64 || !lowerHex(digest) {
+		return "", "", errors.New("apply integration candidate: prepared restoration identity is invalid")
+	}
+	directory := filepath.Join(repository.WorktreeRoot, ".comis-integration-proofs")
+	return directory, filepath.Join(directory, "restoration-"+digest), nil
+}
+
+func preparedRebaseRestorationMatches(
+	restoration preparedRebaseRestoration,
+	request application.IntegrationAdapterRequest,
+	targetRef string,
+	proofRef string,
+) bool {
+	return restoration.Version == 1 && restoration.OperationID == request.OperationID &&
+		restoration.TargetRef == targetRef && restoration.ProofRef == proofRef &&
+		restoration.CandidateHead == request.Candidate.HeadRevision &&
+		restoration.ExpectedHead == request.Target.ExpectedHead &&
+		gitRevisionPattern.MatchString(restoration.CandidateTree) &&
+		gitRevisionPattern.MatchString(restoration.ExpectedTree) &&
+		len(restoration.CandidateIndex) == 64 && lowerHex(restoration.CandidateIndex)
+}
+
+func publishPreparedRebaseRestoration(
+	directory string,
+	path string,
+	restoration preparedRebaseRestoration,
+) error {
+	contents, err := json.Marshal(restoration)
+	if err != nil {
+		return errors.New("apply integration candidate: prepared restoration cannot be encoded")
+	}
+	contents = append(contents, '\n')
+	temporary := path + ".pending"
+	if err := discardServerRebaseProofTemporary(temporary); err != nil {
+		return err
+	}
+	if err := createServerRebaseProof(temporary, contents); err != nil {
+		return err
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		return errors.New("apply integration candidate: prepared restoration could not be published")
+	}
+	return syncDirectory(directory)
+}
+
+func readPreparedRebaseRestoration(path string) (preparedRebaseRestoration, bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return preparedRebaseRestoration{}, false, nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Size() < 2 || info.Size() > 4096 {
+		return preparedRebaseRestoration{}, false,
+			errors.New("apply integration candidate: prepared restoration is invalid")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return preparedRebaseRestoration{}, false,
+			errors.New("apply integration candidate: prepared restoration is unavailable")
+	}
+	contents, readErr := io.ReadAll(io.LimitReader(file, 4097))
+	closeErr := file.Close()
+	if readErr != nil || closeErr != nil || len(contents) > 4096 {
+		return preparedRebaseRestoration{}, false,
+			errors.New("apply integration candidate: prepared restoration is unavailable")
+	}
+	var restoration preparedRebaseRestoration
+	decoder := json.NewDecoder(bytes.NewReader(contents))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&restoration) != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		return preparedRebaseRestoration{}, false,
+			errors.New("apply integration candidate: prepared restoration is malformed")
+	}
+	return restoration, true, nil
 }

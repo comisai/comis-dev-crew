@@ -321,7 +321,10 @@ the shared index, worktree, or target ref. A clean proved result is imported
 through a rooted object-database handle, then adopted through the durable
 materialization transition and target compare-and-swap. Evidence and
 strategy-specific receipts are reauthorized immediately before the worktree is
-materialized. Reproducible recovery and bounded-migration evidence is recorded
+materialized. Result-tree bounds are proved before the compare-and-swap. Exact
+entry capture and no-replace publication preserve racing developer writes, and
+durable prepared/recovery restoration identity resumes only known partial index,
+worktree, and HEAD states. Reproducible recovery and bounded-migration evidence is recorded
 in [review-evidence.md](review-evidence.md).
 Submitting a different operation for a candidate task and head that already has
 a reserved, applied, or conflicted application is a precondition failure before

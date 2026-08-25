@@ -96,10 +96,15 @@ it validates and backfills pages of 64.
   publication even if its ambient path is replaced.
 - Shared result adoption persists the expected index, expected and result trees,
   result proof, and pending transition before the target compare-and-swap. Only
-  an unchanged expected worktree can then be safely materialized. Tree entries
-  and bounded blob bytes are read as immutable Git objects, the index advances
-  without worktree conversion, and rooted no-follow publication writes exact
-  regular-file bytes, executable modes, and symlink targets. No post-CAS Git
+  a completely representable result tree and an unchanged expected worktree can
+  then be safely materialized. Tree entry, per-blob, and aggregate bounds are
+  enforced before compare-and-swap. Untrusted regular files are compared through
+  rooted no-follow handles with size-first bounded streaming and replacement
+  detection. Each changed entry is atomically displaced into task-owned recovery
+  evidence, verified against the expected snapshot, and replaced through an
+  atomic no-replace publication. Racing developer entries and service stages are
+  preserved for exact restart reconciliation; unsupported file/directory shape
+  changes refuse before mutation. No post-CAS Git
   checkout consumes mutable repository configuration or info attributes, so a
   racing dynamically named filter cannot execute with service authority. A
   crash after the compare-and-swap resumes from that transition, while partial
@@ -107,6 +112,11 @@ it validates and backfills pages of 64.
   Evidence freshness and strategy-specific receipts are reauthorized
   immediately before post-CAS index/worktree materialization; expiry preserves
   the pending transition and expected worktree for a later authorized retry.
+- Prepared rebase and conflict-recovery restoration publish immutable source,
+  target, tree, index, branch, and proof identity before the first index,
+  worktree, or HEAD mutation. Restart accepts only the closed original,
+  index-restored, worktree-restored, or reattached posture and resumes the next
+  authorized step; every contradictory partial state preserves work and refuses.
 - Recovery validates the complete original and recovery receipt set through
   non-recursive tri-state inspection. A completed result can be reconciled
   after the target compare-and-swap. Every completion posture rechecks the

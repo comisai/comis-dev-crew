@@ -19,6 +19,9 @@ func (registry *Registry) prepareRecoveryIntegrationMaterialization(
 	if request.RecoveryOperationID == "" || targetRef != "refs/heads/"+expectedIntegrationTargetBranch(request) {
 		return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery materialization identity is invalid")
 	}
+	if err := registry.validateIntegrationMaterializationResult(ctx, request, resultingHead); err != nil {
+		return integrationMaterializationTransition{}, err
+	}
 	branchHead, err := registry.integrationBranchHead(ctx, request.Target.WorktreePath, targetRef)
 	if err != nil || branchHead != request.Target.ExpectedHead {
 		return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery target differs")
@@ -35,6 +38,10 @@ func (registry *Registry) prepareRecoveryIntegrationMaterialization(
 	if err != nil || !registry.recoveryMaterializationWorktreeMatchesIndex(ctx, request.Target.WorktreePath) {
 		return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery worktree identity differs")
 	}
+	recoveryTree, err := registry.integrationIndexTree(ctx, request.Target.WorktreePath)
+	if err != nil {
+		return integrationMaterializationTransition{}, err
+	}
 	expectedTree, err := registry.integrationCommitTree(ctx, request.Target.WorktreePath, request.Target.ExpectedHead)
 	if err != nil {
 		return integrationMaterializationTransition{}, err
@@ -44,11 +51,11 @@ func (registry *Registry) prepareRecoveryIntegrationMaterialization(
 		return integrationMaterializationTransition{}, err
 	}
 	return integrationMaterializationTransition{
-		Version: 2, State: "recovery", OperationID: request.OperationID, Strategy: request.Strategy,
+		Version: 3, State: "recovery", OperationID: request.OperationID, Strategy: request.Strategy,
 		TargetRef: targetRef, ExpectedHead: request.Target.ExpectedHead, ExpectedTree: expectedTree,
 		ExpectedIndexDigest: indexDigest, CandidateBase: request.Candidate.BaseRevision,
 		CandidateHead: request.Candidate.HeadRevision, ResultingHead: resultingHead, ResultingTree: resultingTree,
-		RecoveryHead: recoveryHead, RecoveryIndexDigest: indexDigest,
+		RecoveryHead: recoveryHead, RecoveryTree: recoveryTree, RecoveryIndexDigest: indexDigest,
 	}, nil
 }
 
@@ -57,55 +64,92 @@ func (registry *Registry) restoreRecoveryMaterializationBase(
 	request application.IntegrationAdapterRequest,
 	transition integrationMaterializationTransition,
 ) (integrationMaterializationTransition, error) {
-	if transition.Version != 2 || transition.State != "recovery" || request.RecoveryOperationID == "" {
+	if transition.Version != 3 || transition.State != "recovery" || request.RecoveryOperationID == "" {
 		return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery transition is invalid")
 	}
 	branchHead, err := registry.integrationBranchHead(ctx, request.Target.WorktreePath, transition.TargetRef)
 	if err != nil || branchHead != transition.ExpectedHead {
 		return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery target changed")
 	}
-	if err := registry.authorizeRebaseFinalization(ctx, request, transition.ResultingHead); err != nil {
+	recoverySnapshot, err := registry.loadIntegrationTreeSnapshot(
+		ctx, request.Target.WorktreePath, transition.RecoveryTree,
+	)
+	if err != nil {
 		return integrationMaterializationTransition{}, err
 	}
-	if _, err := registry.expectedMaterializationIdentity(ctx, request, transition.TargetRef); err != nil {
-		if err := registry.verifyRecoveryMaterializationState(ctx, request, transition); err != nil {
-			return integrationMaterializationTransition{}, err
+	expectedSnapshot, err := registry.loadIntegrationTreeSnapshot(
+		ctx, request.Target.WorktreePath, transition.ExpectedTree,
+	)
+	if err != nil {
+		return integrationMaterializationTransition{}, err
+	}
+	for {
+		currentHead, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C",
+			request.Target.WorktreePath, "rev-parse", "--verify", "HEAD^{commit}")
+		if err != nil {
+			return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery head is unavailable")
 		}
-		recoveryTree, err := registry.integrationIndexTree(ctx, request.Target.WorktreePath)
+		headRef, attached, err := registry.integrationHeadRef(ctx, request.Target.WorktreePath)
+		if err != nil || attached && headRef != transition.TargetRef ||
+			!attached && currentHead != transition.RecoveryHead ||
+			attached && currentHead != transition.ExpectedHead {
+			return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery attachment changed")
+		}
+		indexTree, err := registry.integrationIndexTree(ctx, request.Target.WorktreePath)
 		if err != nil {
 			return integrationMaterializationTransition{}, err
 		}
-		recoverySnapshot, err := registry.loadIntegrationTreeSnapshot(
-			ctx, request.Target.WorktreePath, recoveryTree,
+		recoveryWorktree, recoveryErr := integrationWorktreeMatchesSnapshot(
+			request.Target.WorktreePath, recoverySnapshot,
 		)
-		if err != nil {
-			return integrationMaterializationTransition{}, err
-		}
-		expectedSnapshot, err := registry.loadIntegrationTreeSnapshot(
-			ctx, request.Target.WorktreePath, transition.ExpectedTree,
+		expectedWorktree, expectedErr := integrationWorktreeMatchesSnapshot(
+			request.Target.WorktreePath, expectedSnapshot,
 		)
-		if err != nil {
-			return integrationMaterializationTransition{}, err
+		if recoveryErr != nil || expectedErr != nil {
+			return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery worktree is unavailable")
 		}
-		if err := registry.authorizeRebaseFinalization(ctx, request, transition.ResultingHead); err != nil {
-			return integrationMaterializationTransition{}, err
+		if attached {
+			if indexTree != transition.ExpectedTree || !expectedWorktree {
+				return integrationMaterializationTransition{}, errors.New("apply integration candidate: attached recovery restoration differs")
+			}
+			break
 		}
-		if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C",
-			request.Target.WorktreePath, "symbolic-ref", "HEAD", transition.TargetRef); err != nil {
-			return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery target could not be reattached")
-		}
-		workspace, err := registry.integrationMaterializationWorkspace(ctx, request.Target.WorktreePath)
-		if err != nil {
-			return integrationMaterializationTransition{}, err
-		}
-		if _, err := runGitBytesInWorkspace(ctx, registry.gitExecutable, workspace,
-			"read-tree", "--reset", transition.ExpectedHead); err != nil {
-			return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery index could not be restored")
-		}
-		if err := materializeIntegrationWorktree(
-			request.Target.WorktreePath, recoverySnapshot, expectedSnapshot,
-		); err != nil {
-			return integrationMaterializationTransition{}, err
+		switch {
+		case indexTree == transition.RecoveryTree && recoveryWorktree:
+			digest, digestErr := registry.integrationIndexDigest(ctx, request.Target.WorktreePath)
+			if digestErr != nil || digest != transition.RecoveryIndexDigest {
+				return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery index changed")
+			}
+			if err := registry.authorizeRebaseFinalization(ctx, request, transition.ResultingHead); err != nil {
+				return integrationMaterializationTransition{}, err
+			}
+			workspace, err := registry.integrationMaterializationWorkspace(ctx, request.Target.WorktreePath)
+			if err != nil {
+				return integrationMaterializationTransition{}, err
+			}
+			if _, err := runGitBytesInWorkspace(ctx, registry.gitExecutable, workspace,
+				"read-tree", "--reset", transition.ExpectedHead); err != nil {
+				return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery index could not be restored")
+			}
+		case indexTree == transition.ExpectedTree && !expectedWorktree:
+			if err := registry.authorizeRebaseFinalization(ctx, request, transition.ResultingHead); err != nil {
+				return integrationMaterializationTransition{}, err
+			}
+			if err := materializeIntegrationWorktree(
+				request.Target.WorktreePath, recoverySnapshot, expectedSnapshot,
+			); err != nil {
+				return integrationMaterializationTransition{}, err
+			}
+		case indexTree == transition.ExpectedTree && expectedWorktree:
+			if err := registry.authorizeRebaseFinalization(ctx, request, transition.ResultingHead); err != nil {
+				return integrationMaterializationTransition{}, err
+			}
+			if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C",
+				request.Target.WorktreePath, "symbolic-ref", "HEAD", transition.TargetRef); err != nil {
+				return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery target could not be reattached")
+			}
+		default:
+			return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery restoration state is contradictory")
 		}
 	}
 	if err := registry.removeSharedRebaseSequencer(ctx, request.Target.WorktreePath); err != nil {
@@ -120,34 +164,12 @@ func (registry *Registry) restoreRecoveryMaterializationBase(
 	pending.State = "pending"
 	pending.ExpectedIndexDigest = expectedIndex
 	pending.RecoveryHead = ""
+	pending.RecoveryTree = ""
 	pending.RecoveryIndexDigest = ""
 	if err := registry.replaceIntegrationMaterialization(request, transition, pending); err != nil {
 		return integrationMaterializationTransition{}, err
 	}
 	return pending, nil
-}
-
-func (registry *Registry) verifyRecoveryMaterializationState(
-	ctx context.Context,
-	request application.IntegrationAdapterRequest,
-	transition integrationMaterializationTransition,
-) error {
-	currentHead, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C",
-		request.Target.WorktreePath, "rev-parse", "--verify", "HEAD^{commit}")
-	if err != nil {
-		return errors.New("apply integration candidate: recovery head is unavailable")
-	}
-	headRef, attached, err := registry.integrationHeadRef(ctx, request.Target.WorktreePath)
-	if err != nil || attached && headRef != transition.TargetRef ||
-		!attached && currentHead != transition.RecoveryHead || attached && currentHead != transition.ExpectedHead {
-		return errors.New("apply integration candidate: recovery attachment changed")
-	}
-	digest, err := registry.integrationIndexDigest(ctx, request.Target.WorktreePath)
-	if err != nil || digest != transition.RecoveryIndexDigest ||
-		!registry.recoveryMaterializationWorktreeMatchesIndex(ctx, request.Target.WorktreePath) {
-		return errors.New("apply integration candidate: recovery worktree changed")
-	}
-	return nil
 }
 
 func (registry *Registry) recoveryMaterializationWorktreeMatchesIndex(

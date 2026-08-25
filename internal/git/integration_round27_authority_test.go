@@ -13,7 +13,7 @@ import (
 )
 
 func TestRegistry_ReconcilesPreparedRebaseRestorationCrashes(t *testing.T) {
-	for _, boundary := range []string{"after-index", "before-attachment"} {
+	for _, boundary := range []string{"after-index", "before-attachment", "after-attachment"} {
 		t.Run(boundary, func(t *testing.T) {
 			fixture := newIntegrationFixture(t)
 			candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath,
@@ -49,37 +49,41 @@ func TestRegistry_ReconcilesPreparedRebaseRestorationCrashes(t *testing.T) {
 	}
 }
 
-func TestRegistry_ReconcilesRecoveryRestorationCrashAfterIndex(t *testing.T) {
-	fixture := newIntegrationFixture(t)
-	candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath,
-		"fixture.txt", "candidate\n")
-	targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath,
-		"fixture.txt", "target\n")
-	original := fixture.request("integration-recovery-restore-original",
-		application.IntegrationRebase, candidateHead, targetHead)
-	stagePreviouslyAuthorizedRebaseConflict(t, fixture, original)
-	if err := os.WriteFile(filepath.Join(fixture.target.CanonicalPath, "fixture.txt"),
-		[]byte("resolved\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C",
-		fixture.target.CanonicalPath, "add", "--", "fixture.txt")
-	recovery := original
-	recovery.OperationID = "integration-recovery-restore-resume"
-	recovery.RecoveryOperationID = original.OperationID
-	targetRef := "refs/heads/" + fixture.target.Branch
-	wrapper, arm := writeRestorationCrashWrapper(t, fixture, "after-index", targetRef)
-	registry := newIntegrationRegistryWithExecutable(t, fixture, wrapper)
-	if err := os.WriteFile(arm, []byte("armed\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+func TestRegistry_ReconcilesRecoveryRestorationCrashes(t *testing.T) {
+	for _, boundary := range []string{"after-index", "before-attachment", "after-attachment"} {
+		t.Run(boundary, func(t *testing.T) {
+			fixture := newIntegrationFixture(t)
+			candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath,
+				"fixture.txt", "candidate\n")
+			targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath,
+				"fixture.txt", "target\n")
+			original := fixture.request("integration-recovery-restore-original-"+boundary,
+				application.IntegrationRebase, candidateHead, targetHead)
+			stagePreviouslyAuthorizedRebaseConflict(t, fixture, original)
+			if err := os.WriteFile(filepath.Join(fixture.target.CanonicalPath, "fixture.txt"),
+				[]byte("resolved\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C",
+				fixture.target.CanonicalPath, "add", "--", "fixture.txt")
+			recovery := original
+			recovery.OperationID = "integration-recovery-restore-resume-" + boundary
+			recovery.RecoveryOperationID = original.OperationID
+			targetRef := "refs/heads/" + fixture.target.Branch
+			wrapper, arm := writeRestorationCrashWrapper(t, fixture, boundary, targetRef)
+			registry := newIntegrationRegistryWithExecutable(t, fixture, wrapper)
+			if err := os.WriteFile(arm, []byte("armed\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
 
-	if _, err := registry.ApplyIntegrationCandidate(context.Background(), recovery); err == nil {
-		t.Fatal("ApplyIntegrationCandidate(crashed recovery restoration) error = nil")
-	}
-	result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), recovery)
-	if err != nil || result.Outcome != application.IntegrationApplied {
-		t.Fatalf("ApplyIntegrationCandidate(recovery restoration retry) = %#v, %v", result, err)
+			if _, err := registry.ApplyIntegrationCandidate(context.Background(), recovery); err == nil {
+				t.Fatal("ApplyIntegrationCandidate(crashed recovery restoration) error = nil")
+			}
+			result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), recovery)
+			if err != nil || result.Outcome != application.IntegrationApplied {
+				t.Fatalf("ApplyIntegrationCandidate(recovery restoration retry) = %#v, %v", result, err)
+			}
+		})
 	}
 }
 
@@ -174,6 +178,13 @@ if [ -f "$arm" ] && { [ "$GIT_WORK_TREE" = "$target" ] || [ "$shared" = true ]; 
   if [ "$boundary" = before-attachment ] && [ "$is_attachment" = true ] && [ "$has_target" = true ]; then
     rm -f "$arm"
     exit 79
+  fi
+  if [ "$boundary" = after-attachment ] && [ "$is_attachment" = true ] && [ "$has_target" = true ]; then
+    "$real" "$@"
+    status=$?
+    rm -f "$arm"
+    if [ $status -eq 0 ]; then exit 80; fi
+    exit $status
   fi
 fi
 exec "$real" "$@"

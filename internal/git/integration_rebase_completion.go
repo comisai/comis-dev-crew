@@ -45,6 +45,9 @@ func (registry *Registry) runIntegrationStrategy(
 		return errors.Join(err, application.ErrIntegrationMutationNotStarted)
 	}
 	if !conflicted {
+		if err := registry.validateIntegrationMaterializationResult(ctx, request, plan.ResultingHead); err != nil {
+			return errors.Join(err, application.ErrIntegrationMutationNotStarted)
+		}
 		if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
 			return errors.Join(err, application.ErrIntegrationMutationNotStarted)
 		}
@@ -88,6 +91,9 @@ func (registry *Registry) runRebaseIntegration(
 			errors.New("apply integration candidate: rebase conflicts in isolation"),
 			application.ErrIntegrationMutationNotStarted,
 		)
+	}
+	if err := registry.validateIntegrationMaterializationResult(ctx, request, proof.resultingHead); err != nil {
+		return errors.Join(err, application.ErrIntegrationMutationNotStarted)
 	}
 	mutationAt := registry.clock().UTC()
 	if mutationAt.IsZero() || !mutationAt.Before(request.EvidenceExpiresAt) {

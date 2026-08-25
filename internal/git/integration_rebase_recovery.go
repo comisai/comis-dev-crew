@@ -260,6 +260,17 @@ func (registry *Registry) reconcileInterruptedRebase(
 	if err != nil {
 		return application.IntegrationAdapterResult{}, true, err
 	}
+	if !rebasedFound {
+		restored, restoreErr := registry.restorePreparedRebaseTarget(
+			ctx, request, targetRef, currentHead, headRef, attached,
+		)
+		if restoreErr != nil {
+			return application.IntegrationAdapterResult{}, true, restoreErr
+		}
+		if restored {
+			return application.IntegrationAdapterResult{}, false, nil
+		}
+	}
 	if currentHead == request.Target.ExpectedHead && attached && headRef == targetRef {
 		if rebasedFound {
 			return application.IntegrationAdapterResult{}, true, errors.New("apply integration candidate: rebased head receipt differs from target")
@@ -275,17 +286,6 @@ func (registry *Registry) reconcileInterruptedRebase(
 		attached && (headRef == targetRef || headRef == integrationRebaseProofRef(request)) {
 		result, err := registry.finalizeRecoveredRebase(ctx, request, repository, targetRef, proof.resultingHead)
 		return result, true, err
-	}
-	if !rebasedFound {
-		restored, restoreErr := registry.restorePreparedRebaseTarget(
-			ctx, request, targetRef, currentHead, headRef, attached,
-		)
-		if restoreErr != nil {
-			return application.IntegrationAdapterResult{}, true, restoreErr
-		}
-		if restored {
-			return application.IntegrationAdapterResult{}, false, nil
-		}
 	}
 	if err := registry.validateRebaseOrigin(ctx, request); err != nil {
 		return application.IntegrationAdapterResult{}, true, err

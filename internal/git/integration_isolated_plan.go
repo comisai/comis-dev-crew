@@ -283,6 +283,10 @@ func (registry *Registry) reconcileCompletedIntegrationPlan(
 			ResultingHead: plan.ResultingHead,
 		}, true, nil
 	}
+	if err := registry.validateIntegrationMaterializationResult(ctx, request, plan.ResultingHead); err != nil {
+		return application.IntegrationAdapterResult{}, true,
+			errors.Join(err, application.ErrIntegrationMutationNotStarted)
+	}
 	if request.ReceiptOnly {
 		if err := registry.provePristineIntegrationState(ctx, request, targetRef); err != nil {
 			return application.IntegrationAdapterResult{}, true, err
