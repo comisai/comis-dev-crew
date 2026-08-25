@@ -62,9 +62,13 @@ func (registry *Registry) InspectCandidateDiff(
 	if err != nil {
 		return CandidateDiff{}, err
 	}
-	uncommitted, uncommittedTruncated, err := registry.diffFiles(ctx, request.WorktreePath, head, "")
-	if err != nil {
-		return CandidateDiff{}, err
+	var uncommitted []CandidateFileChange
+	uncommittedTruncated := false
+	if snapshot.Cleanliness != CandidateClean {
+		uncommitted, uncommittedTruncated, err = registry.diffFiles(ctx, request.WorktreePath, head, "")
+		if err != nil {
+			return CandidateDiff{}, err
+		}
 	}
 	diff.Committed, diff.Uncommitted = committed, uncommitted
 	diff.FileListTruncated = committedTruncated || uncommittedTruncated
@@ -201,8 +205,10 @@ func validateDiffPath(path string) error {
 func summarizeDiff(changes []CandidateFileChange) CandidateDiffTotals {
 	totals := CandidateDiffTotals{Files: len(changes)}
 	for _, change := range changes {
-		if change.Binary {
-			totals.BinaryFiles++
+		if change.Binary || change.DetailTruncated {
+			if change.Binary {
+				totals.BinaryFiles++
+			}
 			continue
 		}
 		totals.Added += change.Added

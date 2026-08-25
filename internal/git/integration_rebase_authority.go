@@ -77,7 +77,7 @@ func (registry *Registry) preflightRebaseSequence(
 	}
 	result, err := registry.preflightRebasePatches(ctx, repository, request, directory, commits, patches)
 	if err != nil {
-		return isolatedRebaseResult{}, err
+		return result, err
 	}
 	if result.conflicted {
 		if _, err := registry.rebaseCommitContent(ctx, repository, commits[len(commits)-1]); err != nil {

@@ -61,6 +61,21 @@ func importIsolatedGitObjects(source, destination string) error {
 	return nil
 }
 
+func importIsolatedGitObjectsWithAuthorityState(source, destination string) (bool, error) {
+	if !filepath.IsAbs(source) || !filepath.IsAbs(destination) || source == destination ||
+		!validObjectDirectory(source) || !validObjectDirectory(destination) {
+		return false, errors.New("apply integration candidate: isolated object boundary is invalid")
+	}
+	plan, err := planIsolatedObjectImport(source)
+	if err != nil {
+		return false, err
+	}
+	if len(plan) == 0 {
+		return false, importIsolatedGitObjects(source, destination)
+	}
+	return true, importIsolatedGitObjects(source, destination)
+}
+
 func validateLooseGitObjectBytes(contents []byte, objectID string) error {
 	_, _, err := inspectLooseGitObjectBytes(contents, objectID)
 	return err

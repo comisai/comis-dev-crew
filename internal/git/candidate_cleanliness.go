@@ -3,16 +3,11 @@ package git
 import (
 	"bytes"
 	"context"
-	"crypto/sha1"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -29,8 +24,25 @@ func (registry *Registry) candidateWorktreeCleanAtCommit(
 	commonDirectory string,
 	head string,
 ) (clean bool, returnErr error) {
-	returnErr = registry.withCandidateInspectionWorkspace(
-		ctx, worktreePath, commonDirectory, head,
+	budget := candidateSubmoduleBudget{}
+	return registry.candidateWorkspaceCleanAtCommit(
+		ctx, worktreePath, commonDirectory, head, filepath.Dir(worktreePath), commonDirectory, "", &budget, 0,
+	)
+}
+
+func (registry *Registry) candidateWorkspaceCleanAtCommit(
+	ctx context.Context,
+	worktreePath string,
+	commonDirectory string,
+	head string,
+	scratchParent string,
+	authorityRoot string,
+	expectedGitDirectory string,
+	budget *candidateSubmoduleBudget,
+	depth int,
+) (clean bool, returnErr error) {
+	returnErr = registry.withCandidateInspectionWorkspaceAt(
+		ctx, worktreePath, commonDirectory, head, scratchParent, expectedGitDirectory,
 		func(workspace gitWorkspaceEnvironment) error {
 			indexOutput, err := runGitBytesInWorkspaceWithLimit(
 				ctx, registry.gitExecutable, workspace, maximumIntegrationTreeListing,
@@ -64,20 +76,22 @@ func (registry *Registry) candidateWorktreeCleanAtCommit(
 			if err != nil || !attributesSafe {
 				return errors.New("candidate conversion attributes are unavailable")
 			}
-			matches, err := registry.candidateTrackedWorktreeMatches(ctx, worktreePath, index)
-			if err != nil || !matches {
-				clean = false
-				return err
-			}
-			untracked, err := runGitBytesInWorkspaceWithLimit(
+			status, err := runGitBytesInWorkspaceWithLimit(
 				ctx, registry.gitExecutable, workspace, maximumIntegrationTreeListing,
-				"-c", "core.excludesFile=/dev/null", "ls-files", "--others", "--exclude-standard", "-z",
+				"-c", "core.excludesFile=/dev/null", "status", "--porcelain=v2", "-z",
+				"--untracked-files=all", "--ignore-submodules=all",
 			)
 			if err != nil {
-				return errors.New("candidate untracked files are unavailable")
+				return errors.New("candidate controlled status is unavailable")
 			}
-			clean = len(untracked) == 0
-			return nil
+			if len(status) != 0 {
+				clean = false
+				return nil
+			}
+			clean, err = registry.candidateSubmodulesClean(
+				ctx, worktreePath, authorityRoot, index, scratchParent, budget, depth,
+			)
+			return err
 		},
 	)
 	return clean, returnErr
@@ -151,7 +165,7 @@ func candidateConversionAttributesSafe(
 	}
 	output, err := runGitBytesInWorkspaceWithInputAndLimit(
 		ctx, executable, workspace, input, maximumIntegrationTreeListing,
-		"check-attr", "-z", "--stdin", "filter", "working-tree-encoding", "ident", "text", "eol",
+		"check-attr", "-z", "--stdin", "filter", "working-tree-encoding",
 	)
 	if err != nil {
 		return false, err
@@ -172,132 +186,6 @@ func candidateConversionAttributesSafe(
 	return true, nil
 }
 
-func (registry *Registry) candidateTrackedWorktreeMatches(
-	ctx context.Context,
-	worktreePath string,
-	entries map[string]candidateTrackedEntry,
-) (matches bool, returnErr error) {
-	root, err := os.OpenRoot(worktreePath)
-	if err != nil {
-		return false, errors.New("candidate worktree root is unavailable")
-	}
-	defer func() { returnErr = errors.Join(returnErr, root.Close()) }()
-	for name, entry := range entries {
-		if err := ctx.Err(); err != nil {
-			return false, err
-		}
-		if entry.mode == "160000" {
-			info, err := root.Lstat(name)
-			if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-				return false, nil
-			}
-			head, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C",
-				filepath.Join(worktreePath, filepath.FromSlash(name)), "rev-parse", "--verify", "HEAD^{commit}")
-			if err != nil || head != entry.objectID {
-				return false, nil
-			}
-			final, err := root.Lstat(name)
-			if err != nil || !final.IsDir() || final.Mode()&os.ModeSymlink != 0 || !os.SameFile(info, final) {
-				return false, nil
-			}
-			continue
-		}
-		matched, err := candidateBlobMatches(ctx, root, name, entry)
-		if err != nil || !matched {
-			return false, err
-		}
-	}
-	return true, nil
-}
-
-func candidateBlobMatches(
-	ctx context.Context,
-	root *os.Root,
-	name string,
-	entry candidateTrackedEntry,
-) (bool, error) {
-	info, err := root.Lstat(name)
-	if err != nil {
-		return false, nil
-	}
-	if entry.mode == "120000" {
-		if info.Mode()&os.ModeSymlink == 0 {
-			return false, nil
-		}
-		target, err := root.Readlink(name)
-		if err != nil {
-			return false, err
-		}
-		final, err := root.Lstat(name)
-		if err != nil || final.Mode()&os.ModeSymlink == 0 || !os.SameFile(info, final) {
-			return false, nil
-		}
-		return candidateBlobObjectID(entry.objectID, int64(len(target)), strings.NewReader(target)) == entry.objectID, nil
-	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 ||
-		(entry.mode == "100755") != (info.Mode().Perm()&0o111 != 0) {
-		return false, nil
-	}
-	file, err := root.Open(name)
-	if err != nil {
-		return false, err
-	}
-	opened, statErr := file.Stat()
-	if statErr != nil || !os.SameFile(info, opened) {
-		_ = file.Close()
-		return false, nil
-	}
-	if opened.Size() < 0 || opened.Size() == 1<<63-1 {
-		_ = file.Close()
-		return false, errors.New("candidate worktree entry size is invalid")
-	}
-	digest := candidateBlobObjectID(
-		entry.objectID, opened.Size(),
-		io.LimitReader(candidateContextReader{ctx: ctx, reader: file}, opened.Size()+1),
-	)
-	final, finalErr := file.Stat()
-	pathFinal, pathErr := root.Lstat(name)
-	closeErr := file.Close()
-	if finalErr != nil || pathErr != nil || closeErr != nil || !os.SameFile(opened, final) ||
-		!os.SameFile(final, pathFinal) || final.Size() != opened.Size() || final.ModTime() != opened.ModTime() {
-		return false, nil
-	}
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	return digest == entry.objectID, nil
-}
-
-type candidateContextReader struct {
-	ctx    context.Context
-	reader io.Reader
-}
-
-func (reader candidateContextReader) Read(destination []byte) (int, error) {
-	if err := reader.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return reader.reader.Read(destination)
-}
-
-func candidateBlobObjectID(expected string, size int64, reader io.Reader) string {
-	var digest hash.Hash
-	switch len(expected) {
-	case 40:
-		digest = sha1.New()
-	case 64:
-		digest = sha256.New()
-	default:
-		return ""
-	}
-	_, _ = io.WriteString(digest, "blob "+strconv.FormatInt(size, 10)+"\x00")
-	written, err := io.Copy(digest, reader)
-	if err != nil || written != size {
-		return ""
-	}
-	return hex.EncodeToString(digest.Sum(nil))
-}
-
 func (registry *Registry) withCandidateInspectionWorkspace(
 	ctx context.Context,
 	worktreePath string,
@@ -305,8 +193,21 @@ func (registry *Registry) withCandidateInspectionWorkspace(
 	head string,
 	inspect func(gitWorkspaceEnvironment) error,
 ) (returnErr error) {
-	parent := filepath.Dir(worktreePath)
-	root, err := os.MkdirTemp(parent, ".candidate-inspection-")
+	return registry.withCandidateInspectionWorkspaceAt(
+		ctx, worktreePath, commonDirectory, head, filepath.Dir(worktreePath), "", inspect,
+	)
+}
+
+func (registry *Registry) withCandidateInspectionWorkspaceAt(
+	ctx context.Context,
+	worktreePath string,
+	commonDirectory string,
+	head string,
+	scratchParent string,
+	expectedGitDirectory string,
+	inspect func(gitWorkspaceEnvironment) error,
+) (returnErr error) {
+	root, err := os.MkdirTemp(scratchParent, ".candidate-inspection-")
 	if err != nil {
 		return errors.New("candidate inspection workspace is unavailable")
 	}
@@ -315,7 +216,7 @@ func (registry *Registry) withCandidateInspectionWorkspace(
 		return errors.New("candidate inspection workspace is invalid")
 	}
 	defer func() {
-		returnErr = errors.Join(returnErr, removeCandidateInspectionWorkspace(parent, root, identity))
+		returnErr = errors.Join(returnErr, removeCandidateInspectionWorkspace(scratchParent, root, identity))
 	}()
 	gitDirectory := filepath.Join(root, ".git")
 	for _, directory := range []string{
@@ -341,6 +242,12 @@ func (registry *Registry) withCandidateInspectionWorkspace(
 	if err != nil {
 		return errors.New("candidate index identity is unavailable")
 	}
+	if expectedGitDirectory != "" {
+		canonical, err := filepath.EvalSymlinks(source.gitDir)
+		if err != nil || canonical != expectedGitDirectory {
+			return errors.New("candidate submodule Git identity changed")
+		}
+	}
 	index, err := stableCandidateControlFile(source.gitIndex, maximumCandidateIndexBytes)
 	if err != nil || os.WriteFile(filepath.Join(gitDirectory, "index"), index, 0o600) != nil {
 		return errors.New("candidate index copy is unavailable")
@@ -350,11 +257,19 @@ func (registry *Registry) withCandidateInspectionWorkspace(
 	if err != nil || os.WriteFile(filepath.Join(gitDirectory, "info", "exclude"), exclude, 0o600) != nil {
 		return errors.New("candidate exclude copy is unavailable")
 	}
-	return inspect(gitWorkspaceEnvironment{
+	inspectErr := inspect(gitWorkspaceEnvironment{
 		gitDir: gitDirectory, gitWorkTree: worktreePath, gitIndex: filepath.Join(gitDirectory, "index"),
 		gitObjectDirectory:          filepath.Join(gitDirectory, "objects"),
 		gitAlternateObjectDirectory: filepath.Join(commonDirectory, "objects"),
 	})
+	if expectedGitDirectory != "" {
+		final, err := registry.integrationMaterializationWorkspace(ctx, worktreePath)
+		canonical, canonicalErr := filepath.EvalSymlinks(final.gitDir)
+		if err != nil || canonicalErr != nil || canonical != expectedGitDirectory {
+			return errors.Join(inspectErr, errors.New("candidate submodule Git identity changed"))
+		}
+	}
+	return inspectErr
 }
 
 func stableCandidateControlFile(path string, limit int64) ([]byte, error) {

@@ -14,7 +14,13 @@ func (registry *Registry) completeRebaseRecoveryInIsolation(
 	ctx context.Context,
 	repository Repository,
 	request application.IntegrationAdapterRequest,
-) (string, error) {
+) (result string, returnErr error) {
+	sharedStateWritten := false
+	defer func() {
+		if returnErr != nil && sharedStateWritten {
+			returnErr = errors.Join(returnErr, errIntegrationSharedStateWritten)
+		}
+	}()
 	proof, found, err := registry.serverRebaseProof(repository, request)
 	if err != nil || !found || proof.operationID != originalIntegrationOperationID(request) {
 		return "", errors.New("apply integration candidate: recovery server proof is unavailable")
@@ -85,10 +91,16 @@ func (registry *Registry) completeRebaseRecoveryInIsolation(
 			if err != nil || !gitRevisionPattern.MatchString(resultingHead) {
 				return errors.New("apply integration candidate: isolated recovery result is unavailable")
 			}
-			if err := registry.validateIsolatedMaterializationSnapshot(ctx, workspace, resultingHead); err != nil {
+			if err := registry.validateIsolatedMaterializationTopology(
+				ctx, workspace, request.Target.ExpectedHead, resultingHead,
+			); err != nil {
 				return err
 			}
-			return importIsolatedGitObjects(workspace.gitObjectDirectory, workspace.gitAlternateObjectDirectory)
+			attempted, err := importIsolatedGitObjectsWithAuthorityState(
+				workspace.gitObjectDirectory, workspace.gitAlternateObjectDirectory,
+			)
+			sharedStateWritten = attempted
+			return err
 		})
 	if err != nil {
 		return "", err

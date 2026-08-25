@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -15,24 +16,34 @@ import (
 func TestCandidateWorktreeSnapshotBoundsAggregateRetainedContent(t *testing.T) {
 	root := t.TempDir()
 	contents := bytes.Repeat([]byte{'x'}, 1<<20)
-	index := make(integrationTreeSnapshot)
+	index := make(candidateDiffSnapshot)
 	for number := 0; number < 65; number++ {
 		name := fmt.Sprintf("expanded-%03d", number)
 		if err := os.WriteFile(filepath.Join(root, name), contents, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		index[name] = integrationTreeEntry{mode: "100644", objectID: fmt.Sprintf("object-%03d", number)}
+		index[name] = candidateDiffEntry{mode: "100644", objectID: strings.Repeat("a", 40), size: int64(len(contents))}
 	}
-	if _, err := candidateWorktreeSnapshot(root, index); err == nil {
-		t.Fatal("candidateWorktreeSnapshot(aggregate over bound) error = nil")
+	snapshot, err := (&Registry{}).candidateWorktreeSnapshot(context.Background(), root, index)
+	if err != nil {
+		t.Fatalf("candidateWorktreeSnapshot(aggregate over bound) error = %v", err)
+	}
+	known := 0
+	for _, entry := range snapshot {
+		if entry.detailKnown {
+			known++
+		}
+	}
+	if known != 64 {
+		t.Fatalf("retained detailed entries = %d, want 64", known)
 	}
 }
 
 func TestCandidateRenameMatchingHasBoundedWork(t *testing.T) {
 	if os.Getenv("DEV_CREW_RENAME_STRESS") == "1" {
-		deleted := make(map[string]integrationTreeEntry, 32000)
-		added := make(map[string]integrationTreeEntry, 32000)
-		entry := integrationTreeEntry{mode: "100644", contents: []byte("same\n")}
+		deleted := make(candidateDiffSnapshot, 32000)
+		added := make(candidateDiffSnapshot, 32000)
+		entry := candidateDiffEntry{mode: "100644", objectID: strings.Repeat("a", 40), contents: []byte("same\n"), detailKnown: true}
 		for number := 0; number < 32000; number++ {
 			deleted[fmt.Sprintf("old-%05d", number)] = entry
 			added[fmt.Sprintf("new-%05d", number)] = entry
@@ -93,8 +104,8 @@ func TestCandidateContentChangeReportsBoundExhaustion(t *testing.T) {
 	beforeContents := bytes.Join(before, []byte{'\n'})
 	afterContents := bytes.Join(after, []byte{'\n'})
 	changes, truncated := candidateSnapshotChanges(
-		integrationTreeSnapshot{"component": {mode: "100644", contents: beforeContents}},
-		integrationTreeSnapshot{"component": {mode: "100644", contents: afterContents}},
+		candidateDiffSnapshot{"component": {mode: "100644", objectID: strings.Repeat("a", 40), contents: beforeContents, detailKnown: true}},
+		candidateDiffSnapshot{"component": {mode: "100644", objectID: strings.Repeat("b", 40), contents: afterContents, detailKnown: true}},
 	)
 	if len(changes) != 1 || !truncated {
 		t.Fatalf("candidateSnapshotChanges(bound exhaustion) = %#v, truncated=%t", changes, truncated)

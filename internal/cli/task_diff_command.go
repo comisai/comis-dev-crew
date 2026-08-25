@@ -92,7 +92,9 @@ func renderDiffSection(
 	writer := tabwriter.NewWriter(destination, 0, 0, 2, ' ', 0)
 	for _, change := range changes {
 		extent := "binary"
-		if !change.Binary {
+		if change.DetailTruncated {
+			extent = "unknown"
+		} else if !change.Binary {
 			extent = fmt.Sprintf("+%d/-%d", change.Added, change.Deleted)
 		}
 		if _, err := fmt.Fprintf(writer, "  %s\t%s\n", extent, renderDiffPath(change)); err != nil {

@@ -12,9 +12,10 @@ import (
 )
 
 type isolatedRebaseResult struct {
-	head       string
-	commits    []string
-	conflicted bool
+	head               string
+	commits            []string
+	conflicted         bool
+	sharedStateWritten bool
 }
 
 func (registry *Registry) preflightRebasePatches(
@@ -59,10 +60,16 @@ func (registry *Registry) preflightRebasePatches(
 				if validationErr != nil {
 					return validationErr
 				}
-				if err := registry.validateIsolatedMaterializationSnapshot(ctx, workspace, result.head); err != nil {
+				if err := registry.validateIsolatedMaterializationTopology(
+					ctx, workspace, request.Target.ExpectedHead, result.head,
+				); err != nil {
 					return err
 				}
-				return importIsolatedGitObjects(workspace.gitObjectDirectory, workspace.gitAlternateObjectDirectory)
+				attempted, err := importIsolatedGitObjectsWithAuthorityState(
+					workspace.gitObjectDirectory, workspace.gitAlternateObjectDirectory,
+				)
+				result.sharedStateWritten = attempted
+				return err
 			case 1:
 				if err := registry.validateIsolatedRebaseConflict(ctx, repository, workspace, commits); err != nil {
 					return err
@@ -73,6 +80,9 @@ func (registry *Registry) preflightRebasePatches(
 				return errors.New("apply integration candidate: isolated rebase execution failed")
 			}
 		})
+	if err != nil && result.sharedStateWritten {
+		err = errors.Join(err, errIntegrationSharedStateWritten)
+	}
 	return result, err
 }
 

@@ -19,11 +19,12 @@ type TaskDiffRequest struct {
 
 // TaskFileChange is one changed path with its numeric extent.
 type TaskFileChange struct {
-	Path         string `json:"path"`
-	PreviousPath string `json:"previousPath,omitempty"`
-	Added        int    `json:"added"`
-	Deleted      int    `json:"deleted"`
-	Binary       bool   `json:"binary,omitempty"`
+	Path            string `json:"path"`
+	PreviousPath    string `json:"previousPath,omitempty"`
+	Added           int    `json:"added"`
+	Deleted         int    `json:"deleted"`
+	Binary          bool   `json:"binary,omitempty"`
+	DetailTruncated bool   `json:"detailTruncated,omitempty"`
 }
 
 // TaskDiffTotals is the bounded extent of one change set.
@@ -51,8 +52,8 @@ type TaskDiffView struct {
 	Uncommitted       []TaskFileChange `json:"uncommitted"`
 	CommittedTotals   TaskDiffTotals   `json:"committedTotals"`
 	UncommittedTotals TaskDiffTotals   `json:"uncommittedTotals"`
-	// FileListTruncated states the change set outgrew this bounded read, so a
-	// partial listing is never presented as a complete one.
+	// FileListTruncated states the change set or its numeric detail outgrew this
+	// bounded read, so partial evidence is never presented as complete.
 	FileListTruncated bool `json:"fileListTruncated,omitempty"`
 }
 

@@ -800,6 +800,10 @@ descriptor, a proved result that changes or removes an existing worktree entry
 is refused before the target ref moves. Automatic publication is limited to
 unchanged entries and no-replace additions until a later stage ratifies writer
 custody.
+The isolated engine validates that complete E0 topology against bounded
+expected and result snapshots before publishing result objects into the shared
+object database. Any later failure after a possible shared write remains
+unknown rather than being settled as a pre-mutation abort.
 The operator CLI reaches the identical boundary through `initiative integrate`
 and rejects authority-bearing or self-retargeting contract fields before opening
 the service socket.

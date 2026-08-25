@@ -155,6 +155,7 @@ func portFileChanges(changes []CandidateFileChange) []application.TaskFileChange
 		ported = append(ported, application.TaskFileChange{
 			Path: change.Path, PreviousPath: change.PreviousPath,
 			Added: change.Added, Deleted: change.Deleted, Binary: change.Binary,
+			DetailTruncated: change.DetailTruncated,
 		})
 	}
 	return ported

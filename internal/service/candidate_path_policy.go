@@ -123,6 +123,9 @@ func taskDiffTotalsMatch(changes []application.TaskFileChange, totals applicatio
 	}
 	added, deleted, binaryFiles := 0, 0, 0
 	for _, change := range changes {
+		if change.Binary && change.DetailTruncated || change.DetailTruncated && (change.Added != 0 || change.Deleted != 0) {
+			return false
+		}
 		if change.Added < 0 || change.Deleted < 0 || change.Added > totals.Added-added ||
 			change.Deleted > totals.Deleted-deleted {
 			return false

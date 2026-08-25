@@ -331,10 +331,13 @@ journaling and can be adopted only by a fresh exact recovery operation. Blocking
 filesystem topology is refused before target compare-and-swap, and success
 requires durable parent publication plus retirement of exact recovery evidence.
 Candidate cleanliness is inspected from a service-owned copied index and empty
-configuration/attribute administration. Tracked bytes are compared by bounded
-streaming object identity, ignored files retain `.gitignore` and repository
-exclude semantics, and configured conversions that cannot be reproduced without
-worker command authority are reported as unknown.
+configuration administration. Ignored files retain `.gitignore` and repository
+exclude semantics, safe built-in text/EOL/ident normalization is reproduced,
+and command-backed conversions are unknown. Initialized gitlinks are inspected
+recursively under fixed count/depth bounds without consuming their local
+configuration. Candidate diff summaries are metadata-first, so large blobs,
+large trees, and gitlink identities remain bounded summaries with explicit
+per-entry detail truncation.
 Reproducible recovery and bounded-migration evidence is recorded
 in [review-evidence.md](review-evidence.md).
 Submitting a different operation for a candidate task and head that already has

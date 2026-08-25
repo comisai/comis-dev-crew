@@ -22,6 +22,8 @@ type serverIntegrationPlan struct {
 	ResultingHead string                          `json:"resultingHead"`
 }
 
+var errIntegrationSharedStateWritten = errors.New("apply integration candidate: shared integration state may have changed")
+
 func (registry *Registry) runIsolatedIntegration(
 	ctx context.Context,
 	request application.IntegrationAdapterRequest,
@@ -44,6 +46,7 @@ func (registry *Registry) runIsolatedIntegration(
 	}
 	var plan serverIntegrationPlan
 	conflicted := false
+	sharedStateWritten := false
 	err = registry.withIsolatedRebaseWorkspace(ctx, request.Target.WorktreePath, directory,
 		func(workspace gitWorkspaceEnvironment) error {
 			branch := "refs/heads/integration-result"
@@ -94,10 +97,16 @@ func (registry *Registry) runIsolatedIntegration(
 			if err := registry.validateIsolatedIntegrationResult(ctx, workspace, request, repository, resultingHead); err != nil {
 				return err
 			}
-			if err := registry.validateIsolatedMaterializationSnapshot(ctx, workspace, resultingHead); err != nil {
+			if err := registry.validateIsolatedMaterializationTopology(
+				ctx, workspace, request.Target.ExpectedHead, resultingHead,
+			); err != nil {
 				return err
 			}
-			if err := importIsolatedGitObjects(workspace.gitObjectDirectory, workspace.gitAlternateObjectDirectory); err != nil {
+			attempted, err := importIsolatedGitObjectsWithAuthorityState(
+				workspace.gitObjectDirectory, workspace.gitAlternateObjectDirectory,
+			)
+			sharedStateWritten = sharedStateWritten || attempted
+			if err != nil {
 				return err
 			}
 			plan = serverIntegrationPlan{
@@ -108,9 +117,15 @@ func (registry *Registry) runIsolatedIntegration(
 			return nil
 		})
 	if err != nil || conflicted {
+		if err != nil && sharedStateWritten {
+			err = errors.Join(err, errIntegrationSharedStateWritten)
+		}
 		return serverIntegrationPlan{}, conflicted, err
 	}
 	if err := publishServerIntegrationPlan(directory, path, plan); err != nil {
+		if sharedStateWritten {
+			err = errors.Join(err, errIntegrationSharedStateWritten)
+		}
 		return serverIntegrationPlan{}, false, err
 	}
 	return plan, false, nil

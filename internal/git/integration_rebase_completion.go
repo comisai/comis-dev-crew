@@ -42,25 +42,29 @@ func (registry *Registry) runIntegrationStrategy(
 	}
 	plan, conflicted, err := registry.runIsolatedIntegration(ctx, request, repository)
 	if err != nil {
+		if errors.Is(err, errIntegrationSharedStateWritten) {
+			return err
+		}
 		return errors.Join(err, application.ErrIntegrationMutationNotStarted)
 	}
 	if !conflicted {
 		if err := registry.validateIntegrationMaterializationResult(ctx, request, plan.ResultingHead); err != nil {
-			return errors.Join(err, application.ErrIntegrationMutationNotStarted)
+			return err
 		}
 		if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
-			return errors.Join(err, application.ErrIntegrationMutationNotStarted)
+			return withoutIntegrationMutationNotStarted(err)
 		}
 		if err := registry.validateIntegrationMutationDeadline(request); err != nil {
-			return err
+			return withoutIntegrationMutationNotStarted(err)
 		}
 		targetRef, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
 			"symbolic-ref", "--quiet", "HEAD")
 		if err != nil || targetRef != "refs/heads/"+expectedIntegrationTargetBranch(request) {
-			return errors.Join(errors.New("apply integration candidate: target branch identity is unavailable"),
-				application.ErrIntegrationMutationNotStarted)
+			return errors.New("apply integration candidate: target branch identity is unavailable")
 		}
-		return registry.materializeIntegrationResult(ctx, request, targetRef, plan.ResultingHead)
+		return withoutIntegrationMutationNotStarted(
+			registry.materializeIntegrationResult(ctx, request, targetRef, plan.ResultingHead),
+		)
 	}
 	return errors.Join(errors.New("apply integration candidate: strategy conflicts in isolation"),
 		application.ErrIntegrationMutationNotStarted)
@@ -80,45 +84,50 @@ func (registry *Registry) runRebaseIntegration(
 		)
 	}
 	if err := registry.prepareServerRebaseProof(ctx, repository, request); err != nil {
+		if errors.Is(err, errIntegrationSharedStateWritten) {
+			return err
+		}
 		return errors.Join(err, application.ErrIntegrationMutationNotStarted)
 	}
 	proof, found, err := registry.serverRebaseProof(repository, request)
 	if err != nil {
-		return errors.Join(err, application.ErrIntegrationMutationNotStarted)
+		return err
 	}
 	if !found || proof.resultingHead == "" {
-		return errors.Join(
-			errors.New("apply integration candidate: rebase conflicts in isolation"),
-			application.ErrIntegrationMutationNotStarted,
-		)
+		return errors.New("apply integration candidate: rebase result proof is unavailable")
 	}
 	if err := registry.validateIntegrationMaterializationResult(ctx, request, proof.resultingHead); err != nil {
-		return errors.Join(err, application.ErrIntegrationMutationNotStarted)
+		return err
 	}
 	mutationAt := registry.clock().UTC()
 	if mutationAt.IsZero() || !mutationAt.Before(request.EvidenceExpiresAt) {
-		return errors.Join(
-			errors.New("apply integration candidate: candidate evidence expired during rebase preflight"),
-			application.ErrIntegrationMutationNotStarted,
-		)
+		return errors.New("apply integration candidate: candidate evidence expired after isolated publication")
 	}
 	if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
-		return errors.Join(err, application.ErrIntegrationMutationNotStarted)
+		return withoutIntegrationMutationNotStarted(err)
 	}
 	if err := registry.validateIntegrationMutationDeadline(request); err != nil {
-		return err
+		return withoutIntegrationMutationNotStarted(err)
 	}
 	if err := registry.recordIntegrationTargetRef(ctx, request, targetRef); err != nil {
 		return err
 	}
-	return registry.applyIsolatedRebaseResult(ctx, request, targetRef, proof.resultingHead)
+	return withoutIntegrationMutationNotStarted(
+		registry.applyIsolatedRebaseResult(ctx, request, targetRef, proof.resultingHead),
+	)
 }
 
 func (registry *Registry) prepareServerRebaseProof(
 	ctx context.Context,
 	repository Repository,
 	request application.IntegrationAdapterRequest,
-) error {
+) (returnErr error) {
+	sharedStateWritten := false
+	defer func() {
+		if returnErr != nil && sharedStateWritten {
+			returnErr = errors.Join(returnErr, errIntegrationSharedStateWritten)
+		}
+	}()
 	directory, path, err := serverRebaseProofPath(repository, request)
 	if err != nil {
 		return err
@@ -146,7 +155,11 @@ func (registry *Registry) prepareServerRebaseProof(
 		}
 	}
 	isolated, err := registry.preflightRebaseSequence(ctx, repository, request, directory, commits, patches)
+	sharedStateWritten = isolated.sharedStateWritten
 	if err != nil {
+		if sharedStateWritten {
+			return err
+		}
 		return errors.Join(err, application.ErrIntegrationMutationNotStarted)
 	}
 	if isolated.conflicted {

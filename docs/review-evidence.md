@@ -78,14 +78,16 @@ it validates and backfills pages of 64.
   dependency readiness, and only the durable `ready` owner posture permits a
   mutation or conflict continuation.
 - Integration inspects local and worktree Git configuration without includes
-  before mutation. Candidate cleanliness and operator diff summaries use raw
-  commit trees, index trees, bounded blob reads, and rooted no-follow worktree
-  comparison rather than Git status or content diff in the worker-controlled
-  repository. Dynamically named filters, text converters, external diff
-  commands, info attributes, and configuration races therefore cannot execute
-  during candidate inspection. Repository-aware Git children still receive
-  fixed service-owned configuration; the generic bounded process seam receives
-  its caller's exact argument vector.
+  before mutation. Candidate cleanliness uses a copied index, empty controlled
+  configuration, copied repository excludes, and recursively bounded gitlink
+  inspection. Safe built-in text, EOL, and ident normalization remains
+  reproducible, while command-backed conversion attributes remain unknown.
+  Operator diff summaries use metadata-first tree reads and retain content only
+  within explicit detail bounds. Dynamically named filters, text converters,
+  external diff commands, info attributes, and configuration races therefore
+  cannot execute during candidate inspection. Repository-aware Git children
+  still receive fixed service-owned configuration; the generic bounded process
+  seam receives its caller's exact argument vector.
 - The real merge, rebase, or cherry-pick engine runs in an isolated
   service-owned repository. Successful result objects and their exact semantic
   proof are persisted before the shared worktree consumes them. Isolated
@@ -105,11 +107,10 @@ it validates and backfills pages of 64.
   then be safely materialized. Tree entry, per-blob, and aggregate bounds are
   enforced before compare-and-swap. Untrusted regular files are compared through
   rooted no-follow handles with size-first bounded streaming and replacement
-  detection. Existing regular files are journaled and rewritten through their
-  identity-checked authoritative inode, so writes through an already-open
-  developer descriptor remain visible in the worktree and are detected before
-  recovery evidence can retire. Additions use atomic no-replace publication;
-  deletions and existing-entry type changes refuse before target publication.
+  detection. Because E0 has no enforceable writer custody, modifications,
+  deletions, and type changes of existing entries refuse before target
+  publication. Only unchanged entries and additions using atomic no-replace
+  publication can complete automatically.
   Racing developer entries and service stages are preserved for exact restart
   reconciliation. No post-CAS Git
   checkout consumes mutable repository configuration or info attributes, so a
@@ -331,16 +332,43 @@ E0 therefore refuses modifications, removals, and type changes of existing
 worktree entries before target publication. Only unchanged entries and atomic
 no-replace additions are eligible for automatic materialization. Candidate
 cleanliness uses a copied index and repository exclude file in an empty,
-service-owned Git administration context; it streams raw tracked object
-identity without integration tree-size limits and does not expose configured
-filter or diff commands. Diff snapshots have a 64 MiB aggregate retained-byte
-bound, rename pairing uses content-identity buckets with exact verification,
-and line extents use a bounded exact edit calculation whose exhausted work is
-reported through the existing truncation signal.
+service-owned Git administration context; command-backed conversions remain
+unavailable, while safe built-in text normalization is reproduced. Gitlinks
+are recursively inspected within count and depth bounds. Diff snapshots read
+metadata before content, retain at most 64 MiB, and disclose unavailable
+per-entry detail. Rename pairing uses content-identity buckets with exact
+verification, and line extents preserve final-newline identity through a
+bounded exact edit calculation.
 
 The focused GREEN command was:
 
 ```text
 go test ./internal/git -run 'Test(MaterializationRejectsTrackedRewriteBeforePublication|MaterializationPreservesWritesThroughOpenTrackedDescriptor|Registry_(IntegrationRejectsTrackedRewriteBeforeTargetCAS|InspectCandidate.*|CandidateInspectionIgnoresRacingDynamicFilterProcess|CandidateDiffIgnoresDynamicTextConversionDriver)|CandidateWorktreeSnapshotBoundsAggregateRetainedContent|CandidateRenameMatchingHasBoundedWork|CandidateContentChange.*)$' -count=1
 ok github.com/comisai/comis-dev-crew/internal/git 24.511s
+```
+
+## Round 31 candidate and isolated-publication authority
+
+Commits `8784029` and `7e1b6f6` preserve executable RED evidence for dirty and
+nested gitlinks, safe built-in normalization, large-tree and gitlink diff
+summaries, final-newline identity, and shared-object publication before an E0
+topology refusal. The isolated engine now constructs the complete bounded
+expected and result snapshots and applies the no-existing-entry-change rule
+before any object import or durable plan publication. Once shared state may
+have been written, later errors remain unknown and never carry the
+mutation-not-started marker.
+
+Candidate status is evaluated only in the service-owned copied-index context.
+Every initialized gitlink receives the same controlled treatment recursively;
+missing, unsafe, over-depth, over-count, or otherwise unavailable nested state
+is never clean. Candidate diff summaries stream metadata for large blobs and
+gitlinks, preserve collision-resistant identities, and mark bounded-away line
+detail explicitly instead of failing the whole summary. Final newline bytes
+remain part of each bounded logical line.
+
+The focused GREEN command passed in 33.514 seconds:
+
+```text
+go test ./internal/git -run 'TestRegistry_(InspectCandidateRejectsDirtyGitlinks|InspectCandidateRejectsDirtyNestedGitlink|InspectCandidateGitlinkIgnoresWorkerCommandConfiguration|InspectCandidateSupportsBuiltInAttributes|InspectCandidateReportsDirtyBuiltInNormalization|InspectCandidateDiffAcceptsLargeTreesAndGitlinks|RejectsUnsupportedTopologyBeforeSharedObjectPublication|InspectCandidatePreservesStatusCleanlinessSemantics|CandidateInspectionIgnoresRacingDynamicFilterProcess|CandidateDiffIgnoresDynamicTextConversionDriver|AppliesEveryReviewedIntegrationStrategyAndReplays)|TestCandidate(ContentChangePreservesFinalNewlineIdentity|WorktreeSnapshotBoundsAggregateRetainedContent|RenameMatchingHasBoundedWork|ContentChange.*)' -count=1
+ok github.com/comisai/comis-dev-crew/internal/git 33.514s
 ```

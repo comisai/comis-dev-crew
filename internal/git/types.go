@@ -121,11 +121,12 @@ type CandidateDiffRequest struct {
 // CandidateFileChange is one changed path with its numeric extent. A binary
 // change carries no counts, so it is marked rather than reported as empty.
 type CandidateFileChange struct {
-	Path         string `json:"path"`
-	PreviousPath string `json:"previousPath,omitempty"`
-	Added        int    `json:"added"`
-	Deleted      int    `json:"deleted"`
-	Binary       bool   `json:"binary,omitempty"`
+	Path            string `json:"path"`
+	PreviousPath    string `json:"previousPath,omitempty"`
+	Added           int    `json:"added"`
+	Deleted         int    `json:"deleted"`
+	Binary          bool   `json:"binary,omitempty"`
+	DetailTruncated bool   `json:"detailTruncated,omitempty"`
 }
 
 // CandidateDiffTotals is the bounded extent of one change set.
@@ -146,9 +147,8 @@ type CandidateDiff struct {
 	Uncommitted       []CandidateFileChange `json:"uncommitted,omitempty"`
 	CommittedTotals   CandidateDiffTotals   `json:"committedTotals"`
 	UncommittedTotals CandidateDiffTotals   `json:"uncommittedTotals"`
-	// FileListTruncated states that the change set was larger than this read
-	// bounds. The totals still describe the listed rows, so a truncated listing
-	// never reads as a complete one.
+	// FileListTruncated states that the change set or numeric detail exceeded
+	// this read's bounds. The listed rows disclose missing detail individually.
 	FileListTruncated bool `json:"fileListTruncated,omitempty"`
 }
 
