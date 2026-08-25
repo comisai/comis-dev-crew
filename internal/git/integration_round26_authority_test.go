@@ -174,9 +174,10 @@ for argument in "$@"; do
   if [ "$argument" = read-tree ]; then read_tree=true; fi
 done
 if [ "$read_tree" = true ] && [ "$GIT_WORK_TREE" = "$target" ] && [ ! -f "$armed" ]; then
-  : > "$armed"
-  "$real" --no-optional-locks -C "$target" config --local filter.reviewrace.smudge "$filter" || exit $?
-  printf 'filtered.txt filter=reviewrace\n' > "$common/info/attributes" || exit $?
+	  : > "$armed"
+	  "$real" --no-optional-locks -C "$target" config --local filter.reviewrace.smudge "$filter" || exit $?
+	  "$real" --no-optional-locks -C "$target" config --local filter.reviewrace.process "$filter" || exit $?
+	  printf 'filtered.txt filter=reviewrace\n' > "$common/info/attributes" || exit $?
 fi
 exec "$real" "$@"
 `, quote(fixture.repository.gitExecutable), quote(fixture.target.CanonicalPath), quote(commonDirectory),
