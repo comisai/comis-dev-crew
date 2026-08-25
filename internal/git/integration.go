@@ -41,8 +41,15 @@ func (registry *Registry) ApplyIntegrationCandidate(
 	if err := registry.preflightIntegrationWorktrees(ctx, request); err != nil {
 		return application.IntegrationAdapterResult{}, err
 	}
+	pristine, replayStateErr := registry.integrationReplayStatePristine(ctx, repository, request)
 	if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
+		if replayStateErr != nil || !pristine {
+			return application.IntegrationAdapterResult{}, errors.Join(err, replayStateErr)
+		}
 		return application.IntegrationAdapterResult{}, errors.Join(err, application.ErrIntegrationMutationNotStarted)
+	}
+	if replayStateErr != nil {
+		return application.IntegrationAdapterResult{}, replayStateErr
 	}
 	appliedRef := integrationReceiptRef("applied", request)
 	conflictedRef := integrationReceiptRef("conflicted", request)
@@ -304,19 +311,6 @@ func (registry *Registry) validateIntegrationMutationDeadline(
 	return nil
 }
 
-type integrationReceiptKind uint8
-
-const (
-	integrationReceiptAbsent integrationReceiptKind = iota
-	integrationReceiptDirect
-	integrationReceiptSymbolic
-)
-
-type inspectedIntegrationReceipt struct {
-	kind  integrationReceiptKind
-	value string
-}
-
 func (registry *Registry) inspectIntegrationReceipt(
 	ctx context.Context,
 	worktreePath string,
@@ -366,6 +360,9 @@ func (registry *Registry) replayAppliedIntegration(
 	if err != nil || !found {
 		return application.IntegrationAdapterResult{}, false, err
 	}
+	if err := registry.validateAppliedIntegrationReceiptFamily(ctx, request, head); err != nil {
+		return application.IntegrationAdapterResult{}, false, err
+	}
 	if request.Strategy == application.IntegrationRebase {
 		if err := registry.requireServerRebaseProof(ctx, repository, request, head); err != nil {
 			return application.IntegrationAdapterResult{}, false, err
@@ -396,6 +393,9 @@ func (registry *Registry) replayConflictedIntegration(
 	}
 	if head != request.Target.ExpectedHead {
 		return application.IntegrationAdapterResult{}, false, errors.New("apply integration candidate: conflict receipt head differs")
+	}
+	if err := registry.validateConflictedIntegrationReceiptFamily(ctx, request); err != nil {
+		return application.IntegrationAdapterResult{}, false, err
 	}
 	if request.Strategy == application.IntegrationRebase {
 		if _, err := registry.integrationTargetRef(ctx, request); err != nil {

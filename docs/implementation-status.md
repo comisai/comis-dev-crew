@@ -737,9 +737,11 @@ when no exact outcome receipt exists. Rebase records the exact target branch
 before mutation, so an exact operation replay can reconstruct a previously
 authorized interrupted conflict or clean completion only when the origin,
 sequencer, Git-updated terminal proof, target, and current head all agree; the
-separate resolution operation applies the same checks if `rebase --continue`
-settled before its receipt was written. Every ambiguous or
-altered posture preserves the worktree and refuses recovery. Completion updates
+separate resolution operation binds the staged resolution and validated
+sequencer order, completes the remaining sequence in a service-owned isolated
+engine, and adopts only the proved result through the durable target
+compare-and-swap. It never executes the worker-writable shared sequencer. Every
+ambiguous or altered posture preserves the worktree and refuses recovery. Completion updates
 the application row and transitions the existing operation-ledger claim in one
 transaction. Accepted evidence expiry blocks a new mutation without invalidating
 a result already completed.
@@ -777,8 +779,8 @@ optional `recoveryOperationId` names either the immutable conflicted receipt or
 an exact pending post-compare-and-swap materialization transition, and the
 authenticated call supplies a separate durable operation with fresh evidence.
 The service revalidates the original target ref and the exact sequencer command
-order and metadata before continuing a rebase. Pending materialization recovery
-requires the immutable expected/result/tree/index proof and a writer-free,
+order and metadata before reconstructing recovery in isolation. Pending
+materialization recovery requires the immutable expected/result/tree/index proof and a writer-free,
 unedited worktree before completing the transition; changed or incomplete state
 is preserved and refused.
 The operator CLI reaches the identical boundary through `initiative integrate`

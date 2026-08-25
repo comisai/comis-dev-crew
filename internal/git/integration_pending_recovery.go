@@ -60,19 +60,12 @@ func (registry *Registry) resumePendingIntegrationMaterialization(
 		return application.IntegrationAdapterResult{}, true, err
 	}
 	if request.Strategy == application.IntegrationRebase {
-		if err := registry.authorizePendingMaterializationRecovery(ctx, request, resultingHead); err != nil {
-			return application.IntegrationAdapterResult{}, true, err
-		}
 		if err := registry.promoteCompletedRebaseProof(ctx, request, resultingHead); err != nil {
 			return application.IntegrationAdapterResult{}, true, err
 		}
 		if err := registry.retireIntegrationRebaseProof(ctx, request, resultingHead); err != nil {
 			return application.IntegrationAdapterResult{}, true, err
 		}
-	}
-	if err := registry.validateIntegrationMutationDeadline(request); err != nil {
-		return application.IntegrationAdapterResult{}, true,
-			errors.New("apply integration candidate: pending materialization completed after authorization expired")
 	}
 	if err := registry.createIntegrationReceipt(
 		ctx, repository, integrationReceiptRef("applied", request), resultingHead,

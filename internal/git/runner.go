@@ -211,7 +211,7 @@ func executeGitWithEnvironmentInputAndOutputLimit(
 	if err := ctx.Err(); err != nil {
 		return nil, -1, err
 	}
-	command := exec.CommandContext(ctx, executable, arguments...)
+	command := exec.CommandContext(ctx, executable, hermeticGitArguments(arguments)...)
 	command.Env = []string{
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_NOSYSTEM=1",
@@ -261,6 +261,27 @@ func executeGitWithEnvironmentInputAndOutputLimit(
 		return nil, -1, fmt.Errorf("git command execution failed: %w", errGitInfrastructure)
 	}
 	return append([]byte(nil), stdout.buffer.Bytes()...), 0, nil
+}
+
+func hermeticGitArguments(arguments []string) []string {
+	configuration := []string{
+		"-c", "core.fsmonitor=false",
+		"-c", "core.hooksPath=/dev/null",
+		"-c", "core.attributesFile=/dev/null",
+		"-c", "core.editor=/usr/bin/false",
+		"-c", "sequence.editor=/usr/bin/false",
+		"-c", "core.sshCommand=/usr/bin/false",
+		"-c", "credential.helper=",
+		"-c", "diff.external=",
+		"-c", "interactive.diffFilter=",
+		"-c", "commit.gpgSign=false",
+		"-c", "tag.gpgSign=false",
+		"-c", "gpg.program=/usr/bin/false",
+		"-c", "gpg.ssh.program=/usr/bin/false",
+		"-c", "gc.auto=0",
+		"-c", "maintenance.auto=false",
+	}
+	return append(configuration, arguments...)
 }
 
 func classifyGitChildFailure(exitCode int, stderr []byte) gitChildFailureKind {

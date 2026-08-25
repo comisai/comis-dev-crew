@@ -64,6 +64,14 @@ func (registry *Registry) resumeRebaseIntegration(
 	if resultingHead, completedErr := registry.completedRebaseContinuation(ctx, request, targetRef); completedErr == nil {
 		return registry.finalizeRecoveredRebase(ctx, request, repository, targetRef, resultingHead)
 	}
+	if proof, proofFound, proofErr := registry.serverRebaseProof(repository, request); proofErr != nil {
+		return application.IntegrationAdapterResult{}, proofErr
+	} else if proofFound && proof.resultingHead != "" {
+		if err := registry.applyIsolatedRebaseResult(ctx, request, targetRef, proof.resultingHead); err != nil {
+			return application.IntegrationAdapterResult{}, withoutIntegrationMutationNotStarted(err)
+		}
+		return registry.finalizeRecoveredRebase(ctx, request, repository, targetRef, proof.resultingHead)
+	}
 	conflicts, err := registry.validateRecoverableRebase(ctx, request, targetRef)
 	if err != nil {
 		return application.IntegrationAdapterResult{}, err
@@ -89,26 +97,12 @@ func (registry *Registry) resumeRebaseIntegration(
 	if err := registry.validateRebaseSequencerAuthority(ctx, repository, request); err != nil {
 		return application.IntegrationAdapterResult{}, errors.Join(err, application.ErrIntegrationMutationNotStarted)
 	}
-	configuration := []string{
-		"--no-optional-locks", "-C", request.Target.WorktreePath,
-		"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false",
-		"-c", "core.editor=/usr/bin/true", "-c", "sequence.editor=/usr/bin/true",
-		"-c", "gc.auto=0", "-c", "maintenance.auto=false",
-		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
-	}
-	if _, err := runGitBytes(ctx, registry.gitExecutable, append(configuration, "rebase", "--continue")...); err != nil {
-		conflicts, conflictErr := registry.integrationConflictPaths(ctx, request.Target.WorktreePath)
-		if conflictErr == nil && len(conflicts) != 0 {
-			if proofErr := registry.recordServerRebaseConflict(ctx, repository, request); proofErr != nil {
-				return application.IntegrationAdapterResult{}, proofErr
-			}
-			return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: rebase continuation produced unresolved conflicts")
-		}
-		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: rebase continuation failed without attributable conflicts")
-	}
-	resultingHead, err := registry.completeServiceRebase(ctx, repository, request)
+	resultingHead, err := registry.completeRebaseRecoveryInIsolation(ctx, repository, request)
 	if err != nil {
 		return application.IntegrationAdapterResult{}, err
+	}
+	if err := registry.applyIsolatedRebaseResult(ctx, request, targetRef, resultingHead); err != nil {
+		return application.IntegrationAdapterResult{}, withoutIntegrationMutationNotStarted(err)
 	}
 	return registry.finalizeRecoveredRebase(ctx, request, repository, targetRef, resultingHead)
 }

@@ -28,6 +28,8 @@ type integrationMaterializationTransition struct {
 	CandidateHead       string                          `json:"candidateHead"`
 	ResultingHead       string                          `json:"resultingHead"`
 	ResultingTree       string                          `json:"resultingTree"`
+	RecoveryHead        string                          `json:"recoveryHead,omitempty"`
+	RecoveryIndexDigest string                          `json:"recoveryIndexDigest,omitempty"`
 }
 
 func (registry *Registry) materializeIntegrationResult(
@@ -53,7 +55,11 @@ func (registry *Registry) materializeIntegrationResult(
 			return errors.New("apply integration candidate: materialization transition differs")
 		}
 	} else {
-		transition, err = registry.prepareIntegrationMaterialization(ctx, request, targetRef, resultingHead)
+		if request.Strategy == application.IntegrationRebase && request.RecoveryOperationID != "" {
+			transition, err = registry.prepareRecoveryIntegrationMaterialization(ctx, request, targetRef, resultingHead)
+		} else {
+			transition, err = registry.prepareIntegrationMaterialization(ctx, request, targetRef, resultingHead)
+		}
 		if err != nil {
 			return err
 		}
@@ -198,6 +204,14 @@ func (registry *Registry) advanceIntegrationMaterialization(
 		resultingTree != transition.ResultingTree {
 		return errors.New("apply integration candidate: materialization tree proof differs")
 	}
+	recoveryTransition := transition.State == "recovery"
+	if recoveryTransition {
+		restored, restoreErr := registry.restoreRecoveryMaterializationBase(ctx, request, transition)
+		if restoreErr != nil {
+			return withoutIntegrationMutationNotStarted(restoreErr)
+		}
+		transition = restored
+	}
 	branchHead, err := registry.integrationBranchHead(ctx, request.Target.WorktreePath, transition.TargetRef)
 	if err != nil {
 		return errors.New("apply integration candidate: materialization target is unavailable")
@@ -207,9 +221,15 @@ func (registry *Registry) advanceIntegrationMaterialization(
 			return err
 		}
 		if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
+			if recoveryTransition {
+				return withoutIntegrationMutationNotStarted(err)
+			}
 			return errors.Join(err, application.ErrIntegrationMutationNotStarted)
 		}
 		if err := registry.validateIntegrationMutationDeadline(request); err != nil {
+			if recoveryTransition {
+				return withoutIntegrationMutationNotStarted(err)
+			}
 			return err
 		}
 		if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
@@ -377,13 +397,25 @@ func integrationMaterializationMatches(
 	targetRef string,
 	resultingHead string,
 ) bool {
-	return transition.Version == 1 && transition.State == "pending" &&
+	validState := transition.Version == 1 && transition.State == "pending" &&
+		transition.RecoveryHead == "" && transition.RecoveryIndexDigest == "" ||
+		transition.Version == 2 && transition.State == "recovery" && request.RecoveryOperationID != "" &&
+			gitRevisionPattern.MatchString(transition.RecoveryHead) && len(transition.RecoveryIndexDigest) == 64 &&
+			lowerHex(transition.RecoveryIndexDigest)
+	return validState &&
 		transition.OperationID == request.OperationID && transition.Strategy == request.Strategy &&
 		transition.TargetRef == targetRef && transition.ExpectedHead == request.Target.ExpectedHead &&
 		transition.CandidateBase == request.Candidate.BaseRevision && transition.CandidateHead == request.Candidate.HeadRevision &&
 		transition.ResultingHead == resultingHead && gitRevisionPattern.MatchString(transition.ExpectedTree) &&
 		gitRevisionPattern.MatchString(transition.ResultingTree) && len(transition.ExpectedIndexDigest) == 64 &&
 		lowerHex(transition.ExpectedIndexDigest)
+}
+
+func withoutIntegrationMutationNotStarted(err error) error {
+	if err == nil || !errors.Is(err, application.ErrIntegrationMutationNotStarted) {
+		return err
+	}
+	return errors.New("apply integration candidate: mutation outcome requires reconciliation")
 }
 
 func publishIntegrationMaterialization(

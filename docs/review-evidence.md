@@ -80,7 +80,10 @@ it validates and backfills pages of 64.
 - Integration inspects local and worktree Git configuration without includes
   before status or mutation. It rejects hooks, merge drivers, filters, diff
   commands, editors, credential helpers, and file-system monitors, as well as
-  unsafe attributes.
+  unsafe attributes. Every repository-aware Git child also receives fixed
+  service-owned command overrides, so a configuration race cannot activate a
+  hook, file-system monitor, editor, signer, helper, diff command, or automatic
+  maintenance route after inspection.
 - The real merge, rebase, or cherry-pick engine runs in an isolated
   service-owned repository. Successful result objects and their exact semantic
   proof are persisted before the shared worktree consumes them. Isolated
@@ -109,11 +112,19 @@ it validates and backfills pages of 64.
   the immutable original transition, the advanced target, and the unchanged
   expected index/worktree. A pristine published plan or rebase proof with no
   transition or receipt is positively settled as mutation-not-started.
-- Rebase continuation consumes only a rooted, regular-file sequencer whose
+- Rebase recovery validates a rooted, regular-file sequencer whose
   completed and remaining picks, stopped commit, target/original heads, proof
   branch, and counters exactly match the server proof. Executable, ref-updating,
   dropped, reordered, extra, unknown, symbolic, or dangling metadata refuses
-  before `rebase --continue`.
+  before recovery. The validated shared sequencer is never executed: the
+  resolved tree and remaining ordered commits complete in a new service-owned
+  isolated engine, and only the proved result enters the durable
+  compare-and-swap/materialization transition.
+- Mutable policy refusal first classifies the complete receipt, proof,
+  transition, target, worktree, and sequencer posture. Any mutation evidence
+  preserves reconciliation authority and cannot be mislabeled as an aborted
+  pre-mutation attempt. Applied replay validates every sibling receipt before
+  accepting the durable outcome.
 - Pre-mutation policy and topology refusals settle as `aborted`, distinct from
   candidate evidence invalidation, so the exact reservation is released
   without claiming the evidence changed. An aborted recovery releases conflict
@@ -194,4 +205,25 @@ The same named regressions are GREEN on the fixed tree:
 ```text
 ok github.com/comisai/comis-dev-crew/internal/git
 ok github.com/comisai/comis-dev-crew/internal/store/sqlite
+```
+
+The Round 25 behavioral regressions are preserved in test-only commit
+`bac6ebcdc43d9467e304efd7442a116fedfabbd8`. The exact RED commands were:
+
+```text
+go test ./internal/git -run 'TestRegistry_(MutatedReplayPolicyRefusalIsNeverPreMutation|AppliedReplayRejectsContradictorySiblingReceipts|CandidateInspectionIgnoresRacingFSMonitor|RebaseRecoveryNeverConsumesReplacedSharedSequencer|PendingRecoverySettlesAfterPostMaterializationExpiry)' -count=1
+go test ./internal/git -run 'TestRegistry_PendingRecoverySettlesAfterPostMaterializationExpiry' -count=1
+```
+
+Before implementation, mutated applied and pending replays returned the
+mutation-not-started marker, contradictory sibling receipts replayed as
+applied, a racing file-system monitor executed, shared sequencer replacement
+reached `rebase --continue`, and post-materialization expiry stranded merge,
+cherry-pick, and rebase recovery instead of settling their exact results.
+The Round 25 regressions and the existing successful recovery contracts are
+GREEN on the fixed tree:
+
+```text
+go test ./internal/git -run 'TestRegistry_(MutatedReplayPolicyRefusalIsNeverPreMutation|AppliedReplayRejectsContradictorySiblingReceipts|CandidateInspectionIgnoresRacingFSMonitor|RebaseRecoveryNeverConsumesReplacedSharedSequencer|PendingRecoverySettlesAfterPostMaterializationExpiry|RecoversResolvedRebaseConflictAndReattachesExactTarget|ReconcilesCompletedRecoveryBeforeRebasedReceipt|ReceiptOnlyRecoveryRequiresOriginalReceiptAuthority)' -count=1
+ok github.com/comisai/comis-dev-crew/internal/git 91.920s
 ```

@@ -53,13 +53,7 @@ func (registry *Registry) applyIsolatedRebaseResult(
 	if err := registry.materializeIntegrationResult(ctx, request, targetRef, resultingHead); err != nil {
 		return err
 	}
-	if err := registry.authorizeRebaseFinalization(ctx, request, resultingHead); err != nil {
-		return err
-	}
 	if err := registry.promoteCompletedRebaseProof(ctx, request, resultingHead); err != nil {
-		return err
-	}
-	if err := registry.authorizeRebaseFinalization(ctx, request, resultingHead); err != nil {
 		return err
 	}
 	return registry.retireIntegrationRebaseProof(ctx, request, resultingHead)

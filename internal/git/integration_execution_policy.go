@@ -114,7 +114,7 @@ func (registry *Registry) rejectCommandCapableGitAttributes(ctx context.Context,
 	output, exitCode, err := executeGitWithEnvironmentInputAndOutputLimit(
 		ctx, registry.gitExecutable, nil, paths, maximumRebasePatchBytes,
 		"--no-optional-locks", "-C", worktree, "-c", "core.attributesFile=/dev/null",
-		"check-attr", "-z", "--stdin", "merge", "filter",
+		"check-attr", "-z", "--stdin", "merge", "filter", "diff",
 	)
 	if err != nil || exitCode != 0 {
 		return errors.New("apply integration candidate: repository attributes are unavailable")
@@ -131,6 +131,9 @@ func (registry *Registry) rejectCommandCapableGitAttributes(ctx context.Context,
 		if attribute == "merge" && value != "unspecified" && value != "unset" && value != "set" &&
 			value != "text" && value != "binary" && value != "union" {
 			return errors.New("apply integration candidate: repository attributes select a custom merge driver")
+		}
+		if attribute == "diff" && value != "unspecified" && value != "unset" && value != "set" {
+			return errors.New("apply integration candidate: repository attributes select a custom diff driver")
 		}
 	}
 	return nil
