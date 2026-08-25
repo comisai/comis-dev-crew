@@ -85,10 +85,7 @@ func TestRegistry_RecordsAndReplaysExactConflictPaths(t *testing.T) {
 			targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "fixture.txt", "integration\n")
 			request := fixture.request("integration-conflict-"+string(strategy), strategy, candidateHead, targetHead)
 
-			result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
-			if err != nil {
-				t.Fatalf("ApplyIntegrationCandidate(conflict) error = %v", err)
-			}
+			result := stagePreviouslyAuthorizedRebaseConflict(t, fixture, request)
 			if result.Outcome != application.IntegrationConflicted || result.PreviousHead != targetHead ||
 				result.ResultingHead != "" || !reflect.DeepEqual(result.ConflictPaths, []string{"fixture.txt"}) {
 				t.Fatalf("conflict result = %#v", result)
@@ -155,10 +152,7 @@ func TestRegistry_RebaseConflictReplayRejectsAlteredGitState(t *testing.T) {
 				candidateHead,
 				targetHead,
 			)
-			result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
-			if err != nil || result.Outcome != application.IntegrationConflicted {
-				t.Fatalf("ApplyIntegrationCandidate(conflict) = %#v, %v", result, err)
-			}
+			stagePreviouslyAuthorizedRebaseConflict(t, fixture, request)
 			test.tamper(t, fixture, targetHead)
 			if _, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request); err == nil {
 				t.Fatal("ApplyIntegrationCandidate(altered replay) error = nil")

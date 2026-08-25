@@ -79,6 +79,16 @@ func (registry *Registry) runRebaseIntegration(
 	if err := registry.prepareServerRebaseProof(ctx, repository, request); err != nil {
 		return errors.Join(err, application.ErrIntegrationMutationNotStarted)
 	}
+	proof, found, err := registry.serverRebaseProof(repository, request)
+	if err != nil {
+		return errors.Join(err, application.ErrIntegrationMutationNotStarted)
+	}
+	if !found || proof.resultingHead == "" {
+		return errors.Join(
+			errors.New("apply integration candidate: rebase conflicts in isolation"),
+			application.ErrIntegrationMutationNotStarted,
+		)
+	}
 	mutationAt := registry.clock().UTC()
 	if mutationAt.IsZero() || !mutationAt.Before(request.EvidenceExpiresAt) {
 		return errors.Join(
@@ -95,52 +105,7 @@ func (registry *Registry) runRebaseIntegration(
 	if err := registry.recordIntegrationTargetRef(ctx, request, targetRef); err != nil {
 		return err
 	}
-	if proof, found, err := registry.serverRebaseProof(repository, request); err != nil {
-		return err
-	} else if found && proof.resultingHead != "" {
-		return registry.applyIsolatedRebaseResult(ctx, request, targetRef, proof.resultingHead)
-	}
-	if err := registry.recordIntegrationRebaseProof(ctx, request); err != nil {
-		return err
-	}
-	configuration := []string{
-		"--no-optional-locks", "-C", request.Target.WorktreePath,
-		"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false",
-		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
-	}
-	if _, err := runGitBytes(ctx, registry.gitExecutable, append(configuration,
-		"rebase", "--no-autostash", "--no-stat", "--reapply-cherry-picks", "--keep-empty",
-		"--committer-date-is-author-date",
-		"--onto", request.Target.ExpectedHead,
-		request.Candidate.BaseRevision,
-		strings.TrimPrefix(integrationRebaseProofRef(request), "refs/heads/"))...); err != nil {
-		return err
-	}
-	resultingHead, err := registry.completeServiceRebase(ctx, repository, request)
-	if err != nil {
-		return err
-	}
-	if err := registry.authorizeRebaseFinalization(ctx, request, resultingHead); err != nil {
-		return err
-	}
-	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-		"update-ref", targetRef, resultingHead, request.Target.ExpectedHead); err != nil {
-		return errors.New("apply integration candidate: target branch changed during rebase")
-	}
-	if err := registry.authorizeRebaseFinalization(ctx, request, resultingHead); err != nil {
-		return err
-	}
-	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-		"symbolic-ref", "HEAD", targetRef); err != nil {
-		return errors.New("apply integration candidate: rebased target could not be reattached")
-	}
-	if err := registry.authorizeRebaseFinalization(ctx, request, resultingHead); err != nil {
-		return err
-	}
-	if err := registry.retireIntegrationRebaseProof(ctx, request, resultingHead); err != nil {
-		return err
-	}
-	return nil
+	return registry.applyIsolatedRebaseResult(ctx, request, targetRef, proof.resultingHead)
 }
 
 func (registry *Registry) prepareServerRebaseProof(
@@ -178,13 +143,14 @@ func (registry *Registry) prepareServerRebaseProof(
 	if err != nil {
 		return errors.Join(err, application.ErrIntegrationMutationNotStarted)
 	}
+	if isolated.conflicted {
+		return errors.New("apply integration candidate: rebase conflicts in isolation")
+	}
 	want := serverRebaseProof{
 		operationID: request.OperationID, candidateCommits: commits, candidatePatches: patches,
 	}
-	if !isolated.conflicted {
-		want.resultingHead = isolated.head
-		want.resultCommits = append([]string(nil), isolated.commits...)
-	}
+	want.resultingHead = isolated.head
+	want.resultCommits = append([]string(nil), isolated.commits...)
 	existing, found, err := readServerRebaseProof(path)
 	if err != nil {
 		return err

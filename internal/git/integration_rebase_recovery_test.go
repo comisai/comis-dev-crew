@@ -21,10 +21,7 @@ func TestRegistry_RecoversResolvedRebaseConflictAndReattachesExactTarget(t *test
 		t, fixture, fixture.target.CanonicalPath, "fixture.txt", "integration\n",
 	)
 	request := fixture.request("integration-rebase-conflict", application.IntegrationRebase, candidateHead, targetHead)
-	conflicted, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
-	if err != nil || conflicted.Outcome != application.IntegrationConflicted {
-		t.Fatalf("ApplyIntegrationCandidate(conflict) = %#v, %v", conflicted, err)
-	}
+	stagePreviouslyAuthorizedRebaseConflict(t, fixture, request)
 	if err := os.WriteFile(filepath.Join(fixture.target.CanonicalPath, "fixture.txt"), []byte("resolved\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -207,9 +204,7 @@ func TestRegistry_ReconcilesCompletedRecoveryBeforeRebasedReceipt(t *testing.T) 
 	candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "fixture.txt", "candidate\n")
 	targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "fixture.txt", "integration\n")
 	request := fixture.request("integration-rebase-completed-conflict", application.IntegrationRebase, candidateHead, targetHead)
-	if result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request); err != nil || result.Outcome != application.IntegrationConflicted {
-		t.Fatalf("ApplyIntegrationCandidate(conflict) = %#v, %v", result, err)
-	}
+	stagePreviouslyAuthorizedRebaseConflict(t, fixture, request)
 	if err := os.WriteFile(filepath.Join(fixture.target.CanonicalPath, "fixture.txt"), []byte("resolved\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -288,9 +283,7 @@ func TestRegistry_RebaseRecoveryRefusesUnresolvedOrChangedTarget(t *testing.T) {
 			candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "fixture.txt", "candidate\n")
 			targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "fixture.txt", "integration\n")
 			request := fixture.request("integration-rebase-refusal", application.IntegrationRebase, candidateHead, targetHead)
-			if result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request); err != nil || result.Outcome != application.IntegrationConflicted {
-				t.Fatalf("ApplyIntegrationCandidate(conflict) = %#v, %v", result, err)
-			}
+			stagePreviouslyAuthorizedRebaseConflict(t, fixture, request)
 			if test.mutateState != nil {
 				test.mutateState(t, fixture, candidateHead, targetHead)
 			}
@@ -617,9 +610,7 @@ func TestRegistry_RebaseRecoveryRejectsUnverifiableCompletion(t *testing.T) {
 			candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "fixture.txt", "candidate\n")
 			targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "fixture.txt", "integration\n")
 			request := fixture.request("integration-rebase-unverifiable", application.IntegrationRebase, candidateHead, targetHead)
-			if result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request); err != nil || result.Outcome != application.IntegrationConflicted {
-				t.Fatalf("ApplyIntegrationCandidate(conflict) = %#v, %v", result, err)
-			}
+			stagePreviouslyAuthorizedRebaseConflict(t, fixture, request)
 			if err := os.WriteFile(filepath.Join(fixture.target.CanonicalPath, "fixture.txt"), []byte("resolved\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -654,9 +645,7 @@ func TestRegistry_RebaseRecoveryRefusesRepointedWorktreeBeforeMutation(t *testin
 	candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath, "fixture.txt", "candidate\n")
 	targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "fixture.txt", "integration\n")
 	request := fixture.request("integration-rebase-repointed", application.IntegrationRebase, candidateHead, targetHead)
-	if result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request); err != nil || result.Outcome != application.IntegrationConflicted {
-		t.Fatalf("ApplyIntegrationCandidate(conflict) = %#v, %v", result, err)
-	}
+	stagePreviouslyAuthorizedRebaseConflict(t, fixture, request)
 	if err := os.WriteFile(filepath.Join(fixture.target.CanonicalPath, "fixture.txt"), []byte("resolved\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -41,13 +41,11 @@ func (registry *Registry) preflightRebasePatches(
 				"reset", "--hard", request.Candidate.HeadRevision); err != nil {
 				return errors.New("apply integration candidate: isolated rebase checkout is unavailable")
 			}
-			arguments := []string{
-				"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false",
-				"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
+			arguments := append(isolatedIntegrationMutationConfig(),
 				"rebase", "--no-autostash", "--no-stat", "--reapply-cherry-picks", "--keep-empty",
 				"--committer-date-is-author-date", "--onto", request.Target.ExpectedHead,
 				request.Candidate.BaseRevision, strings.TrimPrefix(branch, "refs/heads/"),
-			}
+			)
 			_, exitCode, err := executeGitWithEnvironmentAndOutputLimit(
 				ctx, registry.gitExecutable, &workspace, maximumGitOutputBytes, arguments...,
 			)

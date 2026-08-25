@@ -20,6 +20,30 @@ ApplyIntegrationCandidate(interrupted conflict) = application.IntegrationAdapter
 The implementation begins at `813cbf566d0ac2ff3d2feeef9b7db344892d1f90`.
 The same named command is the focused GREEN replay on the final tree.
 
+The distinct completed-before-receipt regression was reconstructed by applying
+`TestRegistry_ReconcilesCompletedRebaseBeforeConflictReceipt` from immutable
+test commit `5f68a2e03c8ef6f07478c6d913c3856f5b494e83`, together with its inert Git
+fixture helper, to the implementation's immutable pre-fix parent
+`ca1e697c1d30fe163eceac4ecaddae798b832f24`. Its exact command was:
+
+```text
+go test ./internal/git -run '^TestRegistry_ReconcilesCompletedRebaseBeforeConflictReceipt$' -count=1
+```
+
+The pre-fix result was RED:
+
+```text
+ApplyIntegrationCandidate(completed before receipt) = application.IntegrationAdapterResult{Outcome:"", PreviousHead:"", ResultingHead:"", ConflictPaths:[]string(nil)}, apply integration candidate: target worktree is unavailable
+```
+
+Applying the complete test-only diff to implementation commit
+`813cbf566d0ac2ff3d2feeef9b7db344892d1f90` and running the same exact command
+returned GREEN:
+
+```text
+ok github.com/comisai/comis-dev-crew/internal/git
+```
+
 The dangling symbolic-receipt fix is
 `8c1132fa8d5e763fa46fdc77bc2b539cf66a3080`; its RED command was:
 
@@ -60,14 +84,21 @@ it validates and backfills pages of 64.
 - The real merge, rebase, or cherry-pick engine runs in an isolated
   service-owned repository. Successful result objects and their exact semantic
   proof are persisted before the shared worktree consumes them. Isolated
-  conflicts refuse without shared mutation. Loose objects are content-validated
-  and copied independently onto the destination filesystem before atomic
-  publication.
+  conflicts for every strategy refuse without proof-ref, receipt, index,
+  worktree, or target-ref mutation. Automatic Git maintenance and object
+  packing are disabled in every isolated engine. Loose objects are
+  content-validated and copied independently onto the destination filesystem;
+  a rooted directory handle preserves the validated object-database identity
+  through exclusive temporary creation, fsync, collision checks, and atomic
+  publication even if its ambient path is replaced.
 - Shared result adoption persists the expected index, expected and result trees,
   result proof, and pending transition before the target compare-and-swap. Only
   an unchanged expected worktree can then be safely materialized; a crash after
   the compare-and-swap resumes from that transition, while developer edits and
-  divergent refs remain untouched.
+  divergent refs remain untouched. Evidence freshness and strategy-specific
+  receipts are reauthorized immediately before post-CAS index/worktree
+  materialization; expiry preserves the pending transition and expected
+  worktree for a later authorized retry.
 - Recovery validates the complete original and recovery receipt set through
   non-recursive tri-state inspection. A completed result can be reconciled
   after the target compare-and-swap. Every completion posture rechecks the
@@ -123,3 +154,16 @@ boundaries overwrote developer edits; a post-CAS retry remained stranded; an
 isolated merge conflict was rerun in the shared worktree; aborted recovery still
 blocked a corrected operation; imported objects shared source inodes and corrupt
 objects were accepted; and a dependency blocker was reported as capacity.
+
+The Round 23 behavioral regressions are preserved in test-only commit
+`2d999ca4a6c545e56c0134706a813059fbcd5ae4`. The exact RED command was:
+
+```text
+go test ./internal/git -run 'TestRegistry_(RefusesNewIsolatedRebaseConflictBeforeSharedMutation|PostCASMaterializationRequiresFreshAuthorization|ReceiptOnlyReconcilesCompletedMaterializationBeforeRebasedReceipt|IsolatedEnginesDisableAutomaticObjectPacking)|TestImportIsolatedGitObjectsHoldsDestinationAcrossSymlinkSwap' -count=1
+```
+
+Before implementation, a new isolated rebase conflict returned success,
+post-CAS expiry still materialized the result, receipt-only recovery required a
+missing rebased receipt despite an exact completed transition, destination-path
+replacement interrupted object import, and automatic isolated object packing
+made valid imports fail.

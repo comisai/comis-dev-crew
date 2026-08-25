@@ -85,10 +85,7 @@ func TestRegistry_RechecksEvidenceBeforeRebaseContinuation(t *testing.T) {
 		"fixture.txt", "integration\n")
 	request := fixture.request("integration-recovery-final-expiry", application.IntegrationRebase, candidateHead, targetHead)
 	request.EvidenceExpiresAt = now.Add(time.Minute)
-	result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
-	if err != nil || result.Outcome != application.IntegrationConflicted {
-		t.Fatalf("ApplyIntegrationCandidate(conflict) = %#v, %v", result, err)
-	}
+	stagePreviouslyAuthorizedRebaseConflict(t, fixture, request)
 	if err := os.WriteFile(filepath.Join(fixture.target.CanonicalPath, "fixture.txt"), []byte("resolved\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +96,7 @@ func TestRegistry_RechecksEvidenceBeforeRebaseContinuation(t *testing.T) {
 	recovery.OperationID = "integration-recovery-final-expiry-resume"
 	recovery.RecoveryOperationID = request.OperationID
 
-	_, err = fixture.registry.ApplyIntegrationCandidate(context.Background(), recovery)
+	_, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), recovery)
 	if !errors.Is(err, application.ErrIntegrationMutationNotStarted) {
 		t.Fatalf("ApplyIntegrationCandidate(expired recovery) error = %v", err)
 	}
@@ -304,10 +301,7 @@ func TestRegistry_RecoveryRejectsEveryUnexpectedCompletionReceipt(t *testing.T) 
 				"fixture.txt", "integration\n")
 			original := fixture.request("integration-receipts-original-"+strings.ReplaceAll(test.name, " ", "-"),
 				application.IntegrationRebase, candidateHead, targetHead)
-			result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), original)
-			if err != nil || result.Outcome != application.IntegrationConflicted {
-				t.Fatalf("ApplyIntegrationCandidate(conflict) = %#v, %v", result, err)
-			}
+			stagePreviouslyAuthorizedRebaseConflict(t, fixture, original)
 			if err := os.WriteFile(filepath.Join(fixture.target.CanonicalPath, "fixture.txt"), []byte("resolved\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}

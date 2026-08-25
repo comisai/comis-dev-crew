@@ -23,7 +23,20 @@ func importIsolatedGitObjects(source, destination string) error {
 	if !validObjectDirectory(source) || !validObjectDirectory(destination) {
 		return errors.New("apply integration candidate: isolated object directory is invalid")
 	}
-	err := filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
+	destinationIdentity, err := os.Lstat(destination)
+	if err != nil {
+		return errors.New("apply integration candidate: isolated object directory is invalid")
+	}
+	destinationRoot, err := os.OpenRoot(destination)
+	if err != nil {
+		return errors.New("apply integration candidate: isolated object directory is unavailable")
+	}
+	openedIdentity, openedErr := destinationRoot.Stat(".")
+	if openedErr != nil || !openedIdentity.IsDir() || !os.SameFile(destinationIdentity, openedIdentity) {
+		_ = destinationRoot.Close()
+		return errors.New("apply integration candidate: isolated object directory identity changed")
+	}
+	walkErr := filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -34,22 +47,19 @@ func importIsolatedGitObjects(source, destination string) error {
 		if err != nil {
 			return err
 		}
-		if err := validateLooseGitObject(path, objectID); err != nil {
+		directory, err := openObjectSubdirectory(destinationRoot, objectID[:2])
+		if err != nil {
 			return err
 		}
-		directory := filepath.Join(destination, objectID[:2])
-		if err := os.Mkdir(directory, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
-			return err
-		}
-		if !validObjectDirectory(directory) {
-			return errors.New("shared object directory is invalid")
-		}
-		return copyLooseGitObject(path, filepath.Join(directory, objectID[2:]), objectID)
+		copyErr := copyLooseGitObject(path, directory, objectID[2:], objectID)
+		return errors.Join(copyErr, directory.Close())
 	})
-	if err != nil {
+	syncErr := syncObjectRoot(destinationRoot)
+	closeErr := destinationRoot.Close()
+	if walkErr != nil || syncErr != nil || closeErr != nil {
 		return errors.New("apply integration candidate: isolated result objects could not be imported")
 	}
-	return syncDirectory(destination)
+	return nil
 }
 
 func validObjectDirectory(path string) bool {
@@ -79,9 +89,13 @@ func validateLooseGitObject(path, objectID string) error {
 	if err != nil {
 		return errors.New("loose object is unavailable")
 	}
+	defer func() { _ = file.Close() }()
+	return validateLooseGitObjectFile(file, objectID)
+}
+
+func validateLooseGitObjectFile(file *os.File, objectID string) error {
 	decompressed, err := zlib.NewReader(file)
 	if err != nil {
-		_ = file.Close()
 		return errors.New("loose object compression is invalid")
 	}
 	reader := bufio.NewReaderSize(decompressed, 256)
@@ -89,24 +103,21 @@ func validateLooseGitObject(path, objectID string) error {
 	fields := strings.Fields(strings.TrimSuffix(header, "\x00"))
 	if err != nil || len(header) > 128 || len(fields) != 2 || !validLooseObjectType(fields[0]) {
 		_ = decompressed.Close()
-		_ = file.Close()
 		return errors.New("loose object header is invalid")
 	}
 	size, err := strconv.ParseInt(fields[1], 10, 64)
 	if err != nil || size < 0 {
 		_ = decompressed.Close()
-		_ = file.Close()
 		return errors.New("loose object size is invalid")
 	}
 	digest, err := looseObjectDigest(objectID)
 	if err != nil {
 		_ = decompressed.Close()
-		_ = file.Close()
 		return err
 	}
 	_, _ = digest.Write([]byte(header))
 	written, copyErr := io.Copy(digest, io.LimitReader(reader, size+1))
-	closeErr := errors.Join(decompressed.Close(), file.Close())
+	closeErr := decompressed.Close()
 	if copyErr != nil || closeErr != nil || written != size || hex.EncodeToString(digest.Sum(nil)) != objectID {
 		return errors.New("loose object content is invalid")
 	}
@@ -145,24 +156,58 @@ func openRegularFile(path string) (*os.File, error) {
 	return file, nil
 }
 
-func copyLooseGitObject(source, target, objectID string) error {
-	if existing, err := os.Lstat(target); err == nil {
-		if !existing.Mode().IsRegular() || validateLooseGitObject(target, objectID) != nil || !sameFileBytes(source, target) {
-			return errors.New("shared object identity differs")
-		}
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
+func openObjectSubdirectory(root *os.Root, name string) (*os.Root, error) {
+	if len(name) != 2 || !lowerHex(name) {
+		return nil, errors.New("shared object directory identity is invalid")
 	}
-	temporary := target + ".importing"
-	if err := discardLooseObjectTemporary(temporary); err != nil {
-		return err
+	if err := root.Mkdir(name, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+		return nil, err
 	}
+	identity, err := root.Lstat(name)
+	if err != nil || !identity.IsDir() || identity.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("shared object directory is invalid")
+	}
+	directory, err := root.OpenRoot(name)
+	if err != nil {
+		return nil, errors.New("shared object directory is unavailable")
+	}
+	opened, err := directory.Stat(".")
+	if err != nil || !opened.IsDir() || !os.SameFile(identity, opened) {
+		_ = directory.Close()
+		return nil, errors.New("shared object directory identity changed")
+	}
+	return directory, nil
+}
+
+func copyLooseGitObject(source string, destination *os.Root, target, objectID string) error {
 	input, err := openRegularFile(source)
 	if err != nil {
 		return err
 	}
-	output, err := os.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err := validateLooseGitObjectFile(input, objectID); err != nil {
+		_ = input.Close()
+		return err
+	}
+	if _, err := input.Seek(0, io.SeekStart); err != nil {
+		_ = input.Close()
+		return errors.New("isolated object could not be reread")
+	}
+	if existing, err := destination.Lstat(target); err == nil {
+		if !existing.Mode().IsRegular() || !sameRootFileBytes(input, destination, target, objectID) {
+			_ = input.Close()
+			return errors.New("shared object identity differs")
+		}
+		return input.Close()
+	} else if !errors.Is(err, os.ErrNotExist) {
+		_ = input.Close()
+		return err
+	}
+	temporary := target + ".importing"
+	if err := discardLooseObjectTemporary(destination, temporary); err != nil {
+		_ = input.Close()
+		return err
+	}
+	output, err := destination.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		_ = input.Close()
 		return err
@@ -170,48 +215,87 @@ func copyLooseGitObject(source, target, objectID string) error {
 	_, copyErr := io.Copy(output, input)
 	syncErr := output.Sync()
 	closeErr := errors.Join(input.Close(), output.Close())
-	if copyErr != nil || syncErr != nil || closeErr != nil || validateLooseGitObject(temporary, objectID) != nil {
-		_ = os.Remove(temporary)
+	if copyErr != nil || syncErr != nil || closeErr != nil || validateRootLooseGitObject(destination, temporary, objectID) != nil {
+		_ = destination.Remove(temporary)
 		return errors.New("isolated object copy is invalid")
 	}
-	if err := os.Link(temporary, target); err != nil {
-		if !errors.Is(err, os.ErrExist) || validateLooseGitObject(target, objectID) != nil || !sameFileBytes(source, target) {
-			_ = os.Remove(temporary)
+	if err := destination.Link(temporary, target); err != nil {
+		if !errors.Is(err, os.ErrExist) || !samePathAndRootFileBytes(source, destination, target, objectID) {
+			_ = destination.Remove(temporary)
 			return errors.New("isolated object could not be published")
 		}
 	}
-	if err := syncDirectory(filepath.Dir(target)); err != nil {
-		_ = os.Remove(temporary)
+	if err := syncObjectRoot(destination); err != nil {
+		_ = destination.Remove(temporary)
 		return err
 	}
-	if err := os.Remove(temporary); err != nil {
+	if err := destination.Remove(temporary); err != nil {
 		return errors.New("isolated object temporary could not be removed")
 	}
-	return syncDirectory(filepath.Dir(target))
+	return syncObjectRoot(destination)
 }
 
-func discardLooseObjectTemporary(path string) error {
-	info, err := os.Lstat(path)
+func discardLooseObjectTemporary(root *os.Root, path string) error {
+	info, err := root.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
 		return errors.New("isolated object temporary is invalid")
 	}
-	return os.Remove(path)
+	return root.Remove(path)
 }
 
-func sameFileBytes(left, right string) bool {
-	leftFile, err := openRegularFile(left)
+func validateRootLooseGitObject(root *os.Root, path, objectID string) error {
+	file, err := openRootRegularFile(root, path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = file.Close() }()
+	return validateLooseGitObjectFile(file, objectID)
+}
+
+func openRootRegularFile(root *os.Root, path string) (*os.File, error) {
+	identity, err := root.Lstat(path)
+	if err != nil || !identity.Mode().IsRegular() || identity.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("regular file identity is invalid")
+	}
+	file, err := root.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(identity, opened) {
+		_ = file.Close()
+		return nil, errors.New("regular file identity changed")
+	}
+	return file, nil
+}
+
+func samePathAndRootFileBytes(source string, root *os.Root, target, objectID string) bool {
+	left, err := openRegularFile(source)
 	if err != nil {
 		return false
 	}
-	defer func() { _ = leftFile.Close() }()
-	rightFile, err := openRegularFile(right)
+	defer func() { _ = left.Close() }()
+	return sameRootFileBytes(left, root, target, objectID)
+}
+
+func sameRootFileBytes(leftFile *os.File, root *os.Root, target, objectID string) bool {
+	rightFile, err := openRootRegularFile(root, target)
 	if err != nil {
 		return false
 	}
 	defer func() { _ = rightFile.Close() }()
+	if validateLooseGitObjectFile(rightFile, objectID) != nil {
+		return false
+	}
+	if _, err := leftFile.Seek(0, io.SeekStart); err != nil {
+		return false
+	}
+	if _, err := rightFile.Seek(0, io.SeekStart); err != nil {
+		return false
+	}
 	leftInfo, leftErr := leftFile.Stat()
 	rightInfo, rightErr := rightFile.Stat()
 	if leftErr != nil || rightErr != nil || leftInfo.Size() != rightInfo.Size() {
@@ -232,4 +316,17 @@ func sameFileBytes(left, right string) bool {
 			return false
 		}
 	}
+}
+
+func syncObjectRoot(root *os.Root) error {
+	directory, err := root.Open(".")
+	if err != nil {
+		return errors.New("shared object directory is unavailable")
+	}
+	syncErr := directory.Sync()
+	closeErr := directory.Close()
+	if syncErr != nil || closeErr != nil {
+		return errors.New("shared object directory could not be persisted")
+	}
+	return nil
 }

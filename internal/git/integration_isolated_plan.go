@@ -59,10 +59,7 @@ func (registry *Registry) runIsolatedIntegration(
 				"reset", "--hard", request.Target.ExpectedHead); err != nil {
 				return errors.New("apply integration candidate: isolated target checkout is unavailable")
 			}
-			arguments := []string{
-				"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false",
-				"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
-			}
+			arguments := isolatedIntegrationMutationConfig()
 			switch request.Strategy {
 			case application.IntegrationMerge:
 				arguments = append(arguments, "merge", "--no-ff", "--no-edit", "--no-verify", "--no-stat", request.Candidate.HeadRevision)
@@ -114,6 +111,14 @@ func (registry *Registry) runIsolatedIntegration(
 		return serverIntegrationPlan{}, false, err
 	}
 	return plan, false, nil
+}
+
+func isolatedIntegrationMutationConfig() []string {
+	return []string{
+		"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false",
+		"-c", "gc.auto=0", "-c", "maintenance.auto=false",
+		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
+	}
 }
 
 func (registry *Registry) validateIsolatedIntegrationResult(

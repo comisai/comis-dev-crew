@@ -72,10 +72,7 @@ func TestRegistry_CompletedRecoveryRechecksEveryReceiptAndDeadline(t *testing.T)
 			original := fixture.request("integration-completed-recovery-original-"+test.id,
 				application.IntegrationRebase, candidateHead, targetHead)
 			original.EvidenceExpiresAt = now.Add(time.Hour)
-			conflicted, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), original)
-			if err != nil || conflicted.Outcome != application.IntegrationConflicted {
-				t.Fatalf("ApplyIntegrationCandidate(conflict) = %#v, %v", conflicted, err)
-			}
+			stagePreviouslyAuthorizedRebaseConflict(t, fixture, original)
 			if err := os.WriteFile(filepath.Join(fixture.target.CanonicalPath, "fixture.txt"), []byte("resolved\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}

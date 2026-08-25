@@ -313,10 +313,15 @@ Changing any initiative, task, head, policy, evidence, worktree, or rebase state
 remains a refusal before the target branch moves.
 The reservation also requires the candidate's exact `integrates_after` edge and
 all of the integration owner's predecessors to be ready. Git mutation refuses
-command-capable repository configuration or attributes, and rebase preflight
-uses an isolated repository with the real rebase engine before publishing any
-authority receipt. Reproducible recovery and bounded-migration evidence is
-recorded in [review-evidence.md](review-evidence.md).
+command-capable repository configuration or attributes. Every strategy runs its
+real engine in an isolated repository with automatic maintenance disabled. A
+new conflict refuses before publishing any Git authority receipt or changing
+the shared index, worktree, or target ref. A clean proved result is imported
+through a rooted object-database handle, then adopted through the durable
+materialization transition and target compare-and-swap. Evidence and
+strategy-specific receipts are reauthorized immediately before the worktree is
+materialized. Reproducible recovery and bounded-migration evidence is recorded
+in [review-evidence.md](review-evidence.md).
 Submitting a different operation for a candidate task and head that already has
 a reserved, applied, or conflicted application is a precondition failure before
 Git. Reuse the original operation or continue from its durable receipt.
@@ -612,18 +617,18 @@ Apply component candidates with current accepted evidence before launching a dep
 integration owner. This lets the confined worker start from the exact applied or
 conflicted worktree instead of snapshotting an earlier Git state. Candidate
 handoff then accepts only a clean private commit that fast-forwards that exact
-server-owned integration head; divergent history remains a refusal. For a
-conflicted merge or cherry-pick, DevCrew's index already contains every
-non-conflicting candidate change. The worker edits only the recorded conflict
-paths, stages those resolutions, and commits the complete index. For a rebase
-conflict, the worker stages the recorded resolutions but does not continue or
-commit the rebase itself. A separate integration operation naming the conflicted
-receipt revalidates the durable task, evidence, worktree, rebase sequencer, and
-Git-updated terminal proof for the original target branch; DevCrew then continues
-the fixed rebase command, advances that branch with compare-and-swap, and
-reattaches the worktree. An unresolved index, changed branch, missing or unfinished
-terminal proof, altered candidate, or ambiguous receipt preserves the worktree and
-refuses recovery.
+server-owned integration head; divergent history remains a refusal. A newly
+isolated merge, cherry-pick, or rebase conflict is a pre-mutation refusal; E0
+does not materialize that conflict into the shared worktree. Recovery is limited
+to a previously authorized interrupted rebase that already has the exact durable
+conflict receipt. The worker stages only the recorded resolutions and does not
+continue or commit the rebase itself. A separate integration operation naming
+that receipt revalidates the durable task, evidence, worktree, rebase sequencer,
+and Git-updated terminal proof for the original target branch; DevCrew then
+continues the fixed rebase command, advances that branch with compare-and-swap,
+and reattaches the worktree. An unresolved index, changed branch, missing or
+unfinished terminal proof, altered candidate, or ambiguous receipt preserves
+the worktree and refuses recovery.
 The ordering does not authorize the next action. An apply-only operator request
 ends after the durable receipt; launch-plan and terminal operations require
 separate explicit authorization.

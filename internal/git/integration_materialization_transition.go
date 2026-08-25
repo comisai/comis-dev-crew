@@ -94,17 +94,50 @@ func (registry *Registry) reconcileIntegrationMaterialization(
 	if !integrationMaterializationMatches(transition, request, targetRef, resultingHead) {
 		return true, errors.New("apply integration candidate: materialization transition differs")
 	}
-	branchHead, err := registry.integrationBranchHead(ctx, request.Target.WorktreePath, targetRef)
-	if err != nil {
-		return true, errors.New("apply integration candidate: materialization target is unavailable")
-	}
-	if request.ReceiptOnly && branchHead == transition.ExpectedHead {
-		return true, errors.Join(
-			errors.New("apply integration candidate: materialization did not start"),
-			application.ErrIntegrationMutationNotStarted,
+	if request.ReceiptOnly {
+		completed, completedErr := registry.completedIntegrationMaterializationTransition(
+			ctx, request, targetRef, resultingHead,
 		)
+		if completedErr == nil && completed {
+			return true, nil
+		}
+		return true, errors.New("apply integration candidate: materialization mutation authority is unavailable")
 	}
 	return true, registry.advanceIntegrationMaterialization(ctx, request, transition)
+}
+
+func (registry *Registry) completedIntegrationMaterializationTransition(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+	targetRef string,
+	resultingHead string,
+) (bool, error) {
+	repository, err := registry.Resolve(request.Target.RepositoryID)
+	if err != nil {
+		return false, errors.New("apply integration candidate: materialization repository is unavailable")
+	}
+	_, path, err := integrationMaterializationPath(repository, request)
+	if err != nil {
+		return false, err
+	}
+	transition, found, err := readIntegrationMaterialization(path)
+	if err != nil || !found {
+		return false, err
+	}
+	if !integrationMaterializationMatches(transition, request, targetRef, resultingHead) {
+		return false, errors.New("apply integration candidate: materialization transition differs")
+	}
+	expectedTree, expectedErr := registry.integrationCommitTree(ctx, request.Target.WorktreePath, transition.ExpectedHead)
+	resultingTree, resultingErr := registry.integrationCommitTree(ctx, request.Target.WorktreePath, transition.ResultingHead)
+	if expectedErr != nil || resultingErr != nil || expectedTree != transition.ExpectedTree ||
+		resultingTree != transition.ResultingTree {
+		return false, errors.New("apply integration candidate: materialization tree proof differs")
+	}
+	branchHead, err := registry.integrationBranchHead(ctx, request.Target.WorktreePath, transition.TargetRef)
+	if err != nil || branchHead != transition.ResultingHead || !registry.completedMaterialization(ctx, request, transition) {
+		return false, errors.New("apply integration candidate: completed materialization is unverified")
+	}
+	return true, nil
 }
 
 func (registry *Registry) prepareIntegrationMaterialization(
@@ -199,11 +232,11 @@ func (registry *Registry) advanceIntegrationMaterialization(
 	if err := registry.verifyExpectedMaterializationState(ctx, request, transition); err != nil {
 		return errors.New("apply integration candidate: post-CAS worktree identity differs")
 	}
-	if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
-		return err
-	}
 	workspace, err := registry.integrationMaterializationWorkspace(ctx, request.Target.WorktreePath)
 	if err != nil {
+		return err
+	}
+	if err := registry.authorizeIntegrationMaterializationAfterCAS(ctx, request, transition.ResultingHead); err != nil {
 		return err
 	}
 	if _, err := runGitBytesInWorkspace(ctx, registry.gitExecutable, workspace,
@@ -215,6 +248,28 @@ func (registry *Registry) advanceIntegrationMaterialization(
 		return errors.New("apply integration candidate: proved result materialization is unverified")
 	}
 	return nil
+}
+
+func (registry *Registry) authorizeIntegrationMaterializationAfterCAS(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+	resultingHead string,
+) error {
+	var err error
+	if request.Strategy == application.IntegrationRebase {
+		err = registry.authorizeRebaseFinalization(ctx, request, resultingHead)
+	} else {
+		if err = registry.validateIntegrationExecutionPolicy(ctx, request); err == nil {
+			err = registry.validateIntegrationMutationDeadline(request)
+		}
+	}
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, application.ErrIntegrationMutationNotStarted) {
+		return errors.New("apply integration candidate: materialization authorization expired after target update")
+	}
+	return err
 }
 
 func (registry *Registry) completedMaterialization(

@@ -710,19 +710,19 @@ and cleaned predecessors satisfy the same dependency rule used by scheduling and
 the initiative graph; host report acknowledgement is not required after accepted
 candidate evidence. A dependency-ready integration owner may receive those
 server-owned applications while it is still `ready`; this keeps Git application
-and conflict materialization ahead of the confined worker launch. A launched owner
-remains writable only in its explicit working, decision, or blocked states. The Git
-registry then revalidates both worktree identities,
-cleanliness, and heads while holding its mutation lock. Fixed argv performs the
-selected operation with hooks and signing disabled. Rebase applies the candidate
-range from its frozen base onto the current expected integration head, then
-compare-and-swaps the integration branch; it never rebases existing integration
-commits onto a later component. Applied heads and sorted,
-bounded conflict paths are durable records; conflicts remain in the dedicated
-integration worktree for an actionable resolution. The integration worker may
-edit only those paths, but it preserves the server-staged non-conflicting
-candidate changes and commits the complete index. A path-limited conflict commit
-that leaves candidate changes staged cannot pass clean-candidate handoff.
+ahead of the confined worker launch. A launched owner remains writable only in
+its explicit working, decision, or blocked states. The Git registry then
+revalidates both worktree identities, cleanliness, and heads while holding its
+mutation lock. Fixed argv performs the selected operation in a service-owned
+isolated repository with hooks, signing, automatic maintenance, and object
+packing disabled. Every newly isolated conflict refuses before any shared Git
+ref, index, or worktree mutation. A clean result is semantically proved, its
+loose objects are published through a rooted object-database handle, and a
+durable transition binds the expected and result trees and index identity. The
+target branch then advances by compare-and-swap; evidence and strategy-specific
+receipts are reauthorized immediately before worktree materialization. Expiry
+after the compare-and-swap preserves both the pending transition and unchanged
+worktree for an authorized retry.
 
 The reservation and its accepted canonical operation-ledger claim commit in one
 transaction before Git mutation. Startup reconciliation may mark that claim
@@ -734,11 +734,11 @@ or resume a strategy. Content-free Git refs bridge the interval between a Git
 result and its SQLite completion. Exact applied and conflicted calls replay
 without repeating Git. Merge and cherry-pick still refuse a changed worktree
 when no exact outcome receipt exists. Rebase records the exact target branch
-before mutation, so an exact operation replay can reconstruct an interrupted
-conflict or clean completion only when the origin, sequencer, Git-updated terminal
-proof, target, and current head all agree; the separate resolution operation
-applies the same checks if `rebase --continue` settled before its receipt was
-written. Every ambiguous or
+before mutation, so an exact operation replay can reconstruct a previously
+authorized interrupted conflict or clean completion only when the origin,
+sequencer, Git-updated terminal proof, target, and current head all agree; the
+separate resolution operation applies the same checks if `rebase --continue`
+settled before its receipt was written. Every ambiguous or
 altered posture preserves the worktree and refuses recovery. Completion updates
 the application row and transitions the existing operation-ledger claim in one
 transaction. Accepted evidence expiry blocks a new mutation without invalidating

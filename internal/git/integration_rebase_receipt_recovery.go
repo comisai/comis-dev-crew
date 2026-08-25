@@ -37,7 +37,7 @@ func (registry *Registry) reconcileReceiptOnlyCompletedRebase(
 	if err := registry.ensureRebaseSequencerAbsent(ctx, request.Target.WorktreePath); err != nil {
 		return application.IntegrationAdapterResult{}, true, err
 	}
-	targetRef, err := registry.validateReceiptOnlyRebaseReceipts(ctx, request, proof.resultingHead)
+	targetRef, rebasedFound, err := registry.validateReceiptOnlyRebaseReceipts(ctx, request, proof.resultingHead)
 	if err != nil {
 		return application.IntegrationAdapterResult{}, true, err
 	}
@@ -49,10 +49,23 @@ func (registry *Registry) reconcileReceiptOnlyCompletedRebase(
 		return application.IntegrationAdapterResult{}, true,
 			errors.New("apply integration candidate: receipt-only proof receipt differs")
 	}
+	if !rebasedFound && !proofFound {
+		return application.IntegrationAdapterResult{}, true,
+			errors.New("apply integration candidate: receipt-only proof receipt is unavailable")
+	}
 	targetHead, err := registry.integrationBranchHead(ctx, request.Target.WorktreePath, targetRef)
 	if err != nil || targetHead != proof.resultingHead {
 		return application.IntegrationAdapterResult{}, true,
 			errors.New("apply integration candidate: receipt-only target branch differs")
+	}
+	if !rebasedFound {
+		completed, err := registry.completedIntegrationMaterializationTransition(
+			ctx, request, targetRef, proof.resultingHead,
+		)
+		if err != nil || !completed {
+			return application.IntegrationAdapterResult{}, true,
+				errors.New("apply integration candidate: receipt-only completed materialization is unavailable")
+		}
 	}
 	target, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
 		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,

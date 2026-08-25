@@ -2,6 +2,7 @@ package git_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -122,6 +123,33 @@ func writeServerRebaseProofForTest(
 	if err := os.WriteFile(filepath.Join(directory, digest), []byte(proof.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func stagePreviouslyAuthorizedRebaseConflict(
+	t *testing.T,
+	fixture integrationFixture,
+	request application.IntegrationAdapterRequest,
+) application.IntegrationAdapterResult {
+	t.Helper()
+	writeServerRebaseProofForTest(t, fixture, request, "")
+	targetRef := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "symbolic-ref", "HEAD")
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"symbolic-ref", integrationReceiptRefForTest("target", request), targetRef)
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"update-ref", integrationRebaseProofRefForTest(request), request.Candidate.HeadRevision)
+	runIntegrationGitExpectFailure(t, fixture.repository.gitExecutable,
+		"--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false",
+		"-c", "gc.auto=0", "-c", "maintenance.auto=false",
+		"-c", "user.name=DevCrew Integration", "-c", "user.email=integration@example.invalid",
+		"rebase", "--no-autostash", "--no-stat", "--reapply-cherry-picks", "--keep-empty",
+		"--committer-date-is-author-date", "--onto", request.Target.ExpectedHead,
+		request.Candidate.BaseRevision, strings.TrimPrefix(integrationRebaseProofRefForTest(request), "refs/heads/"))
+	result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
+	if err != nil || result.Outcome != application.IntegrationConflicted {
+		t.Fatalf("ApplyIntegrationCandidate(previously authorized conflict) = %#v, %v", result, err)
+	}
+	return result
 }
 
 func integrationPatchIdentityForTest(t *testing.T, fixture integrationFixture, revision string) string {

@@ -83,39 +83,39 @@ func (registry *Registry) validateReceiptOnlyRebaseReceipts(
 	ctx context.Context,
 	request application.IntegrationAdapterRequest,
 	resultingHead string,
-) (string, error) {
+) (string, bool, error) {
 	original := originalIntegrationRequest(request)
 	if request.RecoveryOperationID != "" {
 		if err := registry.requireIntegrationReceiptAbsent(
 			ctx, request.Target.WorktreePath, integrationReceiptRef("target", request),
 		); err != nil {
-			return "", errors.New("apply integration candidate: recovery target receipt is unexpected")
+			return "", false, errors.New("apply integration candidate: recovery target receipt is unexpected")
 		}
 		conflictedHead, found, err := registry.integrationReceiptHeadAtPath(
 			ctx, request.Target.WorktreePath, integrationReceiptRef("conflicted", original),
 		)
 		if err != nil || !found || conflictedHead != request.Target.ExpectedHead {
-			return "", errors.New("apply integration candidate: original conflict receipt differs")
+			return "", false, errors.New("apply integration candidate: original conflict receipt differs")
 		}
 		for _, outcome := range []string{"applied", "rebased"} {
 			if err := registry.requireIntegrationReceiptAbsent(
 				ctx, request.Target.WorktreePath, integrationReceiptRef(outcome, original),
 			); err != nil {
-				return "", errors.New("apply integration candidate: original completion receipt is unexpected")
+				return "", false, errors.New("apply integration candidate: original completion receipt is unexpected")
 			}
 		}
 	}
 	targetRef, found, err := registry.recordedIntegrationTargetRef(ctx, original)
 	if err != nil || !found {
-		return "", errors.New("apply integration candidate: receipt-only target receipt is unavailable")
+		return "", false, errors.New("apply integration candidate: receipt-only target receipt is unavailable")
 	}
 	rebasedHead, found, err := registry.integrationReceiptHeadAtPath(
 		ctx, request.Target.WorktreePath, integrationReceiptRef("rebased", request),
 	)
-	if err != nil || !found || rebasedHead != resultingHead {
-		return "", errors.New("apply integration candidate: receipt-only rebased receipt differs")
+	if err != nil || found && rebasedHead != resultingHead {
+		return "", false, errors.New("apply integration candidate: receipt-only rebased receipt differs")
 	}
-	return targetRef, nil
+	return targetRef, found, nil
 }
 
 func (registry *Registry) requireIntegrationReceiptAbsent(

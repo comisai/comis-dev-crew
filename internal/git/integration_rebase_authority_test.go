@@ -21,10 +21,7 @@ func TestRegistry_RebaseRecoveryRejectsChangesOutsideConflictPaths(t *testing.T)
 		"fixture.txt", "integration\n")
 	request := fixture.request("integration-rebase-protected-conflict",
 		application.IntegrationRebase, candidateHead, targetHead)
-	result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), request)
-	if err != nil || result.Outcome != application.IntegrationConflicted {
-		t.Fatalf("ApplyIntegrationCandidate(conflict) = %#v, %v", result, err)
-	}
+	stagePreviouslyAuthorizedRebaseConflict(t, fixture, request)
 	for path, contents := range map[string]string{
 		"fixture.txt": "resolved\n", "protected.txt": "unrelated\n",
 	} {
@@ -72,9 +69,7 @@ func TestRegistry_ReceiptOnlyRecoveryRequiresOriginalReceiptAuthority(t *testing
 				"fixture.txt", "integration\n")
 			original := fixture.request("integration-receipt-original-"+test.id,
 				application.IntegrationRebase, candidateHead, targetHead)
-			if result, err := fixture.registry.ApplyIntegrationCandidate(context.Background(), original); err != nil || result.Outcome != application.IntegrationConflicted {
-				t.Fatalf("ApplyIntegrationCandidate(conflict) = %#v, %v", result, err)
-			}
+			stagePreviouslyAuthorizedRebaseConflict(t, fixture, original)
 			if err := os.WriteFile(filepath.Join(fixture.target.CanonicalPath, "fixture.txt"), []byte("resolved\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
