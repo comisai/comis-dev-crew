@@ -85,27 +85,14 @@ func (registry *Registry) diffFiles(
 	from string,
 	to string,
 ) ([]CandidateFileChange, bool, error) {
-	arguments := []string{
-		"--no-optional-locks", "-C", worktreePath, "diff", "--numstat", "-z",
-		"--find-renames", "--no-color", "--no-ext-diff", from,
-	}
-	if to != "" {
-		arguments = append(arguments, to)
-	}
-	output, err := runGitBytes(ctx, registry.gitExecutable, arguments...)
+	before, after, err := registry.candidateDiffSnapshots(ctx, worktreePath, from, to)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, false, ctx.Err()
 		}
-		if errors.Is(err, errGitOutputTooLarge) {
-			return nil, true, nil
-		}
 		return nil, false, fmt.Errorf("inspect task diff: change summary is unavailable: %w", err)
 	}
-	changes, err := parseNumstat(output)
-	if err != nil {
-		return nil, false, err
-	}
+	changes := candidateSnapshotChanges(before, after)
 	if len(changes) > maximumDiffFiles {
 		return changes[:maximumDiffFiles], true, nil
 	}

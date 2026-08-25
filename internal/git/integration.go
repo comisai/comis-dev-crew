@@ -140,9 +140,14 @@ func (registry *Registry) ApplyIntegrationCandidate(
 		if err := registry.authorizeRebaseFinalization(ctx, request, final.HeadRevision); err != nil {
 			return application.IntegrationAdapterResult{}, err
 		}
+	} else if err := registry.validateCompletedIntegrationReceiptFamily(ctx, request); err != nil {
+		return application.IntegrationAdapterResult{}, err
 	}
 	if err := registry.createIntegrationReceipt(ctx, repository, appliedRef, final.HeadRevision); err != nil {
 		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: applied receipt could not be recorded")
+	}
+	if err := registry.validateAppliedIntegrationReceiptFamily(ctx, request, final.HeadRevision); err != nil {
+		return application.IntegrationAdapterResult{}, err
 	}
 	return application.IntegrationAdapterResult{
 		Outcome: application.IntegrationApplied, PreviousHead: request.Target.ExpectedHead,
@@ -284,7 +289,7 @@ func (registry *Registry) inspectIntegrationReceipt(
 	worktreePath string,
 	reference string,
 ) (inspectedIntegrationReceipt, error) {
-	output, exitCode, err := executeGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
+	output, exitCode, err := executeHermeticGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
 		"symbolic-ref", "--quiet", "--no-recurse", reference)
 	if err != nil {
 		return inspectedIntegrationReceipt{}, err
@@ -299,7 +304,7 @@ func (registry *Registry) inspectIntegrationReceipt(
 	if exitCode != 1 {
 		return inspectedIntegrationReceipt{}, errors.New("apply integration candidate: symbolic receipt inspection failed")
 	}
-	_, exitCode, err = executeGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
+	_, exitCode, err = executeHermeticGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
 		"show-ref", "--verify", "--quiet", reference)
 	if err != nil {
 		return inspectedIntegrationReceipt{}, err

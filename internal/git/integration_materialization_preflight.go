@@ -42,7 +42,23 @@ func validateIntegrationMaterializationTopology(
 		snapshotContainsMaterializationAncestor(resulting, expected) {
 		return errors.New("apply integration candidate: materialization directory transition is unsupported")
 	}
+	for name, previous := range expected {
+		result, retained := resulting[name]
+		if !retained {
+			return errors.New("apply integration candidate: materialization deletion is unsupported")
+		}
+		if previous.mode == result.mode && previous.objectID == result.objectID {
+			continue
+		}
+		if !regularIntegrationMode(previous.mode) || !regularIntegrationMode(result.mode) {
+			return errors.New("apply integration candidate: materialization type transition is unsupported")
+		}
+	}
 	return nil
+}
+
+func regularIntegrationMode(mode string) bool {
+	return mode == "100644" || mode == "100755"
 }
 
 func snapshotContainsMaterializationAncestor(

@@ -59,6 +59,9 @@ func (registry *Registry) preflightRebasePatches(
 				if validationErr != nil {
 					return validationErr
 				}
+				if err := registry.validateIsolatedMaterializationSnapshot(ctx, workspace, result.head); err != nil {
+					return err
+				}
 				return importIsolatedGitObjects(workspace.gitObjectDirectory, workspace.gitAlternateObjectDirectory)
 			case 1:
 				if err := registry.validateIsolatedRebaseConflict(ctx, repository, workspace, commits); err != nil {

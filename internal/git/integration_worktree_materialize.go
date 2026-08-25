@@ -71,12 +71,12 @@ func materializeIntegrationWorktreeAtBoundary(
 			return err
 		}
 	}
+	if boundary != nil {
+		boundary("before-recovery-retirement", "")
+	}
 	matches, err := integrationWorktreeMatchesSnapshot(worktreePath, resulting)
 	if err != nil || !matches {
 		return errors.New("apply integration candidate: materialized worktree is unverified")
-	}
-	if boundary != nil {
-		boundary("before-recovery-retirement", "")
 	}
 	if err := retireMaterializationRecovery(common, recovery, changed); err != nil {
 		return err
@@ -230,6 +230,14 @@ func publishMaterializationEntry(
 	publication := filepath.Join(recovery, materializationEvidenceName("publication", name))
 	previous, hadPrevious := expected[name]
 	result, hasResult := resulting[name]
+	if hadPrevious {
+		if !hasResult {
+			return errors.New("apply integration candidate: materialization deletion is unsupported")
+		}
+		return publishExistingRegularMaterializationEntry(
+			root, target, recovery, name, previous, result, boundary,
+		)
+	}
 	captured, captureMatches, err := materializationEntryState(root, capture, previous)
 	if err != nil || captured && (!hadPrevious || !captureMatches) {
 		baseErr := errors.New("apply integration candidate: captured materialization entry differs")
@@ -238,7 +246,7 @@ func publishMaterializationEntry(
 		}
 		return baseErr
 	}
-	targetFound, targetExpected, err := materializationEntryState(root, target, previous)
+	targetFound, _, err := materializationEntryState(root, target, previous)
 	if err != nil {
 		return err
 	}
@@ -247,33 +255,6 @@ func publishMaterializationEntry(
 		_, targetResult, err = materializationEntryState(root, target, result)
 		if err != nil {
 			return err
-		}
-	}
-	if hadPrevious && !captured {
-		if targetExpected {
-			if boundary != nil {
-				boundary("before-capture", name)
-			}
-			if err := root.Rename(target, capture); err != nil {
-				return errors.New("apply integration candidate: materialization entry could not be captured")
-			}
-			if err := syncMaterializationDirectory(root, filepath.Dir(target)); err != nil {
-				return err
-			}
-			if err := syncMaterializationDirectory(root, recovery); err != nil {
-				return err
-			}
-			captured, captureMatches, err = materializationEntryState(root, capture, previous)
-			if err != nil || !captured || !captureMatches {
-				return errors.Join(
-					errors.New("apply integration candidate: captured materialization entry differs"),
-					restoreCapturedMaterializationEntry(root, capture, target),
-				)
-			}
-			targetFound = false
-			targetResult = false
-		} else if !targetResult {
-			return errors.New("apply integration candidate: materialization target changed before capture")
 		}
 	}
 	if !hadPrevious && targetFound && !targetResult {
@@ -438,7 +419,7 @@ func retireMaterializationRecovery(
 	changed []string,
 ) error {
 	for _, name := range changed {
-		for _, kind := range []string{"stage", "capture", "publication"} {
+		for _, kind := range []string{"stage", "capture", "publication", "inplace"} {
 			evidence := filepath.Join(recovery, materializationEvidenceName(kind, name))
 			for _, candidate := range []string{evidence, evidence + ".pending"} {
 				if err := root.Remove(candidate); err != nil && !errors.Is(err, os.ErrNotExist) {

@@ -23,6 +23,10 @@ func importIsolatedGitObjects(source, destination string) error {
 	if !validObjectDirectory(source) || !validObjectDirectory(destination) {
 		return errors.New("apply integration candidate: isolated object directory is invalid")
 	}
+	plan, err := planIsolatedObjectImport(source)
+	if err != nil {
+		return err
+	}
 	destinationIdentity, err := os.Lstat(destination)
 	if err != nil {
 		return errors.New("apply integration candidate: isolated object directory is invalid")
@@ -36,30 +40,70 @@ func importIsolatedGitObjects(source, destination string) error {
 		_ = destinationRoot.Close()
 		return errors.New("apply integration candidate: isolated object directory identity changed")
 	}
-	walkErr := filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
+	var importErr error
+	for _, object := range plan {
+		directory, openErr := openObjectSubdirectory(destinationRoot, object.objectID[:2])
+		if openErr != nil {
+			importErr = openErr
+			break
 		}
-		if entry.IsDir() {
-			return nil
+		copyErr := copyLooseGitObject(object.contents, directory, object.objectID[2:], object.objectID)
+		importErr = errors.Join(copyErr, directory.Close())
+		if importErr != nil {
+			break
 		}
-		objectID, err := isolatedObjectID(source, path, entry)
-		if err != nil {
-			return err
-		}
-		directory, err := openObjectSubdirectory(destinationRoot, objectID[:2])
-		if err != nil {
-			return err
-		}
-		copyErr := copyLooseGitObject(path, directory, objectID[2:], objectID)
-		return errors.Join(copyErr, directory.Close())
-	})
+	}
 	syncErr := syncObjectRoot(destinationRoot)
 	closeErr := destinationRoot.Close()
-	if walkErr != nil || syncErr != nil || closeErr != nil {
+	if importErr != nil || syncErr != nil || closeErr != nil {
 		return errors.New("apply integration candidate: isolated result objects could not be imported")
 	}
 	return nil
+}
+
+func validateLooseGitObjectBytes(contents []byte, objectID string) error {
+	_, _, err := inspectLooseGitObjectBytes(contents, objectID)
+	return err
+}
+
+func inspectLooseGitObjectBytes(contents []byte, objectID string) (string, int64, error) {
+	reader := bytes.NewReader(contents)
+	objectType, size, err := inspectLooseGitObject(reader, objectID)
+	if err != nil || reader.Len() != 0 {
+		return "", 0, errors.New("loose object content is invalid")
+	}
+	return objectType, size, nil
+}
+
+func inspectLooseGitObject(input io.Reader, objectID string) (string, int64, error) {
+	decompressed, err := zlib.NewReader(input)
+	if err != nil {
+		return "", 0, errors.New("loose object compression is invalid")
+	}
+	reader := bufio.NewReaderSize(decompressed, 256)
+	header, err := reader.ReadString(0)
+	fields := strings.Fields(strings.TrimSuffix(header, "\x00"))
+	if err != nil || len(header) > 128 || len(fields) != 2 || !validLooseObjectType(fields[0]) {
+		_ = decompressed.Close()
+		return "", 0, errors.New("loose object header is invalid")
+	}
+	size, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil || size < 0 {
+		_ = decompressed.Close()
+		return "", 0, errors.New("loose object size is invalid")
+	}
+	digest, err := looseObjectDigest(objectID)
+	if err != nil {
+		_ = decompressed.Close()
+		return "", 0, err
+	}
+	_, _ = digest.Write([]byte(header))
+	written, copyErr := io.Copy(digest, io.LimitReader(reader, size+1))
+	closeErr := decompressed.Close()
+	if copyErr != nil || closeErr != nil || written != size || hex.EncodeToString(digest.Sum(nil)) != objectID {
+		return "", 0, errors.New("loose object content is invalid")
+	}
+	return fields[0], size, nil
 }
 
 func validObjectDirectory(path string) bool {
@@ -94,34 +138,8 @@ func validateLooseGitObject(path, objectID string) error {
 }
 
 func validateLooseGitObjectFile(file *os.File, objectID string) error {
-	decompressed, err := zlib.NewReader(file)
-	if err != nil {
-		return errors.New("loose object compression is invalid")
-	}
-	reader := bufio.NewReaderSize(decompressed, 256)
-	header, err := reader.ReadString(0)
-	fields := strings.Fields(strings.TrimSuffix(header, "\x00"))
-	if err != nil || len(header) > 128 || len(fields) != 2 || !validLooseObjectType(fields[0]) {
-		_ = decompressed.Close()
-		return errors.New("loose object header is invalid")
-	}
-	size, err := strconv.ParseInt(fields[1], 10, 64)
-	if err != nil || size < 0 {
-		_ = decompressed.Close()
-		return errors.New("loose object size is invalid")
-	}
-	digest, err := looseObjectDigest(objectID)
-	if err != nil {
-		_ = decompressed.Close()
-		return err
-	}
-	_, _ = digest.Write([]byte(header))
-	written, copyErr := io.Copy(digest, io.LimitReader(reader, size+1))
-	closeErr := decompressed.Close()
-	if copyErr != nil || closeErr != nil || written != size || hex.EncodeToString(digest.Sum(nil)) != objectID {
-		return errors.New("loose object content is invalid")
-	}
-	return nil
+	_, _, err := inspectLooseGitObject(file, objectID)
+	return err
 }
 
 func validLooseObjectType(value string) bool {
@@ -179,48 +197,36 @@ func openObjectSubdirectory(root *os.Root, name string) (*os.Root, error) {
 	return directory, nil
 }
 
-func copyLooseGitObject(source string, destination *os.Root, target, objectID string) error {
-	input, err := openRegularFile(source)
-	if err != nil {
+func copyLooseGitObject(contents []byte, destination *os.Root, target, objectID string) error {
+	if err := validateLooseGitObjectBytes(contents, objectID); err != nil {
 		return err
-	}
-	if err := validateLooseGitObjectFile(input, objectID); err != nil {
-		_ = input.Close()
-		return err
-	}
-	if _, err := input.Seek(0, io.SeekStart); err != nil {
-		_ = input.Close()
-		return errors.New("isolated object could not be reread")
 	}
 	if existing, err := destination.Lstat(target); err == nil {
-		if !existing.Mode().IsRegular() || !sameRootFileBytes(input, destination, target, objectID) {
-			_ = input.Close()
+		if !existing.Mode().IsRegular() || !sameBytesAndRootFile(contents, destination, target, objectID) {
 			return errors.New("shared object identity differs")
 		}
-		return input.Close()
+		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		_ = input.Close()
 		return err
 	}
 	temporary := target + ".importing"
 	if err := discardLooseObjectTemporary(destination, temporary); err != nil {
-		_ = input.Close()
 		return err
 	}
 	output, err := destination.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		_ = input.Close()
 		return err
 	}
-	_, copyErr := io.Copy(output, input)
+	written, copyErr := io.Copy(output, bytes.NewReader(contents))
 	syncErr := output.Sync()
-	closeErr := errors.Join(input.Close(), output.Close())
-	if copyErr != nil || syncErr != nil || closeErr != nil || validateRootLooseGitObject(destination, temporary, objectID) != nil {
+	closeErr := output.Close()
+	if copyErr != nil || written != int64(len(contents)) || syncErr != nil || closeErr != nil ||
+		validateRootLooseGitObject(destination, temporary, objectID) != nil {
 		_ = destination.Remove(temporary)
 		return errors.New("isolated object copy is invalid")
 	}
 	if err := destination.Link(temporary, target); err != nil {
-		if !errors.Is(err, os.ErrExist) || !samePathAndRootFileBytes(source, destination, target, objectID) {
+		if !errors.Is(err, os.ErrExist) || !sameBytesAndRootFile(contents, destination, target, objectID) {
 			_ = destination.Remove(temporary)
 			return errors.New("isolated object could not be published")
 		}
@@ -279,6 +285,36 @@ func samePathAndRootFileBytes(source string, root *os.Root, target, objectID str
 	}
 	defer func() { _ = left.Close() }()
 	return sameRootFileBytes(left, root, target, objectID)
+}
+
+func sameBytesAndRootFile(contents []byte, root *os.Root, target, objectID string) bool {
+	rightFile, err := openRootRegularFile(root, target)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = rightFile.Close() }()
+	if validateLooseGitObjectFile(rightFile, objectID) != nil {
+		return false
+	}
+	if _, err := rightFile.Seek(0, io.SeekStart); err != nil {
+		return false
+	}
+	info, err := rightFile.Stat()
+	if err != nil || info.Size() != int64(len(contents)) {
+		return false
+	}
+	buffer := make([]byte, 32*1024)
+	for offset := 0; offset < len(contents); {
+		length := min(len(buffer), len(contents)-offset)
+		read, readErr := io.ReadFull(rightFile, buffer[:length])
+		if readErr != nil || read != length || !bytes.Equal(buffer[:length], contents[offset:offset+length]) {
+			return false
+		}
+		offset += length
+	}
+	var overflow [1]byte
+	read, readErr := rightFile.Read(overflow[:])
+	return read == 0 && readErr == io.EOF
 }
 
 func sameRootFileBytes(leftFile *os.File, root *os.Root, target, objectID string) bool {

@@ -57,7 +57,7 @@ func (registry *Registry) integrationGitConfigKeys(
 	worktree string,
 	scope string,
 ) ([]string, error) {
-	output, exitCode, err := executeGit(ctx, registry.gitExecutable,
+	output, exitCode, err := executeHermeticGit(ctx, registry.gitExecutable,
 		"--no-optional-locks", "-C", worktree, "config", "--no-includes", scope,
 		"--name-only", "-z", "--list")
 	if err != nil || exitCode != 0 {

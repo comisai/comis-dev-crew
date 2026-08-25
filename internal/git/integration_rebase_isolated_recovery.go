@@ -85,6 +85,9 @@ func (registry *Registry) completeRebaseRecoveryInIsolation(
 			if err != nil || !gitRevisionPattern.MatchString(resultingHead) {
 				return errors.New("apply integration candidate: isolated recovery result is unavailable")
 			}
+			if err := registry.validateIsolatedMaterializationSnapshot(ctx, workspace, resultingHead); err != nil {
+				return err
+			}
 			return importIsolatedGitObjects(workspace.gitObjectDirectory, workspace.gitAlternateObjectDirectory)
 		})
 	if err != nil {

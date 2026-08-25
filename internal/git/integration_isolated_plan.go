@@ -94,6 +94,9 @@ func (registry *Registry) runIsolatedIntegration(
 			if err := registry.validateIsolatedIntegrationResult(ctx, workspace, request, repository, resultingHead); err != nil {
 				return err
 			}
+			if err := registry.validateIsolatedMaterializationSnapshot(ctx, workspace, resultingHead); err != nil {
+				return err
+			}
 			if err := importIsolatedGitObjects(workspace.gitObjectDirectory, workspace.gitAlternateObjectDirectory); err != nil {
 				return err
 			}

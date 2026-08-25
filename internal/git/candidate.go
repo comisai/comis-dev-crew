@@ -45,8 +45,7 @@ func (registry *Registry) InspectCandidate(ctx context.Context, request Candidat
 		}
 		return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: head identity differs: %w", ErrCandidateWorktreeUnverified)
 	}
-	status, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.WorktreePath,
-		"status", "--porcelain=v2", "-z", "--untracked-files=all")
+	clean, err := registry.integrationWorktreeCleanAtCommit(ctx, request.WorktreePath, head)
 	if err != nil {
 		if ctx.Err() != nil {
 			return CandidateSnapshot{}, ctx.Err()
@@ -56,9 +55,9 @@ func (registry *Registry) InspectCandidate(ctx context.Context, request Candidat
 		}
 		return CandidateSnapshot{}, fmt.Errorf("inspect task candidate: worktree status is unavailable: %w", ErrCandidateWorktreeUnverified)
 	}
-	cleanliness := CandidateClean
-	if len(status) != 0 {
-		cleanliness = CandidateDirty
+	cleanliness := CandidateDirty
+	if clean {
+		cleanliness = CandidateClean
 	}
 	return CandidateSnapshot{
 		RepositoryID: request.RepositoryID, WorktreePath: request.WorktreePath,

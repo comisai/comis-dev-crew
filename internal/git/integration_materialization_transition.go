@@ -267,6 +267,11 @@ func (registry *Registry) advanceIntegrationMaterialization(
 			}
 			return err
 		}
+		if request.Strategy != application.IntegrationRebase && !request.PendingMaterializationRecovery {
+			if err := registry.validateCompletedIntegrationReceiptFamily(ctx, request); err != nil {
+				return err
+			}
+		}
 		if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
 			"update-ref", transition.TargetRef, transition.ResultingHead, transition.ExpectedHead); err != nil {
 			current, currentErr := registry.integrationBranchHead(ctx, request.Target.WorktreePath, transition.TargetRef)
@@ -277,6 +282,11 @@ func (registry *Registry) advanceIntegrationMaterialization(
 			return errors.New("apply integration candidate: result compare-and-swap outcome requires reconciliation")
 		}
 		branchHead = transition.ResultingHead
+		if request.Strategy != application.IntegrationRebase && !request.PendingMaterializationRecovery {
+			if err := registry.validateCompletedIntegrationReceiptFamily(ctx, request); err != nil {
+				return err
+			}
+		}
 	}
 	if branchHead != transition.ResultingHead {
 		return errors.New("apply integration candidate: materialization target differs from proof")
@@ -317,6 +327,14 @@ func (registry *Registry) advanceIntegrationMaterialization(
 		if err != nil || indexTree != transition.ResultingTree {
 			return errors.New("apply integration candidate: proved result index is unverified")
 		}
+		if request.Strategy != application.IntegrationRebase && !request.PendingMaterializationRecovery {
+			if err := registry.validateCompletedIntegrationReceiptFamily(ctx, request); err != nil {
+				return err
+			}
+		}
+	}
+	if err := registry.authorizeIntegrationMaterializationAfterCAS(ctx, request, transition.ResultingHead); err != nil {
+		return err
 	}
 	if err := materializeIntegrationWorktree(
 		request.Target.WorktreePath, expectedSnapshot, resultingSnapshot,
@@ -325,6 +343,11 @@ func (registry *Registry) advanceIntegrationMaterialization(
 	}
 	if !registry.completedMaterialization(ctx, request, transition) {
 		return errors.New("apply integration candidate: proved result materialization is unverified")
+	}
+	if request.Strategy != application.IntegrationRebase && !request.PendingMaterializationRecovery {
+		if err := registry.validateCompletedIntegrationReceiptFamily(ctx, request); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -340,8 +363,13 @@ func (registry *Registry) authorizeIntegrationMaterializationAfterCAS(
 	} else if request.Strategy == application.IntegrationRebase {
 		err = registry.authorizeRebaseFinalization(ctx, request, resultingHead)
 	} else {
-		if err = registry.validateIntegrationExecutionPolicy(ctx, request); err == nil {
-			err = registry.validateIntegrationMutationDeadline(request)
+		if err = registry.validateCompletedIntegrationReceiptFamily(ctx, request); err == nil {
+			if err = registry.validateIntegrationExecutionPolicy(ctx, request); err == nil {
+				err = registry.validateIntegrationMutationDeadline(request)
+			}
+			if err == nil {
+				err = registry.validateCompletedIntegrationReceiptFamily(ctx, request)
+			}
 		}
 	}
 	if err == nil {
