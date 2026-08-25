@@ -55,7 +55,10 @@ func TestInspectCandidatePreservesInfrastructureFailureAfterRootInspection(t *te
 		t.Fatal(err)
 	}
 	executable := filepath.Join(root, "one-shot-git")
-	if err := os.WriteFile(executable, []byte("#!/bin/sh\nrm -- \"$0\"\nprintf '%s\\n' \"$3\"\n"), 0o700); err != nil {
+	script := "#!/bin/sh\nrm -- \"$0\"\nprevious=\nfor argument in \"$@\"; do\n" +
+		"  if [ \"$previous\" = -C ]; then printf '%s\\n' \"$argument\"; exit 0; fi\n" +
+		"  previous=$argument\ndone\nexit 1\n"
+	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	registry := &Registry{
