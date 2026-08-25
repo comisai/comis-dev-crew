@@ -407,9 +407,8 @@ func (registry *Registry) inspectRecoveredRebaseHead(
 	if err != nil || !gitRevisionPattern.MatchString(resultingHead) || resultingHead == request.Target.ExpectedHead {
 		return "", errors.New("apply integration candidate: recovered rebase head is invalid")
 	}
-	status, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-		"status", "--porcelain=v2", "-z", "--untracked-files=all")
-	if err != nil || len(status) != 0 {
+	clean, err := registry.integrationWorktreeCleanAtCommit(ctx, request.Target.WorktreePath, resultingHead)
+	if err != nil || !clean {
 		return "", errors.New("apply integration candidate: recovered rebase is not clean")
 	}
 	targetContains, err := gitPredicate(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,

@@ -51,7 +51,7 @@ func (registry *Registry) integrationReplayStatePristine(
 			}
 		}
 	}
-	target, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
+	target, err := registry.inspectIntegrationCandidate(ctx, CandidateSnapshotRequest{
 		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
 		WorktreePath: request.Target.WorktreePath,
 	})

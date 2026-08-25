@@ -266,7 +266,10 @@ func (registry *Registry) reconcileCompletedIntegrationPlan(
 	); err != nil {
 		return application.IntegrationAdapterResult{}, true, err
 	} else if found {
-		target, inspectErr := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
+		if err := registry.validateCompletedIntegrationReceiptFamily(ctx, request); err != nil {
+			return application.IntegrationAdapterResult{}, true, err
+		}
+		target, inspectErr := registry.inspectIntegrationCandidate(ctx, CandidateSnapshotRequest{
 			TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
 			WorktreePath: request.Target.WorktreePath,
 		})
@@ -289,13 +292,16 @@ func (registry *Registry) reconcileCompletedIntegrationPlan(
 			application.ErrIntegrationMutationNotStarted,
 		)
 	}
-	target, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
+	target, err := registry.inspectIntegrationCandidate(ctx, CandidateSnapshotRequest{
 		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
 		WorktreePath: request.Target.WorktreePath,
 	})
 	if err != nil || target.HeadRevision != plan.ResultingHead || target.Cleanliness != CandidateClean ||
 		target.Branch != expectedIntegrationTargetBranch(request) {
 		return application.IntegrationAdapterResult{}, false, nil
+	}
+	if err := registry.validateCompletedIntegrationReceiptFamily(ctx, request); err != nil {
+		return application.IntegrationAdapterResult{}, true, err
 	}
 	return application.IntegrationAdapterResult{
 		Outcome: application.IntegrationApplied, PreviousHead: request.Target.ExpectedHead,

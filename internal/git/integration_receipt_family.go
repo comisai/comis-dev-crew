@@ -26,6 +26,11 @@ func (registry *Registry) validateAppliedIntegrationReceiptFamily(
 	head string,
 ) error {
 	worktree := request.Target.WorktreePath
+	if err := registry.requireIntegrationReceiptAbsent(
+		ctx, worktree, integrationRebaseProofRef(request),
+	); err != nil {
+		return errors.New("apply integration candidate: applied proof receipt is contradictory")
+	}
 	if err := registry.requireDirectIntegrationReceipt(
 		ctx, worktree, integrationReceiptRef("applied", request), head,
 	); err != nil {
@@ -113,6 +118,32 @@ func (registry *Registry) validateAppliedIntegrationReceiptFamily(
 	return nil
 }
 
+func (registry *Registry) validateCompletedIntegrationReceiptFamily(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+) error {
+	worktree := request.Target.WorktreePath
+	identities := []application.IntegrationAdapterRequest{request}
+	if request.RecoveryOperationID != "" {
+		identities = append(identities, originalIntegrationRequest(request))
+	}
+	for _, identity := range identities {
+		for _, outcome := range []string{"target", "conflicted", "applied", "rebased"} {
+			if err := registry.requireIntegrationReceiptAbsent(
+				ctx, worktree, integrationReceiptRef(outcome, identity),
+			); err != nil {
+				return errors.New("apply integration candidate: completed receipt family is contradictory")
+			}
+		}
+		if err := registry.requireIntegrationReceiptAbsent(
+			ctx, worktree, integrationRebaseProofRef(identity),
+		); err != nil {
+			return errors.New("apply integration candidate: completed proof receipt is contradictory")
+		}
+	}
+	return nil
+}
+
 func (registry *Registry) validateConflictedIntegrationReceiptFamily(
 	ctx context.Context,
 	request application.IntegrationAdapterRequest,
@@ -137,12 +168,22 @@ func (registry *Registry) validateConflictedIntegrationReceiptFamily(
 		); err != nil {
 			return errors.New("apply integration candidate: conflict target receipt differs")
 		}
+		if err := registry.requireDirectIntegrationReceipt(
+			ctx, worktree, integrationRebaseProofRef(request), request.Candidate.HeadRevision,
+		); err != nil {
+			return errors.New("apply integration candidate: conflict proof receipt differs")
+		}
 		return nil
 	}
 	if err := registry.requireIntegrationReceiptAbsent(
 		ctx, worktree, integrationReceiptRef("target", request),
 	); err != nil {
 		return errors.New("apply integration candidate: conflict target receipt is contradictory")
+	}
+	if err := registry.requireIntegrationReceiptAbsent(
+		ctx, worktree, integrationRebaseProofRef(request),
+	); err != nil {
+		return errors.New("apply integration candidate: conflict proof receipt is contradictory")
 	}
 	return nil
 }

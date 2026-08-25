@@ -75,7 +75,7 @@ func (registry *Registry) reconcileReceiptOnlyCompletedRebase(
 				errors.New("apply integration candidate: receipt-only completed materialization is unavailable")
 		}
 	}
-	target, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
+	target, err := registry.inspectIntegrationCandidate(ctx, CandidateSnapshotRequest{
 		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
 		WorktreePath: request.Target.WorktreePath,
 	})
@@ -97,7 +97,7 @@ func (registry *Registry) reconcileReceiptOnlyCompletedRebase(
 			return application.IntegrationAdapterResult{}, true,
 				errors.New("apply integration candidate: receipt-only target could not be reattached")
 		}
-		target, err = registry.InspectCandidate(ctx, CandidateSnapshotRequest{
+		target, err = registry.inspectIntegrationCandidate(ctx, CandidateSnapshotRequest{
 			TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
 			WorktreePath: request.Target.WorktreePath,
 		})

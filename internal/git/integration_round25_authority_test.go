@@ -209,11 +209,11 @@ real=%s
 target=%s
 hook=%s
 armed=%s
-is_status=false
+is_inspection=false
 for argument in "$@"; do
-  if [ "$argument" = status ]; then is_status=true; fi
+  if [ "$argument" = status ] || [ "$argument" = ls-tree ]; then is_inspection=true; fi
 done
-if [ "$is_status" = true ] && [ ! -f "$armed" ]; then
+if [ "$is_inspection" = true ] && [ ! -f "$armed" ]; then
   : > "$armed"
   "$real" --no-optional-locks -C "$target" config --local core.fsmonitor "$hook" || exit $?
 fi

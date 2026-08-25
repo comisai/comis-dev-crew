@@ -93,6 +93,13 @@ func (registry *Registry) validateReceiptOnlyRebaseReceipts(
 	resultingHead string,
 ) (string, bool, error) {
 	original := originalIntegrationRequest(request)
+	for _, outcome := range []string{"conflicted", "applied"} {
+		if err := registry.requireIntegrationReceiptAbsent(
+			ctx, request.Target.WorktreePath, integrationReceiptRef(outcome, request),
+		); err != nil {
+			return "", false, errors.New("apply integration candidate: receipt-only completion receipt is unexpected")
+		}
+	}
 	if request.RecoveryOperationID != "" {
 		if err := registry.requireIntegrationReceiptAbsent(
 			ctx, request.Target.WorktreePath, integrationReceiptRef("target", request),
@@ -122,6 +129,14 @@ func (registry *Registry) validateReceiptOnlyRebaseReceipts(
 	)
 	if err != nil || found && rebasedHead != resultingHead {
 		return "", false, errors.New("apply integration candidate: receipt-only rebased receipt differs")
+	}
+	proof, proofErr := registry.inspectIntegrationReceipt(
+		ctx, request.Target.WorktreePath, integrationRebaseProofRef(request),
+	)
+	if proofErr != nil || proof.kind == integrationReceiptSymbolic ||
+		proof.kind == integrationReceiptDirect && proof.value != resultingHead ||
+		!found && proof.kind != integrationReceiptDirect {
+		return "", false, errors.New("apply integration candidate: receipt-only proof receipt differs")
 	}
 	return targetRef, found, nil
 }

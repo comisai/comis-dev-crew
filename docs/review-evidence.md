@@ -96,12 +96,17 @@ it validates and backfills pages of 64.
   publication even if its ambient path is replaced.
 - Shared result adoption persists the expected index, expected and result trees,
   result proof, and pending transition before the target compare-and-swap. Only
-  an unchanged expected worktree can then be safely materialized; a crash after
-  the compare-and-swap resumes from that transition, while developer edits and
-  divergent refs remain untouched. Evidence freshness and strategy-specific
-  receipts are reauthorized immediately before post-CAS index/worktree
-  materialization; expiry preserves the pending transition and expected
-  worktree for a later authorized retry.
+  an unchanged expected worktree can then be safely materialized. Tree entries
+  and bounded blob bytes are read as immutable Git objects, the index advances
+  without worktree conversion, and rooted no-follow publication writes exact
+  regular-file bytes, executable modes, and symlink targets. No post-CAS Git
+  checkout consumes mutable repository configuration or info attributes, so a
+  racing dynamically named filter cannot execute with service authority. A
+  crash after the compare-and-swap resumes from that transition, while partial
+  writes, developer edits, and divergent refs remain untouched and unknown.
+  Evidence freshness and strategy-specific receipts are reauthorized
+  immediately before post-CAS index/worktree materialization; expiry preserves
+  the pending transition and expected worktree for a later authorized retry.
 - Recovery validates the complete original and recovery receipt set through
   non-recursive tri-state inspection. A completed result can be reconciled
   after the target compare-and-swap. Every completion posture rechecks the
@@ -123,8 +128,9 @@ it validates and backfills pages of 64.
 - Mutable policy refusal first classifies the complete receipt, proof,
   transition, target, worktree, and sequencer posture. Any mutation evidence
   preserves reconciliation authority and cannot be mislabeled as an aborted
-  pre-mutation attempt. Applied replay validates every sibling receipt before
-  accepting the durable outcome.
+  pre-mutation attempt. Terminal and completed replay validates every original
+  and recovery sibling receipt plus the operation proof ref through the shared
+  non-recursive tri-state boundary before accepting the durable outcome.
 - Pre-mutation policy and topology refusals settle as `aborted`, distinct from
   candidate evidence invalidation, so the exact reservation is released
   without claiming the evidence changed. An aborted recovery releases conflict
@@ -226,4 +232,27 @@ GREEN on the fixed tree:
 ```text
 go test ./internal/git -run 'TestRegistry_(MutatedReplayPolicyRefusalIsNeverPreMutation|AppliedReplayRejectsContradictorySiblingReceipts|CandidateInspectionIgnoresRacingFSMonitor|RebaseRecoveryNeverConsumesReplacedSharedSequencer|PendingRecoverySettlesAfterPostMaterializationExpiry|RecoversResolvedRebaseConflictAndReattachesExactTarget|ReconcilesCompletedRecoveryBeforeRebasedReceipt|ReceiptOnlyRecoveryRequiresOriginalReceiptAuthority)' -count=1
 ok github.com/comisai/comis-dev-crew/internal/git 91.920s
+```
+
+The Round 26 behavioral regressions are preserved in test-only commit
+`06a9e204fa766e563f10c26cc525dc83dc6b99d1`. The exact RED command was:
+
+```text
+go test ./internal/git -run 'TestRegistry_(CompletedMaterializationRejectsContradictoryReceiptFamily|AppliedReplayRejectsUnexpectedProofRef|MaterializationIgnoresRacingDynamicFilter)' -count=1
+```
+
+Before implementation, completed merge and cherry-pick transitions returned
+success with contradictory target or rebased receipts, terminal merge,
+cherry-pick, and rebase replays accepted a resurrected proof ref, and a racing
+dynamically named smudge filter executed during post-CAS materialization.
+Test-only commit `ae8ff12817f27a0f90fc92df7e66fbbca32ec8a3`
+strengthens the same executable race with a dynamic process filter, which also
+executed before integration cleanliness inspection moved to immutable tree,
+index, and rooted worktree comparison.
+
+The focused GREEN command on the fixed tree is:
+
+```text
+go test ./internal/git -run 'TestRegistry_(CompletedMaterializationRejectsContradictoryReceiptFamily|AppliedReplayRejectsUnexpectedProofRef|MaterializationIgnoresRacingDynamicFilter|MaterializationPreservesEditsAcrossCASFailures|ReconcilesCrashAfterResultCAS|FreshOperationAdoptsExactPendingMaterialization|FreshPendingMaterializationNeverOverwritesEdits|PostCASMaterializationRequiresFreshAuthorization|PendingRecoverySettlesAfterPostMaterializationExpiry|RebasePreflightCleansTrackedSymlinkWorkspace|ReceiptOnlyReconcilesCompletedMaterializationBeforeRebasedReceipt|AppliedReplayRejectsContradictorySiblingReceipts|CandidateInspectionIgnoresRacingFSMonitor)' -count=1
+ok github.com/comisai/comis-dev-crew/internal/git 76.011s
 ```

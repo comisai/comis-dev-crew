@@ -125,7 +125,7 @@ func (registry *Registry) ApplyIntegrationCandidate(
 		}, nil
 	}
 
-	final, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
+	final, err := registry.inspectIntegrationCandidate(ctx, CandidateSnapshotRequest{
 		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
 		WorktreePath: request.Target.WorktreePath,
 	})
@@ -194,14 +194,14 @@ func (registry *Registry) inspectIntegrationInputs(
 	if err != nil || !descended || request.Candidate.BaseRevision == request.Candidate.HeadRevision {
 		return CandidateSnapshot{}, CandidateSnapshot{}, errors.New("apply integration candidate: candidate ancestry is invalid")
 	}
-	target, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
+	target, err := registry.inspectIntegrationCandidate(ctx, CandidateSnapshotRequest{
 		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
 		WorktreePath: request.Target.WorktreePath,
 	})
 	if err != nil {
 		return CandidateSnapshot{}, CandidateSnapshot{}, errors.New("apply integration candidate: target worktree is unavailable")
 	}
-	candidate, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
+	candidate, err := registry.inspectIntegrationCandidate(ctx, CandidateSnapshotRequest{
 		TaskHandle: request.Candidate.TaskHandle, RepositoryID: request.Candidate.RepositoryID,
 		WorktreePath: request.Candidate.WorktreePath,
 	})
@@ -216,41 +216,6 @@ func expectedIntegrationTargetBranch(request application.IntegrationAdapterReque
 		request.Target.RepositoryID, request.Target.TaskHandle, request.Target.PreparationOperationID,
 	)
 	return branch
-}
-
-func (registry *Registry) restorePreparedRebaseTarget(
-	ctx context.Context,
-	request application.IntegrationAdapterRequest,
-	targetRef string,
-	currentHead string,
-	headRef string,
-	attached bool,
-) (bool, error) {
-	proofRef := integrationRebaseProofRef(request)
-	if !attached || headRef != proofRef || currentHead != request.Candidate.HeadRevision {
-		return false, nil
-	}
-	if err := registry.ensureRebaseSequencerAbsent(ctx, request.Target.WorktreePath); err != nil {
-		return false, err
-	}
-	proofHead, found, err := registry.integrationReceiptHeadAtPath(ctx, request.Target.WorktreePath, proofRef)
-	if err != nil || !found || proofHead != request.Candidate.HeadRevision {
-		return false, errors.New("apply integration candidate: prepared rebase proof differs")
-	}
-	branchHead, err := registry.integrationBranchHead(ctx, request.Target.WorktreePath, targetRef)
-	if err != nil || branchHead != request.Target.ExpectedHead {
-		return false, errors.New("apply integration candidate: prepared rebase target differs")
-	}
-	status, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-		"status", "--porcelain=v2", "-z", "--untracked-files=all")
-	if err != nil || len(status) != 0 {
-		return false, errors.New("apply integration candidate: prepared rebase is not clean")
-	}
-	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-		"-c", "core.hooksPath=/dev/null", "checkout", "--no-guess", strings.TrimPrefix(targetRef, "refs/heads/")); err != nil {
-		return false, errors.New("apply integration candidate: prepared rebase target could not be restored")
-	}
-	return true, nil
 }
 
 func (registry *Registry) integrationConflictPaths(ctx context.Context, worktreePath string) ([]string, error) {
@@ -368,7 +333,7 @@ func (registry *Registry) replayAppliedIntegration(
 			return application.IntegrationAdapterResult{}, false, err
 		}
 	}
-	target, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
+	target, err := registry.inspectIntegrationCandidate(ctx, CandidateSnapshotRequest{
 		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
 		WorktreePath: request.Target.WorktreePath,
 	})
@@ -403,7 +368,7 @@ func (registry *Registry) replayConflictedIntegration(
 		}
 		return registry.replayConflictedRebase(ctx, request, head)
 	}
-	target, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
+	target, err := registry.inspectIntegrationCandidate(ctx, CandidateSnapshotRequest{
 		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
 		WorktreePath: request.Target.WorktreePath,
 	})

@@ -3,8 +3,6 @@ package git
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -185,10 +183,21 @@ func (registry *Registry) expectedMaterializationIdentity(
 	if err != nil || branchHead != request.Target.ExpectedHead {
 		return "", errors.New("apply integration candidate: materialization target differs")
 	}
-	status, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-		"status", "--porcelain=v2", "-z", "--untracked-files=all")
-	if err != nil || len(status) != 0 || registry.materializationHasIgnoredFiles(ctx, request.Target.WorktreePath) {
+	expectedTree, err := registry.integrationCommitTree(ctx, request.Target.WorktreePath, request.Target.ExpectedHead)
+	if err != nil {
+		return "", err
+	}
+	snapshot, err := registry.loadIntegrationTreeSnapshot(ctx, request.Target.WorktreePath, expectedTree)
+	if err != nil {
+		return "", err
+	}
+	matches, err := integrationWorktreeMatchesSnapshot(request.Target.WorktreePath, snapshot)
+	if err != nil || !matches {
 		return "", errors.New("apply integration candidate: materialization worktree is not clean")
+	}
+	indexTree, err := registry.integrationIndexTree(ctx, request.Target.WorktreePath)
+	if err != nil || indexTree != expectedTree {
+		return "", errors.New("apply integration candidate: materialization index differs")
 	}
 	return registry.integrationIndexDigest(ctx, request.Target.WorktreePath)
 }
@@ -249,8 +258,31 @@ func (registry *Registry) advanceIntegrationMaterialization(
 	if registry.completedMaterialization(ctx, request, transition) {
 		return nil
 	}
-	if err := registry.verifyExpectedMaterializationState(ctx, request, transition); err != nil {
+	expectedSnapshot, err := registry.loadIntegrationTreeSnapshot(
+		ctx, request.Target.WorktreePath, transition.ExpectedTree,
+	)
+	if err != nil {
+		return err
+	}
+	resultingSnapshot, err := registry.loadIntegrationTreeSnapshot(
+		ctx, request.Target.WorktreePath, transition.ResultingTree,
+	)
+	if err != nil {
+		return err
+	}
+	matchesExpected, err := integrationWorktreeMatchesSnapshot(request.Target.WorktreePath, expectedSnapshot)
+	if err != nil || !matchesExpected {
 		return errors.New("apply integration candidate: post-CAS worktree identity differs")
+	}
+	indexTree, err := registry.integrationIndexTree(ctx, request.Target.WorktreePath)
+	if err != nil || indexTree != transition.ExpectedTree && indexTree != transition.ResultingTree {
+		return errors.New("apply integration candidate: post-CAS index identity differs")
+	}
+	if indexTree == transition.ExpectedTree {
+		digest, digestErr := registry.integrationIndexDigest(ctx, request.Target.WorktreePath)
+		if digestErr != nil || digest != transition.ExpectedIndexDigest {
+			return errors.New("apply integration candidate: post-CAS index identity differs")
+		}
 	}
 	workspace, err := registry.integrationMaterializationWorkspace(ctx, request.Target.WorktreePath)
 	if err != nil {
@@ -259,10 +291,20 @@ func (registry *Registry) advanceIntegrationMaterialization(
 	if err := registry.authorizeIntegrationMaterializationAfterCAS(ctx, request, transition.ResultingHead); err != nil {
 		return err
 	}
-	if _, err := runGitBytesInWorkspace(ctx, registry.gitExecutable, workspace,
-		"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-		"read-tree", "-m", "-u", transition.ExpectedHead, transition.ResultingHead); err != nil {
-		return errors.New("apply integration candidate: proved result could not be safely materialized")
+	if indexTree == transition.ExpectedTree {
+		if _, err := runGitBytesInWorkspace(ctx, registry.gitExecutable, workspace,
+			"read-tree", "--reset", transition.ResultingHead); err != nil {
+			return errors.New("apply integration candidate: proved result index could not be safely materialized")
+		}
+		indexTree, err = registry.integrationIndexTree(ctx, request.Target.WorktreePath)
+		if err != nil || indexTree != transition.ResultingTree {
+			return errors.New("apply integration candidate: proved result index is unverified")
+		}
+	}
+	if err := materializeIntegrationWorktree(
+		request.Target.WorktreePath, expectedSnapshot, resultingSnapshot,
+	); err != nil {
+		return err
 	}
 	if !registry.completedMaterialization(ctx, request, transition) {
 		return errors.New("apply integration candidate: proved result materialization is unverified")
@@ -299,12 +341,24 @@ func (registry *Registry) completedMaterialization(
 	request application.IntegrationAdapterRequest,
 	transition integrationMaterializationTransition,
 ) bool {
-	target, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
-		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
-		WorktreePath: request.Target.WorktreePath,
-	})
-	return err == nil && target.HeadRevision == transition.ResultingHead && target.Cleanliness == CandidateClean &&
-		target.Branch == expectedIntegrationTargetBranch(request)
+	headRef, attached, err := registry.integrationHeadRef(ctx, request.Target.WorktreePath)
+	if err != nil || !attached || headRef != transition.TargetRef {
+		return false
+	}
+	branchHead, err := registry.integrationBranchHead(ctx, request.Target.WorktreePath, transition.TargetRef)
+	if err != nil || branchHead != transition.ResultingHead {
+		return false
+	}
+	indexTree, err := registry.integrationIndexTree(ctx, request.Target.WorktreePath)
+	if err != nil || indexTree != transition.ResultingTree {
+		return false
+	}
+	snapshot, err := registry.loadIntegrationTreeSnapshot(ctx, request.Target.WorktreePath, transition.ResultingTree)
+	if err != nil {
+		return false
+	}
+	matches, err := integrationWorktreeMatchesSnapshot(request.Target.WorktreePath, snapshot)
+	return err == nil && matches
 }
 
 func (registry *Registry) verifyExpectedMaterializationState(
@@ -316,66 +370,19 @@ func (registry *Registry) verifyExpectedMaterializationState(
 	if err != nil || digest != transition.ExpectedIndexDigest {
 		return errors.New("apply integration candidate: materialization index differs")
 	}
-	_, exitCode, err := executeGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
-		"diff-files", "--quiet", "--ignore-submodules", "--")
-	if err != nil || exitCode != 0 || registry.materializationHasUntrackedFiles(ctx, request.Target.WorktreePath) ||
-		registry.materializationHasIgnoredFiles(ctx, request.Target.WorktreePath) {
+	indexTree, err := registry.integrationIndexTree(ctx, request.Target.WorktreePath)
+	if err != nil || indexTree != transition.ExpectedTree {
+		return errors.New("apply integration candidate: materialization index differs")
+	}
+	snapshot, err := registry.loadIntegrationTreeSnapshot(ctx, request.Target.WorktreePath, transition.ExpectedTree)
+	if err != nil {
+		return err
+	}
+	matches, err := integrationWorktreeMatchesSnapshot(request.Target.WorktreePath, snapshot)
+	if err != nil || !matches {
 		return errors.New("apply integration candidate: materialization worktree differs")
 	}
 	return nil
-}
-
-func (registry *Registry) materializationHasUntrackedFiles(ctx context.Context, worktreePath string) bool {
-	output, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
-		"ls-files", "--others", "--exclude-standard", "-z")
-	return err != nil || len(output) != 0
-}
-
-func (registry *Registry) materializationHasIgnoredFiles(ctx context.Context, worktreePath string) bool {
-	output, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
-		"ls-files", "--others", "--ignored", "--exclude-standard", "-z")
-	return err != nil || len(output) != 0
-}
-
-func (registry *Registry) integrationIndexDigest(ctx context.Context, worktreePath string) (string, error) {
-	workspace, err := registry.integrationMaterializationWorkspace(ctx, worktreePath)
-	if err != nil {
-		return "", err
-	}
-	file, err := openRegularFile(workspace.gitIndex)
-	if err != nil {
-		return "", errors.New("apply integration candidate: target index is unavailable")
-	}
-	digest := sha256.New()
-	_, copyErr := io.Copy(digest, file)
-	closeErr := file.Close()
-	if copyErr != nil || closeErr != nil {
-		return "", errors.New("apply integration candidate: target index could not be read")
-	}
-	return hex.EncodeToString(digest.Sum(nil)), nil
-}
-
-func (registry *Registry) integrationMaterializationWorkspace(
-	ctx context.Context,
-	worktreePath string,
-) (gitWorkspaceEnvironment, error) {
-	gitDirectory, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
-		"rev-parse", "--absolute-git-dir")
-	if err != nil || !filepath.IsAbs(gitDirectory) {
-		return gitWorkspaceEnvironment{}, errors.New("apply integration candidate: target index identity is unavailable")
-	}
-	return gitWorkspaceEnvironment{
-		gitDir: gitDirectory, gitWorkTree: worktreePath, gitIndex: filepath.Join(gitDirectory, "index"),
-	}, nil
-}
-
-func (registry *Registry) integrationCommitTree(ctx context.Context, worktreePath, head string) (string, error) {
-	tree, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
-		"rev-parse", "--verify", head+"^{tree}")
-	if err != nil || !gitRevisionPattern.MatchString(tree) {
-		return "", errors.New("apply integration candidate: materialization tree is unavailable")
-	}
-	return tree, nil
 }
 
 func integrationMaterializationPath(

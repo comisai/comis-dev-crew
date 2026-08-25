@@ -71,13 +71,41 @@ func (registry *Registry) restoreRecoveryMaterializationBase(
 		if err := registry.verifyRecoveryMaterializationState(ctx, request, transition); err != nil {
 			return integrationMaterializationTransition{}, err
 		}
+		recoveryTree, err := registry.integrationIndexTree(ctx, request.Target.WorktreePath)
+		if err != nil {
+			return integrationMaterializationTransition{}, err
+		}
+		recoverySnapshot, err := registry.loadIntegrationTreeSnapshot(
+			ctx, request.Target.WorktreePath, recoveryTree,
+		)
+		if err != nil {
+			return integrationMaterializationTransition{}, err
+		}
+		expectedSnapshot, err := registry.loadIntegrationTreeSnapshot(
+			ctx, request.Target.WorktreePath, transition.ExpectedTree,
+		)
+		if err != nil {
+			return integrationMaterializationTransition{}, err
+		}
+		if err := registry.authorizeRebaseFinalization(ctx, request, transition.ResultingHead); err != nil {
+			return integrationMaterializationTransition{}, err
+		}
 		if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C",
 			request.Target.WorktreePath, "symbolic-ref", "HEAD", transition.TargetRef); err != nil {
 			return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery target could not be reattached")
 		}
-		if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C",
-			request.Target.WorktreePath, "read-tree", "--reset", "-u", transition.ExpectedHead); err != nil {
-			return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery target could not be restored")
+		workspace, err := registry.integrationMaterializationWorkspace(ctx, request.Target.WorktreePath)
+		if err != nil {
+			return integrationMaterializationTransition{}, err
+		}
+		if _, err := runGitBytesInWorkspace(ctx, registry.gitExecutable, workspace,
+			"read-tree", "--reset", transition.ExpectedHead); err != nil {
+			return integrationMaterializationTransition{}, errors.New("apply integration candidate: recovery index could not be restored")
+		}
+		if err := materializeIntegrationWorktree(
+			request.Target.WorktreePath, recoverySnapshot, expectedSnapshot,
+		); err != nil {
+			return integrationMaterializationTransition{}, err
 		}
 	}
 	if err := registry.removeSharedRebaseSequencer(ctx, request.Target.WorktreePath); err != nil {
@@ -126,10 +154,16 @@ func (registry *Registry) recoveryMaterializationWorktreeMatchesIndex(
 	ctx context.Context,
 	worktreePath string,
 ) bool {
-	_, exitCode, err := executeGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
-		"diff-files", "--quiet", "--ignore-submodules", "--")
-	return err == nil && exitCode == 0 && !registry.materializationHasUntrackedFiles(ctx, worktreePath) &&
-		!registry.materializationHasIgnoredFiles(ctx, worktreePath)
+	tree, err := registry.integrationIndexTree(ctx, worktreePath)
+	if err != nil {
+		return false
+	}
+	snapshot, err := registry.loadIntegrationTreeSnapshot(ctx, worktreePath, tree)
+	if err != nil {
+		return false
+	}
+	matches, err := integrationWorktreeMatchesSnapshot(worktreePath, snapshot)
+	return err == nil && matches
 }
 
 func (registry *Registry) removeSharedRebaseSequencer(ctx context.Context, worktreePath string) error {

@@ -91,7 +91,7 @@ func (registry *Registry) finalizeRecoveredRebase(
 	if err := registry.retireIntegrationRebaseProof(ctx, request, resultingHead); err != nil {
 		return application.IntegrationAdapterResult{}, err
 	}
-	final, err := registry.InspectCandidate(ctx, CandidateSnapshotRequest{
+	final, err := registry.inspectIntegrationCandidate(ctx, CandidateSnapshotRequest{
 		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
 		WorktreePath: request.Target.WorktreePath,
 	})
