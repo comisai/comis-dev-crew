@@ -9,6 +9,13 @@ import (
 	"testing"
 )
 
+func TestBoundedChildProcessPreservesExactArguments(t *testing.T) {
+	output, exitCode, err := executeGit(context.Background(), "/bin/sh", "-c", "printf exact-child-output")
+	if err != nil || exitCode != 0 || string(output) != "exact-child-output" {
+		t.Fatalf("bounded child output = %q, exit = %d, error = %v", output, exitCode, err)
+	}
+}
+
 // writeOversizeThenFailScript writes a child that produces more than the output
 // bound and then exits non-zero, which is what an overflowing read looks like
 // from the outside: the reader stops, the child's pipe closes under it, and the
