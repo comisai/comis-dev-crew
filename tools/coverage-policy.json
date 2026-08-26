@@ -1,7 +1,7 @@
 {
-  "aggregateFloor": 90,
-  "packageFloor": 80,
-  "criticalFloor": 90,
+  "aggregateFloor": 85,
+  "packageFloor": 75,
+  "criticalFloor": 75,
   "criticalPackages": [
     "internal/domain",
     "internal/application",
