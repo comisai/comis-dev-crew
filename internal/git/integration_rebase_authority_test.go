@@ -105,6 +105,7 @@ func TestRegistry_RebaseRejectsDropProneRangesBeforeMutation(t *testing.T) {
 		candidateHead := commitIntegrationFile(t, fixture, fixture.candidate.CanonicalPath,
 			"represented.txt", "represented\n")
 		runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+			"-c", fixtureAuthorName, "-c", fixtureAuthorEmail,
 			"cherry-pick", candidateHead)
 		targetHead := integrationGitOutput(t, fixture, fixture.target.CanonicalPath, "rev-parse", "HEAD")
 		request := fixture.request("integration-rebase-represented-upstream",
@@ -128,6 +129,7 @@ func TestRegistry_RebaseRejectsDropProneRangesBeforeMutation(t *testing.T) {
 		runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.candidate.CanonicalPath,
 			"checkout", fixture.candidate.Branch)
 		runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.candidate.CanonicalPath,
+			"-c", fixtureAuthorName, "-c", fixtureAuthorEmail,
 			"merge", "--no-ff", "--no-edit", "integration-side")
 		candidateHead := integrationGitOutput(t, fixture, fixture.candidate.CanonicalPath, "rev-parse", "HEAD")
 		targetHead := commitIntegrationFile(t, fixture, fixture.target.CanonicalPath, "target.txt", "target\n")
