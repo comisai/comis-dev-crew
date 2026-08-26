@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
@@ -65,7 +66,10 @@ func TestInitiativeMembershipMigrationBoundsLiveHeap(t *testing.T) {
 				return
 			default:
 			}
-			runtime.Gosched()
+			// ReadMemStats stops the world, so an unthrottled sampler starves the
+			// migration it is measuring. Sampling every 500us still catches the
+			// peak of a streaming migration without dominating its runtime.
+			time.Sleep(500 * time.Microsecond)
 		}
 	}()
 	<-started
