@@ -28,7 +28,7 @@ func TestProductionLaunchSupervisor_StartsOnlyAfterVerifiedCreatedAuthority(t *t
 		t.Fatalf("RecordTerminalEvent(created) = %#v, %v", result, err)
 	}
 	wantStart := application.StartTaskCommand{
-		OperationID: productionStartOperationID(task.Handle), TaskHandle: task.Handle,
+		OperationID: productionStartOperationID(task.Handle, task.StateVersion), TaskHandle: task.Handle,
 	}
 	if len(mutations.starts) != 1 || mutations.starts[0] != wantStart ||
 		len(mutations.terminals) != 1 || mutations.terminals[0] != command {
@@ -39,6 +39,43 @@ func TestProductionLaunchSupervisor_StartsOnlyAfterVerifiedCreatedAuthority(t *t
 		adapter.request.Attachment.RelayIdentity != preparation.RequestedAttachment.RelayIdentity ||
 		adapter.request.Attachment.MountSocketPath != "/run/comis/attachments/"+task.AttachmentTargetName {
 		t.Fatalf("verified descriptor request = %#v", adapter.request)
+	}
+}
+
+func TestProductionLaunchSupervisor_UsesOneStartIdentityPerReadyGeneration(t *testing.T) {
+	first := productionStartOperationID("task-production-launch", 7)
+	replayed := productionStartOperationID("task-production-launch", 7)
+	resumed := productionStartOperationID("task-production-launch", 19)
+	if first != replayed || first == resumed {
+		t.Fatalf("start identities = first %q, replay %q, resumed %q", first, replayed, resumed)
+	}
+}
+
+func TestProductionLaunchSupervisor_VerifiesAResumedWorkerAgainstItsRecordedHead(t *testing.T) {
+	task, preparation := productionLaunchFixture(t)
+	resume := application.TaskResumeLaunch{
+		OperationID: "operation-resume-production-launch", TaskHandle: task.Handle,
+		HeadRevision: strings.Repeat("c", 40), StateVersion: task.StateVersion,
+	}
+	store := &productionLaunchStoreStub{
+		tasks: []domain.Task{task}, preparation: preparation,
+		resume: resume, resumeFound: true,
+	}
+	mutations := &productionLaunchMutationStub{task: task}
+	adapter := &productionLaunchHarnessAdapter{}
+	supervisor, err := newProductionLaunchSupervisor(productionLaunchSupervisorConfig{
+		Store: store, Mutations: mutations, Harnesses: productionLaunchHarnesses{adapter: adapter},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := supervisor.RecordTerminalEvent(context.Background(), productionCreatedCommand(task)); err != nil {
+		t.Fatalf("RecordTerminalEvent(resume created) error = %v", err)
+	}
+	if adapter.resume == nil || adapter.resume.ResumeFromHead != resume.HeadRevision ||
+		adapter.resume.Launch.TaskHandle != task.Handle || len(mutations.starts) != 1 {
+		t.Fatalf("resume descriptor = %#v, starts = %#v", adapter.resume, mutations.starts)
 	}
 }
 
@@ -211,8 +248,18 @@ func productionCreatedCommand(task domain.Task) application.RecordTerminalEventC
 type productionLaunchStoreStub struct {
 	tasks       []domain.Task
 	preparation application.ManagedRunPreparation
+	resume      application.TaskResumeLaunch
+	resumeFound bool
+	resumeErr   error
 	listErr     error
 	prepErr     error
+}
+
+func (store *productionLaunchStoreStub) TaskResumeLaunch(
+	context.Context,
+	string,
+) (application.TaskResumeLaunch, bool, error) {
+	return store.resume, store.resumeFound, store.resumeErr
 }
 
 func (store *productionLaunchStoreStub) ListTasks(context.Context) ([]domain.Task, error) {
@@ -274,6 +321,7 @@ func (harnesses productionLaunchHarnesses) ResolveWorkerHarness(string) (applica
 
 type productionLaunchHarnessAdapter struct {
 	request         application.WorkerLaunchRequest
+	resume          *application.WorkerResumeRequest
 	alterDescriptor func(*application.WorkerLaunchDescriptor)
 }
 
@@ -345,10 +393,11 @@ func (*productionLaunchHarnessAdapter) ClassifyProcessRole(
 	}
 }
 
-func (*productionLaunchHarnessAdapter) BuildResumeDescriptor(
-	context.Context, application.WorkerResumeRequest,
+func (adapter *productionLaunchHarnessAdapter) BuildResumeDescriptor(
+	ctx context.Context, request application.WorkerResumeRequest,
 ) (application.WorkerLaunchDescriptor, error) {
-	return application.WorkerLaunchDescriptor{}, errors.New("launch harness adapter does not resume")
+	adapter.resume = &request
+	return adapter.BuildLaunchDescriptor(ctx, request.Launch)
 }
 
 func (*productionLaunchHarnessAdapter) InstallLifecycleIntegration(

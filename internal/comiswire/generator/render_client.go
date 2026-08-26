@@ -11,9 +11,13 @@ func renderClient(manifest bundle.Manifest) (string, error) {
 	expected := map[string]bool{
 		"capabilityServices.handshake":         false,
 		"capabilityServices.health":            false,
+		"managedRunGroups.abandon":             false,
+		"managedRunGroups.activate":            false,
+		"managedRunGroups.getHostRollup":       false,
 		"managedRuns.abandon":                  false,
 		"managedRuns.activate":                 false,
 		"managedRuns.cancel":                   false,
+		"managedRuns.consumeApproval":          false,
 		"managedRuns.heartbeat":                false,
 		"managedRuns.putEvidence":              false,
 		"managedRuns.receiveAttentionResponse": false,
@@ -176,6 +180,28 @@ func (client *Client) PutEvidence(ctx context.Context, params PutEvidenceRequest
 		response.Result.EvidenceRef != params.EvidenceRef || response.Result.ContentHash != params.ContentHash ||
 		response.Result.VerificationLevel != params.VerificationLevel {
 		return PutEvidenceResponseResult{}, fmt.Errorf("put evidence response identity does not match request")
+	}
+	return response.Result, nil
+}
+
+func (client *Client) ConsumeApproval(ctx context.Context, params ConsumeApprovalRequestParams) (ConsumeApprovalResponseResult, error) {
+	if ctx == nil {
+		return ConsumeApprovalResponseResult{}, fmt.Errorf("consume approval context is required")
+	}
+	request := ConsumeApprovalRequest{JSONRPC: JSONRPCVersion, ID: params.OperationID, Method: MethodManagedRunsConsumeApproval, Params: params}
+	if err := validateGeneratedDocument(schemaConsumeApprovalRequest, request); err != nil {
+		return ConsumeApprovalResponseResult{}, fmt.Errorf("validate consume approval request: %w", err)
+	}
+	var response ConsumeApprovalResponse
+	if err := client.transport.roundTrip(ctx, request, &response); err != nil {
+		return ConsumeApprovalResponseResult{}, err
+	}
+	if err := validateGeneratedDocument(schemaConsumeApprovalResponse, response); err != nil {
+		return ConsumeApprovalResponseResult{}, fmt.Errorf("validate consume approval response: %w", err)
+	}
+	if response.ID != request.ID || response.Result.ManagedRunID != params.ManagedRunID ||
+		response.Result.ApprovalRequestID != params.ApprovalRequestID || response.Result.MCPOperationID != params.MCPOperationID {
+		return ConsumeApprovalResponseResult{}, fmt.Errorf("consume approval response identity does not match request")
 	}
 	return response.Result, nil
 }

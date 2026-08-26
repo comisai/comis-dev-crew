@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 const maxProtocolFileBytes = 2 * 1024 * 1024
@@ -87,6 +89,7 @@ func validateManifest(manifest Manifest) error {
 func validateLimits(limits Limits) error {
 	values := []int{
 		limits.MaxEvidenceBytes,
+		limits.MaxGroupMembers,
 		limits.MaxInFlightRequests,
 		limits.MaxLineBytes,
 		limits.MaxReportBytes,
@@ -98,6 +101,9 @@ func validateLimits(limits Limits) error {
 		if value <= 0 {
 			return fmt.Errorf("manifest limit must be positive")
 		}
+	}
+	if limits.MaxGroupMembers != domain.MaximumInitiativeMembers {
+		return fmt.Errorf("manifest group limit differs from the application bound")
 	}
 	if limits.MaxReportBytes > limits.MaxRequestBytes || limits.MaxRequestBytes > limits.MaxLineBytes {
 		return fmt.Errorf("manifest request limits are contradictory")
@@ -172,7 +178,13 @@ func validateMethods(manifest Manifest) error {
 		if !oneOf(method.Direction, "bidirectional", "comis-to-service", "service-to-comis") {
 			return fmt.Errorf("method %q has unknown direction %q", name, method.Direction)
 		}
-		if method.RequiredServiceScope != nil && !oneOf(*method.RequiredServiceScope, "attention_response", "evidence", "health", "report", "workspace_lease") {
+		// The full protocol scope set, not merely the scopes some method happens
+		// to require today. The narrower list silently omitted terminal_events
+		// and execution_attachment, so the first method to require either would
+		// have failed the sync as an unknown scope rather than as a real defect.
+		if method.RequiredServiceScope != nil && !oneOf(*method.RequiredServiceScope,
+			"approval_receipt", "attention_response", "evidence", "execution_attachment", "health",
+			"managed_run_group", "report", "terminal_events", "workspace_lease") {
 			return fmt.Errorf("method %q has unknown service scope %q", name, *method.RequiredServiceScope)
 		}
 		if !method.OperationIDRequired || method.MaxRequestBytes != manifest.Limits.MaxRequestBytes || method.MaxResponseBytes != manifest.Limits.MaxResponseBytes || len(method.SemanticInvariants) == 0 {

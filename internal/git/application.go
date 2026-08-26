@@ -59,6 +59,19 @@ func (registry *Registry) RemoveDeliveredWorkspace(
 	})
 }
 
+// RemoveDiscardedWorkspace implements the acknowledged discard path while
+// preserving the same exact task, operation, worktree, branch and head proof.
+func (registry *Registry) RemoveDiscardedWorkspace(
+	ctx context.Context,
+	request application.DeliveredWorkspaceRemoval,
+) error {
+	return registry.RemoveDiscardedWorktree(ctx, DeliveredWorktreeCleanupRequest{
+		PreparationOperationID: request.PreparationOperationID, TaskHandle: request.TaskHandle,
+		RepositoryID: request.RepositoryID, WorktreePath: request.WorktreePath,
+		Branch: request.Branch, HeadRevision: request.HeadRevision,
+	})
+}
+
 // SynchronizePrimary implements the application synchronization port. The
 // adapter's own closed vocabularies are mapped rather than shared, so the
 // application never depends on this adapter's types and an unmapped outcome
@@ -124,6 +137,7 @@ func (registry *Registry) InspectTaskDiff(
 		return application.TaskDiffView{}, err
 	}
 	return application.TaskDiffView{
+		TaskHandle: request.TaskHandle, RepositoryID: request.RepositoryID,
 		BaseRevision: diff.BaseRevision, HeadRevision: diff.HeadRevision,
 		Committed: portFileChanges(diff.Committed), Uncommitted: portFileChanges(diff.Uncommitted),
 		CommittedTotals:   portDiffTotals(diff.CommittedTotals),
@@ -141,6 +155,7 @@ func portFileChanges(changes []CandidateFileChange) []application.TaskFileChange
 		ported = append(ported, application.TaskFileChange{
 			Path: change.Path, PreviousPath: change.PreviousPath,
 			Added: change.Added, Deleted: change.Deleted, Binary: change.Binary,
+			DetailTruncated: change.DetailTruncated,
 		})
 	}
 	return ported

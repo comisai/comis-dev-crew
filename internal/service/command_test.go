@@ -177,6 +177,7 @@ func TestServiceFailureClassUsesSafeStableCategories(t *testing.T) {
 		{"run candidate supervisor: candidate evidence was not accepted", "candidate_evidence_rejected"},
 		{"run candidate supervisor: durable task queue is unavailable", "candidate_supervision"},
 		{"run service validation recovery: unavailable", "validation_process_recovery"},
+		{"run service integration policy composition: unavailable", "installed_composition"},
 		{"run service startup reconciliation: unavailable", "startup_reconciliation"},
 		{"run service local endpoint: unavailable", "operator_endpoint"},
 		{"run service MCP endpoint: unavailable", "mcp_endpoint"},
@@ -188,6 +189,26 @@ func TestServiceFailureClassUsesSafeStableCategories(t *testing.T) {
 			t.Fatalf("serviceFailureClass() = %q, want %q", got, test.want)
 		}
 	}
+	if got := serviceFailureCause(errors.New("unclassified private detail")); got != "" {
+		t.Fatalf("serviceFailureCause(unclassified) = %q, want empty", got)
+	}
+	integrationFailure := errors.New("run service integration policy composition: unavailable")
+	if got := serviceFailureCause(integrationFailure); got != "integration_policy_composition" ||
+		serviceFailureHint(integrationFailure) != "inspect integrationPolicies in the owner-private candidate configuration" {
+		t.Fatalf("integration failure diagnostic = %q / %q", got, serviceFailureHint(integrationFailure))
+	}
+	candidatePolicyFailure := errors.New("read candidate composition: integration policies are invalid")
+	if got := serviceFailureHint(candidatePolicyFailure); got != "add one to 64 valid integrationPolicies entries to the owner-private candidate configuration" {
+		t.Fatalf("candidate policy failure hint = %q", got)
+	}
+}
+
+func TestServiceFailureHintNamesMissingProfilePathRulesKnob(t *testing.T) {
+	err := errors.New("run service validation composition: create validation catalog: profile path rules are required")
+	want := "add one to 64 valid profiles[*].pathRules entries to the owner-private candidate configuration"
+	if got := serviceFailureHint(err); got != want {
+		t.Fatalf("serviceFailureHint() = %q, want %q", got, want)
+	}
 }
 
 func TestRunCommand_ComposesInstalledLaneWithExplicitDeterministicFixture(t *testing.T) {
@@ -198,7 +219,8 @@ func TestRunCommand_ComposesInstalledLaneWithExplicitDeterministicFixture(t *tes
 	candidateConfigPath := root + "/candidate.json"
 	writeCandidateConfig(t, candidateConfigPath, `{
   "programs":[{"id":"repo-check","executable":"/usr/bin/true"}],
-  "profiles":[{"id":"required","localChecks":[{"id":"unit","programId":"repo-check","arguments":[{"kind":"literal","value":"--version"}],"timeout":"2m","required":true}],"forgeChecks":[{"name":"ci/unit","required":true}],"evidenceTtl":"24h"}],
+  "profiles":[{"id":"required","localChecks":[{"id":"unit","programId":"repo-check","arguments":[{"kind":"literal","value":"--version"}],"timeout":"2m","required":true}],"forgeChecks":[{"name":"ci/unit","required":true}],"pathRules":[{"kind":"exact","path":"report.md"}],"evidenceTtl":"24h"}],
+  "integrationPolicies":[{"id":"integration-default","strategy":"merge"}],
   "maxOutputBytes":65536,"pollInterval":"250ms",
   "forge":{"apiBaseUrl":"https://api.github.com","owner":"comisai","repository":"product-api","remoteUrl":"https://github.com/comisai/product-api.git","readCredentialFile":"/private/config/forge-read.credential","pushCredentialFile":"/private/config/forge-push.credential","credentialDirectory":"/private/run/forge-credentials"}
 }`, 0o600)
@@ -226,6 +248,8 @@ func TestRunCommand_ComposesInstalledLaneWithExplicitDeterministicFixture(t *tes
 		"--codex-terminal-allow-entry", "codex-confined",
 		"--codex-network", "restricted",
 		"--codex-concurrency", "2",
+		"--max-concurrent-tasks", "4",
+		"--max-concurrent-tasks-per-repository", "3",
 		"--claude-profile", "claude-reviewed",
 		"--claude-executable", "/opt/claude/bin/claude",
 		"--claude-version", "2.1.224 (Claude Code)",
@@ -264,7 +288,8 @@ func TestRunCommand_ComposesInstalledLaneWithExplicitDeterministicFixture(t *tes
 	}
 	if got.DatabasePath != "/private/state/devcrew.db" || got.SocketPath != "/private/run/operator.sock" ||
 		got.MCPSocketPath != "/private/run/mcp.sock" || got.RuntimeRoot != "/private/run/tasks" || got.ServiceInstanceID != "service-instance-fixture" ||
-		got.PreparationTTL != 15*time.Minute || !reflect.DeepEqual(got.RepositoryComposition, wantRepository) ||
+		got.PreparationTTL != 15*time.Minute || got.MaxConcurrentTasks != 4 || got.MaxConcurrentTasksPerRepository != 3 ||
+		!reflect.DeepEqual(got.RepositoryComposition, wantRepository) ||
 		!reflect.DeepEqual(got.ComisComposition, wantComis) || !reflect.DeepEqual(got.CodexComposition, wantCodex) ||
 		got.FixtureComposition == nil || got.FixtureComposition.Decision != "use the bounded fixture choice" {
 		t.Fatalf("installed service config = %#v", got)
@@ -301,6 +326,10 @@ func TestRunCommand_RejectsPartialInstalledCompositionWithoutLeakingValues(t *te
 	}, &stdout, &stderr, CommandConfig{})
 	if exitCode != 2 || !strings.Contains(stderr.String(), "installed composition is incomplete") {
 		t.Fatalf("RunCommand(partial) = %d, stderr=%q", exitCode, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--max-concurrent-tasks=0") ||
+		!strings.Contains(stderr.String(), "--max-concurrent-tasks-per-repository=0") {
+		t.Fatalf("partial-composition diagnostic omitted task concurrency values: %q", stderr.String())
 	}
 	if strings.Contains(stdout.String()+stderr.String(), privateValue) {
 		t.Fatalf("partial-composition diagnostic leaked private value: %q", stderr.String())

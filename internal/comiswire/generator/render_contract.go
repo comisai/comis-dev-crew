@@ -16,6 +16,7 @@ func renderContract(manifest bundle.Manifest, schemas []schemaSpec) (string, err
 	fmt.Fprintf(&output, "const BundleDigest = %s\n", quoted(manifest.BundleDigest))
 	output.WriteString("const JSONRPCVersion = \"2.0\"\n\n")
 	fmt.Fprintf(&output, "const MaxEvidenceBytes = %d\n", manifest.Limits.MaxEvidenceBytes)
+	fmt.Fprintf(&output, "const MaxGroupMembers = %d\n", manifest.Limits.MaxGroupMembers)
 	fmt.Fprintf(&output, "const MaxInFlightRequests = %d\n", manifest.Limits.MaxInFlightRequests)
 	fmt.Fprintf(&output, "const MaxLineBytes = %d\n", manifest.Limits.MaxLineBytes)
 	fmt.Fprintf(&output, "const MaxReportBytes = %d\n", manifest.Limits.MaxReportBytes)
@@ -42,6 +43,7 @@ func renderContract(manifest bundle.Manifest, schemas []schemaSpec) (string, err
 	}{
 		{name: "AbandonDisposition", schema: "schemas/abandon.request.schema.json", path: []string{"params", "disposition"}},
 		{name: "AbandonReason", schema: "schemas/abandon.request.schema.json", path: []string{"params", "reason"}},
+		{name: "ApprovalReceiptState", schema: "schemas/consumeApproval.response.schema.json", path: []string{"result", "state"}},
 		{name: "HealthStatus", schema: "schemas/health.response.schema.json", path: []string{"result", "status"}},
 		{name: "ReportKind", schema: "schemas/report.request.schema.json", path: []string{"params", "kind"}},
 		{name: "CapabilityTerminalTransition", schema: "schemas/terminalEvent.request.schema.json", path: []string{"params", "transition"}},

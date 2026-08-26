@@ -46,8 +46,10 @@ type Queries struct {
 	taskDiffs                TaskDiffInspector
 	repairs                  RepairSurveyStore
 	events                   ServiceEventStore
+	audit                    AuditReader
 	taskLogs                 TaskLogStore
 	decisionSurfacing        DecisionSurfacingPolicy
+	schedulingLimits         *InitiativeSchedulingLimits
 	clock                    Clock
 }
 
@@ -73,13 +75,17 @@ type QueryConfig struct {
 	// Absent when the deployment exposes no event log; the stream then reports
 	// unavailable rather than a quiet page a follower would trust.
 	Events ServiceEventStore
+	Audit  AuditReader
 	// Absent when the deployment exposes no durable history; a log read then
 	// reports unavailable rather than an empty page.
 	TaskLogs TaskLogStore
 	// Zero when the deployment configures no cadence; the reviewed default is
 	// used so the published return schedule matches the running supervisor.
 	DecisionSurfacing DecisionSurfacingPolicy
-	Clock             Clock
+	// Absent only when the deployment has no reviewed concurrency policy. A
+	// configured service publishes the same exact limits used at admission.
+	SchedulingLimits *InitiativeSchedulingLimits
+	Clock            Clock
 }
 
 // NewQueries validates and binds the read-side dependencies.
@@ -90,13 +96,22 @@ func NewQueries(config QueryConfig) (*Queries, error) {
 	if config.Clock == nil {
 		return nil, errors.New("create queries: clock is required")
 	}
+	var schedulingLimits *InitiativeSchedulingLimits
+	if config.SchedulingLimits != nil {
+		cloned := cloneInitiativeSchedulingLimits(*config.SchedulingLimits)
+		if err := validateSchedulingLimits(cloned); err != nil {
+			return nil, fmt.Errorf("create queries: %w", err)
+		}
+		schedulingLimits = &cloned
+	}
 	return &Queries{
 		repository: config.Repository, harnesses: config.Harnesses, host: config.Host,
 		reconciliationWorkspaces: config.ReconciliationWorkspaces,
 		workerProfiles:           config.WorkerProfiles, decisions: config.Decisions,
-		taskDiffs: config.TaskDiffs, repairs: config.Repairs, events: config.Events,
+		taskDiffs: config.TaskDiffs, repairs: config.Repairs, events: config.Events, audit: config.Audit,
 		taskLogs:          config.TaskLogs,
-		decisionSurfacing: config.DecisionSurfacing, clock: config.Clock,
+		decisionSurfacing: config.DecisionSurfacing, schedulingLimits: schedulingLimits,
+		clock: config.Clock,
 	}, nil
 }
 
@@ -120,29 +135,6 @@ func (queries *Queries) Diagnose(ctx context.Context) (DiagnosticReport, error) 
 			{Name: "store", Status: CheckPass, Message: "durable state is readable", Hint: "none"},
 			hostCheck,
 		},
-	}, nil
-}
-
-// Fleet returns the canonical current E0 fleet snapshot.
-func (queries *Queries) Fleet(ctx context.Context) (FleetSnapshot, error) {
-	tasks, stateVersion, err := queries.taskSnapshot(ctx)
-	if err != nil {
-		return FleetSnapshot{}, err
-	}
-	now := queries.now()
-	projected, err := queries.projectTasks(ctx, tasks, now)
-	if err != nil {
-		return FleetSnapshot{}, err
-	}
-	completeness, serviceHealth, comisHealth, _ := queries.hostHealth()
-	return FleetSnapshot{
-		SchemaVersion: 1,
-		CapturedAtMs:  now.UnixMilli(),
-		StateVersion:  stateVersion,
-		Completeness:  completeness,
-		ServiceHealth: serviceHealth,
-		ComisHealth:   comisHealth,
-		Tasks:         projected,
 	}, nil
 }
 
@@ -244,7 +236,11 @@ func (queries *Queries) GetLaunchPlan(ctx context.Context, handle string) (Launc
 	if err != nil {
 		return LaunchPlan{}, translateReadError(err, "task launch preparation")
 	}
-	descriptor, err := BuildWorkerLaunchDescriptor(ctx, task, preparation, queries.harnesses)
+	var resumes TaskResumeLaunchReader
+	if reader, ok := queries.repository.(TaskResumeLaunchReader); ok {
+		resumes = reader
+	}
+	descriptor, err := BuildWorkerTaskLaunchDescriptor(ctx, task, preparation, queries.harnesses, resumes)
 	if err != nil {
 		if errors.Is(err, errLaunchAuthorityIncomplete) || errors.Is(err, errLaunchDescriptorInconsistent) {
 			return LaunchPlan{}, newSafeFailure(

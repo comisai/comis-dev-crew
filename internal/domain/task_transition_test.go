@@ -59,9 +59,10 @@ func TestTaskApplyTransition_ModelsDecisionBlockAndPauseWithoutWideningState(t *
 		{kind: TransitionDecisionRequested, want: TaskAwaitingDecision},
 		{kind: TransitionDecisionAnswered, want: TaskWorking},
 		{kind: TransitionBlocked, want: TaskBlocked},
-		{kind: TransitionResumed, want: TaskWorking},
 		{kind: TransitionPaused, want: TaskPaused},
-		{kind: TransitionResumed, want: TaskWorking},
+		{kind: TransitionResumed, want: TaskReady},
+		{kind: TransitionLaunchRequested, want: TaskLaunching},
+		{kind: TransitionWorkerAcknowledged, want: TaskWorking},
 		{kind: TransitionFailureObserved, want: TaskFailed},
 		{kind: TransitionCleanupStarted, want: TaskCleanupHeld},
 	}
@@ -124,6 +125,48 @@ func TestTaskApplyTransition_ReconciliationFailsClosed(t *testing.T) {
 	}
 	if task.State != TaskWorking {
 		t.Fatalf("verified state = %q, want %q", task.State, TaskWorking)
+	}
+}
+
+func TestTaskApplyTransition_InvalidatedEvidenceRequiresFreshValidation(t *testing.T) {
+	task := transitionTaskToWorking(t)
+	var err error
+	task, err = task.ApplyTransition(TransitionValidationStarted, task.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err = task.ApplyTransition(TransitionValidationAccepted, task.UpdatedAt.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidated, err := task.ApplyTransition(TransitionEvidenceInvalidated, task.UpdatedAt.Add(time.Second))
+	if err != nil || invalidated.State != TaskValidating {
+		t.Fatalf("evidence invalidation = %#v, %v", invalidated, err)
+	}
+	if _, err := invalidated.ApplyTransition(TransitionEvidenceInvalidated, invalidated.UpdatedAt.Add(time.Second)); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("repeated evidence invalidation error = %v, want ErrInvalidTransition", err)
+	}
+}
+
+func TestTaskApplyTransition_InvalidatesDeliveredEvidenceForFreshValidation(t *testing.T) {
+	task := transitionTaskToWorking(t)
+	transitions := []TaskTransition{
+		TransitionValidationStarted,
+		TransitionValidationAccepted,
+		TransitionDeliveryStarted,
+		TransitionDeliveryAccepted,
+	}
+	for _, transition := range transitions {
+		var err error
+		task, err = task.ApplyTransition(transition, task.UpdatedAt.Add(time.Second))
+		if err != nil {
+			t.Fatalf("ApplyTransition(%q) error = %v", transition, err)
+		}
+	}
+
+	invalidated, err := task.ApplyTransition(TransitionEvidenceInvalidated, task.UpdatedAt.Add(time.Second))
+	if err != nil || invalidated.State != TaskValidating {
+		t.Fatalf("delivered evidence invalidation = %#v, %v", invalidated, err)
 	}
 }
 

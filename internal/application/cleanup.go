@@ -16,32 +16,26 @@ type TaskCleanupStage string
 
 const (
 	CleanupPrepared          TaskCleanupStage = "prepared"
+	CleanupManagedRunAbsent  TaskCleanupStage = "managed_run_absent"
 	CleanupHostReleased      TaskCleanupStage = "host_released"
 	CleanupRemovalAuthorized TaskCleanupStage = "removal_authorized"
 	CleanupCompleted         TaskCleanupStage = "completed"
 )
 
 const (
-	// CleanupOpenHoldMessage is the content-free operator-visible blocker
-	// consumed by the protected campaign oracle.
+	// CleanupOpenHoldMessage is the content-free operator-visible blocker.
 	CleanupOpenHoldMessage = "cleanup is blocked by an open task hold"
-	// CleanupOpenDecisionMessage is the content-free operator-visible blocker
-	// consumed by the protected campaign oracle.
+	// CleanupOpenDecisionMessage is the content-free operator-visible blocker.
 	CleanupOpenDecisionMessage = "cleanup is blocked by an unresolved task decision"
-	// CleanupUnattestedScoutMessage is the content-free operator-visible blocker
-	// for a scout whose decision inventory is missing or still unresolved.
+	// CleanupUnattestedScoutMessage covers a missing or unresolved scout inventory.
 	CleanupUnattestedScoutMessage = "cleanup is blocked by a missing or unresolved scout decision inventory"
-	// CleanupActiveExecutionMessage is the content-free operator-visible blocker
-	// consumed by the protected campaign oracle.
+	// CleanupActiveExecutionMessage is the content-free operator-visible blocker.
 	CleanupActiveExecutionMessage = "cleanup is blocked by active task execution"
-	// CleanupUnknownExecutionMessage is the content-free operator-visible blocker
-	// consumed by the protected campaign oracle.
+	// CleanupUnknownExecutionMessage is the content-free operator-visible blocker.
 	CleanupUnknownExecutionMessage = "cleanup requires settled task execution evidence"
-	// CleanupDirtyWorkspaceMessage is the content-free operator-visible blocker
-	// consumed by the protected campaign oracle.
+	// CleanupDirtyWorkspaceMessage is the content-free operator-visible blocker.
 	CleanupDirtyWorkspaceMessage = "cleanup requires a clean task worktree"
-	// CleanupStaleForgeTruthMessage is the content-free operator-visible blocker
-	// consumed by the protected campaign oracle.
+	// CleanupStaleForgeTruthMessage is the content-free operator-visible blocker.
 	CleanupStaleForgeTruthMessage = "cleanup requires current matching pull request truth"
 )
 
@@ -200,16 +194,20 @@ type RuntimeAttachmentReleaser interface {
 	ReleaseRuntimeAttachment(context.Context, string) error
 }
 
-// DeliveredWorkspaceRemover removes one previously authorized exact workspace.
+// DeliveredWorkspaceRemover preserves dirty cleanup work but removes acknowledged discards.
 type DeliveredWorkspaceRemover interface {
 	RemoveDeliveredWorkspace(context.Context, DeliveredWorkspaceRemoval) error
+	RemoveDiscardedWorkspace(context.Context, DeliveredWorkspaceRemoval) error
 }
 
-// CleanupCoordinatorConfig supplies the complete E0 cleanup authority set.
+// CleanupCoordinatorConfig supplies the complete cleanup authority set.
 type CleanupCoordinatorConfig struct {
-	Store       TaskCleanupStore
-	Workspaces  WorkspaceInspector
-	Forge       PullRequestDeliveryVerifier
+	Store      TaskCleanupStore
+	Workspaces WorkspaceInspector
+	Forge      PullRequestDeliveryVerifier
+	// Landed is optional. A deployment without one keeps the delivery rule
+	// exactly as it was rather than acquiring a route it never opted into.
+	Landed      LandedEvidenceGatherer
 	Releaser    ManagedRunReleaser
 	Attachments RuntimeAttachmentReleaser
 	Remover     DeliveredWorkspaceRemover
@@ -260,13 +258,8 @@ func (coordinator *CleanupCoordinator) CleanupTask(ctx context.Context, command 
 }
 
 // runRemovalStages drives the release-before-remove sequence to completion.
-//
-// Cleanup and discard differ only in what they must prove before entering it —
-// delivery evidence for one, an operator's explicit acknowledgement for the
-// other. The sequence itself is identical and stays written once: releasing host
-// authority before removing a worktree, and recording each stage so a crash
-// resumes rather than repeats, is exactly the part that must not diverge
-// between two commands that both end in an irreversible deletion.
+// Cleanup and discard persist evidence or acknowledgement before entering here.
+// Both release the runtime attachment; only activated tasks release a managed run.
 func (coordinator *CleanupCoordinator) runRemovalStages(
 	ctx context.Context,
 	record TaskCleanupRecord,
@@ -307,7 +300,11 @@ func (coordinator *CleanupCoordinator) runRemovalStages(
 				OperationID: record.OperationID, SubjectDigest: record.SubjectDigest, Snapshot: snapshot,
 				DeliveryTruth: truth, Receipt: receipt, At: coordinator.config.Clock(),
 			})
-		case CleanupHostReleased:
+		case CleanupManagedRunAbsent, CleanupHostReleased:
+			if record.Stage == CleanupManagedRunAbsent &&
+				(!record.Discard || record.ManagedRunID != "" || record.WorkspaceLeaseID != "") {
+				return MutationResult{}, errors.New("cleanup task: absent managed-run authority is contradictory")
+			}
 			if releaseErr := coordinator.config.Attachments.ReleaseRuntimeAttachment(ctx, record.TaskHandle); releaseErr != nil {
 				return MutationResult{}, cleanupDependencyFailure(
 					"runtime attachment release failed",
@@ -324,13 +321,20 @@ func (coordinator *CleanupCoordinator) runRemovalStages(
 				DeliveryTruth: truth, At: coordinator.config.Clock(),
 			})
 		case CleanupRemovalAuthorized:
-			if err := coordinator.config.Remover.RemoveDeliveredWorkspace(ctx, DeliveredWorkspaceRemoval{
+			removal := DeliveredWorkspaceRemoval{
 				PreparationOperationID: record.PreparationOperationID, TaskHandle: record.TaskHandle,
 				RepositoryID: record.RepositoryID, WorktreePath: record.Snapshot.WorktreePath,
 				Branch: record.Snapshot.Branch, HeadRevision: record.Snapshot.HeadRevision,
-			}); err != nil {
+			}
+			remove := coordinator.config.Remover.RemoveDeliveredWorkspace
+			failureMessage := "delivered workspace removal failed"
+			if record.Discard {
+				remove = coordinator.config.Remover.RemoveDiscardedWorkspace
+				failureMessage = "discarded workspace removal failed"
+			}
+			if err := remove(ctx, removal); err != nil {
 				return MutationResult{}, cleanupDependencyFailure(
-					"delivered workspace removal failed",
+					failureMessage,
 					"inspect the operation-bound worktree and Git repository before retrying",
 					err,
 				)
@@ -389,8 +393,8 @@ func (coordinator *CleanupCoordinator) verifyCurrentSafety(
 		return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, cleanupDirtyWorkspaceFailure()
 	}
 	if record.PullRequestID == "" {
-		if record.ReportArtifactHash == "" {
-			return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, errors.New("cleanup delivery evidence is unavailable")
+		if err := coordinator.acceptUndeliveredIfLanded(ctx, record, snapshot); err != nil {
+			return WorkspaceSnapshot{}, PullRequestDeliveryTruth{}, err
 		}
 		return snapshot, PullRequestDeliveryTruth{}, nil
 	}

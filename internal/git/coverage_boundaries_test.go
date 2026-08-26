@@ -127,7 +127,11 @@ func TestGitAdaptersRejectUnconfiguredRepositoryBoundaries(t *testing.T) {
 }
 
 func TestGitMachineReadersRejectAmbiguousSuccessfulOutput(t *testing.T) {
-	if _, err := runGit(context.Background(), "/bin/sh", "-c", `printf '\n'`); err == nil {
+	empty := filepath.Join(internalCanonicalTempDir(t), "git-empty-output-fixture")
+	if err := os.WriteFile(empty, []byte("#!/bin/sh\nprintf '\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(context.Background(), empty); err == nil {
 		t.Fatal("runGit accepted an empty successful result")
 	}
 	entries, err := decodeWorktreeList([]byte("worktree /worktrees/task-boundary\x00HEAD " + strings.Repeat("a", 40)))

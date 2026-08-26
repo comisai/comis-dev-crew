@@ -2,7 +2,6 @@
 package localapi
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 
@@ -42,45 +41,59 @@ func (caller CallerClass) valid() bool {
 type Method string
 
 const (
-	MethodDiagnose        Method = "Diagnose"
-	MethodFleet           Method = "FleetStatus"
-	MethodListTasks       Method = "ListTasks"
-	MethodWorkerProfiles  Method = "ListWorkerProfiles"
-	MethodShowTask        Method = "ShowTask"
-	MethodExplainTask     Method = "ExplainTask"
-	MethodGetLaunchPlan   Method = "GetLaunchPlan"
-	MethodOperation       Method = "GetOperation"
-	MethodPrepareTask     Method = "PrepareTask"
-	MethodReconcileTask   Method = "ReconcileTask"
-	MethodHandbackTask    Method = "HandbackTask"
-	MethodCleanupTask     Method = "CleanupTask"
-	MethodPauseTask       Method = "PauseTask"
-	MethodCancelTask      Method = "CancelTask"
-	MethodResumeTask      Method = "ResumeTask"
-	MethodVerifyTask      Method = "VerifyTask"
-	MethodPromoteScout    Method = "PromoteScout"
-	MethodReplaceWorker   Method = "ReplaceWorker"
-	MethodSteerTask       Method = "SteerTask"
-	MethodDiscardTask     Method = "DiscardTask"
-	MethodSyncPrimary     Method = "SyncPrimary"
-	MethodAttestScout     Method = "AttestScoutDecisions"
-	MethodListDecisions   Method = "ListTaskDecisions"
-	MethodShowDecision    Method = "ShowTaskDecision"
-	MethodDiffTask        Method = "DiffTask"
-	MethodSurveyRepairs   Method = "SurveyRepairs"
-	MethodReadEvents      Method = "ReadEvents"
-	MethodReadTaskLogs    Method = "ReadTaskLogs"
-	MethodCancelDecision  Method = "CancelDecision"
-	MethodRespondDecision Method = "RespondDecision"
+	MethodDiagnose          Method = "Diagnose"
+	MethodFleet             Method = "FleetStatus"
+	MethodListTasks         Method = "ListTasks"
+	MethodWorkerProfiles    Method = "ListWorkerProfiles"
+	MethodShowTask          Method = "ShowTask"
+	MethodExplainTask       Method = "ExplainTask"
+	MethodGetLaunchPlan     Method = "GetLaunchPlan"
+	MethodOperation         Method = "GetOperation"
+	MethodListInitiatives   Method = "ListInitiatives"
+	MethodGetInitiative     Method = "GetInitiative"
+	MethodListBacklog       Method = "ListBacklog"
+	MethodAddBacklog        Method = "AddBacklog"
+	MethodPromoteBacklog    Method = "PromoteBacklog"
+	MethodPrepareTask       Method = "PrepareTask"
+	MethodPrepareInitiative Method = "PrepareInitiative"
+	MethodApplyIntegration  Method = "ApplyIntegrationCandidate"
+	MethodPauseInitiative   Method = "PauseInitiative"
+	MethodResumeInitiative  Method = "ResumeInitiative"
+	MethodCancelInitiative  Method = "CancelInitiative"
+	MethodReconcileTask     Method = "ReconcileTask"
+	MethodHandbackTask      Method = "HandbackTask"
+	MethodCleanupTask       Method = "CleanupTask"
+	MethodMergeTask         Method = "MergeTask"
+	MethodPauseTask         Method = "PauseTask"
+	MethodCancelTask        Method = "CancelTask"
+	MethodResumeTask        Method = "ResumeTask"
+	MethodVerifyTask        Method = "VerifyTask"
+	MethodPromoteScout      Method = "PromoteScout"
+	MethodReplaceWorker     Method = "ReplaceWorker"
+	MethodSteerTask         Method = "SteerTask"
+	MethodDiscardTask       Method = "DiscardTask"
+	MethodSyncPrimary       Method = "SyncPrimary"
+	MethodAttestScout       Method = "AttestScoutDecisions"
+	MethodListDecisions     Method = "ListTaskDecisions"
+	MethodShowDecision      Method = "ShowTaskDecision"
+	MethodDiffTask          Method = "DiffTask"
+	MethodSurveyRepairs     Method = "SurveyRepairs"
+	MethodReadEvents        Method = "ReadEvents"
+	MethodReadTaskLogs      Method = "ReadTaskLogs"
+	MethodCancelDecision    Method = "CancelDecision"
+	MethodRespondDecision   Method = "RespondDecision"
+	MethodReadAudit         Method = "ReadAudit"
 )
 
 func (method Method) valid() bool {
 	switch method {
 	case MethodDiagnose, MethodFleet, MethodListTasks, MethodWorkerProfiles, MethodShowTask, MethodExplainTask, MethodGetLaunchPlan,
-		MethodOperation, MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
+		MethodOperation, MethodListInitiatives, MethodGetInitiative, MethodListBacklog, MethodAddBacklog, MethodPromoteBacklog,
+		MethodPrepareTask, MethodPrepareInitiative, MethodApplyIntegration, MethodPauseInitiative, MethodResumeInitiative, MethodCancelInitiative,
+		MethodReconcileTask, MethodHandbackTask, MethodCleanupTask, MethodMergeTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
 		MethodSyncPrimary, MethodAttestScout, MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs, MethodReadEvents, MethodReadTaskLogs, MethodCancelDecision,
-		MethodRespondDecision:
+		MethodRespondDecision, MethodReadAudit:
 		return true
 	default:
 		return false
@@ -101,7 +114,9 @@ func (method Method) SideEffect() SideEffectClass {
 	switch method {
 	case MethodCancelDecision, MethodRespondDecision:
 		return SideEffectMutate
-	case MethodPrepareTask, MethodReconcileTask, MethodHandbackTask, MethodCleanupTask,
+	case MethodPrepareTask, MethodPrepareInitiative, MethodApplyIntegration, MethodAddBacklog, MethodPromoteBacklog,
+		MethodPauseInitiative, MethodResumeInitiative, MethodCancelInitiative,
+		MethodReconcileTask, MethodHandbackTask, MethodCleanupTask, MethodMergeTask,
 		MethodPauseTask, MethodCancelTask, MethodResumeTask, MethodVerifyTask, MethodPromoteScout, MethodReplaceWorker, MethodSteerTask, MethodDiscardTask,
 		MethodSyncPrimary, MethodAttestScout:
 		return SideEffectMutate
@@ -152,6 +167,13 @@ type ReadEventsInput struct {
 	TaskHandle    string `json:"taskHandle,omitempty"`
 }
 
+// ReadAuditInput resumes the durable audit trail from a cursor. A zero cursor
+// starts at the beginning and a zero limit takes the service default.
+type ReadAuditInput struct {
+	AfterSequence int64 `json:"afterSequence,omitempty"`
+	Limit         int   `json:"limit,omitempty"`
+}
+
 // SurveyRepairsInput scopes the repair survey. An absent task handle surveys the
 // whole fleet.
 type SurveyRepairsInput struct {
@@ -189,108 +211,39 @@ type Outcome struct {
 	StateVersion    *int64                 `json:"stateVersion,omitempty"`
 	Result          json.RawMessage        `json:"result,omitempty"`
 	Error           *WireError             `json:"error,omitempty"`
+	failureCause    application.BoundaryFailureCause
 }
 
-// operatorOnly reports whether a method carries private task detail that §20.3
-// keeps off the model surface.
+// operatorOnly reports whether a method carries private operator data or controls
+// that stay off the model surface.
 //
 // The boundary lives here rather than only in the set of tools the facade
 // exposes, so a facade that later grows a tool cannot thereby gain an authority
 // the operator console was meant to hold alone.
 func (method Method) operatorOnly() bool {
 	switch method {
-	case MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs,
-		MethodReadTaskLogs, MethodCancelDecision, MethodRespondDecision:
+	case MethodPauseInitiative, MethodResumeInitiative, MethodCancelInitiative,
+		MethodListDecisions, MethodShowDecision, MethodDiffTask, MethodSurveyRepairs,
+		MethodReadTaskLogs, MethodCancelDecision, MethodRespondDecision, MethodReadAudit:
 		return true
 	default:
 		return false
 	}
 }
 
-// ReadQueries is the narrow application surface consumed by the local boundary.
-type ReadQueries interface {
-	ReadEvents(context.Context, int64, int, string) (application.EventPage, error)
-	ReadTaskLogs(context.Context, string, application.TaskLogSource, int64, int) (application.TaskLogPage, error)
-	DiffTask(context.Context, string) (application.TaskDiffView, error)
-	SurveyRepairs(context.Context, string) (application.RepairSurvey, error)
-	ListDecisions(context.Context, string) (application.DecisionList, error)
-	ShowDecision(context.Context, string, string) (application.TaskDecision, error)
-	Diagnose(context.Context) (application.DiagnosticReport, error)
-	Fleet(context.Context) (application.FleetSnapshot, error)
-	ListTasks(context.Context, domain.TaskState) (application.TaskList, error)
-	ListWorkerProfiles(context.Context) (application.WorkerProfileList, error)
-	ShowTask(context.Context, string) (application.TaskDetail, error)
-	ExplainTask(context.Context, string) (application.TaskExplanation, error)
-	GetLaunchPlan(context.Context, string) (application.LaunchPlan, error)
-	Operation(context.Context, string) (application.OperationView, error)
-}
-
-// TaskMutations is the sole canonical mutation surface used by the local API.
-type TaskMutations interface {
-	PrepareTask(context.Context, application.PrepareTaskCommand) (application.MutationResult, error)
-	PauseTask(context.Context, application.PauseTaskCommand) (application.MutationResult, error)
-	VerifyTask(context.Context, application.VerifyTaskCommand) (application.MutationResult, error)
-	SteerTask(context.Context, application.SteerTaskCommand) (application.MutationResult, error)
-	PromoteScout(context.Context, application.PromoteScoutCommand) (application.MutationResult, error)
-	CancelTask(context.Context, application.CancelTaskCommand) (application.MutationResult, error)
-}
-
-// TaskInterventions is the canonical paused-worktree handback surface.
-type TaskInterventions interface {
-	ResumeTask(context.Context, application.ResumeTaskCommand) (application.MutationResult, error)
-	ReplaceWorker(context.Context, application.ReplaceWorkerCommand) (application.MutationResult, error)
-	HandbackTask(context.Context, application.HandbackTaskCommand) (application.MutationResult, error)
-}
-
-// TaskReconciliation is the canonical unknown-task recovery surface.
-type TaskReconciliation interface {
-	ReconcileTask(context.Context, application.ReconcileTaskCommand) (application.MutationResult, error)
-}
-
-// TaskCleanup is the canonical release-before-removal mutation surface.
-type TaskCleanup interface {
-	CleanupTask(context.Context, application.CleanupTaskCommand) (application.MutationResult, error)
-	DiscardTask(context.Context, application.DiscardTaskCommand) (application.MutationResult, error)
-}
-
-// DecisionAuthority is the canonical operator surface over a question the worker
-// asked: the human either answers it or withdraws it. Both belong to the console
-// rather than the facade, so a worker cannot settle its own hold.
-type DecisionAuthority interface {
-	CancelDecision(context.Context, application.CancelDecisionCommand) (application.MutationResult, error)
-	RespondDecision(context.Context, application.RespondDecisionCommand) (application.MutationResult, error)
-}
-
-// ScoutReviewAttestation is the canonical review-completion surface.
-type ScoutReviewAttestation interface {
-	AttestScoutDecisions(context.Context, application.AttestScoutDecisionsCommand) (application.MutationResult, error)
-}
-
-// PrimaryCheckoutSync is the canonical repository synchronization surface. It
-// is separate from the task surfaces because it moves no task: it advances the
-// developer's own checkout and touches no durable task state.
-type PrimaryCheckoutSync interface {
-	SyncPrimary(context.Context, application.PrimarySyncCommand) (application.PrimarySyncReport, error)
-}
-
-// HandlerConfig binds local endpoint authority to canonical application seams.
-type HandlerConfig struct {
-	Queries           ReadQueries
-	Mutations         TaskMutations
-	Reconciliation    TaskReconciliation
-	Interventions     TaskInterventions
-	Cleanup           TaskCleanup
-	PrimaryCheckouts  PrimaryCheckoutSync
-	ScoutReviews      ScoutReviewAttestation
-	Decisions         DecisionAuthority
-	ServiceInstanceID string
-	Clock             application.Clock
-}
-
 // HandbackTaskInput selects one paused task and closed E0 action.
 type HandbackTaskInput struct {
 	TaskHandle string                     `json:"taskHandle"`
 	Action     application.HandbackAction `json:"action"`
+}
+
+// MergeTaskInput names only the durable task on the operator socket. The MCP
+// socket additionally binds the private host approval identity to the same
+// operation; neither caller can supply forge coordinates or a merge method.
+type MergeTaskInput struct {
+	TaskHandle        string `json:"taskHandle"`
+	ApprovalRequestID string `json:"approvalRequestId,omitempty"`
+	MCPOperationID    string `json:"mcpOperationId,omitempty"`
 }
 
 // ReconcileTaskInput selects one unknown task and the closed clean-candidate

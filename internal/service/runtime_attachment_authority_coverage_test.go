@@ -164,6 +164,12 @@ func (boundaryDeliveredWorkspaceRemover) RemoveDeliveredWorkspace(
 	return nil
 }
 
+func (boundaryDeliveredWorkspaceRemover) RemoveDiscardedWorkspace(
+	context.Context, application.DeliveredWorkspaceRemoval,
+) error {
+	return nil
+}
+
 type runtimeRelayBoundaryStore struct {
 	runtimeAttachmentRecoveryStore
 	refusals    []application.RuntimeRelayIdentityRefusal
@@ -192,4 +198,8 @@ func (store *runtimeRelayBoundaryStore) CompleteRuntimeRelayIdentityUpgrade(
 	context.Context, application.RuntimeRelayIdentityUpgrade,
 ) error {
 	return store.completeErr
+}
+
+func (store *runtimeRelayBoundaryStore) RecordAuditEvent(context.Context, application.AuditEvent) error {
+	return nil
 }

@@ -58,11 +58,15 @@ func TestFacade_OfficialSDKCatalogAndPrivatePreparation(t *testing.T) {
 	if err != nil || comiswire.ValidatePayload(comiswire.PayloadMCPManagedRunResult, encodedExtension) != nil {
 		t.Fatalf("managed-run extension = %s, %v", encodedExtension, err)
 	}
+	if !strings.Contains(string(encodedExtension), `"relayIdentity":"`+strings.Repeat("ab", 32)+`"`) {
+		t.Fatalf("managed-run extension omitted the prepared relay identity: %s", encodedExtension)
+	}
 	var prepared comiswire.MCPManagedRunResult
 	if err := json.Unmarshal(encodedExtension, &prepared); err != nil || prepared.RequestedWorkspace == nil ||
 		prepared.RequestedWorkspace.RootHint != "/approved/workspaces/task-0001" || prepared.RequestedAttachment == nil ||
 		prepared.RequestedAttachment.Kind != comiswire.ExecutionAttachmentKindUnixSocket ||
-		prepared.RequestedAttachment.SourcePath != "/approved/runtime/task-0001/attachment.sock" {
+		prepared.RequestedAttachment.SourcePath != "/approved/runtime/task-0001/attachment.sock" ||
+		prepared.RequestedAttachment.RelayIdentity != strings.Repeat("ab", 32) {
 		t.Fatalf("managed-run requested resources = workspace:%#v attachment:%#v, %v", prepared.RequestedWorkspace, prepared.RequestedAttachment, err)
 	}
 	if got := strings.Join(client.calls, ","); got != "prepare:prepare-0001" {
@@ -382,14 +386,14 @@ func TestFacade_UncertainTerminalMutationsReconcileBeforeExactRetry(t *testing.T
 
 func assertToolCatalog(t *testing.T, tools []*mcp.Tool) {
 	t.Helper()
-	want := map[string]bool{ToolPrepareTask: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolDiscardTask: false, ToolSyncPrimary: false, ToolAttestScout: false, ToolPauseTask: false, ToolCancelTask: false, ToolResumeTask: false, ToolVerifyTask: false, ToolPromoteScout: false, ToolReplaceWorker: false, ToolSteerTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
+	want := map[string]bool{ToolPrepareTask: false, ToolPrepareInitiative: false, ToolApplyIntegration: false, ToolGetInitiative: true, ToolBacklogList: true, ToolAddBacklog: false, ToolPromoteBacklog: false, ToolReconcileTask: false, ToolHandbackTask: false, ToolCleanupTask: false, ToolMergeTask: false, ToolSyncPrimary: false, ToolAttestScout: false, ToolPauseTask: false, ToolCancelTask: false, ToolResumeTask: false, ToolVerifyTask: false, ToolPromoteScout: false, ToolReplaceWorker: false, ToolSteerTask: false, ToolListTasks: true, ToolGetTask: true, ToolExplainTask: true, ToolGetLaunchPlan: true, ToolDoctor: true, ToolWorkerProfiles: true}
 	if len(tools) != len(want) {
 		t.Fatalf("tool count = %d, want %d", len(tools), len(want))
 	}
 	// Destructive is an explicit set, not a single name. A tool that quietly
 	// became destructive would otherwise fail this test with an annotation dump
 	// rather than a statement about which tools may destroy work.
-	destructiveTools := map[string]bool{ToolCleanupTask: true, ToolCancelTask: true, ToolDiscardTask: true}
+	destructiveTools := map[string]bool{ToolCleanupTask: true, ToolMergeTask: true, ToolCancelTask: true}
 	for _, tool := range tools {
 		readOnly, ok := want[tool.Name]
 		destructive := destructiveTools[tool.Name]
@@ -478,8 +482,8 @@ type fakeClient struct {
 	handbackErrors  []error
 	reconcileErrors []error
 	cleanupErrors   []error
-	discardResult   localapi.TaskMutationResult
-	discardErrors   []error
+	mergeResult     application.MergeTaskResult
+	mergeErrors     []error
 	syncReport      application.PrimarySyncReport
 	syncErrors      []error
 	attestResult    localapi.TaskMutationResult
@@ -647,6 +651,24 @@ func (client *fakeClient) HandbackTask(
 	return client.handbackResult, err
 }
 
+func (client *fakeClient) AddBacklog(
+	_ context.Context,
+	operationID string,
+	_ localapi.AddBacklogInput,
+) (localapi.AddBacklogResult, error) {
+	client.calls = append(client.calls, "add-backlog:"+operationID)
+	return localapi.AddBacklogResult{}, nil
+}
+
+func (client *fakeClient) PromoteBacklog(
+	_ context.Context,
+	operationID string,
+	_ localapi.PromoteBacklogInput,
+) (localapi.PromoteBacklogResult, error) {
+	client.calls = append(client.calls, "promote-backlog:"+operationID)
+	return localapi.PromoteBacklogResult{}, nil
+}
+
 func (client *fakeClient) PrepareTask(_ context.Context, operationID string, _ localapi.PrepareTaskInput) (localapi.PrepareTaskResult, error) {
 	client.calls = append(client.calls, "prepare:"+operationID)
 	if len(client.prepareErrors) > 0 {
@@ -662,6 +684,42 @@ func (client *fakeClient) PrepareTask(_ context.Context, operationID string, _ l
 	result := client.prepareResults[0]
 	client.prepareResults = client.prepareResults[1:]
 	return result, nil
+}
+
+func (client *fakeClient) PrepareInitiative(
+	_ context.Context,
+	operationID string,
+	_ localapi.PrepareInitiativeInput,
+) (localapi.PrepareInitiativeResult, error) {
+	client.calls = append(client.calls, "prepare-initiative:"+operationID)
+	return localapi.PrepareInitiativeResult{}, nil
+}
+
+func (client *fakeClient) ApplyIntegrationCandidate(
+	_ context.Context,
+	operationID string,
+	_ localapi.ApplyIntegrationCandidateInput,
+) (localapi.ApplyIntegrationCandidateResult, error) {
+	client.calls = append(client.calls, "apply-integration:"+operationID)
+	return localapi.ApplyIntegrationCandidateResult{}, nil
+}
+
+func (client *fakeClient) GetInitiative(
+	_ context.Context,
+	operationID string,
+	handle string,
+) (application.InitiativeDetail, error) {
+	client.calls = append(client.calls, "get-initiative:"+operationID+":"+handle)
+	return application.InitiativeDetail{}, nil
+}
+
+func (client *fakeClient) ListBacklog(
+	_ context.Context,
+	operationID string,
+	input localapi.ListBacklogInput,
+) (application.BacklogList, error) {
+	client.calls = append(client.calls, "list-backlog:"+operationID+":"+input.RepositoryID+":"+string(input.Readiness))
+	return application.BacklogList{}, nil
 }
 
 func (client *fakeClient) ListWorkerProfiles(

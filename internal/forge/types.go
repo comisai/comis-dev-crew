@@ -4,6 +4,7 @@ package forge
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
@@ -12,22 +13,33 @@ import (
 // to retry without changing pull-request delivery authority.
 var ErrPullRequestTruthUnavailable = errors.New("pull-request truth is temporarily unavailable")
 
-// CredentialKind is the closed non-merge E0 forge authority vocabulary.
+// ErrPullRequestMergeOutcomeUnknown marks a merge mutation whose exact result
+// or actual method could not be proved. Callers preserve unknown rather than
+// translating intended or acknowledged state into success.
+var ErrPullRequestMergeOutcomeUnknown = errors.New("pull-request merge outcome is unknown")
+
+// CredentialKind is the closed forge authority vocabulary.
+//
+// Merge is a THIRD identity, not a wider push. It is resolved only inside the
+// approved merge operation and never reaches a worker, so the ability to push a
+// branch never carries the ability to merge it.
 type CredentialKind string
 
 const (
-	CredentialRead CredentialKind = "read"
-	CredentialPush CredentialKind = "push"
+	CredentialRead  CredentialKind = "read"
+	CredentialPush  CredentialKind = "push"
+	CredentialMerge CredentialKind = "merge"
 )
 
 // CredentialScope is one operator-asserted least-privilege grant.
 type CredentialScope string
 
 const (
-	ScopeContentsRead     CredentialScope = "contents:read"
-	ScopeContentsWrite    CredentialScope = "contents:write"
-	ScopePullRequestsRead CredentialScope = "pull_requests:read"
-	ScopeChecksRead       CredentialScope = "checks:read"
+	ScopeContentsRead      CredentialScope = "contents:read"
+	ScopeContentsWrite     CredentialScope = "contents:write"
+	ScopePullRequestsRead  CredentialScope = "pull_requests:read"
+	ScopeChecksRead        CredentialScope = "checks:read"
+	ScopePullRequestsWrite CredentialScope = "pull_requests:write"
 )
 
 // Credential is resolved only within one adapter operation and is never logged.
@@ -78,4 +90,35 @@ type PullRequestVerificationRequest struct {
 type PullRequestTruth struct {
 	URL      string
 	Evidence domain.ForgeEvidence
+}
+
+// MergeMethod is the operator-selected GitHub merge strategy.
+type MergeMethod string
+
+const (
+	MergeCommit MergeMethod = "merge"
+	MergeSquash MergeMethod = "squash"
+	MergeRebase MergeMethod = "rebase"
+)
+
+// PullRequestMergeRequest binds one merge to the already-approved exact forge
+// identity and every required check observed in its evidence bundle.
+type PullRequestMergeRequest struct {
+	OperationID        string
+	Branch             string
+	HeadRevision       string
+	PullRequestID      string
+	Method             MergeMethod
+	RequiredChecks     []string
+	AuthorityExpiresAt time.Time
+}
+
+// PullRequestMergeReceipt is post-mutation forge truth, not the API call's
+// optimistic acknowledgement.
+type PullRequestMergeReceipt struct {
+	RepositoryID        string
+	PullRequestID       string
+	HeadRevision        string
+	MergeCommitRevision string
+	Method              MergeMethod
 }

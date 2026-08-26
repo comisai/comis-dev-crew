@@ -45,8 +45,10 @@ type TaskDiscardStore interface {
 // Cancellation preserves work on purpose, which leaves a settled task holding a
 // worktree, a lease and a run binding that nothing else can release: cleanup
 // requires delivery evidence a cancelled task will never have. Discard is the
-// path out, and it releases host authority before removing anything, exactly as
-// cleanup does.
+// path out. It releases acquired managed-run authority before removing anything;
+// a preparation that never acquired that authority records the absence rather
+// than fabricating an empty release request. Its service-owned runtime attachment
+// is still released before the worktree.
 func (coordinator *CleanupCoordinator) DiscardTask(
 	ctx context.Context,
 	command DiscardTaskCommand,

@@ -77,6 +77,15 @@ func TestCandidateJudge_AcceptsOnlyCurrentShipEvidenceAndForgeTruth(t *testing.T
 	}
 }
 
+func TestDeliveryEvidenceRefusesForgeTruthWithoutExactBranch(t *testing.T) {
+	task := validTask(ShapeShip, DeliveryPullRequest)
+	bundle := shipEvidence(task)
+	bundle.ForgeEvidence.Branch = ""
+	if _, err := SealDeliveryEvidence(bundle); err == nil {
+		t.Fatal("SealDeliveryEvidence() accepted forge truth without a branch")
+	}
+}
+
 func TestCandidateJudge_RequiresImmutableScoutReportArtifact(t *testing.T) {
 	task := validTask(ShapeScout, DeliveryReport)
 	bundle := shipEvidence(task)
@@ -298,7 +307,8 @@ func shipEvidence(task Task) DeliveryEvidenceBundle {
 			StartedAt: producedAt.Add(-time.Minute), CompletedAt: producedAt,
 		}},
 		ForgeEvidence: &ForgeEvidence{
-			Repository: task.RepositoryID, PullRequestID: "pull-request-42", HeadRevision: headRevision,
+			Repository: task.RepositoryID, PullRequestID: "pull-request-42", Branch: "devcrew/task-evidence",
+			HeadRevision:     headRevision,
 			CheckConclusions: []ForgeCheckEvidence{{Name: "ci/unit", Conclusion: CheckPassed}},
 		},
 		UnresolvedDecisionCount: 0, ProducedAt: producedAt, ExpiresAt: producedAt.Add(10 * time.Minute),

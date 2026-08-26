@@ -24,11 +24,13 @@ and are never edited by hand.
 
 The pinned manifest and provenance are authenticated inputs to generation. Generation fails
 closed if the accepted protocol identifier, bundle digest, schema inventory, or closed method
-catalog changes. The service-side client exposes handshake, health, report, evidence, attention-
-response receive, and workspace release. Generated activate, abandon, and terminal-event DTOs
-are inbound handler contracts and cannot be used as outbound client methods. Strict runtime validation rejects unknown or duplicate fields, trailing JSON, invalid
-closed discriminators, operation-envelope disagreement, response identity drift, and size-limit
-violations before they can cross the adapter boundary.
+catalog changes. The service-side client exposes handshake, health, exact group-host rollup
+reads, report, evidence, attention-response receive, exact approval-receipt consumption, and
+workspace release. Generated activate, abandon, and terminal-event DTOs are inbound handler
+contracts and cannot be used as outbound client methods. Strict runtime validation rejects
+unknown or duplicate fields, trailing JSON, invalid closed discriminators, operation-envelope
+disagreement, response identity drift, and size-limit violations before they can cross the
+adapter boundary.
 Negotiated scope arrays are treated as duplicate-insensitive sets: ordering grants no authority,
 every requested scope must be active, and any unexpected grant is rejected. The manifest method
 list and method catalog are likewise matched by unique method name rather than position; MCP tool

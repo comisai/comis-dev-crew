@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"math"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -140,6 +141,88 @@ func TestComisReportOutbox_HoldsCandidateReportUntilEvidenceDeliveryCompletes(t 
 	delivered, err := store.GetTask(context.Background(), task.Handle)
 	if err != nil || delivered.State != domain.TaskDelivered {
 		t.Fatalf("GetTask(delivered) = %#v, %v", delivered, err)
+	}
+}
+
+func TestComisReportOutbox_CandidateAcknowledgementFailuresRollBackExactly(t *testing.T) {
+	store, task := openReportFixture(t, filepath.Join(canonicalTempDir(t), "candidate-ack-boundaries.db"))
+	t.Cleanup(func() { _ = store.Close() })
+	report := sqliteWorkerReport(task, "report-candidate-ack-boundaries", domain.ReportCandidateComplete)
+	if _, err := store.CommitReport(context.Background(), directReportMutation(task, report, task.UpdatedAt.Add(time.Minute))); err != nil {
+		t.Fatalf("CommitReport() error = %v", err)
+	}
+	validating, err := store.GetTask(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	evidence := candidateEvidence(t, validating, strings.Repeat("e", 40))
+	publications := candidateEvidencePublications(t, validating, evidence)
+	judgedAt := validating.UpdatedAt.Add(5 * time.Minute)
+	accepted, _, err := store.CommitCandidateEvidence(context.Background(), task.Handle, evidence,
+		[]string{"unit"}, []string{"ci/unit"}, judgedAt, publications)
+	if err != nil {
+		t.Fatalf("CommitCandidateEvidence() error = %v", err)
+	}
+	for range publications {
+		delivery, found, err := store.NextComisEvidence(context.Background())
+		if err != nil || !found {
+			t.Fatalf("NextComisEvidence() = %#v, %t, %v", delivery, found, err)
+		}
+		deliveredAt := judgedAt.Add(time.Minute)
+		retainedUntil := deliveredAt.Add(time.Hour)
+		if err := store.MarkComisEvidenceDelivered(context.Background(), delivery.OperationID,
+			application.ComisEvidenceAcknowledgement{
+				ManagedRunID: delivery.ManagedRunID, EvidenceRef: delivery.EvidenceRef,
+				ContentHash: delivery.ContentHash, VerificationLevel: delivery.VerificationLevel,
+				RetainedUntil: &retainedUntil,
+			}, deliveredAt); err != nil {
+			t.Fatalf("MarkComisEvidenceDelivered() error = %v", err)
+		}
+	}
+	pending, found, err := store.NextComisReport(context.Background())
+	if err != nil || !found {
+		t.Fatalf("NextComisReport() = %#v, %t, %v", pending, found, err)
+	}
+	reportDeliveredAt := judgedAt.Add(2 * time.Minute)
+	ack := application.ComisReportAcknowledgement{
+		ManagedRunID: pending.ManagedRunID, ServiceReportID: pending.ServiceReportID,
+		AcceptedSequence: 1, RetainedUntil: reportDeliveredAt.Add(time.Hour),
+	}
+
+	if _, err := store.db.Exec("UPDATE tasks SET state = 'invalid' WHERE handle = ?", task.Handle); err != nil {
+		t.Fatalf("alter task state: %v", err)
+	}
+	if err := store.MarkComisReportDelivered(context.Background(), pending.OperationID, ack, reportDeliveredAt); err == nil {
+		t.Fatal("MarkComisReportDelivered(invalid task) error = nil")
+	}
+	if _, err := store.db.Exec("UPDATE tasks SET state = 'delivered' WHERE handle = ?", task.Handle); err != nil {
+		t.Fatalf("alter task state: %v", err)
+	}
+	if err := store.MarkComisReportDelivered(context.Background(), pending.OperationID, ack, reportDeliveredAt); err == nil {
+		t.Fatal("MarkComisReportDelivered(settled task) error = nil")
+	}
+	if _, err := store.db.Exec("UPDATE tasks SET state = 'candidate_complete', state_version = ? WHERE handle = ?", math.MaxInt64, task.Handle); err != nil {
+		t.Fatalf("exhaust task state version: %v", err)
+	}
+	if err := store.MarkComisReportDelivered(context.Background(), pending.OperationID, ack, reportDeliveredAt); err == nil {
+		t.Fatal("MarkComisReportDelivered(exhausted version) error = nil")
+	}
+	if _, err := store.db.Exec("UPDATE tasks SET state_version = ? WHERE handle = ?", accepted.StateVersion, task.Handle); err != nil {
+		t.Fatalf("restore candidate task version: %v", err)
+	}
+	if _, err := store.db.Exec(`CREATE TRIGGER refuse_candidate_delivery_update
+		BEFORE UPDATE ON tasks
+		BEGIN SELECT RAISE(FAIL, 'candidate delivery update unavailable'); END`); err != nil {
+		t.Fatalf("install candidate delivery refusal: %v", err)
+	}
+	if err := store.MarkComisReportDelivered(context.Background(), pending.OperationID, ack, reportDeliveredAt); err == nil {
+		t.Fatal("MarkComisReportDelivered(refused task update) error = nil")
+	}
+	if _, err := store.db.Exec("DROP TRIGGER refuse_candidate_delivery_update"); err != nil {
+		t.Fatalf("drop candidate delivery refusal: %v", err)
+	}
+	if err := store.MarkComisReportDelivered(context.Background(), pending.OperationID, ack, reportDeliveredAt); err != nil {
+		t.Fatalf("MarkComisReportDelivered() error = %v", err)
 	}
 }
 

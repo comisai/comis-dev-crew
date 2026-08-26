@@ -210,21 +210,30 @@ func TestMutations_ActivateAndAbandonValidateClosedInputsAndCommitFailures(t *te
 func TestMutations_StartTaskBuildsExactReplaySubject(t *testing.T) {
 	clock := time.Date(2026, time.August, 9, 16, 10, 0, 0, time.UTC)
 	store := &mutationStore{}
+	limits := &InitiativeSchedulingLimits{
+		MaxConcurrentTasks: 2, MaxConcurrentTasksPerRepository: 2,
+		WorkerProfileLimits: map[string]int{"codex-reviewed": 2},
+	}
 	mutations, err := NewMutations(MutationConfig{
 		Store: store, Repositories: &repositoryCatalog{}, Workspaces: testWorkspacePreparer(), RuntimeAttachments: testRuntimeAttachments(),
 		WorkerProfiles: acceptingWorkerProfile, ValidationProfiles: acceptingValidationProfile,
 		TaskIDs:            func(string) (string, error) { return "task-unused", nil },
 		RegistrationNonces: testRegistrationNonceSource, PreparationTTL: time.Hour,
-		Clock: func() time.Time { return clock },
+		SchedulingLimits: limits,
+		Clock:            func() time.Time { return clock },
 	})
 	if err != nil {
 		t.Fatalf("NewMutations() error = %v", err)
 	}
+	limits.MaxConcurrentTasks = 1
+	limits.WorkerProfileLimits["codex-reviewed"] = 1
 	command := StartTaskCommand{OperationID: "op-start-0001", TaskHandle: "task-0001"}
 	if _, err := mutations.StartTask(context.Background(), command); err != nil {
 		t.Fatalf("StartTask() error = %v", err)
 	}
-	if store.start.TaskHandle != command.TaskHandle || len(store.start.SubjectDigest) != 64 || store.start.At != clock {
+	if store.start.TaskHandle != command.TaskHandle || len(store.start.SubjectDigest) != 64 || store.start.At != clock ||
+		store.start.SchedulingLimits == nil || store.start.SchedulingLimits.MaxConcurrentTasks != 2 ||
+		store.start.SchedulingLimits.WorkerProfileLimits["codex-reviewed"] != 2 {
 		t.Fatalf("start mutation = %#v, want exact task subject, SHA-256 digest, and injected time", store.start)
 	}
 }
@@ -522,6 +531,7 @@ type mutationStore struct {
 	launchAck       WorkerLaunchAcknowledgementMutation
 	pauseRequest    TaskPauseRequestMutation
 	cancelTask      TaskCancelMutation
+	cancelTaskErr   error
 	verifyTask      TaskVerifyMutation
 	steerTask       TaskSteerMutation
 	cancelDecision  DecisionCancellationMutation
@@ -533,6 +543,7 @@ type mutationStore struct {
 	replayErr       error
 	activationErr   error
 	abandonErr      error
+	startErr        error
 }
 
 func (store *mutationStore) RecordTaskPreparationIntent(
@@ -575,7 +586,7 @@ func (store *mutationStore) CommitManagedRunAbandon(_ context.Context, mutation 
 
 func (store *mutationStore) CommitTaskStart(_ context.Context, mutation TaskStartMutation) (MutationResult, error) {
 	store.start = mutation
-	return MutationResult{}, nil
+	return MutationResult{}, store.startErr
 }
 
 func (store *mutationStore) CommitTerminalEvent(_ context.Context, mutation TerminalEventMutation) (MutationResult, error) {
@@ -672,6 +683,9 @@ func (store *mutationStore) CommitTaskCancel(
 	mutation TaskCancelMutation,
 ) (MutationResult, error) {
 	store.cancelTask = mutation
+	if store.cancelTaskErr != nil {
+		return MutationResult{}, store.cancelTaskErr
+	}
 	return MutationResult{
 		Task:      domain.Task{Handle: mutation.TaskHandle, State: domain.TaskCancelled},
 		Operation: domain.OperationRecord{ID: mutation.OperationID},

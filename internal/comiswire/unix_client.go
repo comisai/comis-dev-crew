@@ -50,8 +50,18 @@ type authenticatedHeartbeatRequest struct {
 	Bearer string `json:"bearer"`
 }
 
+type authenticatedGroupGetHostRollupRequest struct {
+	GroupGetHostRollupRequest
+	Bearer string `json:"bearer"`
+}
+
 type authenticatedPutEvidenceRequest struct {
 	PutEvidenceRequest
+	Bearer string `json:"bearer"`
+}
+
+type authenticatedConsumeApprovalRequest struct {
+	ConsumeApprovalRequest
 	Bearer string `json:"bearer"`
 }
 
@@ -181,6 +191,8 @@ func addInstanceCredential(request any, bearer string) (any, error) {
 		return authenticatedReportRequest{ReportRequest: envelope, Bearer: bearer}, nil
 	case PutEvidenceRequest:
 		return authenticatedPutEvidenceRequest{PutEvidenceRequest: envelope, Bearer: bearer}, nil
+	case ConsumeApprovalRequest:
+		return authenticatedConsumeApprovalRequest{ConsumeApprovalRequest: envelope, Bearer: bearer}, nil
 	case ReceiveAttentionResponseRequest:
 		return authenticatedReceiveAttentionResponseRequest{ReceiveAttentionResponseRequest: envelope, Bearer: bearer}, nil
 	case ReleaseRequest:
@@ -199,6 +211,8 @@ func outboundOperationID(request any) (OperationID, error) {
 	case ReportRequest:
 		return envelope.ID, nil
 	case PutEvidenceRequest:
+		return envelope.ID, nil
+	case ConsumeApprovalRequest:
 		return envelope.ID, nil
 	case ReceiveAttentionResponseRequest:
 		return envelope.ID, nil

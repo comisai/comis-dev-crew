@@ -134,10 +134,11 @@ func (reviews *ScoutReviews) AttestScoutDecisions(
 	if err != nil {
 		return MutationResult{}, mutationValidationFailure("attestation subject cannot be encoded")
 	}
-	return reviews.store.CommitScoutDecisionAttestation(ctx, ScoutDecisionAttestationMutation{
+	result, err := reviews.store.CommitScoutDecisionAttestation(ctx, ScoutDecisionAttestationMutation{
 		OperationID: command.OperationID, SubjectDigest: digest, TaskHandle: command.TaskHandle,
 		Finding: command.Finding, OpenDecisionKeys: keys, At: reviews.clock(),
 	})
+	return result, mutationCommitFailure(err)
 }
 
 // validateAttestedInventory holds each finding to the shape that makes it a

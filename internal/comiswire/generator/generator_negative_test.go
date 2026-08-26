@@ -112,7 +112,7 @@ func TestGeneratorHelpersCoverSupportedPrimitiveShapes(t *testing.T) {
 		}
 	}
 	for input, want := range map[string]string{
-		"api": "API", "id": "ID", "jsonrpc": "JSONRPC", "mcp": "MCP", "rpc": "RPC", "url": "URL", "two-words": "TwoWords",
+		"api": "API", "approvalRequestId": "ApprovalRequestID", "id": "ID", "jsonrpc": "JSONRPC", "mcp": "MCP", "mcpOperationId": "MCPOperationID", "rpc": "RPC", "url": "URL", "two-words": "TwoWords",
 	} {
 		if got := exportedName(input); got != want {
 			t.Errorf("exportedName(%q) = %q, want %q", input, got, want)

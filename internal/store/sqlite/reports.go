@@ -36,6 +36,14 @@ func (store *Store) CommitReport(ctx context.Context, mutation application.Repor
 	if err != nil {
 		return domain.ReportReceipt{}, err
 	}
+	if mutation.Report.Report.Kind == domain.ReportCandidateComplete {
+		if err := requireInitiativeValidationDependencies(ctx, transaction, task.Handle); err != nil {
+			return domain.ReportReceipt{}, err
+		}
+	}
+	if err := requireIntegrationReportProvenance(ctx, transaction, task, mutation.Report.Report.Kind); err != nil {
+		return domain.ReportReceipt{}, err
+	}
 	if err := validateDecisionReport(ctx, transaction, mutation.Report); err != nil {
 		return domain.ReportReceipt{}, err
 	}
@@ -72,9 +80,15 @@ func (store *Store) CommitReport(ctx context.Context, mutation application.Repor
 	if err != nil {
 		return domain.ReportReceipt{}, err
 	}
-	instruction, err := consumeSteeringInstruction(ctx, transaction, task.Handle, formatTime(mutation.AcceptedAt))
-	if err != nil {
-		return domain.ReportReceipt{}, err
+	var instruction string
+	// The decision command reserves stdout for the exact private answer and
+	// cannot expose receipt controls. Keep steering queued until the worker's
+	// next ordinary report, whose command renders the instruction explicitly.
+	if accepted.Report.Kind != domain.ReportDecision {
+		instruction, err = consumeSteeringInstruction(ctx, transaction, task.Handle, formatTime(mutation.AcceptedAt))
+		if err != nil {
+			return domain.ReportReceipt{}, err
+		}
 	}
 	if err := transaction.Commit(); err != nil {
 		return domain.ReportReceipt{}, fmt.Errorf("commit report mutation: %w", err)
@@ -151,6 +165,15 @@ func updateReportedTask(ctx context.Context, transaction *sql.Tx, task domain.Ta
 	if err := task.Validate(); err != nil {
 		return fmt.Errorf("validate reported task: %w", err)
 	}
+	var previous domain.TaskState
+	if err := transaction.QueryRowContext(ctx,
+		`SELECT state FROM tasks WHERE handle = ?`, task.Handle,
+	).Scan(&previous); err != nil {
+		return fmt.Errorf("read task state before report update: %w", err)
+	}
+	if err := refuseReservedIntegrationTaskTransition(ctx, transaction, task.Handle, previous, task.State); err != nil {
+		return err
+	}
 	const update = `UPDATE tasks SET state = ?, report_cursor = ?, state_version = ?, updated_at = ? WHERE handle = ?`
 	result, err := transaction.ExecContext(ctx, update, task.State, task.ReportCursor, task.StateVersion, formatTime(task.UpdatedAt), task.Handle)
 	if err != nil {
@@ -160,7 +183,7 @@ func updateReportedTask(ctx context.Context, transaction *sql.Tx, task domain.Ta
 	if err != nil || rows != 1 {
 		return errors.New("update reported task: exact task was not updated")
 	}
-	return nil
+	return refreshInitiativeAggregate(ctx, transaction, task.Handle, task.StateVersion, task.UpdatedAt)
 }
 
 func insertAcceptedReport(ctx context.Context, transaction *sql.Tx, accepted domain.AcceptedReport) error {

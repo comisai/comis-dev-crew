@@ -43,11 +43,13 @@
               "report",
               "workspace_lease",
               "terminal_events",
-              "execution_attachment"
+              "execution_attachment",
+              "managed_run_group",
+              "approval_receipt"
             ],
             "type": "string"
           },
-          "maxItems": 7,
+          "maxItems": 9,
           "minItems": 1,
           "type": "array"
         },

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"time"
 
@@ -227,11 +228,84 @@ func BuildWorkerLaunchDescriptor(
 	preparation ManagedRunPreparation,
 	harnesses WorkerHarnessResolver,
 ) (WorkerLaunchDescriptor, error) {
+	adapter, request, err := resolveWorkerLaunch(ctx, task, preparation, harnesses)
+	if err != nil {
+		return WorkerLaunchDescriptor{}, err
+	}
+	descriptor, err := adapter.BuildLaunchDescriptor(ctx, request)
+	if err != nil {
+		return WorkerLaunchDescriptor{}, err
+	}
+	if !launchDescriptorMatches(descriptor, request) {
+		return WorkerLaunchDescriptor{}, errLaunchDescriptorInconsistent
+	}
+	return descriptor, nil
+}
+
+// BuildWorkerResumeDescriptor constructs the same reviewed process contract as
+// an initial launch, but asks the exact worker family for its resume bootstrap.
+func BuildWorkerResumeDescriptor(
+	ctx context.Context,
+	task domain.Task,
+	preparation ManagedRunPreparation,
+	harnesses WorkerHarnessResolver,
+	headRevision string,
+) (WorkerLaunchDescriptor, error) {
+	adapter, request, err := resolveWorkerLaunch(ctx, task, preparation, harnesses)
+	if err != nil {
+		return WorkerLaunchDescriptor{}, err
+	}
+	descriptor, err := adapter.BuildResumeDescriptor(ctx, WorkerResumeRequest{
+		Launch: request, ResumeFromHead: headRevision,
+	})
+	if err != nil {
+		return WorkerLaunchDescriptor{}, err
+	}
+	if !launchDescriptorMatches(descriptor, request) {
+		return WorkerLaunchDescriptor{}, errLaunchDescriptorInconsistent
+	}
+	return descriptor, nil
+}
+
+// BuildWorkerTaskLaunchDescriptor selects a resume bootstrap only when the
+// durable resume generation exactly owns the task's current ready or launching
+// state. Older resume records do not affect a later replacement generation.
+func BuildWorkerTaskLaunchDescriptor(
+	ctx context.Context,
+	task domain.Task,
+	preparation ManagedRunPreparation,
+	harnesses WorkerHarnessResolver,
+	resumes TaskResumeLaunchReader,
+) (WorkerLaunchDescriptor, error) {
+	if resumes != nil {
+		resume, found, err := resumes.TaskResumeLaunch(ctx, task.Handle)
+		if err != nil {
+			return WorkerLaunchDescriptor{}, err
+		}
+		current := found && (task.State == domain.TaskReady && task.StateVersion == resume.StateVersion ||
+			task.State == domain.TaskLaunching && resume.StateVersion < math.MaxInt64 && task.StateVersion == resume.StateVersion+1)
+		if current {
+			if resume.TaskHandle != task.Handle || domain.ValidateOperationID(resume.OperationID) != nil ||
+				!resumeHeadPattern.MatchString(resume.HeadRevision) {
+				return WorkerLaunchDescriptor{}, errLaunchDescriptorInconsistent
+			}
+			return BuildWorkerResumeDescriptor(ctx, task, preparation, harnesses, resume.HeadRevision)
+		}
+	}
+	return BuildWorkerLaunchDescriptor(ctx, task, preparation, harnesses)
+}
+
+func resolveWorkerLaunch(
+	ctx context.Context,
+	task domain.Task,
+	preparation ManagedRunPreparation,
+	harnesses WorkerHarnessResolver,
+) (WorkerHarnessAdapter, WorkerLaunchRequest, error) {
 	if ctx == nil {
-		return WorkerLaunchDescriptor{}, errors.New("build worker launch descriptor: context is required")
+		return nil, WorkerLaunchRequest{}, errors.New("build worker launch descriptor: context is required")
 	}
 	if err := ctx.Err(); err != nil {
-		return WorkerLaunchDescriptor{}, err
+		return nil, WorkerLaunchRequest{}, err
 	}
 	if task.Validate() != nil || (task.State != domain.TaskReady && task.State != domain.TaskLaunching) ||
 		task.ManagedRunID == "" || task.WorkspaceLeaseID == "" ||
@@ -240,17 +314,17 @@ func BuildWorkerLaunchDescriptor(
 		ValidateRuntimeRelayIdentity(preparation.RequestedAttachment.RelayIdentity) != nil ||
 		!filepath.IsAbs(preparation.RequestedWorkspaceRoot) ||
 		filepath.Clean(preparation.RequestedWorkspaceRoot) != preparation.RequestedWorkspaceRoot {
-		return WorkerLaunchDescriptor{}, errLaunchAuthorityIncomplete
+		return nil, WorkerLaunchRequest{}, errLaunchAuthorityIncomplete
 	}
 	if harnesses == nil {
-		return WorkerLaunchDescriptor{}, errors.New("build worker launch descriptor: worker harnesses are unavailable")
+		return nil, WorkerLaunchRequest{}, errors.New("build worker launch descriptor: worker harnesses are unavailable")
 	}
 	adapter, err := harnesses.ResolveWorkerHarness(task.WorkerProfileID)
 	if err != nil {
-		return WorkerLaunchDescriptor{}, fmt.Errorf("build worker launch descriptor: resolve worker profile: %w", err)
+		return nil, WorkerLaunchRequest{}, fmt.Errorf("build worker launch descriptor: resolve worker profile: %w", err)
 	}
 	if adapter == nil {
-		return WorkerLaunchDescriptor{}, errors.New("build worker launch descriptor: worker profile is unavailable")
+		return nil, WorkerLaunchRequest{}, errors.New("build worker launch descriptor: worker profile is unavailable")
 	}
 	attachment := RuntimeSocketAttachment{
 		ExecutionAttachmentID: task.ExecutionAttachmentID,
@@ -265,14 +339,7 @@ func BuildWorkerLaunchDescriptor(
 		BriefRevision: task.BriefRevision, BriefRevisionHash: task.BriefRevisionHash,
 		Attachment: attachment,
 	}
-	descriptor, err := adapter.BuildLaunchDescriptor(ctx, request)
-	if err != nil {
-		return WorkerLaunchDescriptor{}, err
-	}
-	if !launchDescriptorMatches(descriptor, request) {
-		return WorkerLaunchDescriptor{}, errLaunchDescriptorInconsistent
-	}
-	return descriptor, nil
+	return adapter, request, nil
 }
 
 func launchDescriptorMatches(descriptor WorkerLaunchDescriptor, request WorkerLaunchRequest) bool {

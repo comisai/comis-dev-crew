@@ -43,7 +43,7 @@ func (destination *boundedBuffer) Write(contents []byte) (int, error) {
 }
 
 func runGit(ctx context.Context, executable string, arguments ...string) (string, error) {
-	output, exitCode, err := executeGit(ctx, executable, arguments...)
+	output, exitCode, err := executeHermeticGit(ctx, executable, arguments...)
 	if err != nil {
 		return "", err
 	}
@@ -58,7 +58,28 @@ func runGit(ctx context.Context, executable string, arguments ...string) (string
 }
 
 func runGitBytes(ctx context.Context, executable string, arguments ...string) ([]byte, error) {
-	output, exitCode, err := executeGit(ctx, executable, arguments...)
+	return runGitBytesWithLimit(ctx, maximumGitOutputBytes, executable, arguments...)
+}
+
+func runGitBytesWithLimit(
+	ctx context.Context,
+	outputLimit int,
+	executable string,
+	arguments ...string,
+) ([]byte, error) {
+	return runGitBytesWithInputAndLimit(ctx, nil, outputLimit, executable, arguments...)
+}
+
+func runGitBytesWithInputAndLimit(
+	ctx context.Context,
+	input []byte,
+	outputLimit int,
+	executable string,
+	arguments ...string,
+) ([]byte, error) {
+	output, exitCode, err := executeHermeticGitWithEnvironmentInputAndOutputLimit(
+		ctx, executable, nil, input, outputLimit, arguments...,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +92,7 @@ func runGitBytes(ctx context.Context, executable string, arguments ...string) ([
 }
 
 func gitPredicate(ctx context.Context, executable string, arguments ...string) (bool, error) {
-	_, exitCode, err := executeGit(ctx, executable, arguments...)
+	_, exitCode, err := executeHermeticGit(ctx, executable, arguments...)
 	if err != nil {
 		return false, err
 	}
@@ -86,13 +107,21 @@ func gitPredicate(ctx context.Context, executable string, arguments ...string) (
 }
 
 func executeGit(ctx context.Context, executable string, arguments ...string) ([]byte, int, error) {
+	return executeChildWithEnvironmentInputAndOutputLimit(
+		ctx, executable, nil, nil, maximumGitOutputBytes, false, arguments...,
+	)
+}
+
+func executeHermeticGit(ctx context.Context, executable string, arguments ...string) ([]byte, int, error) {
 	return executeGitWithEnvironment(ctx, executable, nil, arguments...)
 }
 
 type gitWorkspaceEnvironment struct {
-	gitDir      string
-	gitWorkTree string
-	gitIndex    string
+	gitDir                      string
+	gitWorkTree                 string
+	gitIndex                    string
+	gitObjectDirectory          string
+	gitAlternateObjectDirectory string
 }
 
 func runGitInWorkspace(
@@ -131,6 +160,36 @@ func runGitBytesInWorkspace(
 	return output, nil
 }
 
+func runGitBytesInWorkspaceWithLimit(
+	ctx context.Context,
+	executable string,
+	environment gitWorkspaceEnvironment,
+	limit int,
+	arguments ...string,
+) ([]byte, error) {
+	return runGitBytesInWorkspaceWithInputAndLimit(ctx, executable, environment, nil, limit, arguments...)
+}
+
+func runGitBytesInWorkspaceWithInputAndLimit(
+	ctx context.Context,
+	executable string,
+	environment gitWorkspaceEnvironment,
+	input []byte,
+	limit int,
+	arguments ...string,
+) ([]byte, error) {
+	output, exitCode, err := executeGitWithEnvironmentInputAndOutputLimit(
+		ctx, executable, &environment, input, limit, arguments...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if exitCode != 0 {
+		return nil, errors.New("git workspace bounded machine command failed")
+	}
+	return output, nil
+}
+
 func gitPredicateInWorkspace(
 	ctx context.Context,
 	executable string,
@@ -157,29 +216,75 @@ func executeGitWithEnvironment(
 	workspace *gitWorkspaceEnvironment,
 	arguments ...string,
 ) ([]byte, int, error) {
+	return executeGitWithEnvironmentAndOutputLimit(
+		ctx, executable, workspace, maximumGitOutputBytes, arguments...,
+	)
+}
+
+func executeGitWithEnvironmentAndOutputLimit(
+	ctx context.Context,
+	executable string,
+	workspace *gitWorkspaceEnvironment,
+	outputLimit int,
+	arguments ...string,
+) ([]byte, int, error) {
+	return executeHermeticGitWithEnvironmentInputAndOutputLimit(
+		ctx, executable, workspace, nil, outputLimit, arguments...,
+	)
+}
+
+func executeGitWithEnvironmentInputAndOutputLimit(
+	ctx context.Context,
+	executable string,
+	workspace *gitWorkspaceEnvironment,
+	input []byte,
+	outputLimit int,
+	arguments ...string,
+) ([]byte, int, error) {
+	return executeChildWithEnvironmentInputAndOutputLimit(
+		ctx, executable, workspace, input, outputLimit, true, arguments...,
+	)
+}
+
+func executeHermeticGitWithEnvironmentInputAndOutputLimit(
+	ctx context.Context,
+	executable string,
+	workspace *gitWorkspaceEnvironment,
+	input []byte,
+	outputLimit int,
+	arguments ...string,
+) ([]byte, int, error) {
+	return executeChildWithEnvironmentInputAndOutputLimit(
+		ctx, executable, workspace, input, outputLimit, true, arguments...,
+	)
+}
+
+func executeChildWithEnvironmentInputAndOutputLimit(
+	ctx context.Context,
+	executable string,
+	workspace *gitWorkspaceEnvironment,
+	input []byte,
+	outputLimit int,
+	hermeticGit bool,
+	arguments ...string,
+) ([]byte, int, error) {
 	if ctx == nil {
 		return nil, -1, errors.New("git command context is required")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, -1, err
 	}
-	command := exec.CommandContext(ctx, executable, arguments...)
-	command.Env = []string{
-		"GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_NO_REPLACE_OBJECTS=1",
-		"GIT_OPTIONAL_LOCKS=0",
-		"LC_ALL=C",
+	commandArguments := arguments
+	if hermeticGit {
+		commandArguments = hermeticGitArguments(arguments)
 	}
-	if workspace != nil {
-		command.Env = append(command.Env,
-			"GIT_DIR="+workspace.gitDir,
-			"GIT_WORK_TREE="+workspace.gitWorkTree,
-			"GIT_INDEX_FILE="+workspace.gitIndex,
-		)
-	}
+	command := exec.CommandContext(ctx, executable, commandArguments...)
+	command.Env = hermeticGitEnvironment(workspace)
 	command.WaitDelay = time.Second
-	stdout := &boundedBuffer{limit: maximumGitOutputBytes}
+	if input != nil {
+		command.Stdin = bytes.NewReader(input)
+	}
+	stdout := &boundedBuffer{limit: outputLimit}
 	stderr := &boundedBuffer{limit: maximumGitOutputBytes}
 	command.Stdout = stdout
 	command.Stderr = stderr
@@ -204,6 +309,51 @@ func executeGitWithEnvironment(
 		return nil, -1, fmt.Errorf("git command execution failed: %w", errGitInfrastructure)
 	}
 	return append([]byte(nil), stdout.buffer.Bytes()...), 0, nil
+}
+
+func hermeticGitEnvironment(workspace *gitWorkspaceEnvironment) []string {
+	environment := []string{
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_NO_REPLACE_OBJECTS=1",
+		"GIT_OPTIONAL_LOCKS=0",
+		"LC_ALL=C",
+	}
+	if workspace != nil {
+		environment = append(environment,
+			"GIT_DIR="+workspace.gitDir,
+			"GIT_WORK_TREE="+workspace.gitWorkTree,
+			"GIT_INDEX_FILE="+workspace.gitIndex,
+		)
+		if workspace.gitObjectDirectory != "" {
+			environment = append(environment,
+				"GIT_OBJECT_DIRECTORY="+workspace.gitObjectDirectory,
+				"GIT_ALTERNATE_OBJECT_DIRECTORIES="+workspace.gitAlternateObjectDirectory,
+			)
+		}
+	}
+	return environment
+}
+
+func hermeticGitArguments(arguments []string) []string {
+	configuration := []string{
+		"-c", "core.fsmonitor=false",
+		"-c", "core.hooksPath=/dev/null",
+		"-c", "core.attributesFile=/dev/null",
+		"-c", "core.editor=/usr/bin/false",
+		"-c", "sequence.editor=/usr/bin/false",
+		"-c", "core.sshCommand=/usr/bin/false",
+		"-c", "credential.helper=",
+		"-c", "diff.external=",
+		"-c", "interactive.diffFilter=",
+		"-c", "commit.gpgSign=false",
+		"-c", "tag.gpgSign=false",
+		"-c", "gpg.program=/usr/bin/false",
+		"-c", "gpg.ssh.program=/usr/bin/false",
+		"-c", "gc.auto=0",
+		"-c", "maintenance.auto=false",
+	}
+	return append(configuration, arguments...)
 }
 
 func classifyGitChildFailure(exitCode int, stderr []byte) gitChildFailureKind {

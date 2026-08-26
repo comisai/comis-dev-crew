@@ -62,9 +62,13 @@ func (registry *Registry) InspectCandidateDiff(
 	if err != nil {
 		return CandidateDiff{}, err
 	}
-	uncommitted, uncommittedTruncated, err := registry.diffFiles(ctx, request.WorktreePath, head, "")
-	if err != nil {
-		return CandidateDiff{}, err
+	var uncommitted []CandidateFileChange
+	uncommittedTruncated := false
+	if snapshot.Cleanliness != CandidateClean {
+		uncommitted, uncommittedTruncated, err = registry.diffFiles(ctx, request.WorktreePath, head, "")
+		if err != nil {
+			return CandidateDiff{}, err
+		}
 	}
 	diff.Committed, diff.Uncommitted = committed, uncommitted
 	diff.FileListTruncated = committedTruncated || uncommittedTruncated
@@ -85,31 +89,18 @@ func (registry *Registry) diffFiles(
 	from string,
 	to string,
 ) ([]CandidateFileChange, bool, error) {
-	arguments := []string{
-		"--no-optional-locks", "-C", worktreePath, "diff", "--numstat", "-z",
-		"--find-renames", "--no-color", "--no-ext-diff", from,
-	}
-	if to != "" {
-		arguments = append(arguments, to)
-	}
-	output, err := runGitBytes(ctx, registry.gitExecutable, arguments...)
+	before, after, err := registry.candidateDiffSnapshots(ctx, worktreePath, from, to)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, false, ctx.Err()
 		}
-		if errors.Is(err, errGitOutputTooLarge) {
-			return nil, true, nil
-		}
 		return nil, false, fmt.Errorf("inspect task diff: change summary is unavailable: %w", err)
 	}
-	changes, err := parseNumstat(output)
-	if err != nil {
-		return nil, false, err
-	}
+	changes, extentTruncated := candidateSnapshotChanges(before, after)
 	if len(changes) > maximumDiffFiles {
 		return changes[:maximumDiffFiles], true, nil
 	}
-	return changes, false, nil
+	return changes, extentTruncated, nil
 }
 
 // parseNumstat decodes NUL-separated numeric change records.
@@ -214,8 +205,10 @@ func validateDiffPath(path string) error {
 func summarizeDiff(changes []CandidateFileChange) CandidateDiffTotals {
 	totals := CandidateDiffTotals{Files: len(changes)}
 	for _, change := range changes {
-		if change.Binary {
-			totals.BinaryFiles++
+		if change.Binary || change.DetailTruncated {
+			if change.Binary {
+				totals.BinaryFiles++
+			}
 			continue
 		}
 		totals.Added += change.Added

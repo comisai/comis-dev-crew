@@ -5,11 +5,11 @@ issue or a pull request.
 
 ## What this repository accepts right now
 
-This is pre-release E0 foundation work with a narrow, explicitly staged scope. It
-is not looking for feature contributions yet, and several capabilities are
-deliberately deferred behind ratified platform gates rather than left undone. A
-pull request that implements a deferred stage will be declined regardless of its
-quality.
+This is pre-release work with a narrow, explicitly staged scope; the current
+capability stage is tracked in [docs/implementation-status.md](docs/implementation-status.md).
+It is not looking for feature contributions yet, and capabilities outside the
+ratified stages remain deliberately deferred rather than left undone. A pull
+request that crosses those gates will be declined regardless of its quality.
 
 Useful contributions today:
 

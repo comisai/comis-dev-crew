@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -121,4 +122,89 @@ func TestStore_RefusesToCancelATaskWhoseWorkIsAlreadyGone(t *testing.T) {
 		cancelTaskMutation(cleaned.Handle, "operation-cancel-0001", at)); err == nil {
 		t.Fatal("CommitTaskCancel(cleaned) error = nil, want a refusal")
 	}
+}
+
+func TestStore_CancellingASettledUnknownTaskReconcilesItWithoutDiscardingAuthority(t *testing.T) {
+	store, unknown, at := unknownTaskAfterTerminal(
+		t, "task-cancel-settled-unknown", application.TerminalExited,
+	)
+
+	result, err := store.CommitTaskCancel(context.Background(),
+		cancelTaskMutation(unknown.Handle, "operation-cancel-settled-unknown", at))
+	if err != nil {
+		t.Fatalf("CommitTaskCancel(settled unknown) error = %v", err)
+	}
+	if result.Task.State != domain.TaskCancelled || result.Task.StateVersion <= unknown.StateVersion {
+		t.Fatalf("cancelled unknown task = %#v, want newer cancelled state", result.Task)
+	}
+	if result.Task.ManagedRunID != unknown.ManagedRunID ||
+		result.Task.WorkspaceLeaseID != unknown.WorkspaceLeaseID ||
+		result.Task.ExecutionAttachmentID != unknown.ExecutionAttachmentID {
+		t.Fatalf("cancelled unknown task lost durable authority: %#v", result.Task)
+	}
+}
+
+func TestStore_RefusesToCancelAnUnknownTaskWithoutExactSettledExecutionProof(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		handle     string
+		transition application.TerminalTransition
+		mutate     func(*Store, domain.Task)
+	}{
+		{name: "terminal remains lost", handle: "task-unknown-lost-0001", transition: application.TerminalLost},
+		{name: "terminal authority differs", handle: "task-unknown-auth-0001", transition: application.TerminalExited, mutate: func(store *Store, task domain.Task) {
+			_, _ = store.db.Exec(
+				"UPDATE task_terminal_bindings SET managed_run_id = 'managed-run-other' WHERE task_handle = ?",
+				task.Handle,
+			)
+		}},
+		{name: "validation remains active", handle: "task-unknown-valid-0001", transition: application.TerminalExited, mutate: func(store *Store, task domain.Task) {
+			_, _ = store.db.Exec(`INSERT INTO validation_processes(
+				operation_id, task_handle, program_id, executable_label, pid,
+				start_identity, process_group_identity, state, started_at, observed_at)
+				VALUES ('validate-cancel-unknown', ?, 'go-test', 'go', 123,
+				'start-123', 'group-123', 'running', ?, ?)`,
+				task.Handle, formatTime(task.UpdatedAt), formatTime(task.UpdatedAt))
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store, unknown, at := unknownTaskAfterTerminal(t, test.handle, test.transition)
+			if test.mutate != nil {
+				test.mutate(store, unknown)
+			}
+
+			_, err := store.CommitTaskCancel(context.Background(),
+				cancelTaskMutation(unknown.Handle, "operation-cancel-unknown-refused", at))
+			if !errors.Is(err, application.ErrPrecondition) {
+				t.Fatalf("CommitTaskCancel(unsafe unknown) error = %v, want precondition refusal", err)
+			}
+			unchanged, readErr := store.GetTask(context.Background(), unknown.Handle)
+			if readErr != nil || unchanged.State != domain.TaskUnknown ||
+				unchanged.StateVersion != unknown.StateVersion {
+				t.Fatalf("refused unknown task = %#v, %v, want unchanged version %d", unchanged, readErr, unknown.StateVersion)
+			}
+		})
+	}
+}
+
+func unknownTaskAfterTerminal(
+	t *testing.T,
+	handle string,
+	transition application.TerminalTransition,
+) (*Store, domain.Task, time.Time) {
+	t.Helper()
+	store, task, _, now := openTerminalLifecycleFixture(t, handle, true)
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.CommitTerminalEvent(context.Background(), terminalEventMutation(
+		task, "operation-terminal-running-"+handle, application.TerminalRunning, now.Add(3*time.Minute),
+	)); err != nil {
+		t.Fatalf("CommitTerminalEvent(running) error = %v", err)
+	}
+	result, err := store.CommitTerminalEvent(context.Background(), terminalEventMutation(
+		task, "operation-terminal-settled-"+handle, transition, now.Add(4*time.Minute),
+	))
+	if err != nil || result.Task.State != domain.TaskUnknown {
+		t.Fatalf("CommitTerminalEvent(%s) = %#v, %v, want unknown", transition, result, err)
+	}
+	return store, result.Task, now.Add(5 * time.Minute)
 }

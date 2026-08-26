@@ -10,12 +10,17 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 // ControlHandler consumes authenticated host-to-service lifecycle requests.
 // Implementations must durably deduplicate every operation ID.
 type ControlHandler interface {
 	Activate(context.Context, ActivateRequestParams) (ActivateResponseResult, error)
+	GroupActivate(context.Context, GroupActivateRequestParams) (GroupActivateResponseResult, error)
+	GroupAbandon(context.Context, GroupAbandonRequestParams) (GroupAbandonResponseResult, error)
 	Abandon(context.Context, AbandonRequestParams) (AbandonResponseResult, error)
 	Cancel(context.Context, CancelRequestParams) (CancelResponseResult, error)
 	TerminalEvent(context.Context, TerminalEventRequestParams) (TerminalEventResponseResult, error)
@@ -38,6 +43,10 @@ type ControlConnectionConfig struct {
 	RequestTimeout       time.Duration
 	MinimumBackoff       time.Duration
 	MaximumBackoff       time.Duration
+	// Logger is optional and Clock defaults to wall time. A deployment without
+	// them holds the connection exactly as before, recording nothing.
+	Logger application.BoundaryLogger
+	Clock  func() time.Time
 }
 
 // ControlConnection maintains the single authenticated bidirectional Comis
@@ -49,6 +58,8 @@ type ControlConnection struct {
 	session *controlSession
 	changed chan struct{}
 }
+
+var _ application.InitiativeHostRollupSource = (*ControlConnection)(nil)
 
 // Connected reports whether the current session completed the pinned
 // authenticated handshake and remains published for control traffic.
@@ -90,13 +101,20 @@ func (connection *ControlConnection) Run(ctx context.Context) error {
 		return err
 	}
 	backoff := connection.config.MinimumBackoff
+	failureRecorded := false
 	for {
+		started := controlConnectionClock(connection.config)()
 		session, err := connection.connect(ctx)
 		if err == nil {
+			connection.recordConnectionCompletion(started)
+			failureRecorded = false
 			connection.publish(session)
 			_ = session.serve(ctx)
 			connection.unpublish(session)
 			_ = session.close()
+		} else if !failureRecorded {
+			connection.recordConnectionFailure(err, started)
+			failureRecorded = true
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -137,7 +155,7 @@ func (connection *ControlConnection) Heartbeat(
 	}
 	var response HeartbeatResponse
 	authenticated := authenticatedHeartbeatRequest{HeartbeatRequest: request, Bearer: connection.config.Credential}
-	if err := session.call(ctx, authenticated, params.OperationID, &response); err != nil {
+	if err := connection.invoke(ctx, session, request.Method, authenticated, params.OperationID, &response); err != nil {
 		return HeartbeatResponseResult{}, fmt.Errorf("heartbeat to Comis: outcome uncertain: %w", err)
 	}
 	if response.Result.ManagedRunID != params.ManagedRunID {
@@ -162,7 +180,7 @@ func (connection *ControlConnection) Report(ctx context.Context, params ReportRe
 	}
 	var response ReportResponse
 	authenticated := authenticatedReportRequest{ReportRequest: request, Bearer: connection.config.Credential}
-	if err := session.call(ctx, authenticated, params.OperationID, &response); err != nil {
+	if err := connection.invoke(ctx, session, request.Method, authenticated, params.OperationID, &response); err != nil {
 		return ReportResponseResult{}, fmt.Errorf("report to Comis: outcome uncertain: %w", err)
 	}
 	if response.Result.ManagedRunID != params.ManagedRunID || response.Result.ServiceReportID != params.ServiceReportID {
@@ -202,7 +220,7 @@ func (connection *ControlConnection) PutEvidence(
 	}
 	var response PutEvidenceResponse
 	authenticated := authenticatedPutEvidenceRequest{PutEvidenceRequest: request, Bearer: connection.config.Credential}
-	if err := session.call(ctx, authenticated, params.OperationID, &response); err != nil {
+	if err := connection.invoke(ctx, session, request.Method, authenticated, params.OperationID, &response); err != nil {
 		return PutEvidenceResponseResult{}, fmt.Errorf("put evidence to Comis: outcome uncertain: %w", err)
 	}
 	if err := validateGeneratedDocument(schemaPutEvidenceResponse, response); err != nil {
@@ -239,7 +257,7 @@ func (connection *ControlConnection) ReceiveAttentionResponse(
 	authenticated := authenticatedReceiveAttentionResponseRequest{
 		ReceiveAttentionResponseRequest: request, Bearer: connection.config.Credential,
 	}
-	if err := session.call(ctx, authenticated, params.OperationID, &response); err != nil {
+	if err := connection.invoke(ctx, session, request.Method, authenticated, params.OperationID, &response); err != nil {
 		return ReceiveAttentionResponseResponseResult{}, fmt.Errorf("receive attention response from Comis: outcome uncertain: %w", err)
 	}
 	if err := validateGeneratedDocument(schemaReceiveAttentionResponseResponse, response); err != nil {
@@ -247,6 +265,45 @@ func (connection *ControlConnection) ReceiveAttentionResponse(
 	}
 	if response.Result.ManagedRunID != params.ManagedRunID || response.Result.ExternalKey != params.ExternalKey {
 		return ReceiveAttentionResponseResponseResult{}, errors.New("receive attention response from Comis: response identity differs")
+	}
+	return response.Result, nil
+}
+
+// ConsumeApproval obtains one exact approval receipt over the persistent
+// authenticated session. An uncertain transport outcome is reconciled by
+// retrying the same consume operation identity.
+func (connection *ControlConnection) ConsumeApproval(
+	ctx context.Context,
+	params ConsumeApprovalRequestParams,
+) (ConsumeApprovalResponseResult, error) {
+	if ctx == nil {
+		return ConsumeApprovalResponseResult{}, errors.New("consume approval from Comis: context is required")
+	}
+	request := ConsumeApprovalRequest{
+		JSONRPC: JSONRPCVersion, ID: params.OperationID,
+		Method: MethodManagedRunsConsumeApproval, Params: params,
+	}
+	if err := validateGeneratedDocument(schemaConsumeApprovalRequest, request); err != nil {
+		return ConsumeApprovalResponseResult{}, fmt.Errorf("consume approval from Comis: invalid request: %w", err)
+	}
+	session, err := connection.awaitSession(ctx)
+	if err != nil {
+		return ConsumeApprovalResponseResult{}, err
+	}
+	var response ConsumeApprovalResponse
+	authenticated := authenticatedConsumeApprovalRequest{
+		ConsumeApprovalRequest: request, Bearer: connection.config.Credential,
+	}
+	if err := connection.invoke(ctx, session, request.Method, authenticated, params.OperationID, &response); err != nil {
+		return ConsumeApprovalResponseResult{}, fmt.Errorf("consume approval from Comis: outcome uncertain: %w", err)
+	}
+	if err := validateGeneratedDocument(schemaConsumeApprovalResponse, response); err != nil {
+		return ConsumeApprovalResponseResult{}, fmt.Errorf("consume approval from Comis: invalid response: %w", err)
+	}
+	if response.Result.ApprovalRequestID != params.ApprovalRequestID ||
+		response.Result.ManagedRunID != params.ManagedRunID ||
+		response.Result.MCPOperationID != params.MCPOperationID {
+		return ConsumeApprovalResponseResult{}, errors.New("consume approval from Comis: response identity differs")
 	}
 	return response.Result, nil
 }
@@ -272,7 +329,7 @@ func (connection *ControlConnection) Release(
 	}
 	var response ReleaseResponse
 	authenticated := authenticatedReleaseRequest{ReleaseRequest: request, Bearer: connection.config.Credential}
-	if err := session.call(ctx, authenticated, params.OperationID, &response); err != nil {
+	if err := connection.invoke(ctx, session, request.Method, authenticated, params.OperationID, &response); err != nil {
 		return ReleaseResponseResult{}, fmt.Errorf("release managed run in Comis: outcome uncertain: %w", err)
 	}
 	if err := validateGeneratedDocument(schemaReleaseResponse, response); err != nil {
@@ -371,4 +428,41 @@ func waitControlBackoff(ctx context.Context, duration time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+// invoke records one crossing of the Comis control boundary.
+//
+// Every control method funnels through here rather than each caller logging for
+// itself, so a method added later is recorded by construction. The record names
+// the wire method and nothing about its parameters: those carry evidence bodies
+// and report contents that must not reach a log.
+func (connection *ControlConnection) invoke(
+	ctx context.Context,
+	session *controlSession,
+	method Method,
+	authenticated any,
+	operationID OperationID,
+	response any,
+) error {
+	clock := connection.config.Clock
+	if clock == nil {
+		clock = time.Now
+	}
+	started := clock()
+	err := session.call(ctx, authenticated, operationID, response)
+	record := application.BoundaryRecord{
+		Boundary: application.BoundaryControl, Operation: string(method),
+		OperationID: string(operationID), DurationMs: clock().Sub(started).Milliseconds(),
+		Outcome: application.BoundaryCompleted,
+	}
+	if err != nil {
+		// A failed control call leaves the host outcome uncertain rather than
+		// known-failed, which is why the hint points at reconciliation instead
+		// of at a retry.
+		record.Outcome = application.BoundaryFailed
+		record.ErrorKind = domain.ErrorUnavailable
+		record.Hint = "reconcile the exact operation with Comis before retrying"
+	}
+	application.RecordBoundary(connection.config.Logger, record)
+	return err
 }

@@ -304,7 +304,8 @@ func TestRegistry_InspectTaskDiffPortsEveryChangeRecordIntact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InspectTaskDiff() error = %v", err)
 	}
-	if view.BaseRevision != request.BaseRevision || view.HeadRevision == request.BaseRevision {
+	if view.TaskHandle != request.TaskHandle || view.RepositoryID != request.RepositoryID ||
+		view.BaseRevision != request.BaseRevision || view.HeadRevision == request.BaseRevision {
 		t.Fatalf("ported revisions = %#v", view)
 	}
 	var binary, renamed bool
@@ -327,6 +328,20 @@ func TestRegistry_InspectTaskDiffPortsEveryChangeRecordIntact(t *testing.T) {
 	}
 	if view.UncommittedTotals.Files != 1 {
 		t.Fatalf("ported uncommitted totals = %#v", view.UncommittedTotals)
+	}
+	runGit(t, fixture.gitExecutable, "--no-optional-locks", "-C", prepared.CanonicalPath,
+		"restore", "--worktree", "--", "renamed.txt")
+	empty, err := inspector.InspectTaskDiff(context.Background(), application.TaskDiffRequest{
+		TaskHandle: request.TaskHandle, RepositoryID: request.RepositoryID,
+		WorktreePath: prepared.CanonicalPath, BaseRevision: view.HeadRevision,
+	})
+	if err != nil {
+		t.Fatalf("InspectTaskDiff(empty) error = %v", err)
+	}
+	if empty.Committed != nil || empty.Uncommitted != nil ||
+		empty.CommittedTotals != (application.TaskDiffTotals{}) ||
+		empty.UncommittedTotals != (application.TaskDiffTotals{}) {
+		t.Fatalf("InspectTaskDiff(empty) = %#v", empty)
 	}
 
 	// A refusal has to cross the port as a refusal, never as an empty change set.

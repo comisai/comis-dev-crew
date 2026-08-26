@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
+	"github.com/comisai/comis-dev-crew/internal/logging"
 	"github.com/comisai/comis-dev-crew/internal/workers"
 )
 
@@ -21,6 +22,7 @@ const serviceUsage = `Usage: devcrew-service [--database PATH] [--socket PATH]
          --comis-handshake-operation ID --codex-profile ID --codex-executable PATH
          --codex-version VERSION --codex-model MODEL --codex-effort EFFORT
 		 --codex-terminal-allow-entry ID --codex-network POSTURE --codex-concurrency N
+		 --max-concurrent-tasks N --max-concurrent-tasks-per-repository N
 		 [--claude-profile ID --claude-executable PATH --claude-version VERSION
 		  --claude-model MODEL --claude-effort EFFORT --claude-terminal-allow-entry ID
 		  --claude-network POSTURE --claude-concurrency N --claude-config-directory PATH]
@@ -30,6 +32,7 @@ Run the sole durable comis-dev-crew service authority.
 
 Options:
   --database PATH                 Owner-private SQLite database path
+  --log-level LEVEL               Boundary log level: debug, info, warn, error
   --socket PATH                   Owner-only operator Unix socket path
   --mcp-socket PATH               Owner-only MCP facade Unix socket path
   --runtime-root PATH             Owner-only per-task attachment root
@@ -56,6 +59,8 @@ Options:
   --codex-terminal-allow-entry ID Reviewed Comis terminal allow-entry identity
   --codex-network POSTURE         disabled, restricted, or host
   --codex-concurrency N           Reviewed profile concurrency limit
+  --max-concurrent-tasks N        Reviewed host-wide worker ceiling
+  --max-concurrent-tasks-per-repository N  Reviewed per-repository worker ceiling
   --claude-profile ID             Exact reviewed Claude Code profile identity
   --claude-executable PATH        Canonical Claude Code executable path
   --claude-version VERSION        Exact reviewed Claude Code version output
@@ -90,6 +95,7 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	flags.SetOutput(io.Discard)
 	databasePath := config.DefaultDatabasePath
 	socketPath := config.DefaultSocketPath
+	logLevel := string(logging.LevelInfo)
 	var mcpSocketPath string
 	var runtimeRoot string
 	var serviceInstanceID string
@@ -110,6 +116,8 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	var codexTerminalAllowEntry string
 	var codexNetwork string
 	var codexConcurrency int
+	var maxConcurrentTasks int
+	var maxConcurrentTasksPerRepository int
 	var claudeProfileID string
 	var claudeExecutable string
 	var claudeVersion string
@@ -130,6 +138,7 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	var version bool
 	flags.StringVar(&databasePath, "database", databasePath, "owner-private SQLite database path")
 	flags.StringVar(&socketPath, "socket", socketPath, "owner-only operator Unix socket path")
+	flags.StringVar(&logLevel, "log-level", logLevel, "boundary log level: debug, info, warn, or error")
 	flags.StringVar(&mcpSocketPath, "mcp-socket", "", "owner-only MCP facade Unix socket path")
 	flags.StringVar(&runtimeRoot, "runtime-root", "", "owner-only per-task attachment root")
 	flags.StringVar(&serviceInstanceID, "service-instance", "", "exact Comis service instance identity")
@@ -153,6 +162,8 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	flags.StringVar(&codexTerminalAllowEntry, "codex-terminal-allow-entry", "", "reviewed Comis terminal allow-entry identity")
 	flags.StringVar(&codexNetwork, "codex-network", "", "reviewed network posture")
 	flags.IntVar(&codexConcurrency, "codex-concurrency", 0, "reviewed profile concurrency limit")
+	flags.IntVar(&maxConcurrentTasks, "max-concurrent-tasks", 0, "reviewed host-wide worker ceiling")
+	flags.IntVar(&maxConcurrentTasksPerRepository, "max-concurrent-tasks-per-repository", 0, "reviewed per-repository worker ceiling")
 	flags.StringVar(&claudeProfileID, "claude-profile", "", "exact reviewed Claude Code profile identity")
 	flags.StringVar(&claudeExecutable, "claude-executable", "", "canonical Claude Code executable path")
 	flags.StringVar(&claudeVersion, "claude-version", "", "exact reviewed Claude Code version output")
@@ -204,11 +215,20 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 		codexProfileID, codexExecutable, codexVersion, codexModel, codexEffort, codexTerminalAllowEntry, codexNetwork,
 		candidateConfigPath,
 	}
-	installed := preparationTTLConfigured || codexConcurrency != 0
+	installed := preparationTTLConfigured || codexConcurrency != 0 || maxConcurrentTasks != 0 || maxConcurrentTasksPerRepository != 0
 	for _, value := range installedValues {
 		installed = installed || value != ""
 	}
 	validNetwork := codexNetwork == string(workers.NetworkDisabled) || codexNetwork == string(workers.NetworkRestricted) || codexNetwork == string(workers.NetworkHost)
+	if installed && (maxConcurrentTasks < 1 || maxConcurrentTasks > 1024 ||
+		maxConcurrentTasksPerRepository < 1 || maxConcurrentTasksPerRepository > maxConcurrentTasks) {
+		return writeServiceDiagnostic(stderr, fmt.Sprintf(
+			"devcrew-service: installed composition is incomplete\n"+
+				"Configured task concurrency: --max-concurrent-tasks=%d --max-concurrent-tasks-per-repository=%d\n"+
+				"Hint: set both flags to positive limits and keep the per-repository limit no greater than the host-wide limit\n",
+			maxConcurrentTasks, maxConcurrentTasksPerRepository,
+		), 2)
+	}
 	if installed && (preparationTTL <= 0 || preparationTTL > 24*time.Hour || codexConcurrency < 1 || codexConcurrency > 64 || !validNetwork) {
 		return writeServiceDiagnostic(stderr, "devcrew-service: installed composition is incomplete\nHint: configure every repository, MCP, Comis, and Codex option\n", 2)
 	}
@@ -246,12 +266,29 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 	if runService == nil {
 		runService = Run
 	}
-	serviceConfig := Config{DatabasePath: databasePath, SocketPath: socketPath, DecisionSurfacing: surfacing}
+	level, levelErr := logging.ParseLevel(logLevel)
+	if levelErr != nil {
+		return writeServiceDiagnostic(stderr,
+			"devcrew-service: log level is invalid\nHint: use debug, info, warn, or error\n", 2)
+	}
+	// Boundary records go to standard error, which the supervisor already
+	// collects; opening a file here would add a retention surface the host
+	// already provides.
+	logger, loggerErr := logging.New(stderr, level)
+	if loggerErr != nil {
+		return writeServiceDiagnostic(stderr, "devcrew-service: boundary logging is unavailable\n", 2)
+	}
+	serviceConfig := Config{
+		DatabasePath: databasePath, SocketPath: socketPath,
+		DecisionSurfacing: surfacing, Logger: logger,
+	}
 	if installed {
 		serviceConfig.MCPSocketPath = mcpSocketPath
 		serviceConfig.RuntimeRoot = runtimeRoot
 		serviceConfig.ServiceInstanceID = serviceInstanceID
 		serviceConfig.PreparationTTL = preparationTTL
+		serviceConfig.MaxConcurrentTasks = maxConcurrentTasks
+		serviceConfig.MaxConcurrentTasksPerRepository = maxConcurrentTasksPerRepository
 		serviceConfig.RepositoryComposition = &RepositoryComposition{
 			GitExecutable: gitExecutable, ApprovedRoot: approvedRoot, RepositoryID: repositoryID,
 			PrimaryCheckout: repositoryPrimary, WorktreeRoot: worktreeRoot, DefaultBranch: repositoryDefaultBranch,
@@ -275,7 +312,10 @@ func RunCommand(ctx context.Context, args []string, stdout, stderr io.Writer, co
 		}
 		validationComposition, forgeComposition, readErr := readCandidateComposition(candidateConfigPath)
 		if readErr != nil {
-			return writeServiceDiagnostic(stderr, "devcrew-service: candidate configuration is invalid\nHint: provide one canonical owner-private reviewed candidate policy\n", 2)
+			return writeServiceDiagnostic(stderr, fmt.Sprintf(
+				"devcrew-service: candidate configuration is invalid\nHint: %s\n",
+				serviceFailureHint(readErr),
+			), 2)
 		}
 		serviceConfig.ValidationComposition = validationComposition
 		serviceConfig.ForgeComposition = forgeComposition
@@ -309,6 +349,8 @@ func serviceFailureCause(err error) string {
 		{"run service Codex", "codex_composition"},
 		{"run service Claude", "claude_composition"},
 		{"run service validation composition", "validation_composition"},
+		{"run service integration policy composition", "integration_policy_composition"},
+		{"run service: integration application composition", "integration_application_composition"},
 		{"run service forge read credential", "forge_read_credential"},
 		{"run service forge push credential", "forge_push_credential"},
 		{"run service: forge read and push identities", "forge_identity_separation"},
@@ -346,6 +388,8 @@ func serviceFailureClass(err error) string {
 		strings.Contains(message, "run service Codex"),
 		strings.Contains(message, "run service Claude"),
 		strings.Contains(message, "run service validation composition"),
+		strings.Contains(message, "run service integration policy composition"),
+		strings.Contains(message, "run service: integration application composition"),
 		strings.Contains(message, "run service forge"),
 		strings.Contains(message, "run service GitHub composition"),
 		strings.Contains(message, "run service: exact Codex version is unavailable"),
@@ -375,6 +419,16 @@ func serviceFailureClass(err error) string {
 }
 
 func serviceFailureHint(err error) string {
+	if strings.Contains(err.Error(), "profile path rules are required") {
+		return "add one to 64 valid profiles[*].pathRules entries to the owner-private candidate configuration"
+	}
+	if strings.Contains(err.Error(), "integration policies are invalid") {
+		return "add one to 64 valid integrationPolicies entries to the owner-private candidate configuration"
+	}
+	if strings.Contains(err.Error(), "integration policy composition") ||
+		strings.Contains(err.Error(), "integration application composition") {
+		return "inspect integrationPolicies in the owner-private candidate configuration"
+	}
 	if strings.Contains(err.Error(), "recover runtime attachments: prepare runtime attachment: workspace is not canonical") {
 		return "inspect cleaned-task attachment recovery and durable workspace state"
 	}

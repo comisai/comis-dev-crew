@@ -13,152 +13,7 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/localapi"
 	"github.com/comisai/comis-dev-crew/internal/store/sqlite"
 	"github.com/comisai/comis-dev-crew/internal/validation"
-	"github.com/comisai/comis-dev-crew/internal/workers"
 )
-
-const (
-	comisReportPollInterval   = 250 * time.Millisecond
-	comisReportMinimumBackoff = 100 * time.Millisecond
-	comisReportMaximumBackoff = 5 * time.Second
-	comisRequestTimeout       = 5 * time.Second
-	// Well inside the host's own staleness bound, so one missed sweep — a slow
-	// store read, a reconnect — never makes a healthy service look departed.
-	comisLivenessInterval = 60 * time.Second
-	comisMinimumBackoff   = 100 * time.Millisecond
-	comisMaximumBackoff   = time.Second
-	fixturePollInterval   = 25 * time.Millisecond
-)
-
-// ComisControl is the single persistent authenticated connection supervised
-// by the service. The concrete control adapter also carries durable reports.
-type ComisControl interface {
-	comiswire.ReportSender
-	comiswire.EvidenceSender
-	comiswire.HeartbeatSender
-	comiswire.AttentionResponseReceiver
-	application.ManagedRunReleaser
-	application.HostIntegrationStatus
-	Run(context.Context) error
-}
-
-// Config identifies the service-owned database and operator endpoint.
-type Config struct {
-	DatabasePath             string
-	SocketPath               string
-	MCPSocketPath            string
-	RuntimeRoot              string
-	ServiceInstanceID        string
-	Repositories             application.RepositoryCatalog
-	WorkerProfiles           application.WorkerProfileValidator
-	WorkerProfileCatalog     application.WorkerProfileCatalog
-	ValidationProfiles       application.ValidationProfileValidator
-	Workspaces               application.WorkspacePreparer
-	RuntimeAttachments       application.RuntimeAttachmentCoordinator
-	WorkerHarnesses          application.WorkerHarnessResolver
-	TaskIDs                  application.TaskIDSource
-	RegistrationNonces       application.RegistrationNonceSource
-	PreparationTTL           time.Duration
-	Clock                    application.Clock
-	DecisionSurfacing        application.DecisionSurfacingPolicy
-	ComisControl             ComisControl
-	RepositoryComposition    *RepositoryComposition
-	ComisComposition         *ComisComposition
-	CodexComposition         *CodexComposition
-	ClaudeComposition        *ClaudeComposition
-	ValidationComposition    *ValidationComposition
-	ForgeComposition         *ForgeComposition
-	FixtureComposition       *FixtureComposition
-	Ready                    func()
-	candidateGit             candidateGitInspector
-	workspaceInspector       application.WorkspaceInspector
-	taskDiffs                application.TaskDiffInspector
-	primarySynchronizer      application.PrimarySynchronizer
-	reconciliationInspector  application.ReconciliationWorkspaceManager
-	validationCatalog        *validation.Catalog
-	validationMaxOutputBytes int64
-	validationPollInterval   time.Duration
-	pullRequests             candidatePullRequestDeliverer
-	cleanupRemover           application.DeliveredWorkspaceRemover
-	cleanupForge             application.PullRequestDeliveryVerifier
-	fixtureCandidatePreparer fixtureCandidatePreparer
-}
-
-// RepositoryComposition is the installed single-repository fixture lane.
-type RepositoryComposition struct {
-	GitExecutable   string
-	ApprovedRoot    string
-	RepositoryID    string
-	PrimaryCheckout string
-	WorktreeRoot    string
-	DefaultBranch   string
-}
-
-// ComisComposition identifies the installed authenticated control lane without
-// placing its protected bearer on the process command line.
-type ComisComposition struct {
-	SocketPath           string
-	CredentialFile       string
-	HandshakeOperationID string
-}
-
-// CodexComposition is one exact operator-reviewed production worker profile.
-// Lifecycle settling is intentionally not configurable until a trustworthy
-// Codex settle signal is ratified.
-type CodexComposition struct {
-	ProfileID            string
-	Executable           string
-	ExpectedVersion      string
-	Model                string
-	Effort               string
-	TerminalAllowEntryID string
-	Network              workers.NetworkPosture
-	ConcurrencyLimit     int
-}
-
-// ClaudeComposition is one exact operator-reviewed production worker profile.
-// Its owner-private config directory is exposed read-only by the terminal jail.
-type ClaudeComposition struct {
-	ProfileID            string
-	Executable           string
-	ExpectedVersion      string
-	Model                string
-	Effort               string
-	TerminalAllowEntryID string
-	Network              workers.NetworkPosture
-	ConcurrencyLimit     int
-	ConfigDirectory      string
-}
-
-// ValidationComposition is the immutable operator-reviewed candidate policy.
-type ValidationComposition struct {
-	Programs       []validation.Program
-	Profiles       []validation.Profile
-	MaxOutputBytes int64
-	PollInterval   time.Duration
-}
-
-// ForgeComposition fixes the sole E0 pull-request route and keeps its read and
-// push credentials in distinct owner-private files.
-type ForgeComposition struct {
-	APIBaseURL             string
-	Owner                  string
-	Repository             string
-	RemoteURL              string
-	ReadCredentialFile     string
-	PushCredentialFile     string
-	CredentialDirectory    string
-	LocalFixtureRemoteRoot string
-	SSHTransportExecutable string
-	SSHExecutable          string
-	SSHKnownHostsFile      string
-}
-
-// FixtureComposition enables the reviewed deterministic worker with one fixed
-// local decision response.
-type FixtureComposition struct {
-	Decision             string
-	ArtifactRelativePath string
-}
 
 // Run opens the sole writable store and serves canonical operator queries until
 // cancellation. It joins every acquired resource before returning.
@@ -181,6 +36,11 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
+	lock, err := acquireWriterAuthority(config.DatabasePath)
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, lock.Release()) }()
 	store, err := sqlite.Open(ctx, config.DatabasePath)
 	if err != nil {
 		return fmt.Errorf("run service store: %w", err)
@@ -188,25 +48,9 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	defer func() {
 		resultErr = errors.Join(resultErr, store.Close())
 	}()
-	var attachmentSupervisor *runtimeAttachmentCoordinator
-	if config.RuntimeAttachments == nil && config.RuntimeRoot != "" {
-		attachmentSupervisor, err = newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
-			RuntimeRoot: config.RuntimeRoot, Store: store, Clock: clock,
-			NewCredential:           func() (string, error) { return randomIdentity("runtime-credential", 16) },
-			NewAttentionOperationID: func() (string, error) { return randomIdentity("attention-response", 16) },
-		})
-		if err != nil {
-			return fmt.Errorf("run service runtime attachments: %w", err)
-		}
-		config.RuntimeAttachments = attachmentSupervisor
-		if err := attachmentSupervisor.recoverRuntimeRelayIdentityUpgrades(ctx); err != nil {
-			return fmt.Errorf("run service runtime relay identity upgrade: %w", err)
-		}
-	} else {
-		upgrades, upgradeErr := store.ListRuntimeRelayIdentityUpgrades(ctx)
-		if upgradeErr != nil || len(upgrades) != 0 {
-			return errors.New("run service runtime relay identity upgrade requires service-owned attachments")
-		}
+	attachmentSupervisor, err := composeRuntimeAttachments(ctx, &config, store, clock)
+	if err != nil {
+		return err
 	}
 	reconciler, err := application.NewStartupReconciler(application.StartupReconcilerConfig{Store: store, Clock: clock})
 	if err != nil {
@@ -241,15 +85,41 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if err != nil {
 		return err
 	}
+	initiativeMutations, err := composeInitiativeMutations(config, store, clock, mutations != nil)
+	if err != nil {
+		return err
+	}
+	backlogAdditions, backlogPromotions, err := composeBacklogWorkflows(config, store, mutations, clock)
+	if err != nil {
+		return err
+	}
+	integrations, err := composeIntegrationApplications(config, store, clock)
+	if err != nil {
+		return err
+	}
 	if attachmentSupervisor != nil {
 		if err := attachmentSupervisor.SetRecoveryAcknowledger(mutations); err != nil {
 			return fmt.Errorf("run service runtime attachment recovery: %w", err)
 		}
 	}
+	groupActivations, err := composeInitiativeActivations(config, store, mutations, clock)
+	if err != nil {
+		return err
+	}
+	groupAbandonments, err := application.NewInitiativeAbandonments(application.InitiativeAbandonmentConfig{
+		Store: store, Clock: clock,
+	})
+	if err != nil {
+		return fmt.Errorf("run service initiative abandonment coordinator: %w", err)
+	}
 	var interventions *application.Interventions
 	if config.workspaceInspector != nil {
+		var runtimeLaunches application.RuntimeAttachmentLaunchRebinder
+		if candidate, ok := config.RuntimeAttachments.(application.RuntimeAttachmentLaunchRebinder); ok {
+			runtimeLaunches = candidate
+		}
 		interventions, err = application.NewInterventions(application.InterventionConfig{
-			Store: store, Workspaces: config.workspaceInspector,
+			Store: store, Workspaces: config.workspaceInspector, RuntimeLaunches: runtimeLaunches,
 			// Replacement launches a worker, so it must be able to prove the
 			// proposed profile is one an operator reviewed for this task's shape.
 			WorkerProfiles: config.WorkerProfiles,
@@ -268,6 +138,15 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 			return fmt.Errorf("run service task reconciliation coordinator: %w", err)
 		}
 	}
+	var initiativeControls *application.InitiativeControls
+	if mutations != nil {
+		initiativeControls, err = application.NewInitiativeControls(application.InitiativeControlConfig{
+			Store: store, Tasks: mutations, Resumer: interventions, Clock: clock,
+		})
+		if err != nil {
+			return fmt.Errorf("run service initiative controls: %w", err)
+		}
+	}
 	var controlMutations comiswire.DurableControlMutations
 	if mutations != nil {
 		controlMutations = mutations
@@ -281,7 +160,23 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		}
 		controlMutations = launchSupervisor
 	}
-	control, err := composeComisControl(config, controlMutations)
+	control, err := composeComisControl(config, controlMutations, groupActivations, groupAbandonments)
+	if err != nil {
+		return err
+	}
+	var initiativeHostReconciler *application.InitiativeHostReconciler
+	if control != nil && config.ServiceInstanceID != "" {
+		initiativeHostReconciler, err = application.NewInitiativeHostReconciler(application.InitiativeHostReconcilerConfig{
+			Store: store, Host: control, ServiceInstanceID: config.ServiceInstanceID,
+			NewOperationID: func() (string, error) { return randomIdentity("group-rollup", 16) },
+			Clock:          clock, AttemptTimeout: comisRequestTimeout + comisMaximumBackoff,
+			RetryInterval: comisReportPollInterval, Logger: config.Logger,
+		})
+		if err != nil {
+			return fmt.Errorf("run service initiative host reconciler: %w", err)
+		}
+	}
+	merges, err := composeTaskMerges(config, store, control, clock)
 	if err != nil {
 		return err
 	}
@@ -290,15 +185,25 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 			return fmt.Errorf("run service runtime attention responses: %w", err)
 		}
 	}
+	querySchedulingLimits, err := schedulingLimitsForConfig(config)
+	if err != nil {
+		return fmt.Errorf("run service fleet capacity: %w", err)
+	}
 	queries, err := application.NewQueries(application.QueryConfig{
 		Repository: store, Harnesses: config.WorkerHarnesses, Host: control,
 		ReconciliationWorkspaces: config.reconciliationInspector,
 		WorkerProfiles:           config.WorkerProfileCatalog, Decisions: store,
-		TaskDiffs: config.taskDiffs, Repairs: store, Events: store, TaskLogs: store,
-		DecisionSurfacing: config.DecisionSurfacing, Clock: clock,
+		TaskDiffs: config.taskDiffs, Repairs: store, Events: store, Audit: store, TaskLogs: store,
+		DecisionSurfacing: config.DecisionSurfacing, SchedulingLimits: querySchedulingLimits, Clock: clock,
 	})
 	if err != nil {
 		return fmt.Errorf("run service queries: %w", err)
+	}
+	initiativeQueries, err := application.NewInitiativeQueries(application.InitiativeQueryConfig{
+		Store: store, Clock: clock,
+	})
+	if err != nil {
+		return fmt.Errorf("run service initiative queries: %w", err)
 	}
 	var cleanup *application.CleanupCoordinator
 	if config.cleanupRemover != nil || config.cleanupForge != nil {
@@ -307,6 +212,7 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		}
 		cleanup, err = application.NewCleanupCoordinator(application.CleanupCoordinatorConfig{
 			Store: store, Workspaces: config.workspaceInspector, Forge: config.cleanupForge,
+			Landed:   config.cleanupLanded,
 			Releaser: control, Attachments: config.RuntimeAttachments,
 			Remover: config.cleanupRemover, Clock: clock,
 		})
@@ -345,9 +251,22 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 		}
 		scoutReviews = reviews
 	}
-	handlerConfig := localapi.HandlerConfig{Queries: queries, Clock: clock}
+	handlerConfig := localapi.HandlerConfig{
+		Queries: queries, InitiativeQueries: initiativeQueries, Clock: clock, Logger: config.Logger,
+	}
+	if merges != nil {
+		handlerConfig.Merges = merges
+	}
 	if mutations != nil {
 		handlerConfig.Mutations = mutations
+		handlerConfig.InitiativeMutations = initiativeMutations
+		handlerConfig.InitiativeControls = initiativeControls
+		handlerConfig.BacklogAdditions = backlogAdditions
+		handlerConfig.BacklogPromotions = backlogPromotions
+		handlerConfig.ServiceInstanceID = config.ServiceInstanceID
+	}
+	if integrations != nil {
+		handlerConfig.Integrations = integrations
 		handlerConfig.ServiceInstanceID = config.ServiceInstanceID
 	}
 	if interventions != nil {
@@ -421,8 +340,12 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if err := errors.Join(forwarderErr, evidenceErr, livenessErr, surfacingErr); err != nil {
 		return fmt.Errorf("run service Comis control components: %w", err)
 	}
+	controlRun := control.Run
+	if attachmentSupervisor != nil {
+		controlRun = runAfterRuntimeAttachmentRecovery(attachmentSupervisor, control.Run)
+	}
 	components := []func(context.Context) error{
-		control.Run,
+		controlRun,
 		evidenceForwarder.Run,
 		forwarder.Run,
 		liveness.Run,
@@ -437,10 +360,17 @@ func Run(ctx context.Context, config Config) (resultErr error) {
 	if candidate != nil {
 		components = append(components, candidate.Run)
 	}
-	var beforeReady func(context.Context) error
+	readinessSteps := make([]func(context.Context) error, 0, 2)
 	if attachmentSupervisor != nil {
-		beforeReady = attachmentSupervisor.waitForRecovery
+		readinessSteps = append(readinessSteps, attachmentSupervisor.waitForRecovery)
 	}
+	if initiativeHostReconciler != nil {
+		readinessSteps = append(readinessSteps, func(readinessContext context.Context) error {
+			_, reconcileErr := initiativeHostReconciler.Reconcile(readinessContext)
+			return reconcileErr
+		})
+	}
+	beforeReady := runReadinessSteps(readinessSteps...)
 	return serveServiceComponents(ctx, servers, components, beforeReady, config.Ready)
 }
 
@@ -453,6 +383,10 @@ func composeMutations(config Config, store *sqlite.Store, clock application.Cloc
 		}
 		return nil, nil
 	}
+	schedulingLimits, err := schedulingLimitsForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("run service initiative scheduling: %w", err)
+	}
 	mutations, err := application.NewMutations(application.MutationConfig{
 		Store: store, Repositories: config.Repositories,
 		WorkerProfiles: config.WorkerProfiles, ValidationProfiles: config.ValidationProfiles,
@@ -460,6 +394,7 @@ func composeMutations(config Config, store *sqlite.Store, clock application.Cloc
 		RuntimeAttachments: config.RuntimeAttachments,
 		RegistrationNonces: config.RegistrationNonces,
 		PreparationTTL:     config.PreparationTTL,
+		SchedulingLimits:   schedulingLimits,
 		// The durable store is the promotion authority: it proves the scout has
 		// evidence to preserve and records the link. Without it promotion is
 		// refused rather than minting a ship task with no recorded origin.
@@ -475,24 +410,46 @@ func composeMutations(config Config, store *sqlite.Store, clock application.Cloc
 	return mutations, nil
 }
 
-func serveLocalEndpoints(ctx context.Context, servers []*localapi.Server) error {
-	if len(servers) == 1 {
-		return servers[0].Serve(ctx)
+// composeInitiativeMutations reuses the exact reviewed preparation dependencies
+// selected for standalone tasks. An unconfigured read-only service exposes
+// neither mutation surface.
+func composeInitiativeMutations(
+	config Config,
+	store *sqlite.Store,
+	clock application.Clock,
+	mutationsConfigured bool,
+) (*application.InitiativeMutations, error) {
+	if !mutationsConfigured {
+		return nil, nil
 	}
-	serveContext, cancel := context.WithCancel(ctx)
-	defer cancel()
-	results := make(chan error, len(servers))
-	for _, server := range servers {
-		go func(endpoint *localapi.Server) { results <- endpoint.Serve(serveContext) }(server)
+	mutations, err := application.NewInitiativeMutations(application.InitiativeMutationConfig{
+		Store: store, Repositories: config.Repositories,
+		WorkerProfiles: config.WorkerProfiles, ValidationProfiles: config.ValidationProfiles,
+		Workspaces: config.Workspaces, RuntimeAttachments: config.RuntimeAttachments,
+		TaskIDs: config.TaskIDs, RegistrationNonces: config.RegistrationNonces,
+		PreparationTTL: config.PreparationTTL, Clock: clock,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("run service initiative mutation coordinator: %w", err)
 	}
-	var resultErr error
-	for range servers {
-		err := <-results
-		resultErr = errors.Join(resultErr, err)
-		cancel()
-		for _, server := range servers {
-			resultErr = errors.Join(resultErr, server.Close())
-		}
+	return mutations, nil
+}
+
+func composeInitiativeActivations(
+	config Config,
+	store *sqlite.Store,
+	mutations *application.Mutations,
+	clock application.Clock,
+) (*application.InitiativeActivations, error) {
+	if mutations == nil {
+		return nil, nil
 	}
-	return resultErr
+	activations, err := application.NewInitiativeActivations(application.InitiativeActivationConfig{
+		Store: store, RuntimeAttachments: config.RuntimeAttachments,
+		Acknowledger: mutations, Clock: clock,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("run service initiative activation coordinator: %w", err)
+	}
+	return activations, nil
 }

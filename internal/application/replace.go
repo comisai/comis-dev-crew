@@ -42,6 +42,9 @@ func (interventions *Interventions) ReplaceWorker(
 	); err != nil {
 		return MutationResult{}, mutationReplayFailure(err)
 	} else if found {
+		if err := interventions.rebindReadyWorkerLaunch(ctx, replay.Task); err != nil {
+			return MutationResult{}, err
+		}
 		return replay, nil
 	}
 	task, err := interventions.store.GetTask(ctx, command.TaskHandle)
@@ -68,6 +71,9 @@ func (interventions *Interventions) ReplaceWorker(
 	})
 	if err != nil {
 		return MutationResult{}, mutationCommitFailure(err)
+	}
+	if err := interventions.rebindReadyWorkerLaunch(ctx, result.Task); err != nil {
+		return MutationResult{}, err
 	}
 	return result, nil
 }

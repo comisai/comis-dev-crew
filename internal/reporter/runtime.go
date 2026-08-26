@@ -21,7 +21,7 @@ import (
 const (
 	runtimeProtocolVersion      = "devcrew.runtime.v1"
 	maximumRuntimeRequestBytes  = 18 * 1024
-	maximumRuntimeResponseBytes = 128 * 1024
+	maximumRuntimeResponseBytes = 2 * 1024 * 1024
 	maximumRuntimePath          = 100
 	runtimeDeadline             = 5 * time.Second
 )
@@ -38,6 +38,7 @@ type RuntimeOutcome struct {
 	Receipt           *domain.ReportReceipt              `json:"receipt,omitempty"`
 	Acknowledgement   *application.LaunchAcknowledgement `json:"acknowledgement,omitempty"`
 	AttentionResponse *runtimeAttentionOutcome           `json:"attentionResponse,omitempty"`
+	ContractArtifact  *domain.ContractArtifactContent    `json:"contractArtifact,omitempty"`
 	Error             *RuntimeError                      `json:"error,omitempty"`
 }
 
@@ -47,6 +48,7 @@ type runtimeRequest struct {
 	Report          *domain.WorkerReport               `json:"report,omitempty"`
 	Acknowledgement *application.LaunchAcknowledgement `json:"acknowledgement,omitempty"`
 	ExternalKey     string                             `json:"externalKey,omitempty"`
+	ArtifactHandle  string                             `json:"artifactHandle,omitempty"`
 }
 
 // RuntimeServerConfig binds one socket capability to one exact brief and
@@ -60,6 +62,7 @@ type RuntimeServerConfig struct {
 	LaunchAcknowledger      application.WorkerLaunchAcknowledger
 	AttentionResponses      AttentionResponseReceiver
 	NewAttentionOperationID func() (string, error)
+	ContractArtifacts       ContractArtifactReader
 	RelaySeed               []byte
 }
 
@@ -81,6 +84,7 @@ type RuntimeServer struct {
 	reporter                *Client
 	attentionResponses      AttentionResponseReceiver
 	newAttentionOperationID func() (string, error)
+	contractArtifacts       ContractArtifactReader
 	launchMu                sync.RWMutex
 	launch                  *RuntimeLaunchConfig
 	lifecycleOnce           sync.Once
@@ -140,7 +144,8 @@ func listenRuntime(config RuntimeServerConfig, afterSocketInfo func()) (*Runtime
 		listener: listener, socketPath: config.SocketPath, socketInfo: info,
 		brief: config.Brief, reporter: config.Reporter,
 		attentionResponses: config.AttentionResponses, newAttentionOperationID: config.NewAttentionOperationID,
-		relayPrivateKey: relayPrivateKey, relayIdentity: relayIdentity,
+		contractArtifacts: config.ContractArtifacts,
+		relayPrivateKey:   relayPrivateKey, relayIdentity: relayIdentity,
 	}
 	server.initializeLifecycle()
 	identity, err := captureRuntimeSocketIdentity(config.SocketPath, info)
@@ -157,28 +162,6 @@ func listenRuntime(config RuntimeServerConfig, afterSocketInfo func()) (*Runtime
 		}
 	}
 	return server, nil
-}
-
-// BindLaunch attaches one exact activation identity without replacing the
-// socket Comis already validated. Altered replays fail closed.
-func (server *RuntimeServer) BindLaunch(config RuntimeLaunchConfig) error {
-	if server == nil || server.reporter == nil {
-		return errors.New("bind runtime launch: server is unavailable")
-	}
-	if err := validateRuntimeLaunchBinding(server.brief, server.reporter, config); err != nil {
-		return err
-	}
-	server.launchMu.Lock()
-	defer server.launchMu.Unlock()
-	if server.launch != nil {
-		if server.launch.OperationID != config.OperationID || server.launch.Expected != config.Expected {
-			return errors.New("bind runtime launch: activation binding conflicts")
-		}
-		return nil
-	}
-	binding := config
-	server.launch = &binding
-	return nil
 }
 
 // Serve accepts bounded one-request connections until cancellation or Close.
@@ -262,23 +245,25 @@ func (server *RuntimeServer) serveConnection(ctx context.Context, connection *ne
 	var outcome RuntimeOutcome
 	switch request.Kind {
 	case "brief":
-		if request.Report != nil || request.Acknowledgement != nil || request.ExternalKey != "" {
+		if request.Report != nil || request.Acknowledgement != nil || request.ExternalKey != "" || request.ArtifactHandle != "" {
 			outcome = runtimeRejected("malformed_request")
 		} else {
-			brief := server.brief
+			brief, _ := server.generationBinding()
 			outcome = RuntimeOutcome{Version: runtimeProtocolVersion, Brief: &brief}
 		}
 	case "report":
-		if request.Report == nil || request.Acknowledgement != nil || request.ExternalKey != "" {
+		if request.Report == nil || request.Acknowledgement != nil || request.ExternalKey != "" || request.ArtifactHandle != "" {
 			outcome = runtimeRejected("malformed_request")
-		} else if receipt, err := server.reporter.Report(ctx, *request.Report); err != nil {
+		} else if _, client := server.generationBinding(); client == nil {
+			outcome = runtimeRejected("report_rejected")
+		} else if receipt, err := client.Report(ctx, *request.Report); err != nil {
 			outcome = runtimeRejected("report_rejected")
 		} else {
 			outcome = RuntimeOutcome{Version: runtimeProtocolVersion, Receipt: &receipt}
 		}
 	case "launch":
 		launch := server.launchBinding()
-		if request.Report != nil || request.Acknowledgement != nil || request.ExternalKey != "" {
+		if request.Report != nil || request.Acknowledgement != nil || request.ExternalKey != "" || request.ArtifactHandle != "" {
 			outcome = runtimeRejected("malformed_request")
 		} else if launch == nil {
 			outcome = runtimeRejected("launch_unavailable")
@@ -290,6 +275,8 @@ func (server *RuntimeServer) serveConnection(ctx context.Context, connection *ne
 		outcome = server.acknowledgeLaunch(ctx, request, server.launchBinding())
 	case "attention_response":
 		outcome = server.receiveAttentionResponse(ctx, request, server.launchBinding())
+	case "artifact":
+		outcome = server.readContractArtifact(ctx, request)
 	default:
 		outcome = runtimeRejected("unknown_request")
 	}
@@ -297,7 +284,7 @@ func (server *RuntimeServer) serveConnection(ctx context.Context, connection *ne
 }
 
 func (server *RuntimeServer) acknowledgeLaunch(ctx context.Context, request runtimeRequest, launch *RuntimeLaunchConfig) RuntimeOutcome {
-	if request.Report != nil || request.Acknowledgement == nil || request.ExternalKey != "" || launch == nil ||
+	if request.Report != nil || request.Acknowledgement == nil || request.ExternalKey != "" || request.ArtifactHandle != "" || launch == nil ||
 		*request.Acknowledgement != launch.Expected {
 		return runtimeRejected("acknowledgement_rejected")
 	}
@@ -333,7 +320,7 @@ func (client *RuntimeClient) Brief(ctx context.Context) (domain.WorkerBrief, err
 		return domain.WorkerBrief{}, err
 	}
 	if outcome.Error != nil || outcome.Brief == nil || outcome.Receipt != nil || outcome.Acknowledgement != nil ||
-		outcome.AttentionResponse != nil {
+		outcome.AttentionResponse != nil || outcome.ContractArtifact != nil {
 		return domain.WorkerBrief{}, errors.New("read runtime brief: attachment rejected the request")
 	}
 	if err := outcome.Brief.Validate(); err != nil {
@@ -349,7 +336,7 @@ func (client *RuntimeClient) Report(ctx context.Context, report domain.WorkerRep
 		return domain.ReportReceipt{}, err
 	}
 	if outcome.Error != nil || outcome.Receipt == nil || outcome.Brief != nil || outcome.Acknowledgement != nil ||
-		outcome.AttentionResponse != nil {
+		outcome.AttentionResponse != nil || outcome.ContractArtifact != nil {
 		return domain.ReportReceipt{}, errors.New("submit runtime report: attachment rejected the request")
 	}
 	if err := domain.ValidateTaskHandle(outcome.Receipt.TaskHandle); err != nil ||
@@ -383,7 +370,7 @@ func (client *RuntimeClient) Acknowledge(ctx context.Context, workingDirectory s
 		return err
 	}
 	if outcome.Error != nil || outcome.Acknowledgement == nil || outcome.Brief != nil || outcome.Receipt != nil ||
-		outcome.AttentionResponse != nil ||
+		outcome.AttentionResponse != nil || outcome.ContractArtifact != nil ||
 		*outcome.Acknowledgement != launch {
 		return errors.New("acknowledge runtime launch: attachment rejected the operation")
 	}
@@ -396,7 +383,7 @@ func (client *RuntimeClient) launchAcknowledgement(ctx context.Context) (applica
 		return application.LaunchAcknowledgement{}, err
 	}
 	if outcome.Error != nil || outcome.Acknowledgement == nil || outcome.Brief != nil || outcome.Receipt != nil ||
-		outcome.AttentionResponse != nil ||
+		outcome.AttentionResponse != nil || outcome.ContractArtifact != nil ||
 		outcome.Acknowledgement.Validate() != nil {
 		return application.LaunchAcknowledgement{}, errors.New("read runtime launch: attachment returned an invalid binding")
 	}

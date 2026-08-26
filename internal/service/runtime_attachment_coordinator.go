@@ -16,6 +16,7 @@ import (
 
 type runtimeAttachmentStore interface {
 	application.ReportMutationStore
+	application.AuditRecorder
 	ListRuntimeRelayIdentityUpgrades(context.Context) ([]application.RuntimeRelayIdentityUpgrade, error)
 	ListRuntimeRelayIdentityRefusals(context.Context) ([]application.RuntimeRelayIdentityRefusal, error)
 	CompleteRuntimeRelayIdentityUpgrade(context.Context, application.RuntimeRelayIdentityUpgrade) error
@@ -28,10 +29,12 @@ type runtimeAttachmentStore interface {
 	GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error)
 	GetTaskCleanupRecord(context.Context, string) (application.TaskCleanupRecord, bool, error)
 	ReadDecisionResponseForManagedRun(context.Context, string, string) (application.DecisionResponse, bool, error)
+	ReadTaskContractArtifact(context.Context, string, string) (domain.ContractArtifactContent, error)
 }
 
 type runtimeAttachmentCoordinatorConfig struct {
 	RuntimeRoot             string
+	Logger                  application.BoundaryLogger
 	Store                   runtimeAttachmentStore
 	Clock                   application.Clock
 	NewCredential           func() (string, error)
@@ -57,6 +60,7 @@ type runtimeAttachmentCoordinator struct {
 	runtimeRoot                            string
 	runtimeRootIdentity                    reporter.RuntimeSocketIdentity
 	runtimeRootMountID                     uint64
+	logger                                 application.BoundaryLogger
 	store                                  runtimeAttachmentStore
 	clock                                  application.Clock
 	reportSink                             *application.ReportSink
@@ -99,7 +103,7 @@ func newRuntimeAttachmentCoordinator(config runtimeAttachmentCoordinatorConfig) 
 	}
 	return &runtimeAttachmentCoordinator{
 		runtimeRoot: runtimeRoot, runtimeRootIdentity: runtimeRootIdentity, runtimeRootMountID: runtimeRootMountID,
-		store: config.Store, clock: config.Clock, reportSink: sink, newCredential: config.NewCredential,
+		store: config.Store, clock: config.Clock, logger: config.Logger, reportSink: sink, newCredential: config.NewCredential,
 		newAttentionOperationID: config.NewAttentionOperationID,
 		registrations:           make(chan runtimeAttachmentRegistration), releases: make(chan runtimeAttachmentRelease),
 		recoveryReady: make(chan struct{}), runDone: make(chan struct{}),
@@ -284,6 +288,61 @@ func bindRuntimeAttachmentEntry(entry *runtimeAttachmentEntry, request applicati
 		return err
 	}
 	binding := request
+	entry.binding = &binding
+	return nil
+}
+
+func (coordinator *runtimeAttachmentCoordinator) RebindRuntimeAttachmentLaunch(
+	ctx context.Context,
+	request application.RuntimeAttachmentLaunchRebindRequest,
+) error {
+	if ctx == nil {
+		return errors.New("rebind runtime attachment launch: context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	wantOperationID, err := application.RuntimeRelaunchAcknowledgementOperationID(
+		request.TaskHandle, request.ReadyStateVersion,
+	)
+	if err != nil || wantOperationID != request.LaunchOperationID || request.Brief.Validate() != nil {
+		return errors.New("rebind runtime attachment launch: generation identity is invalid")
+	}
+	select {
+	case <-coordinator.recoveryReady:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	coordinator.mu.Lock()
+	defer coordinator.mu.Unlock()
+	entry := coordinator.entries[request.TaskHandle]
+	if entry == nil || entry.state != runtimeAttachmentEntryReady || entry.binding == nil {
+		return errors.New("rebind runtime attachment launch: bound socket is unavailable")
+	}
+	binding := *entry.binding
+	expected := application.LaunchAcknowledgement{
+		TaskHandle: request.TaskHandle, ManagedRunID: binding.ManagedRunID,
+		WorkspaceLeaseID: binding.WorkspaceLeaseID, WorkingDirectory: entry.request.WorkingDirectory,
+		BriefRevision: request.Brief.Revision, BriefRevisionHash: request.Brief.RevisionHash,
+	}
+	launch := reporter.RuntimeLaunchConfig{
+		OperationID:  request.LaunchOperationID,
+		Expected:     expected,
+		Acknowledger: binding.Acknowledger,
+	}
+	if request.Brief.Revision == entry.request.BriefRevision &&
+		request.Brief.RevisionHash == entry.request.BriefRevisionHash {
+		err = entry.server.RebindLaunch(launch)
+	} else {
+		err = entry.server.RebindGeneration(request.Brief, launch)
+	}
+	if err != nil {
+		return err
+	}
+	entry.request.Brief = request.Brief
+	entry.request.BriefRevision = request.Brief.Revision
+	entry.request.BriefRevisionHash = request.Brief.RevisionHash
+	binding.LaunchOperationID = request.LaunchOperationID
 	entry.binding = &binding
 	return nil
 }

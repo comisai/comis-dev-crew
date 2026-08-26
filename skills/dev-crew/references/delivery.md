@@ -33,6 +33,20 @@ ship revision.
 Missing, symlinked, oversized, non-regular, or changed-after-hash artifacts fail
 closed. That is correct behavior, not an error to route around.
 
+## Approval-bound merge
+
+`merge_task` is available only for a delivered task whose exact pull-request
+head has current accepted forge evidence. Call it only when the user is asking
+for that merge and the live tool metadata marks the destructive action for the
+normal approval path.
+
+The approval request, managed run, and operation binding arrive through private
+Comis call context. Never add them to tool arguments, reuse approval from another
+action, or choose a repository, pull request, head, credential, or merge method.
+A successful result carries the durable post-merge forge truth; an approval
+request or an uncertain transport outcome is not itself proof that the merge
+completed.
+
 ## Cleanup
 
 Cleanup is a proof, not a command. The service releases the lease and removes

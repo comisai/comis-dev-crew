@@ -15,6 +15,18 @@ import (
 // It reports the operator message and exit code when a contract is unusable, and
 // whether it handled the command at all.
 func applyContractInput(command *parsedCommand, config Config) (string, int, bool) {
+	if command.kind == commandApplyIntegration {
+		data, readErr := readBoundedContract(command.inputPath, config)
+		if readErr != nil {
+			return "devcrew: invalid integration contract\nHint: provide one strict bounded JSON input without policy or host paths\n", ExitUsage, true
+		}
+		input, decodeErr := localapi.DecodeApplyIntegrationCandidateInput(data)
+		if decodeErr != nil {
+			return "devcrew: invalid integration contract\nHint: provide one strict bounded JSON input without policy or host paths\n", ExitUsage, true
+		}
+		input.InitiativeHandle = command.reference
+		command.integrationInput = &input
+	}
 	if command.kind == commandPrepareTask {
 		input, readErr := readPrepareInput(command.inputPath, config)
 		if readErr != nil {
@@ -29,6 +41,21 @@ func applyContractInput(command *parsedCommand, config Config) (string, int, boo
 		}
 		input.ScoutTaskHandle = command.reference
 		command.promoteInput = &input
+	}
+	if command.kind == commandAddBacklog {
+		input, readErr := readAddBacklogInput(command.inputPath, config)
+		if readErr != nil {
+			return "devcrew: invalid backlog contract\nHint: provide one strict bounded JSON input\n", ExitUsage, true
+		}
+		command.backlogAddInput = &input
+	}
+	if command.kind == commandPromoteBacklog {
+		input, readErr := readPromoteBacklogInput(command.inputPath, config)
+		if readErr != nil {
+			return "devcrew: invalid backlog promotion contract\nHint: provide one strict bounded JSON input that does not name a backlog item\n", ExitUsage, true
+		}
+		input.BacklogHandle = command.reference
+		command.backlogPromoteInput = &input
 	}
 	if command.kind == commandRespondDecision {
 		data, readErr := readBoundedContract(command.inputPath, config)
@@ -103,4 +130,20 @@ func readPromoteInput(path string, config Config) (localapi.PromoteScoutInput, e
 		return localapi.PromoteScoutInput{}, err
 	}
 	return localapi.DecodePromoteScoutInput(data)
+}
+
+func readAddBacklogInput(path string, config Config) (localapi.AddBacklogInput, error) {
+	data, err := readBoundedContract(path, config)
+	if err != nil {
+		return localapi.AddBacklogInput{}, err
+	}
+	return localapi.DecodeAddBacklogInput(data)
+}
+
+func readPromoteBacklogInput(path string, config Config) (localapi.PromoteBacklogInput, error) {
+	data, err := readBoundedContract(path, config)
+	if err != nil {
+		return localapi.PromoteBacklogInput{}, err
+	}
+	return localapi.DecodePromoteBacklogInput(data)
 }

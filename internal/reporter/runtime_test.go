@@ -166,6 +166,42 @@ func TestRuntimeAttachment_BindsActivationLaunchWithoutReplacingPreparedSocket(t
 	if err := harness.server.BindLaunch(altered); err == nil {
 		t.Fatal("BindLaunch(altered replay) error = nil")
 	}
+	if err := harness.server.RebindLaunch(altered); err != nil {
+		t.Fatalf("RebindLaunch(next generation) error = %v", err)
+	}
+	if err := harness.server.RebindLaunch(altered); err != nil {
+		t.Fatalf("RebindLaunch(next generation replay) error = %v", err)
+	}
+	if err := harness.client.Acknowledge(context.Background(), harness.workspace); err != nil ||
+		harness.acknowledger.calls != 2 || harness.acknowledger.command.OperationID != altered.OperationID {
+		t.Fatalf("Acknowledge(rebound generation) error = %v, calls=%d, command=%#v",
+			err, harness.acknowledger.calls, harness.acknowledger.command)
+	}
+	forged := altered
+	forged.Expected.WorkspaceLeaseID = "workspace-lease-forged"
+	if err := harness.server.RebindLaunch(forged); err == nil {
+		t.Fatal("RebindLaunch(forged authority) error = nil")
+	}
+	nextContent := harness.brief.Content + "constraints:\n- preserve the inherited tree\n"
+	nextBrief := domain.WorkerBrief{
+		Revision: 2, RevisionHash: fmt.Sprintf("%x", sha256.Sum256([]byte(nextContent))),
+		Content: nextContent,
+	}
+	next := altered
+	next.OperationID = "operation-launch-ack-next-generation"
+	next.Expected.BriefRevision = nextBrief.Revision
+	next.Expected.BriefRevisionHash = nextBrief.RevisionHash
+	if err := harness.server.RebindGeneration(nextBrief, next); err != nil {
+		t.Fatalf("RebindGeneration() error = %v", err)
+	}
+	if got, err := harness.client.Brief(context.Background()); err != nil || got != nextBrief {
+		t.Fatalf("Brief(rebound generation) = %#v, %v, want %#v", got, err, nextBrief)
+	}
+	if err := harness.client.Acknowledge(context.Background(), harness.workspace); err != nil ||
+		harness.acknowledger.calls != 3 || harness.acknowledger.command.OperationID != next.OperationID {
+		t.Fatalf("Acknowledge(rebound brief) error = %v, calls=%d, command=%#v",
+			err, harness.acknowledger.calls, harness.acknowledger.command)
+	}
 }
 
 func TestRuntimeAttachment_WaitsForExactBoundAttentionResponseWithFreshOperations(t *testing.T) {
@@ -224,6 +260,7 @@ type runtimeHarness struct {
 	launchOperationID string
 	acknowledger      *recordingLaunchAcknowledger
 	attention         *recordingAttentionReceiver
+	artifacts         *recordingContractArtifactReader
 }
 
 func newRuntimeHarness(t *testing.T, taskHandle, localReportID string) runtimeHarness {
@@ -251,7 +288,7 @@ func newRuntimeHarnessWithLaunch(t *testing.T, taskHandle, localReportID string,
 	}}
 	endpoint, err := reporter.NewEndpoint(reporter.EndpointConfig{
 		TaskHandle: taskHandle, BriefRevision: brief.Revision, BriefRevisionHash: brief.RevisionHash,
-		Credential: validCredential, Sink: sink,
+		Credential: validCredential, Sink: sink, Auditor: &recordingAuditor{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -272,11 +309,13 @@ func newRuntimeHarnessWithLaunch(t *testing.T, taskHandle, localReportID string,
 	launchOperationID := "operation-launch-ack-" + taskHandle
 	acknowledger := &recordingLaunchAcknowledger{}
 	attention := &recordingAttentionReceiver{}
+	artifacts := newRecordingContractArtifactReader(taskHandle)
 	operationSequence := 0
 	socketPath := filepath.Join(root, "attachment.sock")
 	config := reporter.RuntimeServerConfig{
 		SocketPath: socketPath, Brief: brief, Reporter: reportClient, AttentionResponses: attention,
-		RelaySeed: []byte(strings.Repeat("r", ed25519.SeedSize)),
+		ContractArtifacts: artifacts,
+		RelaySeed:         []byte(strings.Repeat("r", ed25519.SeedSize)),
 		NewAttentionOperationID: func() (string, error) {
 			operationSequence++
 			return fmt.Sprintf("attention-response-runtime-%d", operationSequence), nil
@@ -309,6 +348,7 @@ func newRuntimeHarnessWithLaunch(t *testing.T, taskHandle, localReportID string,
 		server: server, client: client, sink: sink, brief: brief, socketPath: socketPath,
 		workspace: workspace, expectedLaunch: expectedLaunch,
 		launchOperationID: launchOperationID, acknowledger: acknowledger, attention: attention,
+		artifacts: artifacts,
 	}
 }
 

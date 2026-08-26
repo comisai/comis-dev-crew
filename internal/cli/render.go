@@ -27,10 +27,22 @@ func renderResult(destination io.Writer, command parsedCommand, result any) erro
 		return renderTaskList(destination, result.(application.TaskList))
 	case commandWorkerProfiles:
 		return renderWorkerProfiles(destination, result.(application.WorkerProfileList))
+	case commandListInitiatives:
+		return renderInitiativeList(destination, result.(application.InitiativeList))
+	case commandShowInitiative:
+		return renderInitiativeDetail(destination, result.(application.InitiativeDetail))
+	case commandExplainInitiative:
+		return renderInitiativeExplanation(destination, result.(application.InitiativeDetail))
+	case commandGraphInitiative:
+		return renderInitiativeGraph(destination, result.(application.InitiativeGraphView))
+	case commandWatchInitiative:
+		return renderInitiativeDetail(destination, result.(initiativeWatchResult).Detail)
 	case commandReadTaskLogs:
 		return renderTaskLogPage(destination, result.(application.TaskLogPage))
 	case commandReadEvents:
 		return renderEventPage(destination, command, result.(application.EventPage))
+	case commandReadAudit:
+		return renderAuditPage(destination, command, result.(application.AuditPage))
 	case commandSurveyRepairs:
 		return renderRepairSurvey(destination, result.(application.RepairSurvey))
 	case commandDiffTask:
@@ -85,6 +97,27 @@ func renderDoctor(destination io.Writer, report application.DiagnosticReport) er
 
 func renderFleet(destination io.Writer, snapshot application.FleetSnapshot) error {
 	return writeTable(destination, func(table *tabwriter.Writer) error {
+		if _, err := fmt.Fprintln(table, "CAPACITY\tUSED\tLIMIT\tAVAILABLE\tSATURATED"); err != nil {
+			return err
+		}
+		if !snapshot.Capacity.Known {
+			if _, err := fmt.Fprintln(table, "unavailable\t-\t-\t-\t-"); err != nil {
+				return err
+			}
+		}
+		for _, dimension := range snapshot.Capacity.Dimensions {
+			name := string(dimension.Kind)
+			if dimension.ID != "" {
+				name += ":" + dimension.ID
+			}
+			if _, err := fmt.Fprintf(table, "%s\t%d\t%d\t%d\t%t\n",
+				name, dimension.Used, dimension.Limit, dimension.Available, dimension.Saturated); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(table); err != nil {
+			return err
+		}
 		if _, err := fmt.Fprintln(table, "TASK\tINIT/COMPONENT\tSTATE\tCUSTODY\tWORKER\tHEAD\tACTIVITY\tPROCESSES\tVALIDATION\tBLOCKED BY\tATTENTION\tNEXT"); err != nil {
 			return err
 		}

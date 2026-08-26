@@ -5,9 +5,15 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
+
+func TestBoundedChildProcessPreservesExactArguments(t *testing.T) {
+	output, exitCode, err := executeGit(context.Background(), "/bin/sh", "-c", "printf exact-child-output")
+	if err != nil || exitCode != 0 || string(output) != "exact-child-output" {
+		t.Fatalf("bounded child output = %q, exit = %d, error = %v", output, exitCode, err)
+	}
+}
 
 // writeOversizeThenFailScript writes a child that produces more than the output
 // bound and then exits non-zero, which is what an overflowing read looks like
@@ -43,13 +49,13 @@ func TestExecuteGitReportsAnOversizeReadRegardlessOfChildExitStatus(t *testing.T
 // A failing child names the status it exited with. The status is a number rather
 // than child output, so it stays content-free while still saying which failure
 // class an operator is looking at.
-func TestRunGitBytesNamesTheChildExitStatus(t *testing.T) {
+func TestBoundedChildNamesTheChildExitStatus(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fail")
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 3\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	_, err := runGitBytes(context.Background(), path)
-	if err == nil || !strings.Contains(err.Error(), "3") {
-		t.Fatalf("runGitBytes(child exiting 3) error = %v, want the exit status named", err)
+	_, exitCode, err := executeGit(context.Background(), path)
+	if err != nil || exitCode != 3 {
+		t.Fatalf("bounded child exit = %d, error = %v", exitCode, err)
 	}
 }

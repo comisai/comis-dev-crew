@@ -24,6 +24,16 @@ type authenticatedAbandonRequest struct {
 	Bearer string `json:"bearer"`
 }
 
+type authenticatedGroupActivateRequest struct {
+	GroupActivateRequest
+	Bearer string `json:"bearer"`
+}
+
+type authenticatedGroupAbandonRequest struct {
+	GroupAbandonRequest
+	Bearer string `json:"bearer"`
+}
+
 type authenticatedTerminalEventRequest struct {
 	TerminalEventRequest
 	Bearer string `json:"bearer"`
@@ -211,6 +221,8 @@ func (session *controlSession) dispatch(ctx context.Context, method Method, line
 			return session.writeFailure(&id, handlerWireFailure(err))
 		}
 		return session.writeValidated(PayloadAbandonResponse, AbandonResponse{JSONRPC: JSONRPCVersion, ID: id, Result: result})
+	case MethodManagedRunGroupsActivate, MethodManagedRunGroupsAbandon:
+		return session.dispatchGroup(ctx, method, line)
 	case MethodManagedRunsCancel:
 		var authenticated authenticatedCancelRequest
 		if err := decodeStrictObject(line, &authenticated); err != nil {
@@ -410,6 +422,8 @@ func requiredControlScopes() []ServiceScope {
 		ServiceScopeWorkspaceLease,
 		ServiceScopeTerminalEvents,
 		ServiceScopeExecutionAttachment,
+		ServiceScopeManagedRunGroup,
+		ServiceScopeApprovalReceipt,
 	}
 }
 

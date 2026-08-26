@@ -74,11 +74,13 @@ func TestClaudeAdapterBuildsConfinedProtectedLaunchWithoutAuthorityLeak(t *testi
 		"--strict-mcp-config", "--dangerously-skip-permissions", "--permission-mode", "bypassPermissions",
 		"--model", "claude-opus-4-6", "--effort", "high",
 		"Before doing any task work, acknowledge the exact protected launch binding with `devcrew-report acknowledge`. " +
-			"Then read the pinned task brief with `devcrew-report brief`. If either command fails, stop without reading or " +
+			"Then read the pinned task brief with `devcrew-report brief`. For every consumed contract named by that brief, " +
+			"read its exact content with `devcrew-report artifact --handle HANDLE`. If any required command fails, stop without reading or " +
 			"changing the workspace; do not continue task work. Run `devcrew-report --help` before reporting and use only " +
 			"its exact flag syntax; do not invent JSON or stdin formats. Use `devcrew-report` for sparse progress, " +
 			"decisions, blocked state, candidate completion, and failure. Treat the protected runtime attachment as " +
-			"the only task/report authority.\n",
+			"the only task/report authority. Do not push or change Git remotes; commit locally and let DevCrew own " +
+			"validation and delivery.\n",
 	}
 	if strings.Join(descriptor.Arguments, "\x00") != strings.Join(wantArguments, "\x00") ||
 		len(descriptor.StandardInput) != 0 ||
@@ -102,8 +104,10 @@ func TestClaudeAdapterBuildsConfinedProtectedLaunchWithoutAuthorityLeak(t *testi
 		len(descriptor.EnvironmentBindings) != 4 ||
 		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "devcrew-report acknowledge") ||
 		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "devcrew-report brief") ||
-		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "If either command fails, stop without reading or changing the workspace") ||
-		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "Run `devcrew-report --help` before reporting") {
+		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "devcrew-report artifact --handle HANDLE") ||
+		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "If any required command fails, stop without reading or changing the workspace") ||
+		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "Run `devcrew-report --help` before reporting") ||
+		!strings.Contains(descriptor.Arguments[len(descriptor.Arguments)-1], "Do not push or change Git remotes") {
 		t.Fatalf("Claude protected launch bindings = %#v", descriptor)
 	}
 	if descriptor.ExpectedAcknowledgement.TaskHandle != request.TaskHandle ||

@@ -56,14 +56,20 @@ func (facade *Facade) Run(ctx context.Context, transport mcp.Transport) error {
 
 func (facade *Facade) registerTools() {
 	mcp.AddTool(facade.server, tool(ToolPrepareTask, "Prepare one durable development task; acceptanceCriteria and constraints must be JSON arrays.", false), facade.prepareTask)
+	mcp.AddTool(facade.server, tool(ToolPrepareInitiative, "Validate and prepare one complete multi-component graph without launching workers.", false), facade.prepareInitiative)
+	mcp.AddTool(facade.server, tool(ToolApplyIntegration, "Apply one accepted component candidate to its initiative's dedicated integration worktree using reviewed policy.", false), facade.applyIntegrationCandidate)
+	mcp.AddTool(facade.server, tool(ToolGetInitiative, "Get one bounded initiative graph, member states, dependencies, and safe next actions.", true), facade.getInitiative)
+	mcp.AddTool(facade.server, tool(ToolBacklogList, "List bounded development requests without creating run authority.", true), facade.listBacklog)
+	mcp.AddTool(facade.server, tool(ToolAddBacklog, "Record one bounded development request without creating run authority.", false), facade.addBacklog)
+	mcp.AddTool(facade.server, tool(ToolPromoteBacklog, "Prepare one normal task from a ready bounded request without changing its repository or shape.", false), facade.promoteBacklog)
 	mcp.AddTool(facade.server, tool(ToolReconcileTask, "Validate one exact clean candidate after its worker terminal ended without a candidate report.", false), facade.reconcileTask)
 	mcp.AddTool(facade.server, tool(ToolHandbackTask, "Validate developer work after one safe paused worker exits.", false), facade.handbackTask)
 	mcp.AddTool(facade.server, cleanupTool(), facade.cleanupTask)
+	mcp.AddTool(facade.server, mergeTool(), facade.mergeTask)
 	mcp.AddTool(facade.server, cancelTool(), facade.cancelTask)
-	mcp.AddTool(facade.server, discardTool(), facade.discardTask)
 	mcp.AddTool(facade.server, tool(
 		ToolResumeTask,
-		"Return one paused task to the worker already running it. Refused when the worktree has uncommitted changes; hand the work back instead so the edit is revalidated.",
+		"Ready one paused task to relaunch the same worker profile after its previous terminal settles. A verified lease-private commit is promoted; actual uncommitted developer edits are refused—hand the work back for revalidation.",
 		false,
 	), facade.resumeTask)
 	mcp.AddTool(facade.server, tool(

@@ -67,6 +67,13 @@ func (control *surfacingControl) Heartbeat(
 	return comiswire.HeartbeatResponseResult{ManagedRunID: params.ManagedRunID}, nil
 }
 
+func (control *surfacingControl) ReadInitiativeHostRollup(
+	context.Context,
+	application.InitiativeHostRollupRequest,
+) (application.InitiativeHostRollup, error) {
+	return application.InitiativeHostRollup{}, application.ErrPrecondition
+}
+
 func (control *surfacingControl) ReceiveAttentionResponse(
 	_ context.Context,
 	request comiswire.ReceiveAttentionResponseRequestParams,

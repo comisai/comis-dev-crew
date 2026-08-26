@@ -20,7 +20,9 @@
             "report",
             "workspace_lease",
             "terminal_events",
-            "execution_attachment"
+            "execution_attachment",
+            "managed_run_group",
+            "approval_receipt"
           ],
           "serviceInstanceId": "service-instance_a",
           "unrecognized": true

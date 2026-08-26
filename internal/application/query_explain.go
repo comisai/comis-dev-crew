@@ -30,15 +30,15 @@ func (queries *Queries) ExplainTask(ctx context.Context, handle string) (TaskExp
 		}
 	}
 	if task.State == domain.TaskFailed || task.State == domain.TaskValidating {
-		candidateReason, candidateExplanation, candidateRootCause, found, candidateErr := queries.explainCandidatePosture(ctx, task)
+		posture, found, candidateErr := queries.explainCandidatePosture(ctx, task)
 		if candidateErr != nil {
 			return TaskExplanation{}, translateReadError(candidateErr, "candidate evidence")
 		}
 		if found {
-			reason = candidateReason
-			explanation = candidateExplanation
-			rootCause = candidateRootCause
-			actions = []NextAction{ActionInspectTask}
+			reason = posture.reason
+			explanation = posture.explanation
+			rootCause = posture.rootCause
+			actions = posture.actions
 		}
 	}
 	return TaskExplanation{
@@ -129,36 +129,32 @@ func workspaceNotRecoverableExplanation() (string, string, string, []NextAction,
 func (queries *Queries) explainCandidatePosture(
 	ctx context.Context,
 	task domain.Task,
-) (string, string, string, bool, error) {
+) (candidatePosture, bool, error) {
 	reader, ok := queries.repository.(candidateEvidenceReader)
 	if !ok {
-		return "", "", "", false, nil
+		return candidatePosture{}, false, nil
 	}
 	sealed, judgment, err := reader.LatestCandidateEvidence(ctx, task.Handle)
 	if errors.Is(err, ErrNotFound) {
-		return "", "", "", false, nil
+		return candidatePosture{}, false, nil
 	}
 	if err != nil {
-		return "", "", "", false, err
+		return candidatePosture{}, false, err
 	}
-	if judgment.Outcome == domain.CandidateUnknown && judgment.Reason == domain.CandidateWorktreeUnverified && sealed != nil {
-		return "candidate_worktree_unverified",
-			"Candidate validation is waiting because current Git truth is unverified.",
-			unverifiedCandidateRootCause(task, sealed.Bundle()), true, nil
+	// The unverified-worktree reading is the one posture whose root cause is
+	// derived from the bundle rather than fixed, because which Git fact is
+	// missing is exactly what the operator needs and the closed reason alone
+	// cannot say it.
+	if judgment.Reason == domain.CandidateWorktreeUnverified && sealed != nil {
+		return candidatePosture{
+			reason:      "candidate_worktree_unverified",
+			explanation: "Candidate validation is waiting because current Git truth is unverified.",
+			rootCause:   unverifiedCandidateRootCause(task, sealed.Bundle()),
+			actions:     []NextAction{ActionInspectTask},
+		}, true, nil
 	}
-	if judgment.Outcome != domain.CandidateRejected {
-		return "", "", "", false, nil
-	}
-	switch judgment.Reason {
-	case domain.CandidateValidationFailed:
-		return "candidate_validation_failed", "Candidate evidence was rejected by local validation.",
-			"At least one required local validation check failed.", true, nil
-	case domain.CandidateForgeFailed:
-		return "candidate_forge_failed", "Candidate evidence was rejected by forge validation.",
-			"At least one required forge check failed.", true, nil
-	default:
-		return "", "", "", false, nil
-	}
+	posture, found := readCandidatePosture(judgment)
+	return posture, found, nil
 }
 
 func unverifiedCandidateRootCause(task domain.Task, bundle domain.DeliveryEvidenceBundle) string {

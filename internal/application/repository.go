@@ -64,3 +64,17 @@ type Repository interface {
 	GetOperation(context.Context, string) (domain.OperationRecord, error)
 	CurrentStateVersion(context.Context) (int64, error)
 }
+
+// InitiativeRepository is the durable port for multi-component development records.
+type InitiativeRepository interface {
+	CreateInitiative(context.Context, domain.DevelopmentInitiative) error
+	GetInitiative(context.Context, string) (domain.DevelopmentInitiative, error)
+	ListInitiatives(context.Context) ([]domain.DevelopmentInitiative, error)
+}
+
+// BacklogRepository is the durable port for bounded requests without run authority.
+type BacklogRepository interface {
+	CreateBacklogItem(context.Context, domain.BacklogItem) error
+	GetBacklogItem(context.Context, string) (domain.BacklogItem, error)
+	ListBacklogItems(context.Context) ([]domain.BacklogItem, error)
+}

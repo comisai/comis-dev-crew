@@ -47,11 +47,12 @@ type TaskCancelMutation struct {
 	At            time.Time
 }
 
-// ResumeTaskCommand returns one paused task to its existing worker.
+// ResumeTaskCommand readies one paused task for another authenticated generation
+// of its existing worker profile.
 //
-// It carries no instruction and selects no worker: resume continues what was
-// already running. Choosing a different worker is replacement, which reconciles
-// a fresh brief rather than assuming the old one still describes the tree.
+// It carries no instruction and selects no worker. Choosing a different worker
+// is replacement, which reconciles a fresh brief rather than assuming the old
+// one still describes the tree.
 type ResumeTaskCommand struct {
 	OperationID string `json:"operationId"`
 	TaskHandle  string `json:"taskHandle"`

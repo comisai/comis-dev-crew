@@ -65,7 +65,10 @@ func (store *Store) CommitTaskHandback(
 		mutation.Snapshot.WorktreePath != preparation.RequestedWorkspaceRoot {
 		return application.MutationResult{}, fmt.Errorf("task handback authority differs: %w", application.ErrPrecondition)
 	}
-	if err := proveNothingIsStillRunning(ctx, transaction, task.Handle, "task handback", true); err != nil {
+	if err := proveNothingIsStillRunning(ctx, transaction, task, "task handback", true); err != nil {
+		return application.MutationResult{}, err
+	}
+	if err := requireInitiativeValidationDependencies(ctx, transaction, task.Handle); err != nil {
 		return application.MutationResult{}, err
 	}
 	updated, err := task.AcceptWorkerReport(mutation.CandidateReport, mutation.At)

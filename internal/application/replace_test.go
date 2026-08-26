@@ -95,6 +95,24 @@ func TestInterventions_ReplacePreservesTheWorkAndRecordsTheTreeInherited(t *test
 	}
 }
 
+func TestInterventions_ReplaceRotatesTheProtectedBriefGeneration(t *testing.T) {
+	interventions, _ := replaceFixture(t, domain.TaskPaused,
+		func(string, domain.TaskShape) error { return nil })
+	runtimeLaunches := &interventionRuntimeLaunches{}
+	interventions.runtimeLaunches = runtimeLaunches
+
+	result, err := interventions.ReplaceWorker(context.Background(), validReplacement())
+	if err != nil {
+		t.Fatalf("ReplaceWorker(runtime generation) error = %v", err)
+	}
+	if runtimeLaunches.calls != 1 || runtimeLaunches.request.Brief.Revision != result.Task.BriefRevision ||
+		runtimeLaunches.request.Brief.RevisionHash != result.Task.BriefRevisionHash ||
+		runtimeLaunches.request.Brief.Revision != 2 {
+		t.Fatalf("replacement runtime rebind = %d/%#v, task %#v",
+			runtimeLaunches.calls, runtimeLaunches.request, result.Task)
+	}
+}
+
 func TestInterventions_ReplaceRefusesATaskThatIsNotPaused(t *testing.T) {
 	interventions, store := replaceFixture(t, domain.TaskWorking,
 		func(string, domain.TaskShape) error { return nil })

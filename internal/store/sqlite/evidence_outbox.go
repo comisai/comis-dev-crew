@@ -206,6 +206,7 @@ func (store *Store) NextComisEvidence(ctx context.Context) (application.ComisEvi
         o.delivery_kind, o.file_name, o.media_type, o.state_version, t.managed_run_id
     FROM comis_evidence_outbox o JOIN tasks t ON t.handle = o.task_handle
     WHERE o.delivered_at IS NULL
+      AND t.state IN ('candidate_complete', 'delivering', 'delivered')
     ORDER BY o.state_version, o.evidence_ref
     LIMIT 1`
 	var result application.ComisEvidenceDelivery

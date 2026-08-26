@@ -26,11 +26,14 @@ const (
 	RuntimePathSocket RuntimePathKind = iota + 1
 	// RuntimePathRegular authorizes an owner-scoped regular file.
 	RuntimePathRegular
+	// RuntimePathLinkedRegular authorizes one link to an owner-scoped regular file.
+	RuntimePathLinkedRegular
 	// RuntimePathDirectory authorizes an owner-scoped directory.
 	RuntimePathDirectory
 )
 
-// QuarantineRuntimePath atomically isolates and preserves one exact child identity.
+// QuarantineRuntimePath atomically isolates and retires one exact child identity.
+// Ambiguous or unsynchronized states remain isolated for fail-closed recovery.
 func QuarantineRuntimePath(
 	directoryDescriptor int,
 	name string,
@@ -97,6 +100,12 @@ func quarantineRuntimePathWithHooks(
 		directoryDescriptor, name, isolationDescriptor, name, expected, kind, permissions,
 	)
 	if err != nil {
+		if created {
+			return errors.Join(
+				err,
+				retireRuntimePathIsolationDirectory(directoryDescriptor, isolationDescriptor, isolationName),
+			)
+		}
 		return errors.Join(err, unix.Close(isolationDescriptor))
 	}
 	if hooks.afterPin != nil {
@@ -144,7 +153,9 @@ func quarantineRuntimePathWithHooks(
 			errors.Join(ErrRuntimePathIdentity, err),
 		)
 	}
-	return preserveIsolatedRuntimePath(isolationDescriptor, targetDescriptor, kind)
+	return retireIsolatedRuntimePath(
+		directoryDescriptor, isolationDescriptor, isolationName, targetDescriptor, kind,
+	)
 }
 
 func exclusiveRuntimeRemovalDirectory(directoryDescriptor int) bool {
@@ -175,21 +186,84 @@ func reconcileIsolatedRuntimePath(
 		if !errors.Is(originalErr, unix.ENOENT) {
 			return true, errors.Join(ErrRuntimePathIdentity, unix.Close(isolationDescriptor))
 		}
-		return true, unix.Close(isolationDescriptor)
+		retireErr := retireRuntimePathIsolationWithoutTarget(
+			directoryDescriptor, isolationDescriptor, isolationName, originalName, expected, kind, permissions,
+		)
+		if retireErr != nil {
+			return true, errors.Join(ErrRuntimePathIdentity, errors.New("runtime path remains isolated"), retireErr)
+		}
+		return true, nil
 	}
 	if err != nil {
 		return true, errors.Join(err, unix.Close(isolationDescriptor))
 	}
-	return true, preserveIsolatedRuntimePath(isolationDescriptor, descriptor, kind)
+	return true, retireIsolatedRuntimePath(
+		directoryDescriptor, isolationDescriptor, isolationName, descriptor, kind,
+	)
 }
 
-func preserveIsolatedRuntimePath(
+func retireIsolatedRuntimePath(
+	directoryDescriptor int,
 	isolationDescriptor int,
+	isolationName string,
 	targetDescriptor *runtimeRemovalPin,
 	kind RuntimePathKind,
 ) error {
-	return errors.Join(preserveRuntimeRemovalPin(targetDescriptor, kind), unix.Fsync(isolationDescriptor),
-		unix.Close(isolationDescriptor))
+	flags := 0
+	if kind == RuntimePathDirectory {
+		flags = unix.AT_REMOVEDIR
+	}
+	if err := unix.Unlinkat(isolationDescriptor, runtimePathIsolationTarget, flags); err != nil {
+		return preserveIsolatedRuntimePathFailure(
+			directoryDescriptor, isolationDescriptor, targetDescriptor, kind,
+			errors.New("runtime path isolated target cannot be retired"),
+		)
+	}
+	if err := errors.Join(closeRuntimeRemovalPin(targetDescriptor), unix.Fsync(isolationDescriptor)); err != nil {
+		return errors.Join(
+			errors.New("runtime path retirement cannot be synchronized"), err, unix.Close(isolationDescriptor),
+		)
+	}
+	return retireRuntimePathIsolationDirectory(directoryDescriptor, isolationDescriptor, isolationName)
+}
+
+func retireRuntimePathIsolationWithoutTarget(
+	directoryDescriptor int,
+	isolationDescriptor int,
+	isolationName string,
+	originalName string,
+	expected RuntimeSocketIdentity,
+	kind RuntimePathKind,
+	permissions os.FileMode,
+) error {
+	if err := removeStrandedRuntimeRemovalPin(
+		isolationDescriptor, originalName, expected, kind, permissions,
+	); err != nil {
+		return errors.Join(err, unix.Close(isolationDescriptor))
+	}
+	if err := unix.Fsync(isolationDescriptor); err != nil {
+		return errors.Join(
+			errors.New("runtime path isolation cannot be synchronized"), err, unix.Close(isolationDescriptor),
+		)
+	}
+	return retireRuntimePathIsolationDirectory(directoryDescriptor, isolationDescriptor, isolationName)
+}
+
+func retireRuntimePathIsolationDirectory(
+	directoryDescriptor int,
+	isolationDescriptor int,
+	isolationName string,
+) error {
+	if err := unix.Close(isolationDescriptor); err != nil {
+		return errors.New("runtime path isolation cannot be closed")
+	}
+	if err := unix.Unlinkat(directoryDescriptor, isolationName, unix.AT_REMOVEDIR); err != nil {
+		return errors.New("runtime path isolation cannot be retired")
+	}
+	if err := syncRuntimeDirectory(directoryDescriptor); err != nil {
+		return errors.New("runtime path isolation retirement cannot be synchronized")
+	}
+	return nil
 }
 
 func openRuntimePathIsolation(directoryDescriptor int, name string) (int, bool, error) {
@@ -283,7 +357,8 @@ func pinExpectedRuntimePathWithAnchor(
 	identity, identityErr := runtimeRemovalPinIdentity(descriptor, stat)
 	if identityErr != nil || !runtimeSocketIdentityMatches(identity, expected) ||
 		!runtimePathModeMatches(uint32(stat.Mode), kind, permissions) ||
-		(kind == RuntimePathRegular && stat.Nlink != 1) {
+		(kind == RuntimePathRegular && stat.Nlink != 1) ||
+		(kind == RuntimePathLinkedRegular && stat.Nlink < 2) {
 		_ = closeRuntimeRemovalPin(descriptor)
 		return nil, ErrRuntimePathIdentity
 	}
@@ -355,12 +430,13 @@ func validRuntimeRemovalName(name string) bool {
 }
 
 func validRuntimePathKind(kind RuntimePathKind) bool {
-	return kind == RuntimePathSocket || kind == RuntimePathRegular || kind == RuntimePathDirectory
+	return kind == RuntimePathSocket || kind == RuntimePathRegular ||
+		kind == RuntimePathLinkedRegular || kind == RuntimePathDirectory
 }
 
 func runtimePathModeMatches(mode uint32, kind RuntimePathKind, permissions os.FileMode) bool {
 	wantType := uint32(unix.S_IFSOCK)
-	if kind == RuntimePathRegular {
+	if kind == RuntimePathRegular || kind == RuntimePathLinkedRegular {
 		wantType = unix.S_IFREG
 	} else if kind == RuntimePathDirectory {
 		wantType = unix.S_IFDIR

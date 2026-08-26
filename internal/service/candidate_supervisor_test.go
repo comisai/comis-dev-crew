@@ -41,7 +41,8 @@ func TestCandidateSupervisor_BuildsShipEvidenceFromChecksAndRereadForgeTruth(t *
 	bundle := fixture.store.evidence.Bundle()
 	if bundle.TaskHandle != fixture.task.Handle || bundle.RepositoryIdentity != fixture.task.RepositoryID ||
 		bundle.HeadRevision != fixture.snapshot.HeadRevision || bundle.ForgeEvidence == nil || bundle.ReportArtifact != nil ||
-		len(bundle.ValidationReceipts) != 1 || bundle.ValidationReceipts[0].Conclusion != domain.CheckPassed {
+		len(bundle.ValidationReceipts) != 2 || bundle.ValidationReceipts[0].CheckID != validation.CandidatePathPolicyCheckID ||
+		bundle.ValidationReceipts[1].CheckID != "unit" {
 		t.Fatalf("sealed ship evidence = %#v", bundle)
 	}
 	if fixture.pullRequests.request.HeadRevision != fixture.snapshot.HeadRevision ||
@@ -505,7 +506,7 @@ func newCandidateSupervisorFixture(t *testing.T, shape domain.TaskShape) *candid
 	worktree := "/approved/worktrees/task-candidate"
 	head := strings.Repeat("b", 40)
 	profile := validation.Profile{
-		ID: task.ValidationProfile,
+		ID: task.ValidationProfile, PathRules: []validation.PathRule{{Kind: validation.PathRuleExact, Path: "report.md"}},
 		LocalChecks: []validation.LocalCheck{{
 			ID: "unit", ProgramID: "go-test", Required: true, Timeout: time.Minute,
 			Arguments: []validation.ArgumentTemplate{{Kind: validation.ArgumentLiteral, Value: "test"}},
@@ -540,13 +541,24 @@ func newCandidateSupervisorFixture(t *testing.T, shape domain.TaskShape) *candid
 		preparation: application.ManagedRunPreparation{RequestedWorkspaceRoot: worktree},
 		snapshot:    snapshot, catalog: catalog, now: now,
 	}
-	fixture.store = &candidateSupervisorStore{task: task, preparation: fixture.preparation}
-	fixture.git = &candidateSupervisorGit{snapshots: []devgit.CandidateSnapshot{snapshot, snapshot}}
+	fixture.store = &candidateSupervisorStore{
+		task: task, preparation: fixture.preparation,
+		preparationOperationID: "operation-prepare-candidate",
+	}
+	fixture.git = &candidateSupervisorGit{
+		snapshots: []devgit.CandidateSnapshot{snapshot, snapshot},
+		promotionSnapshot: application.WorkspaceSnapshot{
+			TaskHandle: task.Handle, RepositoryID: snapshot.RepositoryID,
+			WorktreePath: snapshot.WorktreePath, Branch: snapshot.Branch,
+			HeadRevision: snapshot.HeadRevision, Cleanliness: application.WorkspaceClean,
+		},
+	}
 	fixture.runner = &candidateSupervisorRunner{receipt: receipt}
 	fixture.pullRequests = &candidateSupervisorPullRequests{truth: forge.PullRequestTruth{
 		URL: "https://example.com/pull/17",
 		Evidence: domain.ForgeEvidence{
-			Repository: task.RepositoryID, PullRequestID: "github-pr-17", HeadRevision: head,
+			Repository: task.RepositoryID, PullRequestID: "github-pr-17", Branch: snapshot.Branch,
+			HeadRevision:     head,
 			CheckConclusions: []domain.ForgeCheckEvidence{{Name: "ci/unit", Conclusion: domain.CheckPassed}},
 		},
 	}}
@@ -574,22 +586,24 @@ func (fixture *candidateSupervisorFixture) config() candidateSupervisorConfig {
 }
 
 type candidateSupervisorStore struct {
-	task                  domain.Task
-	preparation           application.ManagedRunPreparation
-	reports               []domain.AcceptedReport
-	evidence              *domain.SealedDeliveryEvidence
-	requiredLocalChecks   []string
-	requiredForgeChecks   []string
-	judgedAt              time.Time
-	publicationKinds      []string
-	publicationDeliveries []string
-	publicationBodies     [][]byte
-	onCommit              func()
-	list                  func(context.Context) ([]domain.Task, error)
-	reconciledSnapshot    application.WorkspaceSnapshot
-	reconciled            bool
-	reconciledErr         error
-	reconciledReads       int
+	task                   domain.Task
+	preparation            application.ManagedRunPreparation
+	preparationOperationID string
+	handoffAuthorityErr    error
+	reports                []domain.AcceptedReport
+	evidence               *domain.SealedDeliveryEvidence
+	requiredLocalChecks    []string
+	requiredForgeChecks    []string
+	judgedAt               time.Time
+	publicationKinds       []string
+	publicationDeliveries  []string
+	publicationBodies      [][]byte
+	onCommit               func()
+	list                   func(context.Context) ([]domain.Task, error)
+	reconciledSnapshot     application.WorkspaceSnapshot
+	reconciled             bool
+	reconciledErr          error
+	reconciledReads        int
 }
 
 func (store *candidateSupervisorStore) ListTasks(ctx context.Context) ([]domain.Task, error) {
@@ -605,6 +619,19 @@ func (store *candidateSupervisorStore) GetTask(context.Context, string) (domain.
 
 func (store *candidateSupervisorStore) GetManagedRunPreparation(context.Context, string) (application.ManagedRunPreparation, error) {
 	return store.preparation, nil
+}
+
+func (store *candidateSupervisorStore) ReadCandidateHandoffAuthority(
+	context.Context,
+	string,
+) (application.CandidateHandoffAuthority, error) {
+	if store.handoffAuthorityErr != nil {
+		return application.CandidateHandoffAuthority{}, store.handoffAuthorityErr
+	}
+	return application.CandidateHandoffAuthority{
+		Task: store.task, Preparation: store.preparation,
+		PreparationOperationID: store.preparationOperationID,
+	}, nil
 }
 
 func (store *candidateSupervisorStore) ListAcceptedReports(context.Context, string) ([]domain.AcceptedReport, error) {
@@ -674,9 +701,14 @@ func (store *candidateSupervisorStore) CommitCandidateEvidence(
 }
 
 type candidateSupervisorGit struct {
-	snapshots []devgit.CandidateSnapshot
-	errors    []error
-	calls     int
+	snapshots         []devgit.CandidateSnapshot
+	errors            []error
+	calls             int
+	promotions        int
+	promotionRequest  application.ReconciliationWorkspaceRequest
+	promotionSnapshot application.WorkspaceSnapshot
+	promotionErr      error
+	onPromote         func()
 }
 
 func (git *candidateSupervisorGit) InspectCandidate(context.Context, devgit.CandidateSnapshotRequest) (devgit.CandidateSnapshot, error) {

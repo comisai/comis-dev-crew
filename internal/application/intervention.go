@@ -98,6 +98,10 @@ type InterventionStore interface {
 type InterventionConfig struct {
 	Store      InterventionStore
 	Workspaces WorkspaceInspector
+	// RuntimeLaunches rotates the protected brief and acknowledgement generation
+	// after a resume or replacement. Deployments without terminal custody may
+	// leave it absent.
+	RuntimeLaunches RuntimeAttachmentLaunchRebinder
 	// Replacement needs to know a proposed profile is one an operator reviewed.
 	// Absent, replacement is refused rather than launching an unreviewed worker.
 	WorkerProfiles WorkerProfileValidator
@@ -106,10 +110,11 @@ type InterventionConfig struct {
 
 // Interventions coordinates E0 pause/edit/revalidate without terminal custody.
 type Interventions struct {
-	store          InterventionStore
-	workspaces     WorkspaceInspector
-	workerProfiles WorkerProfileValidator
-	clock          Clock
+	store           InterventionStore
+	workspaces      WorkspaceInspector
+	workerProfiles  WorkerProfileValidator
+	runtimeLaunches RuntimeAttachmentLaunchRebinder
+	clock           Clock
 }
 
 // NewInterventions creates the canonical handback application service.
@@ -119,7 +124,8 @@ func NewInterventions(config InterventionConfig) (*Interventions, error) {
 	}
 	return &Interventions{
 		store: config.Store, workspaces: config.Workspaces,
-		workerProfiles: config.WorkerProfiles, clock: config.Clock,
+		workerProfiles: config.WorkerProfiles, runtimeLaunches: config.RuntimeLaunches,
+		clock: config.Clock,
 	}, nil
 }
 

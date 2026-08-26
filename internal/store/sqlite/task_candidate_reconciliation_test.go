@@ -19,6 +19,49 @@ type durableTaskCandidateReconciliationStore interface {
 	CommitTaskCandidateReconciliation(context.Context, application.TaskCandidateReconciliationMutation) (application.MutationResult, error)
 }
 
+func TestCandidateHandoffAuthorityDoesNotRequireTerminalSettlement(t *testing.T) {
+	store, task, workspace, _ := openTerminalLifecycleFixture(t, "task-candidate-handoff", false)
+	t.Cleanup(func() { _ = store.Close() })
+
+	authority, err := store.ReadCandidateHandoffAuthority(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("ReadCandidateHandoffAuthority() error = %v", err)
+	}
+	if !reflect.DeepEqual(authority.Task, task) ||
+		authority.PreparationOperationID != "operation-prepare-"+task.Handle ||
+		authority.Preparation.RequestedWorkspaceRoot != workspace {
+		t.Fatalf("candidate handoff authority = %#v", authority)
+	}
+	if _, err := store.ReadTaskReconciliationAuthority(context.Background(), task.Handle); err == nil {
+		t.Fatal("ReadTaskReconciliationAuthority() accepted authority without terminal settlement")
+	}
+}
+
+func TestCandidateHandoffAuthorityRefusesIncompleteDurableAuthority(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Store, domain.Task)
+	}{
+		{name: "preparation is missing", mutate: func(store *Store, task domain.Task) {
+			_, _ = store.db.Exec("DELETE FROM task_preparations WHERE task_handle = ?", task.Handle)
+		}},
+		{name: "relay identity is unproven", mutate: func(store *Store, task domain.Task) {
+			_, _ = store.db.Exec(`INSERT INTO runtime_relay_identity_refusals(task_handle, reason)
+				VALUES (?, ?)`, task.Handle, application.RuntimeRelayIdentityUnproven)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store, task, _, _ := openTerminalLifecycleFixture(t, "task-candidate-handoff-refusal", false)
+			t.Cleanup(func() { _ = store.Close() })
+			test.mutate(store, task)
+			if _, err := store.ReadCandidateHandoffAuthority(context.Background(), task.Handle); err == nil {
+				t.Fatal("ReadCandidateHandoffAuthority() error = nil")
+			}
+		})
+	}
+}
+
 func TestTaskCandidateReconciliation_PersistsExactEvidenceWithoutWorkerReport(t *testing.T) {
 	store, task, workspace, now := openUnknownCandidateReconciliationFixture(t, "task-reconcile-clean")
 	t.Cleanup(func() { _ = store.Close() })
@@ -105,13 +148,8 @@ func TestTaskCandidateReconciliation_BindsEvidenceAndRefusesDuplicateRecovery(t 
 	if err != nil || recovery.Kind != application.RecoveryRestartEvidenceUnresolved {
 		t.Fatalf("ReadTaskRecoveryEvidence(existing reconciliation) = %#v, %v", recovery, err)
 	}
-	secondAuthority, err := store.ReadTaskReconciliationAuthority(context.Background(), task.Handle)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second := candidateReconciliationMutation(secondAuthority, now.Add(time.Minute), "operation-reconcile-duplicate")
-	if _, err := store.CommitTaskCandidateReconciliation(context.Background(), second); !errors.Is(err, application.ErrPrecondition) {
-		t.Fatalf("CommitTaskCandidateReconciliation(duplicate) error = %v, want precondition", err)
+	if _, err := store.ReadTaskReconciliationAuthority(context.Background(), task.Handle); !errors.Is(err, application.ErrPrecondition) {
+		t.Fatalf("ReadTaskReconciliationAuthority(duplicate) error = %v, want precondition", err)
 	}
 }
 

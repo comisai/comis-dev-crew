@@ -6,6 +6,7 @@
       "expectation": "accept",
       "payload": {
         "agentId": "agent_a",
+        "approvalRequestId": "10000000-0000-4000-8000-000000000001",
         "conversationRef": "conversation_a",
         "operationId": "operation_prepare",
         "rootRunId": "root-run_a",
@@ -24,6 +25,7 @@
         "registrationNonce": "registration-nonce_a",
         "requestedAttachment": {
           "kind": "unix_socket",
+          "relayIdentity": "abababababababababababababababababababababababababababababababab",
           "sourcePath": "/approved/runtime/task-a/service.sock"
         },
         "requestedWorkspace": {
@@ -33,6 +35,32 @@
       },
       "schemaExpectation": "accept",
       "target": "mcp-managed-run-result"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "expiresAt": "2030-01-01T00:00:00.000Z",
+        "members": [
+          {
+            "expiresAt": "2030-01-01T00:00:00.000Z",
+            "externalRunRef": "external-run_group-member-a",
+            "registrationNonce": "registration-nonce_group-member-a",
+            "requestedAttachment": {
+              "kind": "unix_socket",
+              "relayIdentity": "abababababababababababababababababababababababababababababababab",
+              "sourcePath": "/approved/runtime/group-task-a/service.sock"
+            },
+            "requestedWorkspace": {
+              "rootHint": "/approved/workspaces/group-task-a"
+            },
+            "state": "prepared"
+          }
+        ],
+        "registrationNonce": "group-registration-nonce_a",
+        "state": "prepared"
+      },
+      "schemaExpectation": "accept",
+      "target": "mcp-managed-run-group-result"
     },
     {
       "expectation": "accept",
@@ -51,7 +79,9 @@
             "report",
             "workspace_lease",
             "terminal_events",
-            "execution_attachment"
+            "execution_attachment",
+            "managed_run_group",
+            "approval_receipt"
           ],
           "serviceInstanceId": "service-instance_a"
         }
@@ -72,11 +102,14 @@
             "report",
             "workspace_lease",
             "terminal_events",
-            "execution_attachment"
+            "execution_attachment",
+            "managed_run_group",
+            "approval_receipt"
           ],
           "bundleDigest": "__BUNDLE_DIGEST__",
           "limits": {
             "maxEvidenceBytes": 1048576,
+            "maxGroupMembers": 16,
             "maxInFlightRequests": 32,
             "maxLineBytes": 1441792,
             "maxReportBytes": 16384,
@@ -90,6 +123,42 @@
       },
       "schemaExpectation": "accept",
       "target": "handshake-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "consume-approval_a",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.consumeApproval",
+        "params": {
+          "approvalRequestId": "10000000-0000-4000-8000-000000000001",
+          "managedRunId": "managed-run_a",
+          "mcpOperationId": "operation_prepare",
+          "operationId": "consume-approval_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "consume-approval_a",
+        "jsonrpc": "2.0",
+        "result": {
+          "approvalRequestId": "10000000-0000-4000-8000-000000000001",
+          "approvedAtMs": 1800000000000,
+          "consumedAtMs": 1800000000100,
+          "expiresAtMs": 1800000900000,
+          "managedRunId": "managed-run_a",
+          "mcpOperationId": "operation_prepare",
+          "operationFingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+          "resolvingPrincipalId": "user_a",
+          "state": "consumed"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "consume-approval-response"
     },
     {
       "expectation": "accept",

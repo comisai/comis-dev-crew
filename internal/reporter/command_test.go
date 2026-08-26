@@ -90,6 +90,55 @@ func TestRunCommand_DecisionWaitsForExactPrivateResponseAfterReportAcceptance(t 
 	}
 }
 
+func TestRunCommand_RendersPauseAndSteeringControlsFromAcceptedReceipt(t *testing.T) {
+	brief := commandBrief()
+	now := time.Date(2026, time.August, 10, 14, 0, 0, 0, time.UTC)
+	capability := &commandCapability{
+		brief: brief,
+		receipt: domain.ReportReceipt{
+			TaskHandle: "task-command-0001", LocalReportID: "report-command-0001",
+			StateVersion: 4, AcceptedAt: now, PauseRequested: true,
+			Instruction: "Prefer the existing parser.",
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	exit := reporter.RunCommand(context.Background(), []string{
+		"progress", "--summary", "implemented parser",
+	}, &stdout, &stderr, reporter.CommandConfig{
+		Capability: capability, Clock: func() time.Time { return now },
+		NewLocalReportID: func() (string, error) { return "report-command-0001", nil }, Version: "test",
+	})
+	const want = "accepted report-command-0001 at state 4\n" +
+		"PauseRequested=true\n" +
+		"Instruction=Prefer the existing parser.\n"
+	if exit != 0 || stderr.Len() != 0 || stdout.String() != want {
+		t.Fatalf("RunCommand(controls) = %d, stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
+	}
+}
+
+func TestRunCommand_RefusesUnsafeInstructionBeforeRenderingReceipt(t *testing.T) {
+	brief := commandBrief()
+	now := time.Date(2026, time.August, 10, 14, 0, 0, 0, time.UTC)
+	capability := &commandCapability{
+		brief: brief,
+		receipt: domain.ReportReceipt{
+			TaskHandle: "task-command-0001", LocalReportID: "report-command-0001",
+			StateVersion: 4, AcceptedAt: now, Instruction: "unsafe\ninstruction",
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	exit := reporter.RunCommand(context.Background(), []string{
+		"progress", "--summary", "implemented parser",
+	}, &stdout, &stderr, reporter.CommandConfig{
+		Capability: capability, Clock: func() time.Time { return now },
+		NewLocalReportID: func() (string, error) { return "report-command-0001", nil }, Version: "test",
+	})
+	if exit != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "runtime attachment") ||
+		strings.Contains(stderr.String(), capability.receipt.Instruction) {
+		t.Fatalf("RunCommand(unsafe control) = %d, stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
+	}
+}
+
 func TestRunCommand_BriefHelpAndVersionExposeNoAuthoritySelector(t *testing.T) {
 	brief := commandBrief()
 	capability := &commandCapability{brief: brief}
@@ -104,6 +153,7 @@ func TestRunCommand_BriefHelpAndVersionExposeNoAuthoritySelector(t *testing.T) {
 		t.Fatalf("RunCommand(help) = %d stdout=%q", exit, stdout.String())
 	}
 	for _, usage := range []string{
+		"artifact --handle HANDLE",
 		"progress --summary TEXT",
 		"decision --key KEY --question TEXT",
 		"blocked --summary TEXT",
@@ -125,6 +175,100 @@ func TestRunCommand_BriefHelpAndVersionExposeNoAuthoritySelector(t *testing.T) {
 	exit = reporter.RunCommand(context.Background(), []string{"--version"}, &stdout, &stderr, reporter.CommandConfig{Version: "test"})
 	if exit != 0 || stdout.String() != "devcrew-report test\n" {
 		t.Fatalf("RunCommand(version) = %d stdout=%q", exit, stdout.String())
+	}
+}
+
+func TestRunCommand_ReadsTaskScopedContractArtifact(t *testing.T) {
+	capability := &commandCapability{
+		artifactContent: []byte("schema: component.contract.v1\nname: payments\n"),
+	}
+	var stdout, stderr bytes.Buffer
+	exit := reporter.RunCommand(context.Background(), []string{
+		"artifact", "--handle", "contract-payments-v1",
+	}, &stdout, &stderr, reporter.CommandConfig{Capability: capability})
+	if exit != 0 || stderr.Len() != 0 || stdout.String() != string(capability.artifactContent) ||
+		capability.artifactCalls != 1 || capability.artifactHandle != "contract-payments-v1" {
+		t.Fatalf("RunCommand(artifact) = %d stdout=%q stderr=%q capability=%#v", exit, stdout.String(), stderr.String(), capability)
+	}
+	for _, args := range [][]string{
+		{"artifact"},
+		{"artifact", "--handle", "bad handle"},
+		{"artifact", "--handle", "contract-payments-v1", "--task", "task-other"},
+	} {
+		stdout.Reset()
+		stderr.Reset()
+		if got := reporter.RunCommand(context.Background(), args, &stdout, &stderr, reporter.CommandConfig{
+			Capability: capability,
+		}); got != 2 || capability.artifactCalls != 1 {
+			t.Fatalf("RunCommand(%q) = %d stdout=%q stderr=%q calls=%d", args, got, stdout.String(), stderr.String(), capability.artifactCalls)
+		}
+	}
+	privateFailure := errors.New("private artifact storage detail")
+	capability.artifactErr = privateFailure
+	stdout.Reset()
+	stderr.Reset()
+	if got := reporter.RunCommand(context.Background(), []string{
+		"artifact", "--handle", "contract-payments-v1",
+	}, &stdout, &stderr, reporter.CommandConfig{Capability: capability}); got != 1 ||
+		stdout.Len() != 0 || !strings.Contains(stderr.String(), "runtime attachment") ||
+		strings.Contains(stderr.String(), privateFailure.Error()) {
+		t.Fatalf("RunCommand(artifact failure) = %d stdout=%q stderr=%q", got, stdout.String(), stderr.String())
+	}
+}
+
+func TestRunCommand_RejectsIncompleteRawOutput(t *testing.T) {
+	brief := commandBrief()
+	artifact := []byte("schema: component.contract.v1\nname: payments\n")
+	now := time.Date(2026, time.August, 10, 14, 0, 0, 0, time.UTC)
+	capability := &commandCapability{
+		brief: brief, artifactContent: artifact, decisionResponse: "Use the existing adapter.",
+		receipt: domain.ReportReceipt{
+			TaskHandle: "task-command-0001", LocalReportID: "report-command-0001",
+			StateVersion: 4, AcceptedAt: now, PauseRequested: true,
+			Instruction: "Prefer the existing parser.",
+		},
+	}
+	reportConfig := reporter.CommandConfig{
+		Capability: capability, Clock: func() time.Time { return now },
+		NewLocalReportID: func() (string, error) { return "report-command-0001", nil },
+	}
+	commands := []struct {
+		name    string
+		args    []string
+		content []byte
+		config  reporter.CommandConfig
+	}{
+		{name: "brief", args: []string{"brief"}, content: []byte(brief.Content), config: reporter.CommandConfig{Capability: capability}},
+		{name: "artifact", args: []string{"artifact", "--handle", "contract-payments-v1"}, content: artifact, config: reporter.CommandConfig{Capability: capability}},
+		{name: "receipt", args: []string{"progress", "--summary", "bounded"}, config: reportConfig,
+			content: []byte("accepted report-command-0001 at state 4\nPauseRequested=true\nInstruction=Prefer the existing parser.\n")},
+		{name: "decision", args: []string{"decision", "--key", "database-choice", "--question", "Which database?"},
+			content: []byte(capability.decisionResponse + "\n"), config: reportConfig},
+		{name: "acknowledge", args: []string{"acknowledge"}, content: []byte("acknowledged launch\n"),
+			config: reporter.CommandConfig{Capability: capability, WorkingDirectory: func() (string, error) { return "/canonical/task-worktree", nil }}},
+		{name: "version", args: []string{"--version"}, content: []byte("devcrew-report test\n"), config: reporter.CommandConfig{Version: "test"}},
+	}
+	privateFailure := errors.New("private output failure")
+	for _, command := range commands {
+		for _, failure := range []struct {
+			name   string
+			writer incompleteOutputWriter
+		}{
+			{name: "short", writer: incompleteOutputWriter{written: len(command.content) - 1}},
+			{name: "error", writer: incompleteOutputWriter{err: privateFailure}},
+		} {
+			t.Run(command.name+"/"+failure.name, func(t *testing.T) {
+				var stderr bytes.Buffer
+				exit := reporter.RunCommand(
+					context.Background(), command.args, failure.writer, &stderr,
+					command.config,
+				)
+				if exit != 1 || !strings.Contains(stderr.String(), "runtime attachment") ||
+					strings.Contains(stderr.String(), privateFailure.Error()) {
+					t.Fatalf("RunCommand() = %d stderr=%q", exit, stderr.String())
+				}
+			})
+		}
 	}
 }
 
@@ -241,6 +385,10 @@ type commandCapability struct {
 	callOrder          int
 	reportOrder        int
 	awaitDecisionOrder int
+	artifactContent    []byte
+	artifactErr        error
+	artifactCalls      int
+	artifactHandle     string
 }
 
 func (capability *commandCapability) Brief(context.Context) (domain.WorkerBrief, error) {
@@ -268,6 +416,21 @@ func (capability *commandCapability) Acknowledge(_ context.Context, workingDirec
 	capability.acknowledgeCalls++
 	capability.workingDirectory = workingDirectory
 	return capability.acknowledgeErr
+}
+
+func (capability *commandCapability) ReadContractArtifact(_ context.Context, artifactHandle string) ([]byte, error) {
+	capability.artifactCalls++
+	capability.artifactHandle = artifactHandle
+	return append([]byte(nil), capability.artifactContent...), capability.artifactErr
+}
+
+type incompleteOutputWriter struct {
+	written int
+	err     error
+}
+
+func (writer incompleteOutputWriter) Write([]byte) (int, error) {
+	return writer.written, writer.err
 }
 
 func commandBrief() domain.WorkerBrief {

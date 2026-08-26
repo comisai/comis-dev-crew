@@ -57,21 +57,25 @@ product does, and this list is not permission to guess a name.
 
 | Intent | Tool | Changes |
 |---|---|---|
-| Look | `list_tasks`, `get_task`, `explain_task`, `get_launch_plan` | Nothing |
+| Look | `list_tasks`, `get_task`, `explain_task`, `get_launch_plan`, `get_initiative`, `backlog_list` | Nothing |
 | See what can run | `worker_profiles` | Nothing |
 | Check readiness | `doctor` | Nothing |
 | Start work | `prepare_task` | Creates a prepared task and worktree |
+| Start coordinated work | `prepare_initiative` | Creates one validated graph and its isolated member worktrees |
+| Queue later work | `backlog_add` | Records bounded intent without creating run authority |
+| Promote queued work | `backlog_promote` | Creates one prepared task from a ready backlog item |
+| Apply a component candidate | `apply_integration_candidate` | Mutates only the recorded integration owner's worktree through reviewed Git policy |
 | Settle a worker safely | `pause_task` | Asks the worker to stop at a safe boundary; changes no state itself |
 | Stop work, keep it | `cancel_task` | Stops the task; worktree and artifacts survive |
-| Continue a paused task | `resume_task` | Returns it to the same worker; refused on a dirty worktree |
+| Continue a paused task | `resume_task` | Readies the same profile after its terminal settles; developer edits route to handback |
 | Validate now | `verify_task` | Opens validation against the reviewed profile; reports no verdict |
 | Act on a scout's findings | `promote_scout` | Mints a new ship task; the scout and its evidence are preserved |
 | Swap a wedged worker | `replace_worker` | Readies the same work for a different reviewed worker |
 | Tell a worker something | `steer_task` | Queues one instruction it reads on its next report |
 | Recover an exited worker | `reconcile_task` | Validates one exact clean candidate |
 | Resume after a developer edit | `handback_task` | Revalidates the developer's work |
+| Merge approved work | `merge_task` | Merges only the exact delivered pull request authorized by bound Comis approval |
 | Retire a task | `cleanup_task` | Evidence-gated release and removal |
-| Remove work that never delivered | `discard_task` | Permanently removes the worktree; requires an explicit acknowledgement |
 | Close out a scout's review | `attest_scout_decisions` | Records which decisions remain open, or attests that none do; cleanup is blocked until it exists |
 | Refresh a stale base | `sync_primary` | Fast-forwards the primary checkout only; refuses any other posture by name |
 
@@ -80,14 +84,54 @@ require the normal approval; never describe an approval as a formality, and
 never re-use a human's answer to a worker question as approval for an action.
 
 Anything not in the live tool set is unavailable, not merely undocumented. If a
-user asks for a merge, a force-push, a deployment, raw terminal custody, or
-sibling-worktree access, say plainly that it is not available here and name who
-can do it instead.
+user asks for a force-push, a deployment, raw terminal custody, or sibling-
+worktree access, say plainly that it is not available here and name who can do
+it instead.
+
+Discard is operator-only and is never available through MCP.
+
+## Initiative integration
+
+Treat component candidate identities as live durable state, not task-contract
+prose. Never freeze task handles or candidate heads from an earlier initiative
+inside a new integration owner's acceptance criteria. Its contract should say
+that it validates the candidates applied by the operator and resolves only
+reported conflicts.
+
+When an application reports conflicts, the worker may edit only those reported
+conflict paths. Non-conflicting candidate changes already staged by DevCrew are
+also part of the integration result: preserve that index, stage the resolved
+conflict paths, and commit the complete staged result. A path-limited commit
+that leaves any candidate change staged is not a clean integration candidate.
+
+After every `integrates_after` predecessor has accepted evidence, apply each
+candidate to the dependency-ready, unlaunched integration owner with
+`apply_integration_candidate`, carrying the resulting integration head into the
+next call. Launch the integration owner only after every application has an
+`applied` or `conflicted` receipt. The worker must not cherry-pick component
+commits itself. Its
+`candidate_complete` report is refused until every predecessor's latest accepted
+evidence has an `applied` or `conflicted` durable application receipt.
+
+This ordering is not implicit authorization for the next step. Invoke only the
+integration actions that the user's current request authorizes. In particular,
+after an apply-only request, report the durable receipt and stop; never fetch a
+launch plan, create a terminal, or settle a terminal unless that request also
+explicitly authorizes launch.
+
+If an application ended with an uncertain failure and operator observability
+provides its exact failed operation identity, a later
+`apply_integration_candidate` call may set `recoveryOperationId` to that identity
+while repeating every initiative, task, and head field exactly. Never use that
+field for a new application, infer an operation identity, or change the subject
+during recovery.
 
 ## What you never send
 
 Do not provide a path, command, executable, credential, run, lease, attachment,
-branch, terminal, or service identity in any argument. DevCrew derives and
-re-proves that authority server-side, and a refused call must leave the task
-unchanged. If required catalog or base authority is unavailable, say what is
-missing and ask the user to choose — do not substitute a plausible value.
+branch, terminal, or service identity in any argument. Do not provide an
+operation identity except the exact `recoveryOperationId` procedure above.
+DevCrew derives and re-proves authority server-side, and a refused call must
+leave the task unchanged. If required catalog or base authority is unavailable,
+say what is missing and ask the user to choose — do not substitute a plausible
+value.

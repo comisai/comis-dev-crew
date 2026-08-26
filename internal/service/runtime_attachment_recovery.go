@@ -62,7 +62,7 @@ func (coordinator *runtimeAttachmentCoordinator) recoverRuntimeAttachments(ctx c
 				return nil, errors.Join(errors.New("recover runtime attachments: durable cleanup target differs"), closeRuntimeServers(servers))
 			}
 			switch cleanup.Stage {
-			case application.CleanupPrepared:
+			case application.CleanupPrepared, application.CleanupManagedRunAbsent:
 			case application.CleanupHostReleased, application.CleanupRemovalAuthorized, application.CleanupCompleted:
 				if err := coordinator.removeTaskRuntimeDirectory(task.Handle); err != nil {
 					if errors.Is(err, errRuntimeAttachmentOwnershipUnproven) {

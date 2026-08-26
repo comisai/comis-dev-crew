@@ -20,6 +20,17 @@ broad-root, non-regular, live, or identity-ambiguous targets. Without explicit
 flags, `devcrew-service` and `devcrew` derive the same paths under the operating
 system's user configuration directory.
 
+One instance owns a data directory. The claim is an advisory lock on the
+directory holding the database, taken before the store is opened, and it is the
+directory rather than the endpoint that is exclusive: a second instance aimed at
+the same state through any other `--socket` would otherwise migrate the store and
+run startup recovery — which converts running work to unknown — before reaching
+the endpoint that would have refused it. A refused start exits with a `conflict`
+naming the condition and stops without touching durable state; the running
+instance keeps serving reads on its own socket throughout. A lock file left by a
+killed process blocks nothing, because ownership is the held kernel lock and not
+the file.
+
 ## Full Comis and coding-worker lane
 
 Prerequisites, all of which fail closed if unmet:
@@ -29,6 +40,23 @@ Prerequisites, all of which fail closed if unmet:
 - The Comis control socket already exists as an owner-only Unix socket.
 - The primary checkout and the worktree parent are separate canonical
   directories under the approved root.
+
+On restart, every ambiguous nonterminal initiative is first persisted as
+`unknown`. Before the service signals readiness, it then uses the authenticated
+persistent control session to read each current-service group's content-free host
+rollup. This scan reads only `unknown` initiatives in bounded handle-ordered
+pages. An initiative resumes only when the complete managed-run identity set and
+every host state count exactly match its durable task rows. If a member still has
+a currently forwardable durable Comis report or evidence publication, startup
+gives that temporary host lag the bounded reconciliation window and refreshes
+both sides. Preserved cancelled or unresolved-task evidence does not grant retry
+time or enter the global evidence forwarder, and the service does not retry an
+unexplained mismatch. A mismatch after that window or a
+bounded host-read failure keeps the initiative `unknown`; inspect the group,
+task, and pending-egress states rather than repeatedly restarting or manually
+changing the database. The `startup_group_reconciliation` failure line carries
+the opaque initiative and group identities, attempt count, mismatch class, and
+both state-count projections needed for that inspection.
 
 Task preparation first resolves the requested worker and validation profiles for
 the exact task shape. An unavailable, incompatible, or incomplete profile is
@@ -41,6 +69,7 @@ service without hand-editing generated or runtime files:
 devcrew-service \
   --database /absolute/private/state/devcrew.db \
   --socket /absolute/private/run/operator.sock \
+  --log-level info \
   --mcp-socket /absolute/private/run/mcp.sock \
   --runtime-root /absolute/private/run/tasks \
   --service-instance service-instance-devcrew \
@@ -64,6 +93,8 @@ devcrew-service \
   --codex-terminal-allow-entry codex-confined \
   --codex-network restricted \
   --codex-concurrency 2 \
+  --max-concurrent-tasks 4 \
+  --max-concurrent-tasks-per-repository 3 \
   --claude-profile claude-reviewed \
   --claude-executable /absolute/path/to/claude \
   --claude-version "2.1.224 (Claude Code)" \
@@ -83,6 +114,18 @@ verified worktree in the managed-run preparation, and binds the same mutation
 authority to the dedicated MCP endpoint. It never accepts the protected bearer on
 its command line.
 
+`--max-concurrent-tasks` and `--max-concurrent-tasks-per-repository` are the
+host-wide and repository-wide scheduler ceilings. Each reviewed worker
+profile's own `--*-concurrency` limit is enforced at the same time. Initiative
+launch authorization is recomputed under the SQLite write transaction, so a
+stale graph read cannot consume capacity or bypass a newly unsatisfied
+dependency. That fleet-wide decision reads contract metadata only; task-scoped
+artifact reads perform the content-size and SHA-256 checks. A member that has
+already started retains its initiative's place in
+the fair round when that transaction recomputes the schedule; a later initiative
+therefore receives its first eligible slot before the older initiative receives
+a second.
+
 `--decision-resurface-initial` and `--decision-resurface-maximum` set how often an
 unanswered decision is put back in front of the liaison. The wait doubles from the
 initial value up to the maximum and stops growing there, so a question nobody
@@ -90,8 +133,12 @@ answered keeps coming back without ever competing with fresh work indefinitely.
 Both default to the reviewed cadence of thirty minutes growing to four hours. A
 non-positive interval, or a maximum shorter than the initial wait, is refused
 before the service opens its endpoints.
+An uncertain attention send leaves the decision due and retries it on the next
+supervisor tick under the same identity; it does not restart the service or stop
+the operator socket and worker supervisors. A durable decision-ledger failure
+still stops the service because its authoritative airing state is unavailable.
 
-The Codex profile is required by the installed E0 composition. The Claude Code
+The Codex profile is required by the installed composition. The Claude Code
 profile is optional but all of its flags are an atomic group. Its executable must
 be the canonical regular reviewed artifact and its config directory must be a
 canonical owner-private (`0700`) directory. The terminal allow entry exposes only
@@ -104,9 +151,24 @@ provides a trustworthy task-settle signal.
 
 The candidate configuration is a strict owner-private JSON document. It fixes
 absolute validation programs, typed argument templates, local and forge checks,
-evidence lifetimes, output and polling bounds, and one GitHub route. The route
+candidate path rules, evidence lifetimes, output and polling bounds, one or more
+integration policies, and one GitHub route. Every profile declares between one
+and 63 `localChecks` and between one and 64 `pathRules`; each path rule has the
+closed kind `exact` or `prefix` and a canonical repository-relative `path`. A
+prefix ends in `/`. If a profile omits this policy, the startup diagnostic names
+`profiles[*].pathRules` and its accepted one-to-64 bound. Each integration policy
+has a unique opaque `id` and one
+closed `strategy`: `merge`, `rebase`, or `cherry_pick`. An initiative names only
+the policy ID; the installed service resolves the Git strategy from this immutable
+document and refuses missing, duplicate, or unknown policy entries. The route
 names distinct owner-private read and push credential files; the service rejects
-shared identities. `localFixtureRemoteRoot` permits a `file://` remote only for
+shared identities. Merge is disabled when both `mergeCredentialFile` and
+`mergeMethod` are absent. Enabling it requires both fields, a credential path
+distinct from read and push, and one fixed method: `merge`, `squash`, or
+`rebase`. The merge file is not read during startup or ordinary candidate
+delivery; its credential is resolved only after an approved merge has freshly
+passed head, check, and branch-protection verification.
+`localFixtureRemoteRoot` permits a `file://` remote only for
 an explicitly bounded local test fixture and must be absent for the production
 HTTPS route.
 
@@ -115,10 +177,14 @@ local or forge check records the rejection and advances only that task to
 `failed`; the candidate supervisor remains available for unrelated tasks and a
 service restart does not rerun the rejected candidate. Incomplete, pending, or
 otherwise unknown evidence stays `validating` and is retried without being
-treated as success or failure. Temporary GitHub pull-request truth failures
-also leave the task `validating` and are retried without stopping the candidate
-supervisor. Other pull-request delivery errors still stop supervision so that
-permanent failures remain visible.
+treated as success or failure. A reviewed validation process that durably
+settles as absent before producing a receipt is retried under a fresh process
+operation without stopping the service; no receipt or candidate evidence is
+invented for the absent attempt. A malformed receipt remains a fatal invariant
+failure. Temporary GitHub pull-request truth failures also leave the task
+`validating` and are retried without stopping the candidate supervisor. Other
+pull-request delivery errors still stop supervision so that permanent failures
+remain visible.
 
 A dirty worktree, a head that still equals the pinned base, a structurally
 unverified worktree, a reconciliation mismatch, or candidate authority that
@@ -130,6 +196,24 @@ local checks, it seals that drift afterward. While the observed head and
 cleanliness are unchanged, later polls reuse the sealed unknown judgment instead
 of rerunning validation processes.
 
+Before any local validation command runs, the supervisor reads the bounded Git
+diff from the task's durable base through the exact candidate head. Every
+committed path must match the profile's reviewed path rules; a rename must match
+on both its previous and current path. A disallowed path records a conclusive
+failed validation receipt and fails only that task. A truncated file inventory,
+inconsistent totals or identity, or unexpected uncommitted work records an
+unknown receipt and leaves the task validating. Neither outcome inspects a scout
+artifact, calls the forge, or publishes candidate evidence for delivery.
+
+Threat posture: worker prompt instructions are not path authority. The immutable
+profile is the only candidate-path allowlist, and the service fails closed before
+side effects when bounded Git evidence cannot prove the complete changed-path
+set. The repository-wide worktree inventory has a dedicated 1 MiB machine-output
+ceiling because its valid size grows with retained task worktrees. Individual Git
+fact reads remain capped at 8 KiB. This keeps a legitimate larger inventory from
+disabling candidate supervision while still refusing unbounded or malformed Git
+output before it can influence task authority.
+
 Diagnostic reads report validation as `unknown` when a task is already
 `validating` but no durable judgment or active validation process can be found;
 they never turn that inconsistent posture into `not_started`.
@@ -137,18 +221,32 @@ they never turn that inconsistent posture into `not_started`.
 For a worker-reported candidate, the final authenticated candidate report closes
 delivery after both evidence publications are acknowledged. For a reconciled
 candidate, no worker report is invented: acknowledgement of both server-owned
-publications atomically closes the task as `delivered`. A restart preserves that
-candidate in `candidate_complete` only when the completed reconciliation, accepted
-sealed evidence, and exact pending outbox remain consistent, then resumes the same
-publications. Incomplete recovery history becomes unresolved and cannot authorize a
-second reconciliation. Cleanup accepts exactly one origin and refuses missing or
-ambiguous evidence.
+publications atomically closes the task as `delivered`. A restart preserves either
+candidate origin in `candidate_complete` only when exactly one worker report or one
+completed reconciliation, accepted sealed evidence, and the exact durable outbox
+remain consistent, then resumes the remaining host delivery. Incomplete recovery
+history becomes unresolved and cannot authorize a second reconciliation. Cleanup
+accepts exactly one origin and refuses missing or ambiguous evidence.
+
+Cancelling a task preserves its unacknowledged Comis evidence publications as
+durable history, but removes them from delivery eligibility. An older cancelled
+candidate therefore cannot monopolize the evidence forwarder or delay a later
+live candidate.
 
 `task explain` reads the latest durable candidate judgment for failed and
-validating tasks. It distinguishes required local-validation and forge-check
-failures, and identifies an unverified worktree when current Git truth is dirty,
-base-equal, or otherwise not a clean non-base candidate. Other terminal failures
-retain the generic failed-task explanation.
+validating tasks and names every verdict the judge can reach, not only the ones
+that reject. A candidate held because required local checks or forge checks have
+not concluded, because evidence expired, conflicts with the task record, or
+cannot be parsed, because decisions remain open, or because a scout report
+artifact is absent, each reads as its own `candidate_*` reason code. An
+unverified worktree additionally says which Git fact is missing — dirty,
+base-equal, or otherwise not a clean non-base candidate — because the closed
+reason alone cannot. A judgment whose reason this build does not know reads as
+`candidate_posture_unrecognized` rather than falling through to lifecycle text:
+generic text states that no blocking reason is recorded, which would be false
+while a verdict sits in durable evidence. Only an accepted judgment leaves the
+lifecycle explanation in place. Every reason string is fixed prose, so this read
+stays content-free where it is reachable from the model facade.
 `task show` and JSON `explain_task` output also include a content-free `evidence`
 projection. It joins the candidate head and digest, latest authenticated report,
 decision and resolution references, validation status, forge and outbox delivery
@@ -176,19 +274,102 @@ devcrew-mcp \
   --service-instance service-instance-devcrew
 ```
 
-The facade defines twenty tools: `prepare_task`, `promote_scout`,
-`reconcile_task`, `handback_task`, `cleanup_task`, `discard_task`, `pause_task`,
-`cancel_task`, `resume_task`, `replace_worker`, `steer_task`, `verify_task`,
+The facade defines twenty-six tools: `prepare_task`, `prepare_initiative`,
+`apply_integration_candidate`, `get_initiative`, `backlog_list`, `backlog_add`, `backlog_promote`,
+`promote_scout`, `reconcile_task`,
+`handback_task`, `cleanup_task`, `merge_task`, `pause_task`, `cancel_task`,
+`resume_task`, `replace_worker`, `steer_task`, `verify_task`,
 `attest_scout_decisions`, `sync_primary`, `list_tasks`, `get_task`,
-`explain_task`, `get_launch_plan`, `worker_profiles`, and `doctor`. `promote_scout` returns the
-same private managed-run registration metadata preparation does, because it
+`explain_task`, `get_launch_plan`, `worker_profiles`, and `doctor`.
+`backlog_list` accepts optional repository and readiness filters, an
+`afterHandle` cursor, and a page `limit`; the service caps each page at sixteen
+handle-ordered records and returns a cursor only when another matching page exists.
+`prepare_initiative` returns the private managed-run group registration, including
+each canonical public relay identity, through the MCP result extension while
+keeping nonces and host resource paths out of
+model-visible structured content. Contract artifacts are supplied as bounded
+records containing their handle, caller-local producer task, closed kind, media
+type, and immutable content. The service derives the SHA-256 digest, persists
+the bytes and producer identity, and accepts consumer pins only when the handle,
+kind, digest, and graph edge resolve to that exact durable record. An exact retry after group activation still
+returns the original `preparing`/`prepared` projection at the preparation
+operation's state version and cannot allocate another artifact. Private member
+preparation closures remain authoritative during reconstruction, so replay
+cannot turn an abandoned join back into an open one. Reusing the operation with
+altered input remains a conflict. `promote_scout` returns the same private
+single-run registration metadata ordinary task preparation does, because it
 mints a task the same way.
+`apply_integration_candidate` names only the initiative, dedicated integration
+owner, accepted candidate, and exact candidate and target heads. The service
+resolves policy, strategy, repository, and worktrees; the visible result contains
+only the reviewed strategy, evidence digest, applied head or bounded conflicts,
+and durable state version. An uncertain call retries the exact reserved operation,
+whose global operation claim is already durable. The Git adapter either replays
+an exact receipt, reconciles an interrupted rebase from its recorded target and
+verified sequencer state, or refuses ambiguity. `recoveryOperationId` names
+either the immutable conflicted rebase operation or an exact pending
+materialization transition after a target compare-and-swap, while the
+authenticated call contributes a distinct operation ID and fresh evidence.
+Changing any initiative, task, head, policy, evidence, worktree, or rebase state
+remains a refusal before the target branch moves.
+The reservation also requires the candidate's exact `integrates_after` edge and
+all of the integration owner's predecessors to be ready. Git mutation refuses
+command-capable repository configuration or attributes. Every strategy runs its
+real engine in an isolated repository with automatic maintenance disabled. A
+new conflict refuses before publishing any Git authority receipt or changing
+the shared index, worktree, or target ref. A clean proved result is imported
+through a rooted object-database handle, then adopted through the durable
+materialization transition and target compare-and-swap. Evidence and
+strategy-specific receipts are reauthorized immediately before the worktree is
+materialized. Result-tree bounds are proved before the compare-and-swap. A fresh
+integration carries no writer custody, so it refuses every change to an existing
+worktree entry before the target compare-and-swap; only unchanged entries and
+atomic no-replace additions are eligible. An operation naming an exact prior
+operation has already revalidated the durable task, evidence, worktree, and
+sequencer state, so it may also rewrite an existing regular entry in place
+through that entry's own inode, leaving a developer's open descriptor addressing
+the file, and remove an entry by displacing it into capture evidence. Capture and
+in-place evidence make either resumable, the target is revalidated immediately
+before capture and again before publication so a racing developer write is
+refused rather than discarded, and type and directory transitions stay refused.
+Durable prepared/recovery restoration identity resumes only known partial index,
+worktree, and HEAD states. Expired restoration authority remains unknown after
+journaling and can be adopted only by a fresh exact recovery operation. Blocking
+filesystem topology is refused before target compare-and-swap, and success
+requires durable parent publication plus retirement of exact recovery evidence.
+Candidate cleanliness is inspected from a service-owned copied index and empty
+configuration administration. Ignored files retain `.gitignore` and repository
+exclude semantics, safe built-in text/EOL/ident normalization is reproduced,
+and command-backed conversions are unknown. Initialized gitlinks are inspected
+recursively under fixed count/depth bounds without consuming their local
+configuration. Candidate diff summaries are metadata-first, so large blobs,
+large trees, and gitlink identities remain bounded summaries with explicit
+per-entry detail truncation.
+Reproducible recovery and bounded-migration evidence is recorded
+in [review-evidence.md](review-evidence.md).
+Submitting a different operation for a candidate task and head that already has
+a reserved, applied, or conflicted application is a precondition failure before
+Git. Reuse the original operation or continue from its durable receipt.
+An integration owner cannot complete by running an equivalent Git operation in
+its terminal. Before accepting its `candidate_complete` report, the service
+requires an `applied` or `conflicted` durable application receipt for the latest
+accepted evidence of every incoming `integrates_after` predecessor. Missing,
+reserved, invalidated, stale, or cross-initiative receipts leave the task
+unchanged and return a precondition failure.
+`backlog_add` records bounded intent and derives its source conversation from
+the authenticated call context; conversation provenance is absent from both the
+tool arguments and model-visible result. `backlog_promote` completes the normal
+task contract for one ready item but cannot select repository or shape. It
+returns private single-run registration metadata through `comis.managedRun`
+while keeping nonces and host resource paths out of structured content.
+`merge_task` is a staged destructive surface and remains unreachable in E0.
+Task validation rejects `merge_after_approval`, so no valid task can satisfy its
+reservation precondition before the platform gate is ratified.
 `cancel_task` is destructive — it ends work an operator asked for and repeating
 it does not undo that — but it is not removal.
-`discard_task` is the removal a cancelled task has no other route to: cleanup
-requires delivery evidence that a task which never delivered will never have.
-It removes uncommitted work permanently and takes the operator's explicit
-`acknowledged` argument, which is the only gate it has.
+Discard remains an operator-only CLI action because it permanently removes work
+that never produced delivery evidence. The MCP facade cannot request or
+acknowledge it.
 `attest_scout_decisions` records the liaison's inventory of a scout's still-open
 human decisions. Only a model can inventory decisions from prose, so the service
 never derives this and never infers it from silence: the finding is a stated
@@ -237,11 +418,21 @@ repository, worktree, branch, base, and head authority; callers cannot supply or
 override those fields. An eligible unknown task must have a settled terminal and
 an exact clean non-base candidate. A candidate committed under Comis's
 lease-private Git confinement remains read-only during explanation; only this
-mutation may validate its source, generated controls, and inert commit identity, import its objects,
-compare-and-swap the prepared branch from the pinned base, and synchronize the
-worktree index without replacing files. Recovery records fresh evidence and enters the
-existing validation pipeline without creating a worker candidate report or
-advancing the report cursor. Validation and pull-request delivery must match the
+mutation may perform that handoff for a task without an accepted candidate report.
+For a task already moved to `validating` by an accepted candidate report, the
+candidate supervisor performs the same server-owned handoff before running any
+validation. This normal handoff is bound to the durable preparation operation but
+does not claim that the worker terminal has settled; the unknown-task recovery path
+still requires that independent terminal evidence. Both paths validate the source,
+generated controls, and inert commit identity, import its objects, compare-and-swap
+the prepared branch from the pinned base, and synchronize the worktree index without
+replacing files. Recovery records fresh evidence and enters the existing validation
+pipeline without creating a worker candidate report or
+advancing the report cursor. After both exact evidence publications are retained,
+a separate service-owned outbox sends the reconciled `candidate_complete` outcome
+to Comis. This report cannot be supplied by the worker or caller, is replayed with
+stable identities after restart, and is acknowledged only when the host returns the
+exact run and service-report identities. Validation and pull-request delivery must match the
 persisted recovery branch and head; a changed worktree is refused before validation
 or forge mutation. Task detail and explanation keep that reconciliation operation
 beside the judged candidate after validation and delivery, allowing a content-free
@@ -268,6 +459,13 @@ attachment before it re-verifies Git and forge truth and authorizes worktree
 removal. If attachment ownership cannot be proven, the service preserves the
 runtime path and directs the operator to inspect that exact task attachment before
 retrying cleanup.
+
+A successful attachment recovery retires its temporary `.devcrew-remove-*`
+namespace after exact-inode verification. A retained namespace therefore records
+an interrupted or refused cleanup, not disposable scratch space. Do not remove one
+manually while the service is running; inspect the affected task and use the
+deployment's scoped runtime-root teardown only with explicit destructive
+authority.
 
 Cleanup refuses before release when an operator cleanup hold remains open. The
 error names the closed `open task hold` category and directs the operator to close
@@ -317,6 +515,59 @@ and it renders no operator command line: worker credentials, terminal profiles,
 workspace roots, approval gates, forge branch protection, and service scopes
 enforce the boundary in code regardless of what the prose says.
 
+## Boundary records
+
+Every crossing of the three seams an outside actor reaches — the owner-only
+local API, a worker's per-task reporter endpoint, and the authenticated Comis
+control connection — is written to standard error as one structured JSON line.
+`--log-level` selects `debug`, `info`, `warn`, or `error` and defaults to `info`;
+an unrecognised level is refused at startup rather than quietly defaulted.
+
+A completion carries the boundary, the closed operation name, opaque operation
+and task identities, and `durationMs`. A failure carries the closed `errorKind`
+and the same operator `hint` the caller received, at `error`. An intermediate
+stage carries neither and is written at `debug`, so a call that never finished
+can still be located.
+
+The record is a closed structure rather than free-form fields, which is what
+makes it safe to leave on: there is no field a brief, objective, report body,
+diff, path, argument or credential could occupy. Failure classification is the
+same closed vocabulary the caller sees, so an operator groups reporter, control
+and console failures the same way.
+
+Standard error is the destination because the service runs supervised and its
+stderr is already collected and rotated by the host; writing a file here would
+add a second retention surface for a stream the supervisor already keeps. This
+is diagnostic output, not the durable history — task transitions live in the
+event stream and refusals in the audit trail below, both of which survive a
+restart.
+
+## Audit trail
+
+Two facts change no task state and would otherwise leave no durable trace at
+all: a destructive removal that was refused, and a worker credential that was
+rejected. The transition log records transitions, correctly, and so is silent
+about both. They are recorded instead as a separate append-only audit trail,
+readable from a cursor like the event stream.
+
+A refused cleanup records the closed ground it was refused on — open hold, open
+decision, unattested scout inventory, active execution, unknown execution, or
+missing evidence. It is written outside the refused transaction, because that
+transaction rolls back and would otherwise take the record of the attempt with
+it. A rejected reporter credential records the task whose endpoint was
+addressed and nothing about the credential presented; the rejection itself
+stands whether or not the record could be written, and an endpoint that cannot
+audit is refused at construction rather than serving unreviewably.
+
+Unlike the event stream, the trail is reachable from the operator console only.
+The stream is content-free operational state and is offered to the model facade;
+the audit trail names who was refused and whose authority was rejected, and the
+party most interested in reading it is the one it would name.
+
+```text
+devcrew audit tail [--after SEQUENCE] [--format text|jsonl]
+```
+
 ## Operator CLI surface
 
 ```text
@@ -325,6 +576,17 @@ devcrew [--socket PATH] doctor [--format table|json]
 devcrew [--socket PATH] status [--watch [--passes N] [--interval DURATION]] [--format table|json]
 devcrew [--socket PATH] tasks list [--state STATE] [--format table|json]
 devcrew [--socket PATH] workers list [--format table|json]
+devcrew [--socket PATH] initiative list [--state STATE] [--after INITIATIVE] [--limit N] [--format table|json]
+devcrew [--socket PATH] initiative show INITIATIVE [--format text|json]
+devcrew [--socket PATH] initiative explain INITIATIVE [--format text|json]
+devcrew [--socket PATH] initiative graph INITIATIVE [--format text|json]
+devcrew [--socket PATH] initiative watch INITIATIVE [--passes N] [--interval DURATION]
+devcrew [--socket PATH] initiative pause INITIATIVE [--operation OPERATION] [--format json]
+devcrew [--socket PATH] initiative resume INITIATIVE [--operation OPERATION] [--format json]
+devcrew [--socket PATH] initiative cancel INITIATIVE [--operation OPERATION] [--format json]
+devcrew [--socket PATH] initiative integrate INITIATIVE --input FILE|- [--operation OPERATION] [--format json]
+devcrew [--socket PATH] backlog add --input FILE|- [--operation OPERATION] [--format json]
+devcrew [--socket PATH] backlog promote BACKLOG --input FILE|- [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task show TASK [--format yaml|json]
 devcrew [--socket PATH] task explain TASK [--format text|json]
 devcrew [--socket PATH] task diff TASK [--stat|--name-only] [--format text|json]
@@ -342,6 +604,7 @@ devcrew [--socket PATH] task promote SCOUT --input FILE|- [--operation OPERATION
 devcrew [--socket PATH] task replace TASK --worker PROFILE [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task steer TASK --input FILE|- [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task cleanup TASK [--operation OPERATION] [--format json]
+devcrew [--socket PATH] task merge TASK [--operation OPERATION] [--format json]
 devcrew [--socket PATH] task discard TASK --yes [--operation OPERATION] [--format json]
 devcrew [--socket PATH] events tail [--after SEQUENCE] [--task TASK] [--format text|jsonl]
 devcrew [--socket PATH] repair reconcile [--task TASK] [--format table|json]
@@ -350,6 +613,68 @@ devcrew [--socket PATH] decision show TASK DECISION [--format text|json]
 devcrew [--socket PATH] decision respond TASK DECISION --input FILE|- [--operation OPERATION] [--format json]
 devcrew [--socket PATH] decision cancel TASK DECISION [--operation OPERATION] [--format json]
 ```
+
+The initiative table prints `resume with --after INITIATIVE` only when another
+bounded page exists. JSON callers receive the same value as `nextCursor`.
+
+Backlog mutation contracts use the same strict request-size bound as task
+contracts. Addition includes the operator's source conversation reference.
+Promotion names its item on the command line and refuses a contract that also
+names one, preventing an input file from silently targeting a different item.
+Both commands emit JSON only.
+
+Initiative reads use the same local service projections as the model facade.
+`initiative graph --format json` returns the graph projection itself, while the
+human views show state, explanation, dependency readiness, and only closed safe
+action identifiers.
+
+`initiative watch` consumes the content-free event cursor and then refreshes the
+authoritative initiative detail on every pass. Initiative pause, resume, and
+cancel print the durable per-member JSON result; they never summarize a partial
+distributed outcome as one atomic success.
+`initiative integrate` derives the initiative from the visible command and reads
+the integration-owner task, candidate task, candidate head, and expected target
+head from one strict bounded JSON contract. A rebase-conflict resolution adds
+the exact prior `recoveryOperationId` while the command uses a new operation ID.
+The contract cannot select policy, strategy, repository, worktree, or argv, and
+the command emits JSON only.
+Apply component candidates with current accepted evidence before launching a dependency-ready
+integration owner. This lets the confined worker start from the exact applied or
+conflicted worktree instead of snapshotting an earlier Git state. Candidate
+handoff then accepts only a clean private commit that fast-forwards that exact
+server-owned integration head; divergent history remains a refusal. A newly
+isolated merge, cherry-pick, or rebase conflict is a pre-mutation refusal; E0
+does not materialize that conflict into the shared worktree. Conflict recovery is
+limited to a previously authorized interrupted rebase that already has the exact
+durable conflict receipt. The worker stages only the recorded resolutions and does not
+continue or commit the rebase itself. A separate integration operation naming
+that receipt revalidates the durable task, evidence, worktree, rebase sequencer,
+and Git-updated terminal proof for the original target branch; DevCrew then
+continues the fixed rebase command, advances that branch with compare-and-swap,
+and reattaches the worktree. An unresolved index, changed branch, missing or
+unfinished terminal proof, altered candidate, or ambiguous receipt preserves
+the worktree and refuses recovery.
+The sequencer authorization binds the exact original pick order, completed and
+remaining ranges, stopped commit, onto/original heads, proof branch, and counters.
+Executable, ref-updating, dropped, reordered, extra, symbolic, or unknown
+sequencer state is rejected before Git continues. A separate fresh operation may
+also adopt an immutable pending materialization transition after revalidating
+the same candidate and a writer-free target; it never revives expired evidence
+or overwrites an edited index or worktree.
+The ordering does not authorize the next action. An apply-only operator request
+ends after the durable receipt; launch-plan and terminal operations require
+separate explicit authorization.
+An `invalidated` outcome means the candidate head or cleanliness changed after
+its evidence was accepted. No integration write occurred: the same durable
+transaction returns that candidate to `validating`, while the integration owner
+and unrelated candidates keep their current state. Retry only after fresh
+validation produces evidence for the new exact head. Accepted
+`candidate_complete` evidence satisfies the initiative dependency immediately;
+host delivery acknowledgement settles independently and is not an integration
+precondition.
+An `aborted` outcome instead records an unchanged candidate whose reviewed
+mutation precondition failed before Git mutation; its accepted evidence remains
+current.
 
 The stream records transitions, not writes. A task that is still waiting is
 rewritten on every supervisor pass to refresh its liveness, and those rewrites
@@ -380,6 +705,13 @@ mutating a display from events. A dropped or reordered event therefore cannot
 leave the view claiming a state the service is not in — the snapshot is the truth
 and the stream only says when to look again. `--passes` bounds the run so the
 command always terminates, and `--interval` paces it.
+
+The same status snapshot reports exact current usage and configured limits for
+the host, every observed repository, and every reviewed worker profile. A
+saturated row names the scope and shows `used`, `limit`, and remaining
+`available` slots, so a refused admission can be diagnosed without reading the
+database or inferring capacity from task counts. Deployments without a reviewed
+scheduler configuration report capacity as unavailable rather than zero.
 
 `repair reconcile` answers "what is stuck, and what would fix it". It surveys the
 tasks in the unknown state — the only state the reconcile command accepts — and
@@ -512,6 +844,11 @@ makes the worktree safe to hand to a developer — a task marked paused while it
 worker kept committing would be changing under their editor. The request carries
 no instruction text and no interrupt, and a repeat replays rather than stacking.
 
+`local_branch` and `merge_after_approval` are reserved names and are rejected by
+E0 task validation. Ship tasks use `pull_request`; scout tasks use `report`.
+Neither deferred delivery route becomes available until its platform gate is
+ratified.
+
 `task discard` removes the worktree of a task that stopped without delivering
 anything. It exists because cancellation preserves work on purpose and cleanup
 requires delivery evidence a cancelled task will never have — without it, the
@@ -523,11 +860,25 @@ defaulted: cleanup proves removal is safe by pointing at delivered work, and a
 discard has nothing to point at, so the operator typing it is the only gate the
 command has. A dirty worktree is expected rather than refused — uncommitted work
 is usually the thing being thrown away, and the acknowledgement covers it. Only
-a cancelled or failed task can be discarded, nothing is removed while a terminal
-or validation process is still running, and host authority is released before
-removal exactly as cleanup does. The durable record says which proof authorised
+a cancelled or failed task can be discarded, and nothing is removed while a
+terminal or validation process is still running. Acquired managed-run authority
+is released before removal exactly as cleanup does. A task cancelled before
+activation has no managed run, workspace lease, execution attachment, or terminal
+to release; its durable cleanup stage records that complete absence and skips
+the managed-run release call. The DevCrew reporter attachment created during
+preparation is still released before the worktree. A partial or contradictory
+authority cluster is refused rather than treated as absent. The durable record
+says which proof authorised
 the removal, so an audit can tell delivered-work removal from acknowledged
-removal.
+removal. The proof still binds the exact task, repository, and worktree identity;
+it permits dirty contents and does not require the worktree head to match delivery
+evidence because discard grants no delivery authority. If a failure interrupts
+the stages after the durable hold is created, a fresh independently acknowledged
+discard resumes that one removal instead of opening a second one. An ordinary
+delivery-backed cleanup cannot be resumed as a discard, and both the original
+and retry operation receipts remain classified as `DiscardTask`. A retry
+operation ID already owned by another command is refused before the resumed
+host stages run.
 
 `task steer` sends one bounded instruction to a task's current worker. The
 instruction arrives as a JSON contract (`{"schemaVersion": 1, "instruction": "…"}`)
@@ -586,6 +937,12 @@ second trigger for that pipeline, able to launch it against a candidate the
 supervisor has not verified. `task verify` opens validation; delivery follows
 from its result.
 
+The reviewed Codex and Claude launch bootstrap prohibits pushes and Git-remote
+changes. A worker commits only inside its task worktree and reports the candidate
+through the protected reporter; the service owns the reviewed credential, remote
+route, exact push, and pull-request delivery. This harness-level rule does not
+rewrite the pinned brief bytes of durable tasks during a service upgrade.
+
 Handback likewise exposes one action, `validate-developer-work`. The other ways
 to resume a paused task are their own commands — `task resume` continues with the
 same worker, `task replace` swaps in a new one, `task cancel` stops the work, and
@@ -602,21 +959,29 @@ against an easier bar than the one the task was accepted under. A task already
 validating is left alone rather than restarted, and an unverifiable worktree is
 judged `unknown` by the candidate inspection rather than blocked here.
 
-`task resume` returns one paused task to the worker already running it. It is
-refused when the worktree has uncommitted changes: the paused worker still holds
-a brief, a base revision and an evidence set describing the tree it stopped on,
-and none of them would notice a developer's edit, so resuming onto a changed
-tree would continue from a description of a tree that no longer exists. The
-refusal names the way out — `task handback --action validate-developer-work`,
-which captures the fresh head, invalidates the evidence the edit stales and
-revalidates. Resume selects no worker; choosing a different one is replacement.
+`task resume` readies one paused task for an authenticated relaunch of the same
+worker profile. The previous terminal must have settled. If the confined worker
+left a clean commit in lease-private Git administration, resume verifies and
+promotes that exact commit into the shared task branch before recording its head;
+the ordinary shared index appearing dirty in that case is not a developer edit.
+An actual uncommitted developer edit is still refused because the paused worker's
+brief and evidence describe a different tree. The refusal names the way out —
+`task handback --action validate-developer-work`, which captures the fresh head,
+invalidates the evidence the edit stales and revalidates. Resume selects no
+worker; choosing a different one is replacement.
 
 `task cancel` stops work on one task and preserves its worktree, artifacts, run
 binding and lease. It names no disposition: stopping and discarding are separate
 decisions with deliberately different evidence requirements, and removal stays
 behind `task cleanup`. Cancelling an already-cancelled task reports the settled
 task rather than refusing, and cancelling clears any pause request standing
-against it — a cancelled task has no worker left to answer one.
+against it — a cancelled task has no worker left to answer one. An `unknown`
+task is cancellable only when its exact durable run and lease binding has an
+authenticated `exited` or `released` terminal observation and no validation
+process remains active. The service reconciles that proven-settled posture to
+`cancelled`; a missing, lost, running, or mismatched terminal, or an active
+validation process, leaves the task unchanged and returns a precondition
+refusal.
 
 `workers list` reports the reviewed dispatch catalog: each profile's identity,
 the task shapes it accepts, whether its harness is available and why not, and
@@ -823,6 +1188,9 @@ task, run, lease, socket, or credential selector.
 Subcommands:
 
 - `brief` reads the exact pinned contract.
+- `artifact --handle HANDLE` reads exact verified content only when that handle
+  and digest are pinned in the socket-bound task brief. It accepts no task or
+  initiative selector.
 - `acknowledge` verifies and echoes the socket-bound task, run, and lease, the
   actual canonical working directory, and the brief revision, before task state
   may become `working`.
@@ -832,6 +1200,14 @@ Subcommands:
   the exact owner response and writes only that private response to stdout.
   Pending delivery stays silent and cancellation exits without inventing an
   answer.
+
+Every non-decision report writes its accepted report ID and state version. When
+the receipt carries worker control, it appends the exact single-line fields
+`PauseRequested=true` and `Instruction=<plain text>`. The instruction is
+validated again before rendering, so malformed or control-character content
+fails closed without reaching stdout. A decision report leaves any steering
+instruction queued because that command reserves stdout for the private answer;
+the next non-decision report receives and renders the instruction.
 
 A candidate report remains non-terminal until service validation.
 

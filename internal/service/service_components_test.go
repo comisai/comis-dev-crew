@@ -127,3 +127,47 @@ func TestRuntimeAttachmentRecoveryWaitPreservesFailureAndCancellation(t *testing
 		t.Fatalf("waitForRecovery(failure) error = %v", err)
 	}
 }
+
+func TestRuntimeAttachmentRecoveryGatesDependentComponentStart(t *testing.T) {
+	coordinator := &runtimeAttachmentCoordinator{recoveryReady: make(chan struct{})}
+	componentStarted := make(chan struct{})
+	componentRelease := make(chan struct{})
+	wrapped := runAfterRuntimeAttachmentRecovery(coordinator, func(context.Context) error {
+		close(componentStarted)
+		<-componentRelease
+		return nil
+	})
+	done := make(chan error, 1)
+	go func() { done <- wrapped(context.Background()) }()
+
+	select {
+	case <-componentStarted:
+		t.Fatal("dependent component started before runtime attachment recovery")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(coordinator.recoveryReady)
+	select {
+	case <-componentStarted:
+	case <-time.After(time.Second):
+		t.Fatal("dependent component did not start after runtime attachment recovery")
+	}
+	close(componentRelease)
+	if err := <-done; err != nil {
+		t.Fatalf("gated dependent component error = %v", err)
+	}
+
+	recoveryErr := errors.New("attachment recovery failed")
+	failedCoordinator := &runtimeAttachmentCoordinator{
+		recoveryReady: make(chan struct{}),
+		recoveryErr:   recoveryErr,
+	}
+	close(failedCoordinator.recoveryReady)
+	called := false
+	err := runAfterRuntimeAttachmentRecovery(failedCoordinator, func(context.Context) error {
+		called = true
+		return nil
+	})(context.Background())
+	if !errors.Is(err, recoveryErr) || called {
+		t.Fatalf("gated recovery failure = %v, component called = %t", err, called)
+	}
+}

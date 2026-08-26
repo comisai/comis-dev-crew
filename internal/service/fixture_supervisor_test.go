@@ -335,3 +335,9 @@ type fixtureStarterFunc func(context.Context, application.StartTaskCommand) (app
 func (start fixtureStarterFunc) StartTask(ctx context.Context, command application.StartTaskCommand) (application.MutationResult, error) {
 	return start(ctx, command)
 }
+
+func (failingFixtureStore) RecordAuditEvent(context.Context, application.AuditEvent) error {
+	return nil
+}
+
+func (fixtureStoreFunc) RecordAuditEvent(context.Context, application.AuditEvent) error { return nil }

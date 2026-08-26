@@ -1,25 +1,27 @@
 # Implementation status
 
-`comis-dev-crew` is pre-release E0 foundation work. This page records, subsystem
-by subsystem, what is actually implemented and what is deliberately not claimed.
-It is maintained alongside the behavior it describes.
+`comis-dev-crew` is pre-release work spanning its E0 foundation and staged
+post-E0 capabilities. This page records, subsystem by subsystem, what is actually
+implemented and what is deliberately not claimed. It is maintained alongside
+the behavior it describes.
 
 ## Summary
 
 The service owns durable SQLite state and a strict owner-only local API. The
-operator CLI provides service, fleet, task, operation, and worker-profile views
-alongside the task lifecycle commands: prepare, reconcile, handback, cleanup, and
-the intervention set — pause, resume, cancel, verify, promote, replace, steer,
-and the acknowledged operator-only discard. The
-protocol foundation pins the 30-artifact Comis capability-service contract at
-source commit `46bea003df4f28422dcf54a7a42a81e107d2b3c5` and bundle digest
-`86f5f5eb3d8147ccf85200adb475ccfecdbe28f6acdeb5446b8b8a71edfa9b33`, and generates
-a closed Go adapter.
+operator CLI provides service, fleet, task, initiative, backlog, operation, and
+worker-profile views alongside task lifecycle commands, initiative controls and
+candidate integration, durable backlog intake and promotion, and the
+acknowledged operator-only discard. The
+protocol foundation pins the 43-artifact Comis capability-service contract at
+source commit `4deb33ed59b272d4a84046a20a7f51a615f06039` and bundle digest
+`dea251a955a4d68faf402aa6977db1b4544737e43aa1f624f39dc359008f6414`, and generates
+a closed Go adapter that can consume an exact one-shot approval receipt.
 
 Installed composition supervises the Comis control lane, Codex and Claude Code
 launch descriptors, candidate validation, forge truth, delivery, unknown-task
-reconciliation, handback, and safe cleanup. Merge authority and unattended worker
-settling are not claimed.
+reconciliation, handback, safe cleanup, and approval-bound pull-request merge
+components. E0 task validation keeps approval-bound merge unreachable until its
+platform gate is ratified. Unattended worker settling is not claimed.
 Tagged release builds inject the exact tag into all four executables, while
 untagged source builds identify themselves as `dev`.
 
@@ -83,16 +85,18 @@ messages in the bounded Comis failure evidence.
 ## Foundation
 
 The maintainer-created bootstrap was adopted without reinitializing its history.
-The repository has its engineering protocol, verification contract, CI foundation,
-pure E0 domain records, a pure-Go SQLite store, canonical read application
-handlers, a bounded newline-delimited local protocol over an owner-only Unix
-socket, the first read-only operator CLI, and an authenticated Comis protocol pin
-with generated DTO, validation, and Unix control client support.
+That foundation established the engineering protocol, verification contract, CI
+foundation, initial E0 domain records, pure-Go SQLite store, canonical read
+application handlers, bounded newline-delimited local protocol over an owner-only
+Unix socket, initial read-only operator CLI, and authenticated Comis protocol pin
+with generated DTO, validation, and Unix control client support. Later staged
+capabilities reuse those boundaries rather than creating alternate authorities.
 
 The protocol join gate is implemented for protocol
 `comis.capability-service/1`, including attention-response, workspace-lease,
-terminal-event, and execution-attachment control scopes. Public operator mutation transport is not
-claimed.
+terminal-event, and execution-attachment control scopes. No network-exposed
+public operator transport is claimed; mutations remain on the owner-only local
+API.
 
 The pinned bundle also carries `managedRuns.heartbeat` and `managedRuns.cancel`.
 A supervised liveness reporter now drives the first: it sweeps durable task
@@ -105,6 +109,17 @@ bound proves nothing.
 Inbound `managedRuns.cancel` is dispatched to the durable task record: it stops
 an activated run, preserves its artifacts, and reports an already-settled run
 rather than refusing, so a second operator cancelling the same run is safe.
+
+Operator cancellation can also settle an `unknown` task when durable evidence
+proves there is nothing left to stop: the recorded terminal must belong to the
+task's exact managed run and workspace lease, its latest trusted posture must be
+`exited` or `released`, and no validation process may remain active. The task is
+then reconciled to `cancelled` without releasing its worktree, artifacts, run,
+lease, or execution attachment. Threat posture: missing or contradictory
+terminal authority, a lost or active terminal, and active validation all refuse
+the mutation and preserve `unknown`; cancellation never converts process
+uncertainty into a claim of safe settlement, and discard remains a separate
+explicitly acknowledged operation.
 
 ## Scout review attestation
 
@@ -171,6 +186,10 @@ the configured initial wait, capped at one minute so a long cadence still runs a
 live loop. The supervisor is composed alongside the report forwarder, the evidence
 forwarder and the liveness reporter whenever an authenticated host connection
 exists; it is bounded by its context and joins on cancellation with them.
+An uncertain attention send leaves the decision due and is retried on the next
+supervisor tick without stopping the service. Durable ledger read or write
+failures still stop supervision because continuing without authoritative state
+could record or omit the wrong airing.
 
 The raising itself is an ordinary attention report on the authenticated control
 lane, carrying the original question and the run it belongs to. Its operation and
@@ -228,13 +247,49 @@ connection, which keeps the request/response transport and its bounded reads
 unchanged, survives a restart, and lets a dropped follower resume exactly where it
 stopped.
 
+## Boundary records
+
+The three seams an outside actor reaches — the local API, a worker's reporter
+endpoint, and the Comis control connection — each write one structured line per
+crossing to standard error, at a level selected by `--log-level`.
+
+The record is a closed struct, not a set of caller-supplied fields. That is the
+design rather than an implementation detail: "never log a brief, objective,
+report, diff, path, argument or credential" is a rule every future call site
+would have to remember, while a closed record has no field those could occupy.
+Failures reuse the same closed error kinds and operator hints callers receive,
+so failures group identically across all three seams.
+
+This is diagnostic output and not durable history. Transitions live in the event
+stream and refusals in the audit trail; both survive a restart, and a lost log
+line costs an operator context rather than a fact.
+
+## Audit trail
+
+A refused cleanup and a rejected reporter credential are recorded as a durable
+append-only audit trail, separate from the transition log.
+
+The separation is the point. The transition log records transitions, so a
+refusal — which changes no state — is invisible there by design, and the
+threat the reporter endpoint exists to stop would succeed or fail with equally
+no trace. The refusal record is written outside the transaction it describes,
+since that transaction rolls back; the credential rejection carries the task
+addressed and nothing of the credential presented.
+
+The trail is operator-only, unlike the event stream. Every column is an
+identity, a closed discriminator, a sequence or a time, so the record stays
+content-free while still naming the ground it was refused on.
+
 ## Reconciliation survey
 
 Which unknown tasks a reconcile would accept is readable from the operator
 console. Each task is classified against the same evidence the reconcile command
-requires — durable authority, terminal settlement, worktree verification,
-cleanliness, and whether a commit exists ahead of the pinned base — using the
-read-only half of the reconciliation inspector.
+requires — durable authority, terminal settlement, absence of prior candidate
+recovery history, worktree verification, cleanliness, and whether a commit exists
+ahead of the pinned base — using the read-only half of the reconciliation
+inspector. Existing candidate or reconciliation history is classified as
+incomplete authority instead of offering an action the commit boundary will
+refuse.
 
 The survey reports and never acts, because choosing an action from evidence is
 the authority the explicit per-task command holds and a survey that reconciled on
@@ -258,13 +313,18 @@ body is unbounded worker-authored content and no surface asks for one. A binary
 change is marked rather than counted as zero, a rename keeps both paths, a change
 set larger than the read bounds reports its listing as truncated, and a path
 carrying control characters or invalid encoding is refused rather than escaped.
+The candidate supervisor consumes this same port as machine evidence rather than
+trusting a worker's prose description of which files changed.
 
 ## Comis adapter
 
 The adapter contains the supervised persistent bidirectional connection used by
-the next service composition step. It authenticates the exact pinned handshake,
-dispatches only `managedRuns.activate`, `managedRuns.abandon`, and terminal events; carries
-reports, evidence, attention-response receives, and workspace release on the same socket; and reconnects with bounded backoff.
+the installed service composition. It authenticates the exact pinned handshake;
+dispatches managed-run and managed-run-group activation and abandonment,
+managed-run cancellation, and terminal events; reads exact group host rollups;
+and carries liveness, reports, evidence, attention-response receives, exact
+approval-receipt consumption, and workspace release on the same socket. It
+reconnects with bounded backoff.
 Wrong credentials, altered operation envelopes, unknown fields, excess
 concurrency, and forged run references fail before handler authority. The adapter
 does not retry an uncertain report itself.
@@ -275,9 +335,9 @@ with the same operation and service-report identities until it can durably recor
 an exact host acknowledgement. It is implemented as an independently supervised
 adapter and participates in the installed service lifecycle.
 
-The service lifecycle supervises exactly one supplied control connection and that
-forwarder alongside both local endpoints, cancelling and joining all of them if
-any component fails.
+The service lifecycle gives the one supplied control connection, its bounded
+forwarders, and both local endpoints explicit cancellation and joined completion
+paths.
 
 Authenticated inbound activation is backed by the same durable mutation
 coordinator: the stored external reference, registration nonce, service instance,
@@ -302,10 +362,11 @@ Before opening its local socket or advertising readiness, the service reconciles
 durable startup state. Prepared and ready tasks remain known because no work-start
 evidence exists. Tasks whose runtime may have been active become `unknown`, as do
 operations left merely `accepted`. Stable terminal task evidence and completed or
-already-unknown operations are preserved. A reconciled `candidate_complete` task is
-also preserved when its accepted sealed evidence and exact pending publications are
-consistent, so host delivery resumes after restart. A repeated restart is
-idempotent.
+already-unknown operations are preserved. A `candidate_complete` task is also
+preserved when exactly one worker report or one completed reconciliation owns its
+accepted sealed evidence and exact durable publications. The service can therefore
+resume the remaining host evidence or report delivery after restart. A repeated
+restart is idempotent.
 
 ## Unknown-task candidate recovery
 
@@ -333,16 +394,42 @@ worker candidate report or one exact completed reconciliation record matching th
 sealed head.
 After successful recovery validation, the two exact server-owned evidence
 publications drive the task to `delivered`; the service does not create a worker
-report merely to close the state machine. Incomplete recovery history remains
-unresolved after restart and refuses a second reconciliation record.
+report merely to close the state machine. Instead, a separate durable outbox emits
+one service-owned `candidate_complete` projection after both evidence publications
+are acknowledged, so Comis can reduce the same verified terminal outcome. Its
+identities and acknowledgement are exact-replay safe across restart. Startup
+backfill accepts only one completed reconciliation with accepted evidence and two
+matching publications; incomplete or ambiguous authority stops startup rather than
+claiming success. The terminal projection remains retryable after cleanup because
+cleanup cannot revoke a previously accepted outcome. Incomplete recovery history
+remains unresolved after restart and refuses a second reconciliation record.
+
+The normal candidate supervisor uses the same server-owned handoff before it
+validates a task that already has an accepted worker candidate report. That report
+has already moved the task into `validating`, so no separate recovery mutation is
+needed. Its handoff authority reads the exact durable task, preparation, and
+preparation operation without borrowing the recovery reader's terminal-settlement
+precondition; terminal evidence remains mandatory for unknown-task recovery and
+cannot be weakened by normal validation. The supervisor derives every Git identity
+from the durable preparation, requires the promoted snapshot to match a fresh host
+inspection, and runs no validation or forge operation when those authorities differ.
+It then compares the complete bounded base-to-head diff with the immutable exact
+and prefix path rules in the resolved validation profile. Both sides of a rename
+must be allowed. A disallowed path fails only that task before local commands,
+artifact inspection, forge activity, or evidence publication; truncated or
+internally inconsistent diff evidence remains unknown and cannot authorize delivery.
+A task without an accepted candidate report still requires the explicit unknown-task
+recovery flow.
 
 The private Git handoff is a high-risk boundary. Paths come only from the
 registered worktree and its canonical Git administration, and the source record,
 generated configuration, inert commit identity, copied worktree controls, branch, clean index, and base
 ancestry must all match. Symlinks, executable Git configuration, alternate object
-indirection, dirty content, or shared/private head drift are refused before any
-host branch mutation. Promotion imports no tags or submodules, advances the exact
-branch with an old-head compare-and-swap, and synchronizes only the worktree index;
+indirection, dirty content, or divergent shared/private history are refused before
+any host branch mutation. When server-owned integration application advanced the
+shared task branch before worker launch, the private candidate must be a strict
+fast-forward of that exact shared head. Promotion imports no tags or submodules,
+advances the exact branch with an old-head compare-and-swap, and synchronizes only the worktree index;
 it never replaces workspace files. Replay re-verifies the same clean head.
 
 `ExplainTask` combines durable terminal posture, current host connectivity, and
@@ -358,6 +445,375 @@ candidate origin without a direct database read. Fleet rows consume the same dur
 postures for head, activity, validation, blocking, and attention. Custody and
 process observations remain explicitly `unknown` until a process-evidence
 contract exists.
+
+## Initiative and backlog durability
+
+Multi-component initiatives and bounded backlog requests are stored in the same
+owner-private SQLite database as task authority. Each write validates the closed
+domain record and commits in its own transaction; duplicate stable handles are
+conflicts, malformed stored JSON fails closed, and deterministic reads validate
+the reconstructed record before returning it. Backlog rows contain request and
+readiness data only and have no managed-run, workspace, credential, terminal, or
+delivery authority.
+
+Backlog intake is an idempotent mutation rather than a direct table insert. The
+service replays the exact item before minting another handle, requires every
+named dependency to exist, and commits the item with its completed operation at
+one global state version. A missing dependency or operation-write failure rolls
+back the whole addition, including across restart.
+
+Threat posture: an addition may describe a bounded desired outcome and refer to
+existing backlog handles, but it cannot select a worktree, credential, terminal,
+delivery route, or managed run. Initial readiness is limited to `ready` or
+`needs_refinement`; terminal backlog postures cannot be forged at intake.
+
+Backlog promotion reserves one ready item to one parent operation and one
+deterministic child preparation operation before a worktree is allocated. The
+reservation and its original timestamp survive restart. Only dependencies whose
+durable backlog rows are already `promoted` satisfy the reservation. Finalization
+then rereads the exact completed `PrepareTask` operation, moves the item to
+`promoted`, records the item-to-task link, and commits the parent operation in one
+transaction. A crash before preparation, after preparation, or during final
+operation persistence can be retried without minting a second task.
+
+Threat posture: promotion inherits repository and task shape from the reserved
+item and prepends its requested outcome to the task acceptance contract. The
+caller can complete validation, worker, delivery, and revision fields, but cannot
+retarget the request or supply a worktree, credential, terminal, attachment, or
+managed-run identity. Competing promotion operations are refused before task
+preparation begins.
+
+The strict local boundary exposes `AddBacklog` and `PromoteBacklog` as
+idempotent `mutate` operations to both operator and MCP caller classes. Addition
+accepts only bounded request fields. Promotion accepts the backlog handle and
+the remaining normal task contract, while repository and shape stay owned by
+the durable item. Unknown workspace, task, attachment, and managed-run fields
+are refused during strict decoding. The trusted local promotion result retains
+the private managed-run preparation for the MCP adapter and distinguishes the
+child task version from the later parent promotion version.
+
+The writable service composes both backlog coordinators from its sole SQLite
+store and clock. Addition handles are stable hashes of the configured service
+identity and operation ID. Promotion delegates its child creation to the same
+reviewed task mutation coordinator used by `PrepareTask`, so repository,
+workspace, attachment, validation, and worker checks cannot diverge between
+ordinary preparation and backlog promotion.
+
+Initiative preparation validates the complete caller-local graph and every
+member contract before allocating a workspace. It then records stable member
+intents, prepares each reversible worktree and task-scoped runtime attachment,
+and commits the unbound initiative, all member tasks, all private activation
+joins, and their replay outcomes in one transaction at one state version. A
+partial allocation failure preserves the intents and already-created reversible
+artifacts for exact retry, but writes no half-initiative and launches nothing.
+Exact preparation replay reconstructs the original `preparing` initiative and
+`prepared` task projection from the completed operation even after activation
+has bound the live records. It clears only later activation bindings and restores
+the operation's version and timestamp; the private preparation records retain
+their live closure state, so abandoned authority stays closed. Altered reuse is
+still audited and rejected as a conflict.
+
+The running service exposes `PrepareInitiative` to operator and MCP caller
+classes through the strict local boundary and the same reviewed preparation
+dependencies used by standalone tasks. The boundary supplies its own operation
+and service identities, refuses caller-supplied host authority fields, and
+returns the exact private group preparation only when every prepared member and
+durable operation agree on the initiative identity and state version. Contract
+artifacts are durable byte records owned by one initiative producer; preparation
+derives and stores their digest and refuses any consumer pin or artifact edge
+that does not resolve to the exact handle, kind, producer, and digest.
+
+Initiative list, detail, dependency graph, and backlog list projections read
+their records and advertised state version from one read-only SQLite snapshot.
+State and backlog-readiness filters reject unknown vocabulary instead of
+returning an ambiguous empty list. Initiative and backlog reads apply their
+filters inside that snapshot and return at most sixteen handle-ordered records
+with an opaque after-handle cursor. Detail reads require every durable member,
+carry the graph's source/confidence/completeness envelope, and return closed
+non-executable next-action identifiers. The running service publishes these
+through the strict local boundary as `ListInitiatives`, `GetInitiative`, and
+`ListBacklog` read commands to both operator and MCP caller classes while
+refusing fields outside their narrow scope.
+
+The stateless MCP facade maps `prepare_initiative`, `get_initiative`,
+`backlog_list`, `backlog_add`, and `backlog_promote` to those canonical commands.
+Preparation, addition, and promotion are marked `mutate`; both reads are marked
+`read`. Addition provenance comes only from authenticated call context, and the
+promotion schema contains no repository or shape field. The complete private group join is validated against
+the pinned protocol schema, including each canonical public relay identity, and
+returned only in the MCP result extension, while
+the model-visible preparation result contains bounded initiative and task
+identities but no registration nonce or host resource path.
+
+The operator console exposes initiative list, show, explain, and graph reads
+through that same canonical local client. Human views retain dependency
+readiness and closed safe actions; graph JSON is the graph DTO itself rather
+than a second wrapper contract. A truncated initiative table prints its opaque
+continuation cursor, while a complete page does not imply more results.
+
+The operator console also exposes `backlog add` and `backlog promote` through
+strict bounded file-or-stdin JSON contracts. The promotion target appears only
+on the command line, and both mutations return the canonical local JSON result.
+
+Initiative pause, resume, and cancel coordination reuses the existing task
+mutation path with a deterministic operation identity per member. The result is
+explicitly non-atomic: every member is reported as completed, rejected, unknown,
+or not attempted. A separate durable group-operation record preserves that
+whole answer for exact replay, including across restart, so a later state change
+cannot rewrite what an earlier control request actually observed. Completed
+member claims are accepted only when the durable member operation names the
+expected command, task, and state version. The replay envelope stores the exact
+member count and fails closed if any result row is missing.
+
+The strict local boundary exposes `PauseInitiative`, `ResumeInitiative`, and
+`CancelInitiative` only to the operator endpoint. Each accepts only an
+initiative handle, validates the complete durable result before projection, and
+returns the per-member outcomes with a `mutate` classification. The MCP endpoint
+refuses all three commands before dispatch.
+
+The running service composes those group controls from the same task mutation,
+workspace-inspection, and SQLite authorities used by task-scoped pause, resume,
+and cancel. If workspace inspection is absent, pause and cancel remain available
+while resume returns an explicit retryable unavailable result.
+
+The operator console exposes bounded initiative watch, pause, resume, and cancel
+commands. Watch advances through the content-free service event cursor and
+refreshes canonical detail on every pass; mutations emit the full durable
+per-member JSON result and accept no caller-selected member set.
+
+Threat posture: a group command carries only an initiative handle. It cannot
+select an unowned task, forge member operation identities, or collapse a partial
+distributed outcome into success; the authoritative member set is reread from
+one store snapshot before execution and again before the replay result commits.
+
+Group activation validates the private group nonce and the exact complete member
+set under the SQLite write lock. It commits the host-managed group identity and
+every run, lease, and execution-attachment handle atomically at one state
+version. Runtime attachment binding begins only after that commit. If any local
+binding remains uncertain, the response reports the outcome per member and the
+initiative becomes durable `unknown`; only an all-completed result remains
+`active` and eligible for later scheduling. The persistent Comis control session
+negotiates `managed_run_group`, strictly validates the generated group request,
+and returns those same per-member outcomes over the authenticated socket.
+
+Group abandonment carries the exact host-minted member IDs and private member
+nonces, so an unbound preparation can be closed without inventing authority.
+The service joins the complete member set under the SQLite write lock, records
+the initiative, task, preparation, operation, and replay-stable member outcomes
+in one transaction, and reports uncertainty per member. Reap-safe cancellation
+enters the reversible cleanup path; preserve retains prepared artifacts while
+the initiative remains non-launchable and `unknown`.
+
+Initiative scheduling is a deterministic fleet-wide decision. Existing workers
+consume host, repository, and reviewed worker-profile capacity first; remaining
+slots are offered one member per initiative per round in stable creation order.
+Members that have already left the prepared or ready state retain their
+initiative's durable round position when the schedule is recomputed, so an
+older initiative cannot reset to round zero and take a second slot before a
+later initiative receives its first.
+Only `ready` members of an `active` initiative can be selected. Every held ready
+member carries one closed reason: `dependency_blocked`, `resource_queued`,
+`contract_stale`, or `integration_held`. Contract consumers must still pin a
+handle listed by the initiative as current, integration waits for exact candidate
+states, and a failed predecessor blocks only its dependent descendants. The same
+decision loads only bounded artifact metadata; artifact bodies remain on the
+task-scoped, digest-verifying read path and are never scanned fleet-wide. It
+derives the initiative aggregate state without treating a missing or
+reconciling member as healthy. Aggregate derivation treats a dependency-ready
+member as progress before capacity allocation, so one completed component cannot
+trap an unstarted independent sibling behind the integration owner's expected
+hold. Member state mutations update that aggregate in the same SQLite transaction
+and at the same global state version; an aggregate write failure rolls back the
+task, operation, and event with it. A durable `unknown` initiative is never
+reactivated by derivation after restart — only the explicit host reconciliation
+path may restore its authority.
+
+Threat posture: aggregate progress comes only from the scheduler's validated
+dependency and contract decision. It does not bypass the transactional capacity
+recheck, reactivate an unknown initiative, or make a held integration owner
+launchable.
+
+The canonical fleet projection publishes the same reviewed concurrency limits
+alongside exact durable usage. Host, observed-repository, and configured-profile
+dimensions are sorted and independently marked saturated, so normal status JSON
+and table output identify the actual limiting scopes without a database read.
+
+The launch boundary does not trust that projection as a reservation. For an
+initiative member, the `ready` to `launching` transaction rereads every durable
+initiative and task, recomputes fair allocation under the reviewed host,
+repository, and worker-profile ceilings, and refuses the mutation unless that
+exact member is selected. Missing scheduler configuration, a newly stale
+contract, a newly blocked dependency, or capacity consumed after an earlier read
+therefore commits no task, operation, or state event. Standalone task starts keep
+their existing path and still count against initiative capacity.
+
+Startup reconciliation now includes every nonterminal initiative. Preparing,
+active, blocked, integrating, validating, and candidate-complete initiatives are
+atomically moved to durable `unknown` with a new global state version before the
+service advertises readiness. Delivered, failed, cancelled, and already-unknown
+initiatives remain stable, and replay is idempotent. A corrupt initiative aborts
+the whole reconciliation transaction, so no subset can be presented as recovered.
+
+After the authenticated Comis control session is available, startup attempts a
+second, narrower reconciliation for bound `unknown` initiatives whose complete
+member set belongs to the current service instance. It scans only `unknown`
+records in handle-ordered pages capped at sixteen, so accumulated terminal
+history does not expand startup memory. The service reads the host's
+content-free managed-run group rollup on that persistent session and compares the
+exact managed-run identities plus all nine host state counts with current durable
+task rows. When a member has a currently forwardable durable Comis report or
+evidence publication, an older host projection can be a temporary egress lag.
+Only in that case, startup refreshes both local rows and the host rollup at the
+normal report poll interval within the existing per-group deadline. Preserved
+cancelled or unresolved-task evidence and a candidate report held behind
+ineligible evidence do not grant retry time. The global evidence forwarder admits
+only candidate-complete, delivering, or delivered tasks, so one unresolved task
+cannot block a later task's publication. A group with no forwardable egress
+receives no projection retry. Only an exact settled match may atomically
+restore the aggregate state derived from those rows. A foreign service instance,
+missing or duplicate member, unexplained changed state count, stale local
+snapshot, unavailable host read, or aggregate that still derives to `unknown`
+leaves the initiative unchanged. Readiness waits for each eligible group attempt,
+with a bounded per-group deadline, but a preserved `unknown` group does not
+prevent unrelated work from being inspected. A failed recovery boundary record
+names the opaque initiative and group, attempt count, closed mismatch class, and
+both complete content-free state-count projections. The next occurrence can
+therefore be diagnosed from one structured log line without joining the two
+databases by hand.
+
+Threat posture: nested initiative graphs and backlog dependencies are encoded as
+data, never executable input, and are revalidated after decoding. Only the
+single-writer service process opens the mutable store. Restart cannot silently
+resume initiative authority: ambiguous nonterminal coordination is downgraded to
+`unknown`, and corrupted durable state prevents readiness rather than broadening
+run or scheduling authority. The host rollup cannot mint local authority by
+itself: its service scope is fixed by the authenticated session, and the final
+SQLite transaction rechecks group identity, complete membership, current service
+ownership, local state counts, snapshot version, and monotonic time before the
+initiative can leave `unknown`. Pending egress grants only bounded retry time; it
+does not relax any recovery comparison or transaction precondition.
+
+## Integration candidate application
+
+Candidate application is a reserved single-writer operation. A caller names the
+initiative, its recorded integration owner, a component task, the component's
+exact candidate head, and the expected integration head. It cannot supply a
+repository path, Git command, shell fragment, or strategy. The initiative's
+operator-owned policy resolves to the closed `merge`, `rebase`, or `cherry_pick`
+vocabulary, and SQLite rechecks that policy and owner before reserving the
+operation.
+
+The reservation resolves distinct task worktrees from durable preparations and
+requires current accepted candidate evidence whose repository, base, task, head,
+and expiry still agree. Candidate-complete, delivering, delivered, cleanup-held,
+and cleaned predecessors satisfy the same dependency rule used by scheduling and
+the initiative graph; host report acknowledgement is not required after accepted
+candidate evidence. A dependency-ready integration owner may receive those
+server-owned applications while it is still `ready`; this keeps Git application
+ahead of the confined worker launch. A launched owner remains writable only in
+its explicit working, decision, or blocked states. The Git registry then
+revalidates both worktree identities, cleanliness, and heads while holding its
+mutation lock. Fixed argv performs the selected operation in a service-owned
+isolated repository with hooks, signing, automatic maintenance, and object
+packing disabled. Every newly isolated conflict refuses before any shared Git
+ref, index, or worktree mutation. A clean result is semantically proved, its
+loose objects are published through a rooted object-database handle, and a
+durable transition binds the expected and result trees and index identity. The
+complete bounded result snapshot is validated before the target branch advances
+by compare-and-swap. Rooted bounded comparison, atomic capture, and no-replace
+publication preserve a concurrent developer entry and retain exact recovery
+evidence across a crash. Prepared and conflict-recovery restoration journals
+bind their source index/worktree, target tree, proof branch, and HEAD before the
+first restoration mutation. Evidence and strategy-specific receipts are
+reauthorized before and after each restoration mutation. Once a restoration
+journal exists, expiry preserves an unknown partial outcome instead of claiming
+that mutation did not start; a separate operation with fresh authority may
+adopt only the exact immutable journal and receipt family. The
+pre-compare-and-swap snapshot rejects untracked directory and symlink topology
+that could block result paths. Materialization synchronizes every newly created
+parent relationship and does not accept completion until its exact bounded
+recovery evidence has been durably retired. Expiry after the compare-and-swap
+preserves both the pending transition and unchanged worktree for an authorized
+retry.
+
+The reservation and its accepted canonical operation-ledger claim commit in one
+transaction before Git mutation. Startup reconciliation may mark that claim
+unknown, but an exact reservation replay must still match the immutable ledger
+row and revalidate current initiative, owner, preparation, and evidence authority
+before work resumes. When that current authority is unresolved, the replay is
+receipt-only: Git may reread an exact applied or conflicted ref but cannot start
+or resume a strategy. Content-free Git refs bridge the interval between a Git
+result and its SQLite completion. Exact applied and conflicted calls replay
+without repeating Git. Merge and cherry-pick still refuse a changed worktree
+when no exact outcome receipt exists. Rebase records the exact target branch
+before mutation, so an exact operation replay can reconstruct a previously
+authorized interrupted conflict or clean completion only when the origin,
+sequencer, Git-updated terminal proof, target, and current head all agree; the
+separate resolution operation binds the staged resolution and validated
+sequencer order, completes the remaining sequence in a service-owned isolated
+engine, and adopts only the proved result through the durable target
+compare-and-swap. It never executes the worker-writable shared sequencer. Every
+ambiguous or altered posture preserves the worktree and refuses recovery. Completion updates
+the application row and transitions the existing operation-ledger claim in one
+transaction. Accepted evidence expiry blocks a new mutation without invalidating
+a result already completed.
+Another operation for the same candidate task and head is rejected before Git
+and before a second reservation is inserted. Its typed precondition directs the
+caller to the original operation or its applied or conflicted receipt.
+
+The closed local service protocol exposes `ApplyIntegrationCandidate` to the
+operator and MCP caller classes as a mutation. Its request contains only the
+initiative, integration-owner task, candidate task, and exact heads. Its result
+projects the reviewed strategy, evidence digest, applied head or bounded conflict
+paths, and durable state version without exposing either worktree path or the
+candidate base path.
+Candidate head or cleanliness drift completes as the third closed outcome,
+`invalidated`. The Git adapter performs no mutation, and SQLite atomically
+records that outcome with the affected candidate's transition back to
+`validating`, whether the accepted evidence was still sealed as
+`candidate_complete` or had already reached `delivered`; sibling candidates and
+the integration owner are untouched. Delivering, cleaned, and every other task
+state remain outside that invalidation authority.
+Exact replay returns the durable invalidation without re-entering Git.
+Reviewed policy, topology, freshness, and recovery refusals that are proven to
+precede Git mutation settle as `aborted`, without revalidating unchanged
+candidate evidence.
+If automatic revalidation receives an incomplete process receipt, the service
+diagnostic names only the closed mismatched field (for example `profile_id` or
+`output_hash_length`). It never emits the receipt, process output, or task
+content, so one service diagnostic identifies the broken contract safely.
+The official MCP facade exposes the same operation as
+`apply_integration_candidate`, marks it idempotent and mutating, and keeps policy,
+strategy selection, repository paths, and argv out of its input schema. A new
+application uses the authenticated call operation, while transport uncertainty
+retries that exact operation automatically. For a staged rebase conflict, the
+optional `recoveryOperationId` names either the immutable conflicted receipt or
+an exact pending post-compare-and-swap materialization transition, and the
+authenticated call supplies a separate durable operation with fresh evidence.
+The service revalidates the original target ref and the exact sequencer command
+order and metadata before reconstructing recovery in isolation. Pending
+materialization recovery requires the immutable expected/result/tree/index proof and a writer-free,
+unedited worktree before completing the transition; changed or incomplete state
+is preserved and refused.
+Because E0 cannot exclude direct writers or writes through an already-open
+descriptor, a proved result that changes or removes an existing worktree entry
+is refused before the target ref moves. Automatic publication is limited to
+unchanged entries and no-replace additions until a later stage ratifies writer
+custody.
+The isolated engine validates that complete E0 topology against bounded
+expected and result snapshots before publishing result objects into the shared
+object database. Any later failure after a possible shared write remains
+unknown rather than being settled as a pre-mutation abort.
+The operator CLI reaches the identical boundary through `initiative integrate`
+and rejects authority-bearing or self-retargeting contract fields before opening
+the service socket.
+
+Integration-owner completion is also provenance-gated. A `candidate_complete`
+report is accepted only after every incoming `integrates_after` predecessor has
+a completed `applied` or `conflicted` application receipt bound to that
+initiative, owner, and predecessor's latest accepted evidence. A direct terminal
+cherry-pick therefore cannot make an initiative look delivered, even if later
+validation would pass the resulting tree.
 
 ## Mutation boundary
 
@@ -390,11 +846,21 @@ redirect the protected attachment, or advance task state.
 
 ## Local client and MCP adapter
 
-The typed local client and strict handler expose the canonical task mutations:
-preparation, reconciliation, handback, and cleanup, alongside the on-request
-lifecycle and intervention set — pause, resume, cancel, verify, promote, replace,
-steer, and the operator-only discard. Each is idempotent under its stable
-operation ID and reconciles rather than re-sends an uncertain outcome.
+The typed local client and strict handler are the canonical mutation boundary for
+task, initiative, backlog, integration, and merge operations. The task set
+includes preparation, reconciliation, handback, cleanup, pause, resume, cancel,
+verify, promote, replace, steer, merge, and the operator-only discard. Each is
+idempotent under its stable operation ID and reconciles rather than re-sends an
+uncertain outcome. An
+independently acknowledged discard retry resumes the one durable discard hold
+after a staged failure, while exact task, repository, and worktree identity
+remain mandatory. Dirty or unpinned contents carry no delivery authority, an
+ordinary cleanup hold cannot be converted into a discard, and original and retry
+receipts are both classified as `DiscardTask`. A retry operation ID owned by a
+different command is refused before resuming any host stage.
+Threat posture: every retry must pass the external acknowledgement gate again;
+resumption cannot change the task, repository, worktree, or release authority,
+and it cannot turn discarded contents into delivery evidence.
 Preparation contains only task-contract fields: the
 stable operation ID comes from the request envelope and the configured service
 instance comes from endpoint composition. The result classifies the operation as
@@ -417,10 +883,11 @@ normalized task, operation, state version, and `mutate` classification across al
 three paths. Repeated calls create one task, and an altered stable operation
 remains the same non-retryable `conflict`. List, get, explain, and launch plan
 return identical versioned projections through all adapters and retain their
-`read` classification. The official-SDK facade exposes the same task-control
-surface as the CLI and typed local client; `reconcile_task` and the other
-non-read-only tools are idempotent, closed-world, and use the same stable result
-and side-effect semantics across all three paths.
+`read` classification. Shared mutations keep the same stable result and
+side-effect semantics, while caller-class checks deliberately keep the catalogs
+non-identical: discard and initiative controls are operator-only, and destructive
+merge completion requires private Comis approval context that the CLI cannot
+supply.
 
 A tagged integration test builds and kills the real stdio `devcrew-mcp` process,
 replaces it, and proves the prepared task, completed operation, exact private
@@ -491,6 +958,30 @@ binding are reconstructed after a service restart only when the recorded runtime
 directory, socket, and relay identities still match. Ambiguous ownership preserves
 the filesystem objects, moves an affected live task to `unknown`, and exposes a
 closed recovery explanation instead of granting cleanup or relaunch authority.
+Successful attachment retirement first moves the exact recorded inode into a
+fresh owner-only isolation directory, verifies the pinned identity again, removes
+only the authorized socket, single-link record, generation hard link, or empty
+task directory, and synchronizes both namespaces. A completed restart therefore
+does not accumulate successful `.devcrew-remove-*` namespaces. Interrupted or
+ambiguous retirement remains isolated and is reconciled by exact identity on the
+next attempt.
+
+Threat posture: cleanup never recursively walks or removes a task directory and
+never follows a link. Generation-link removal requires the durable generation
+directory, anchor inode, task link, link count, mode, and owner-private namespace
+to agree. An unexpected child, special node, replacement, unsafe mode, identity
+change, or synchronization failure preserves the isolated object and refuses
+cleanup. This bounds restart resource use without widening worker or model
+authority and without converting an ownership ambiguity into deletion authority.
+The authenticated Comis control connection starts only after this attachment
+recovery finishes, so host reconciliation observes the reconstructed socket
+identity rather than an inode that the same startup is about to replace.
+
+Non-decision report commands render the durable acceptance line followed by
+`PauseRequested=true` and `Instruction=<plain text>` only when those control
+fields are present. Instructions are bounded and revalidated before stdout. A
+decision report keeps stdout private-response-only and therefore does not
+consume a queued instruction; the next ordinary report delivers it exactly once.
 
 After a decision report is locally accepted, the reporter blocks on that same
 protected socket until Comis returns the exact keyed owner response. The service
@@ -506,9 +997,22 @@ Candidate supervision re-reads the exact clean head around fixed no-shell local
 checks, seals bounded validation and forge evidence, and holds delivery until the
 configured required checks are green in fresh forge truth. Ship delivery performs
 one non-force exact-branch push, resolves or creates one pull request, and re-reads
-its head, base, state, URL, and check conclusions. Scout delivery reads only the
+its branch, head, base, state, URL, and check conclusions. The sealed forge
+evidence retains that exact branch so a later merge never derives authority
+from a naming convention. Scout delivery reads only the
 reviewed bounded artifact. Both use durable outbox identities for exactly-once
 host delivery across restart.
+
+A validation process that is durably absent before it can produce a receipt
+leaves its task validating and is retried with a fresh operation identity. The
+absent attempt cannot contribute evidence, while a malformed purported receipt
+still stops supervision as an invariant failure. This keeps transient process
+admission failure from restarting the service without weakening receipt checks.
+
+The reviewed Codex and Claude launch bootstrap prohibits pushes and Git-remote
+changes without changing persisted brief bytes. Workers produce and report
+task-local commits; only the service may select the configured remote and use its
+scoped delivery credential after candidate verification.
 
 Task explanation reads the latest durable candidate judgment while validation is
 in progress as well as after failure. Operator-facing candidate diagnoses are
@@ -519,7 +1023,43 @@ token push is supported, and an SSH route allows a repository-scoped deploy key
 to be the push identity. The latter decodes the owner-private key only into a
 transient `0600` file, invokes the canonical OpenSSH executable through fixed
 service-owned argv, pins host keys, accepts only the configured Git receive or
-upload command, and removes the key before returning. There is no merge operation.
+upload command, and removes the key before returning.
+
+The candidate configuration may also enable a third, owner-private merge
+identity with one immutable `merge`, `squash`, or `rebase` method. Its file path
+must differ from both ordinary identities, and its contents are intentionally
+not read by installed composition. Only the merge adapter resolves it, after
+fresh exact-head, required-check, and matching branch-protection reads. The
+application coordinator consumes the exact authenticated Comis receipt and
+SQLite atomically reserves current accepted evidence, records the complete
+approval and immutable selected method before forge mutation, and joins exact
+post-merge truth to the same operation only when the receipt carries that
+method. A recorded mutation intent first performs read-only outcome
+reconciliation; when the pull request is still open, every retry requires the
+exact persisted approval metadata, revalidates the approval against a fresh UTC
+clock, and transactionally revalidates the reserved evidence immediately before
+the forge mutation. GitHub's merged pull-request representation does not prove
+the actual method, so an already-merged or uncertain mutation remains unknown
+unless the mutation acknowledgement and exact reread agree. Pending approval
+and recorded mutation intent survive startup reconciliation; altered replays,
+stale evidence, split ledger writes, and unprotected branches fail closed. The
+canonical local API exposes one `MergeTask` mutation to both protected endpoint
+classes: operator calls can carry only the task handle, while MCP calls must
+bind the approval request and the identical operation ID; neither can choose
+forge coordinates or method.
+The approval-bound merge composition and its CLI and MCP surfaces remain staged
+but unreachable: E0 rejects `merge_after_approval` as a task delivery mode.
+Those surfaces cannot reserve an eligible task until the platform gate is
+ratified. Neither surface accepts forge coordinates or a merge method.
+
+Threat posture: the model can name only an opaque task. Public approval, forge,
+head, credential, and method arguments are rejected before the local service is
+called. The private Comis context must contain a schema-valid approval request,
+managed run, service instance, and stable operation; the coordinator then
+consumes the host receipt against store-resolved current evidence before the
+separate merge credential is resolved. A lost reply replays only that same
+durable transaction, and malformed, pending, or mismatched completion data is
+reported as an internal failure rather than success.
 
 ## Worker harnesses
 
@@ -582,7 +1122,21 @@ and resuming cannot become a second, less-examined way to start a worker. The
 resume bootstrap names the exact head the worker left and tells it the tree
 already holds its own unfinished work. Resume is refused without that head:
 E0 returns a worker through the worktree rather than a vendor session, so the
-head is what proves the tree did not move under it.
+head is what proves the tree did not move under it. Resume persists that head
+with the exact ready-state generation, and both launch-plan reads and terminal
+creation select the resume bootstrap only while that generation is current.
+The transition returns to `ready`, then follows the ordinary authenticated
+`launching` and worker-acknowledgement path; it never claims `working` while the
+paused terminal is already gone. A clean lease-private worker commit is verified
+and promoted through the same exact branch handoff used for candidate recovery
+before the resume generation is recorded. Actual developer edits remain dirty
+and route to handback. Every ready generation receives distinct durable start
+and wrapper-acknowledgement operations, and a settled terminal binding may rotate
+only when the next authenticated `created` event arrives for that launching
+generation. Earlier acknowledgements therefore cannot advance a resumed worker.
+Replacement rotates the protected socket's pinned brief, reporter scope, and
+acknowledgement operation together, while preserving its exact task, run, lease,
+workspace, and attachment authority.
 
 Neither family reports a lifecycle integration it cannot prove. An unverified
 settle signal yields no artifacts and a named reason rather than a best-effort
@@ -622,6 +1176,53 @@ report lifecycle. Fixture composition requires explicit command flags and is use
 only with deterministic reviewed inputs. Candidate
 completion advances only to `validating`; it never claims validation, delivery, or
 terminal success.
+
+## Deliberately excluded from the E0 foundation
+
+Two E0 exclusions remain worth stating because each would have been easy to add
+badly. The process projection remains absent; the landed-proof boundary has since
+become reachable.
+
+**There is no `task processes` projection.** A per-process view is meant to join
+what this service launched with what the host observed beneath the task's
+terminal, and only the first half has a source here. The service registry covers
+validation processes it started itself; nothing constructs a terminal-descendant
+observation, because E0 has no durable process-observation contract to construct
+one from. A command rendering half that join would read as a complete process
+list and quietly answer "nothing else is running" whenever the missing half was
+the interesting part. The validation half is reachable through the task views;
+the joined projection waits for the contract that makes it honest.
+
+**Cleanup still proves delivery; the landed proof exists beside it.** A worktree
+is removable when its recorded pull request is open at exactly the evidence head
+with every required check passed, or when a report artifact hash is recorded —
+plus a clean tree. That rule is unchanged.
+
+`local_branch` and `merge_after_approval` remain reserved discriminator names,
+not accepted E0 delivery modes. Ship tasks deliver a pull request and scout
+tasks deliver a report until the corresponding platform gates are ratified.
+The landed-proof boundary can establish authenticated reachability of an exact
+task branch, an exact merged pull request even when ancestry was rewritten, or
+exact commit containment in an up-to-date default branch. Unreadable forge
+truth refuses rather than letting a later route answer a question the earlier
+one never asked, and every refusal names the evidence gap.
+
+Cleanup consults the proof in exactly one place: where the delivery rule cannot
+answer at all, having found neither a recorded pull request nor a report
+artifact hash. That case used to refuse outright, and a missing record is not
+evidence that nothing landed. The consultation can only turn that refusal into an
+acceptance, never the reverse, so every removal the delivery rule already
+refused is still refused.
+
+A deployment that configures no evidence source keeps the earlier behaviour
+rather than acquiring a route it never opted into, and a gatherer that fails is
+not a cleanup failure — it established nothing, and nothing is not proof.
+Gathering needs read authority only, stated in code, so the merge credential
+cannot drift into a path every cleanup runs.
+
+**Process signals are not exposed.** No interrupt, terminate, or kill verb
+exists. Stopping a task's execution runs through terminal lifecycle rather than
+process control, so no surface accepts a process reference as authority.
 
 ## Design record
 

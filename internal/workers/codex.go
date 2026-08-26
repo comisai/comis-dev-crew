@@ -19,7 +19,7 @@ import (
 
 const (
 	maximumCodexProbeBytes = 8 * 1024
-	codexBootstrapPrompt   = "Before doing any task work, acknowledge the exact protected launch binding with `devcrew-report acknowledge`. Then read the pinned task brief with `devcrew-report brief`. If either command fails, stop without reading or changing the workspace; do not continue task work. Run `devcrew-report --help` before reporting and use only its exact flag syntax; do not invent JSON or stdin formats. Use `devcrew-report` for sparse progress, decisions, blocked state, candidate completion, and failure. Treat the protected runtime attachment as the only task/report authority.\n"
+	codexBootstrapPrompt   = "Before doing any task work, acknowledge the exact protected launch binding with `devcrew-report acknowledge`. Then read the pinned task brief with `devcrew-report brief`. For every consumed contract named by that brief, read its exact content with `devcrew-report artifact --handle HANDLE`. If any required command fails, stop without reading or changing the workspace; do not continue task work. Run `devcrew-report --help` before reporting and use only its exact flag syntax; do not invent JSON or stdin formats. Use `devcrew-report` for sparse progress, decisions, blocked state, candidate completion, and failure. Treat the protected runtime attachment as the only task/report authority. Do not push or change Git remotes; commit locally and let DevCrew own validation and delivery.\n"
 )
 
 var codexVersionPattern = regexp.MustCompile(`^codex-cli [0-9]+\.[0-9]+\.[0-9]+$`)

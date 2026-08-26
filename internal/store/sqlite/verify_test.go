@@ -45,6 +45,30 @@ func TestStore_VerifyOpensValidationWithoutJudgingTheTask(t *testing.T) {
 	}
 }
 
+func TestStore_VerifyDoesNotMaterializeUnrelatedInitiativeHistory(t *testing.T) {
+	store, task := openReportFixture(t, filepath.Join(canonicalTempDir(t), "devcrew.db"))
+	unrelated := persistenceInitiative("initiative-unrelated-validation", domain.InitiativeDelivered, 2)
+	unrelated.Components[0].TaskHandles = []string{"task-unrelated-validation-a"}
+	unrelated.Components[1].TaskHandles = []string{"task-unrelated-validation-b"}
+	unrelated.Edges[0].FromTaskHandle = "task-unrelated-validation-a"
+	unrelated.Edges[0].ToTaskHandle = "task-unrelated-validation-b"
+	unrelated.IntegrationOwnerTask = "task-unrelated-validation-b"
+	if err := store.CreateInitiative(context.Background(), unrelated); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(context.Background(),
+		"UPDATE initiatives SET components_json = '{' WHERE handle = ?", unrelated.Handle,
+	); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, time.August, 9, 16, 0, 0, 0, time.UTC)
+	result, err := store.CommitTaskVerify(context.Background(),
+		verifyMutation(task.Handle, "operation-verify-unrelated-history", at))
+	if err != nil || result.Task.State != domain.TaskValidating {
+		t.Fatalf("CommitTaskVerify(unrelated corrupt history) = %#v, %v", result, err)
+	}
+}
+
 // A task already validating is left exactly as it is. Restarting would abandon a
 // run that is mid-flight and whose process the service is still tracking.
 func TestStore_VerifyLeavesAValidationAlreadyInFlightAlone(t *testing.T) {

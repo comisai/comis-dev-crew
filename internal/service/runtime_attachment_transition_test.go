@@ -84,6 +84,61 @@ func TestRuntimeAttachmentReleaseRecoversAfterCloseBeforeDirectoryStage(t *testi
 	}
 }
 
+func TestRuntimeAttachmentRecoveryDoesNotAccumulateRetiredNamespaces(t *testing.T) {
+	root := shortTempDir(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.August, 23, 11, 0, 0, 0, time.UTC)
+	task := runtimeAttachmentRecoverableTask(t, now, "task-runtime-bounded-recovery")
+	store := &runtimeTransitionStore{
+		task: task,
+		preparation: application.ManagedRunPreparation{
+			RequestedWorkspaceRoot: workspace,
+			RequestedAttachment: application.PreparedRuntimeAttachment{
+				Kind:          application.RuntimeAttachmentUnixSocket,
+				SourcePath:    filepath.Join(runtimeRoot, task.Handle, "attachment.sock"),
+				RelayIdentity: runtimeTransitionRelayIdentity(),
+			},
+		},
+	}
+	first := runtimeTransitionCoordinator(t, runtimeRoot, store, now)
+	servers, err := first.recoverRuntimeAttachments(context.Background())
+	if err != nil || len(servers) != 1 {
+		t.Fatalf("recoverRuntimeAttachments(initial) = %d, %v", len(servers), err)
+	}
+	if err := first.closeRuntimeServerForShutdown(servers[0]); err != nil {
+		t.Fatalf("closeRuntimeServerForShutdown(initial) error = %v", err)
+	}
+
+	restarted := runtimeTransitionCoordinator(t, runtimeRoot, store, now.Add(time.Minute))
+	servers, err = restarted.recoverRuntimeAttachments(context.Background())
+	if err != nil || len(servers) != 1 {
+		t.Fatalf(
+			"recoverRuntimeAttachments(restarted) = %d, %v, refusals=%#v",
+			len(servers), err, store.taskRefusals,
+		)
+	}
+	t.Cleanup(func() { _ = servers[0].Close() })
+	var retired []string
+	if err := filepath.WalkDir(runtimeRoot, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if strings.HasPrefix(entry.Name(), ".devcrew-remove-") {
+			retired = append(retired, path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(retired) != 0 {
+		t.Fatalf("retired runtime namespaces after recovery = %v, want none", retired)
+	}
+}
+
 func TestOpenRecordedRuntimeReleasePreservesIsolatedDirectoryWithoutUnrecyclableIdentity(t *testing.T) {
 	root := shortTempDir(t)
 	runtimeRoot := filepath.Join(root, "runtime")
@@ -427,7 +482,7 @@ func TestRuntimeAttachmentRecoveryPreservesUnboundGenerationLinkWithoutBirthTime
 	}
 }
 
-func TestRuntimeAttachmentRecoveryQuarantinesSocketCreatedBeforeIdentityCommit(t *testing.T) {
+func TestRuntimeAttachmentRecoveryRetiresSocketCreatedBeforeIdentityCommit(t *testing.T) {
 	root := shortTempDir(t)
 	runtimeRoot := filepath.Join(root, "runtime")
 	workspace := filepath.Join(root, "workspace")
@@ -475,7 +530,7 @@ func TestRuntimeAttachmentRecoveryQuarantinesSocketCreatedBeforeIdentityCommit(t
 	if err != nil || len(servers) != 1 {
 		t.Fatalf("recoverRuntimeAttachments(socket replay) = %d, %v", len(servers), err)
 	}
-	var preservedSocket bool
+	var retiredSocketRemains bool
 	if err := filepath.WalkDir(runtimeRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -484,14 +539,14 @@ func TestRuntimeAttachmentRecoveryQuarantinesSocketCreatedBeforeIdentityCommit(t
 			return nil
 		}
 		if info, err := entry.Info(); err == nil && info.Mode()&os.ModeSocket != 0 {
-			preservedSocket = true
+			retiredSocketRemains = true
 		}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if !preservedSocket {
-		t.Fatal("uncommitted socket was not preserved in quarantine")
+	if retiredSocketRemains {
+		t.Fatal("retired uncommitted socket remained outside the current attachment path")
 	}
 	if err := servers[0].Close(); err != nil {
 		t.Fatal(err)

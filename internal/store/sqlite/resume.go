@@ -3,13 +3,56 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
-// CommitTaskResume returns one paused task to its existing worker.
+const taskResumeLaunchMigration = `
+ALTER TABLE task_launch_acknowledgements RENAME TO task_launch_acknowledgements_previous;
+CREATE TABLE task_launch_acknowledgements (
+    operation_id TEXT PRIMARY KEY,
+    task_handle TEXT NOT NULL,
+    managed_run_id TEXT NOT NULL,
+    workspace_lease_id TEXT NOT NULL,
+    working_directory TEXT NOT NULL,
+    brief_revision INTEGER NOT NULL,
+    brief_revision_hash TEXT NOT NULL,
+    launch_state_version INTEGER NOT NULL,
+    acknowledged_at TEXT NOT NULL,
+    FOREIGN KEY(operation_id) REFERENCES operations(id),
+    FOREIGN KEY(task_handle) REFERENCES tasks(handle)
+);
+INSERT INTO task_launch_acknowledgements (
+    operation_id, task_handle, managed_run_id, workspace_lease_id,
+    working_directory, brief_revision, brief_revision_hash,
+    launch_state_version, acknowledged_at
+)
+SELECT operation_id, task_handle, managed_run_id, workspace_lease_id,
+    working_directory, brief_revision, brief_revision_hash, 0, acknowledged_at
+FROM task_launch_acknowledgements_previous;
+DROP TABLE task_launch_acknowledgements_previous;
+CREATE INDEX task_launch_acknowledgements_generation_idx
+ON task_launch_acknowledgements(task_handle, launch_state_version, operation_id);
+CREATE TABLE task_resume_launches (
+    operation_id TEXT PRIMARY KEY,
+    task_handle TEXT NOT NULL,
+    head_revision TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    state_version INTEGER NOT NULL,
+    FOREIGN KEY(operation_id) REFERENCES operations(id),
+    FOREIGN KEY(task_handle) REFERENCES tasks(handle)
+);
+CREATE INDEX task_resume_launches_task_idx
+ON task_resume_launches(task_handle, state_version DESC, operation_id);
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (43, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+`
+
+// CommitTaskResume records one paused task as ready for a new authenticated
+// generation of its existing worker profile.
 //
 // The caller has already proven the worktree is exactly as the worker left it.
 // That proof is the whole precondition: resuming the same worker onto a tree
@@ -24,6 +67,18 @@ func (store *Store) CommitTaskResume(
 		Command:     commandResumeTask,
 		OperationID: mutation.OperationID, SubjectDigest: mutation.SubjectDigest,
 		At: mutation.At, Label: "task resume",
+		Record: func(ctx context.Context, transaction *sql.Tx, persisted domain.Task) error {
+			const insert = `INSERT INTO task_resume_launches (
+                operation_id, task_handle, head_revision, observed_at, state_version
+            ) VALUES (?, ?, ?, ?, ?)`
+			if _, err := transaction.ExecContext(ctx, insert,
+				mutation.OperationID, persisted.Handle, mutation.ObservedHeadRevision,
+				formatTime(mutation.At), persisted.StateVersion,
+			); err != nil {
+				return fmt.Errorf("insert task resume launch: %w", err)
+			}
+			return nil
+		},
 	}, func(ctx context.Context, transaction *sql.Tx) (domain.Task, error) {
 		task, err := getTask(ctx, transaction, mutation.TaskHandle)
 		if err != nil {
@@ -42,6 +97,9 @@ func (store *Store) CommitTaskResume(
 			domain.ValidateGitRevision(mutation.ObservedHeadRevision) != nil {
 			return domain.Task{}, fmt.Errorf("task resume head: %w", application.ErrPrecondition)
 		}
+		if err := proveNothingIsStillRunning(ctx, transaction, task, "task resume", true); err != nil {
+			return domain.Task{}, err
+		}
 		updated, err := task.ApplyTransition(domain.TransitionResumed, mutation.At)
 		if err != nil {
 			return domain.Task{}, fmt.Errorf("apply task resume: %w", err)
@@ -53,4 +111,29 @@ func (store *Store) CommitTaskResume(
 		// belongs to the report path.
 		return updated, nil
 	})
+}
+
+// TaskResumeLaunch returns the latest durable resume generation. Callers still
+// compare its state version to the current task before selecting a bootstrap.
+func (store *Store) TaskResumeLaunch(
+	ctx context.Context,
+	taskHandle string,
+) (application.TaskResumeLaunch, bool, error) {
+	if err := store.ready(ctx); err != nil {
+		return application.TaskResumeLaunch{}, false, err
+	}
+	const query = `SELECT operation_id, task_handle, head_revision, state_version
+        FROM task_resume_launches WHERE task_handle = ?
+        ORDER BY state_version DESC, operation_id LIMIT 1`
+	var launch application.TaskResumeLaunch
+	err := store.db.QueryRowContext(ctx, query, taskHandle).Scan(
+		&launch.OperationID, &launch.TaskHandle, &launch.HeadRevision, &launch.StateVersion,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return application.TaskResumeLaunch{}, false, nil
+	}
+	if err != nil {
+		return application.TaskResumeLaunch{}, false, fmt.Errorf("read task resume launch: %w", err)
+	}
+	return launch, true, nil
 }

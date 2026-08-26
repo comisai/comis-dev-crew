@@ -19,6 +19,7 @@ func renderTypes(schemas []schemaSpec) (string, error) {
 	renderer := typeRenderer{defined: make(map[string]struct{})}
 	for _, declaration := range []string{
 		"type OperationID string\n",
+		"type ApprovalRequestID string\n",
 		"type ManagedRunID string\n",
 		"type ManagedRunGroupID string\n",
 		"type WorkspaceLeaseID string\n",
@@ -120,6 +121,19 @@ func (renderer *typeRenderer) renderStruct(name string, node schemaNode) error {
 			if err := renderer.renderNamed(childName, child); err != nil {
 				return err
 			}
+			continue
+		}
+		// An array of objects names an item type in fieldType but had nothing
+		// emitting it, so the generated package referenced a struct that did not
+		// exist. No schema carried an object-typed array item until managed-run
+		// groups needed one: a group operation reports one outcome per member.
+		if child.Type == "array" && child.Items != nil {
+			item := *child.Items
+			if item.Type == "object" || objectVariantUnion(item) {
+				if err := renderer.renderNamed(childName+"Item", item); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil
@@ -183,6 +197,10 @@ func specialFieldType(parent, property string) string {
 	switch property {
 	case "id", "operationId":
 		return "OperationID"
+	case "approvalRequestId":
+		return "ApprovalRequestID"
+	case "mcpOperationId":
+		return "OperationID"
 	case "method":
 		return "Method"
 	case "serviceInstanceId":
@@ -243,6 +261,9 @@ func specialFieldType(parent, property string) string {
 			return "HealthStatus"
 		}
 	case "state":
+		if parent == "ConsumeApprovalResponseResult" {
+			return "ApprovalReceiptState"
+		}
 		return "ManagedRunState"
 	case "requestedScopes", "activeScopes":
 		return "[]ServiceScope"

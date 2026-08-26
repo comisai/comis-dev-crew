@@ -10,7 +10,7 @@
   },
   "protocol": {
     "id": "comis.capability-service/1",
-    "digest": "86f5f5eb3d8147ccf85200adb475ccfecdbe28f6acdeb5446b8b8a71edfa9b33"
+    "digest": "b42ab7a7662f3b02ede4d12d55e1ae7d50855990897fc4d24164b3a35f3c711d"
   },
   "artifacts": [
     {"kind": "comis-cli", "path": "/opt/comis/packages/cli/dist/cli.js", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "version": "replace-comis-version"},

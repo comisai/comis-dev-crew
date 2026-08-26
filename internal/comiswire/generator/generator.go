@@ -10,11 +10,9 @@ import (
 )
 
 const (
-	expectedProtocolID = "comis.capability-service/1"
-	// Bumped with the digest above: the run-lifecycle revision added cancel and
-	// heartbeat, each contributing a request and a response schema.
-	pinnedSchemaCount    = 27
-	expectedBundleDigest = "86f5f5eb3d8147ccf85200adb475ccfecdbe28f6acdeb5446b8b8a71edfa9b33"
+	expectedProtocolID   = "comis.capability-service/1"
+	pinnedSchemaCount    = 36
+	expectedBundleDigest = "dea251a955a4d68faf402aa6977db1b4544737e43aa1f624f39dc359008f6414"
 )
 
 // Generate verifies the exact pin and deterministically renders its Go DTOs and client.

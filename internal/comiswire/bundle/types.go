@@ -31,6 +31,7 @@ type ErrorDefinition struct {
 // Limits records the exact bounded transport and retention values.
 type Limits struct {
 	MaxEvidenceBytes    int `json:"maxEvidenceBytes"`
+	MaxGroupMembers     int `json:"maxGroupMembers"`
 	MaxInFlightRequests int `json:"maxInFlightRequests"`
 	MaxLineBytes        int `json:"maxLineBytes"`
 	MaxReportBytes      int `json:"maxReportBytes"`

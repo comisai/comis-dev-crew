@@ -31,7 +31,8 @@ var (
 	errGitHubResponseMalformed = errors.New("GitHub response is malformed")
 )
 
-// GitHubConfig supplies one fixed repository and separate non-merge identities.
+// GitHubConfig supplies one fixed repository and separately resolved read,
+// push, and optional merge identities.
 type GitHubConfig struct {
 	APIBaseURL         string
 	Owner              string
@@ -42,6 +43,9 @@ type GitHubConfig struct {
 	Pusher             BranchPusher
 	ReadCredentials    CredentialSource
 	PushCredentials    CredentialSource
+	MergeCredentials   CredentialSource
+	MergeMethod        MergeMethod
+	Clock              func() time.Time
 }
 
 // GitHubAdapter owns the bounded idempotent push, pull-request, and check flow.
@@ -61,6 +65,10 @@ func NewGitHubAdapter(config GitHubConfig) (*GitHubAdapter, error) {
 		!forgeIDPattern.MatchString(config.RepositoryIdentity) || !githubNamePattern.MatchString(config.BaseBranch) ||
 		config.HTTPClient == nil || config.Pusher == nil || config.ReadCredentials == nil || config.PushCredentials == nil {
 		return nil, errors.New("create GitHub adapter: repository and dependencies are required")
+	}
+	if (config.MergeCredentials == nil) != (config.MergeMethod == "") ||
+		(config.MergeMethod != "" && (!validMergeMethod(config.MergeMethod) || config.Clock == nil)) {
+		return nil, errors.New("create GitHub adapter: merge authority and method must be configured together")
 	}
 	return &GitHubAdapter{config: config, base: base}, nil
 }
@@ -116,7 +124,8 @@ func (adapter *GitHubAdapter) DeliverPullRequest(ctx context.Context, request Pu
 		URL: pull.HTMLURL,
 		Evidence: domain.ForgeEvidence{
 			Repository:    adapter.config.RepositoryIdentity,
-			PullRequestID: "github-pr-" + strconv.Itoa(number), HeadRevision: request.HeadRevision,
+			PullRequestID: "github-pr-" + strconv.Itoa(number), Branch: request.Branch,
+			HeadRevision:     request.HeadRevision,
 			CheckConclusions: checks,
 		},
 	}, nil
@@ -166,7 +175,7 @@ func (adapter *GitHubAdapter) VerifyPullRequest(
 		URL: pull.HTMLURL,
 		Evidence: domain.ForgeEvidence{
 			Repository: adapter.config.RepositoryIdentity, PullRequestID: request.PullRequestID,
-			HeadRevision: request.HeadRevision, CheckConclusions: checks,
+			Branch: request.Branch, HeadRevision: request.HeadRevision, CheckConclusions: checks,
 		},
 	}, nil
 }
@@ -176,16 +185,34 @@ type githubPullSummary struct {
 }
 
 type githubPull struct {
-	Number  int    `json:"number"`
-	State   string `json:"state"`
-	HTMLURL string `json:"html_url"`
-	Head    struct {
+	Number         int     `json:"number"`
+	State          string  `json:"state"`
+	Merged         bool    `json:"merged"`
+	MergeCommitSHA *string `json:"merge_commit_sha"`
+	HTMLURL        string  `json:"html_url"`
+	Head           struct {
 		SHA string `json:"sha"`
 		Ref string `json:"ref"`
 	} `json:"head"`
 	Base struct {
 		Ref string `json:"ref"`
 	} `json:"base"`
+}
+
+type githubMergeResponse struct {
+	SHA     string `json:"sha"`
+	Merged  bool   `json:"merged"`
+	Message string `json:"message"`
+}
+
+type githubBranchProtection struct {
+	RequiredStatusChecks *struct {
+		Strict   bool     `json:"strict"`
+		Contexts []string `json:"contexts"`
+	} `json:"required_status_checks"`
+	EnforceAdmins *struct {
+		Enabled bool `json:"enabled"`
+	} `json:"enforce_admins"`
 }
 
 type githubChecks struct {
@@ -421,6 +448,9 @@ func (adapter *GitHubAdapter) requestJSON(
 	}
 	if destination == nil {
 		return nil
+	}
+	if err := rejectDuplicateJSONKeys(contents); err != nil {
+		return errGitHubResponseMalformed
 	}
 	decoder := json.NewDecoder(bytes.NewReader(contents))
 	if err := decoder.Decode(destination); err != nil {

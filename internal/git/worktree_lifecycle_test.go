@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	devgit "github.com/comisai/comis-dev-crew/internal/git"
@@ -574,6 +575,64 @@ func TestRegistry_RemoveDeliveredWorktreeUsesExactHeadAndConvergesAfterRemoval(t
 	}
 }
 
+func TestRegistry_RemoveDiscardedWorktreeRemovesAcknowledgedDirtyWorkspace(t *testing.T) {
+	fixture := newRepositoryFixture(t, "product-api")
+	registry := newLifecycleRegistry(t, fixture)
+	prepare := lifecycleRequest(t, fixture, "prepare-discarded", "task-discarded")
+	prepared, err := registry.PrepareWorktree(context.Background(), prepare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(prepared.CanonicalPath, "uncommitted.txt"), []byte("discard me\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := devgit.DeliveredWorktreeCleanupRequest{
+		PreparationOperationID: prepare.OperationID,
+		TaskHandle:             prepare.TaskHandle,
+		RepositoryID:           prepare.RepositoryID,
+		WorktreePath:           prepared.CanonicalPath,
+		Branch:                 prepared.Branch,
+		HeadRevision:           prepared.HeadRevision,
+	}
+	wrongHead := request
+	wrongHead.HeadRevision = strings.Repeat("f", 40)
+	if err := registry.RemoveDiscardedWorktree(context.Background(), wrongHead); err == nil {
+		t.Fatal("RemoveDiscardedWorktree(wrong head) error = nil")
+	}
+	if _, err := os.Lstat(filepath.Join(prepared.CanonicalPath, "uncommitted.txt")); err != nil {
+		t.Fatalf("discard with wrong authority changed the worktree: %v", err)
+	}
+
+	var throughPort application.DeliveredWorkspaceRemover = registry
+	if err := throughPort.RemoveDiscardedWorkspace(context.Background(), application.DeliveredWorkspaceRemoval{
+		PreparationOperationID: request.PreparationOperationID,
+		TaskHandle:             request.TaskHandle,
+		RepositoryID:           request.RepositoryID,
+		WorktreePath:           request.WorktreePath,
+		Branch:                 request.Branch,
+		HeadRevision:           request.HeadRevision,
+	}); err != nil {
+		t.Fatalf("RemoveDiscardedWorkspace() error = %v", err)
+	}
+	if _, err := os.Lstat(prepared.CanonicalPath); !os.IsNotExist(err) {
+		t.Fatalf("discarded worktree remains: %v", err)
+	}
+	showRef := exec.Command(
+		fixture.gitExecutable,
+		"--no-optional-locks",
+		"-C",
+		fixture.primary,
+		"show-ref",
+		"--verify",
+		"--quiet",
+		"refs/heads/"+prepared.Branch,
+	)
+	showRef.Env = gitTestEnvironment(nil)
+	if err := showRef.Run(); err == nil {
+		t.Fatalf("discarded branch %q remains", prepared.Branch)
+	}
+}
+
 func TestRegistry_RemoveDeliveredWorktreeRefusesAmbiguousAbsentAndChangedBranches(t *testing.T) {
 	t.Run("absent path retained in inventory", func(t *testing.T) {
 		fixture := newRepositoryFixture(t, "product-api")
@@ -651,9 +710,18 @@ func TestRegistry_RemoveDeliveredWorktreeRefusesAmbiguousAbsentAndChangedBranche
 }
 
 func newLifecycleRegistry(t *testing.T, fixture repositoryFixture) *devgit.Registry {
+	return newLifecycleRegistryWithClock(t, fixture, time.Now)
+}
+
+func newLifecycleRegistryWithClock(
+	t *testing.T,
+	fixture repositoryFixture,
+	clock func() time.Time,
+) *devgit.Registry {
 	t.Helper()
 	registry, err := devgit.NewRegistry(context.Background(), devgit.RegistryConfig{
 		GitExecutable: fixture.gitExecutable,
+		Clock:         clock,
 		ApprovedRoots: []string{fixture.approvedRoot},
 		Repositories: []devgit.RepositoryConfig{{
 			ID: fixture.repositoryID, PrimaryCheckout: fixture.primary,

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
@@ -73,7 +74,8 @@ func TestGitHubAdapter_UsesSeparateAuthoritiesAndRereadsExactPullRequestTruth(t 
 		t.Fatalf("DeliverPullRequest() error = %v", err)
 	}
 	wantEvidence := domain.ForgeEvidence{
-		Repository: "fixture-repository", PullRequestID: "github-pr-17", HeadRevision: head,
+		Repository: "fixture-repository", PullRequestID: "github-pr-17", Branch: "devcrew/task-fixture",
+		HeadRevision:     head,
 		CheckConclusions: []domain.ForgeCheckEvidence{{Name: "ci/unit", Conclusion: domain.CheckPassed}},
 	}
 	if truth.URL != "https://example.com/comisai/fixture/pull/17" || !reflect.DeepEqual(truth.Evidence, wantEvidence) {
@@ -673,5 +675,6 @@ func validGitHubConfig(server *httptest.Server) GitHubConfig {
 		PushCredentials: staticCredentialSource{credential: Credential{
 			Kind: CredentialPush, Secret: "push-token", Scopes: []CredentialScope{ScopeContentsWrite},
 		}},
+		Clock: func() time.Time { return time.Date(2026, time.August, 20, 12, 0, 0, 0, time.UTC) },
 	}
 }

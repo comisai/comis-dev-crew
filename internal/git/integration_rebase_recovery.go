@@ -1,0 +1,453 @@
+package git
+
+import (
+	"context"
+	"errors"
+	"strings"
+
+	"github.com/comisai/comis-dev-crew/internal/application"
+)
+
+func (registry *Registry) recordIntegrationTargetRef(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+	targetRef string,
+) error {
+	if targetRef != "refs/heads/"+expectedIntegrationTargetBranch(request) {
+		return errors.New("apply integration candidate: target branch identity differs")
+	}
+	existing, found, err := registry.recordedIntegrationTargetRef(ctx, request)
+	if err != nil {
+		return errors.New("apply integration candidate: target branch receipt is unavailable")
+	}
+	if found {
+		if existing != targetRef {
+			return errors.New("apply integration candidate: target branch receipt differs")
+		}
+		return nil
+	}
+	receipt := integrationReceiptRef("target", request)
+	if err := registry.validateIntegrationMutationDeadline(request); err != nil {
+		return err
+	}
+	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"symbolic-ref", receipt, targetRef); err != nil {
+		return errors.New("apply integration candidate: target branch receipt could not be recorded")
+	}
+	return nil
+}
+
+func (registry *Registry) resumeRebaseIntegration(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+	repository Repository,
+) (application.IntegrationAdapterResult, error) {
+	if request.Strategy != application.IntegrationRebase {
+		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: only a rebase conflict can be resumed")
+	}
+	previous := originalIntegrationRequest(request)
+	conflictRef := integrationReceiptRef("conflicted", previous)
+	conflictHead, found, err := registry.integrationReceiptHead(ctx, repository, conflictRef)
+	if err != nil || !found || conflictHead != request.Target.ExpectedHead {
+		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: recovery conflict receipt is unavailable")
+	}
+	targetRef, err := registry.integrationTargetRef(ctx, previous)
+	if err != nil {
+		return application.IntegrationAdapterResult{}, err
+	}
+	rebasedRef := integrationReceiptRef("rebased", request)
+	if resultingHead, found, err := registry.integrationReceiptHead(ctx, repository, rebasedRef); err != nil {
+		return application.IntegrationAdapterResult{}, err
+	} else if found {
+		return registry.finalizeRecoveredRebase(ctx, request, repository, targetRef, resultingHead)
+	}
+	if resultingHead, completedErr := registry.completedRebaseContinuation(ctx, request, targetRef); completedErr == nil {
+		return registry.finalizeRecoveredRebase(ctx, request, repository, targetRef, resultingHead)
+	}
+	if proof, proofFound, proofErr := registry.serverRebaseProof(repository, request); proofErr != nil {
+		return application.IntegrationAdapterResult{}, proofErr
+	} else if proofFound && proof.resultingHead != "" {
+		if err := registry.applyIsolatedRebaseResult(ctx, request, targetRef, proof.resultingHead); err != nil {
+			return application.IntegrationAdapterResult{}, withoutIntegrationMutationNotStarted(err)
+		}
+		return registry.finalizeRecoveredRebase(ctx, request, repository, targetRef, proof.resultingHead)
+	}
+	conflicts, err := registry.validateRecoverableRebase(ctx, request, targetRef)
+	if err != nil {
+		return application.IntegrationAdapterResult{}, err
+	}
+	if len(conflicts) != 0 {
+		if err := registry.recordServerRebaseConflict(ctx, repository, request); err != nil {
+			return application.IntegrationAdapterResult{}, err
+		}
+		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: rebase conflicts remain unresolved")
+	}
+	if err := registry.validateServerRebaseConflictResolution(ctx, repository, request); err != nil {
+		return application.IntegrationAdapterResult{}, err
+	}
+	if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
+		return application.IntegrationAdapterResult{}, errors.Join(err, application.ErrIntegrationMutationNotStarted)
+	}
+	if err := registry.validateActiveRebaseRecoveryReceipts(ctx, request); err != nil {
+		return application.IntegrationAdapterResult{}, errors.Join(err, application.ErrIntegrationMutationNotStarted)
+	}
+	if err := registry.validateIntegrationMutationDeadline(request); err != nil {
+		return application.IntegrationAdapterResult{}, err
+	}
+	if err := registry.validateRebaseSequencerAuthority(ctx, repository, request); err != nil {
+		return application.IntegrationAdapterResult{}, errors.Join(err, application.ErrIntegrationMutationNotStarted)
+	}
+	resultingHead, err := registry.completeRebaseRecoveryInIsolation(ctx, repository, request)
+	if err != nil {
+		return application.IntegrationAdapterResult{}, err
+	}
+	if err := registry.applyIsolatedRebaseResult(ctx, request, targetRef, resultingHead); err != nil {
+		return application.IntegrationAdapterResult{}, withoutIntegrationMutationNotStarted(err)
+	}
+	return registry.finalizeRecoveredRebase(ctx, request, repository, targetRef, resultingHead)
+}
+
+func (registry *Registry) validateActiveRebaseRecoveryReceipts(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+) error {
+	original := originalIntegrationRequest(request)
+	expectedTarget := "refs/heads/" + expectedIntegrationTargetBranch(request)
+	target, err := registry.inspectIntegrationReceipt(
+		ctx, request.Target.WorktreePath, integrationReceiptRef("target", original),
+	)
+	if err != nil || target.kind != integrationReceiptSymbolic || target.value != expectedTarget {
+		return errors.New("apply integration candidate: original target receipt differs")
+	}
+	conflicted, err := registry.inspectIntegrationReceipt(
+		ctx, request.Target.WorktreePath, integrationReceiptRef("conflicted", original),
+	)
+	if err != nil || conflicted.kind != integrationReceiptDirect || conflicted.value != request.Target.ExpectedHead {
+		return errors.New("apply integration candidate: original conflict receipt differs")
+	}
+	for _, identity := range []struct {
+		outcome string
+		request application.IntegrationAdapterRequest
+	}{
+		{outcome: "applied", request: original},
+		{outcome: "rebased", request: original},
+		{outcome: "target", request: request},
+		{outcome: "conflicted", request: request},
+		{outcome: "applied", request: request},
+		{outcome: "rebased", request: request},
+	} {
+		if err := registry.requireIntegrationReceiptAbsent(
+			ctx, request.Target.WorktreePath, integrationReceiptRef(identity.outcome, identity.request),
+		); err != nil {
+			return errors.New("apply integration candidate: recovery receipt set is contradictory")
+		}
+	}
+	return nil
+}
+
+func (registry *Registry) integrationTargetRef(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+) (string, error) {
+	targetRef, found, err := registry.recordedIntegrationTargetRef(ctx, request)
+	if err != nil || !found {
+		return "", errors.New("apply integration candidate: target branch receipt is invalid")
+	}
+	return targetRef, nil
+}
+
+func (registry *Registry) recordedIntegrationTargetRef(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+) (string, bool, error) {
+	receipt := integrationReceiptRef("target", request)
+	inspected, err := registry.inspectIntegrationReceipt(ctx, request.Target.WorktreePath, receipt)
+	if err != nil {
+		return "", false, errors.New("apply integration candidate: target branch receipt is invalid")
+	}
+	switch inspected.kind {
+	case integrationReceiptAbsent:
+		return "", false, nil
+	case integrationReceiptDirect:
+		return "", false, errors.New("apply integration candidate: target branch receipt is ambiguous")
+	case integrationReceiptSymbolic:
+		if inspected.value != "refs/heads/"+expectedIntegrationTargetBranch(request) {
+			return "", false, errors.New("apply integration candidate: target branch receipt is invalid")
+		}
+		return inspected.value, true, nil
+	default:
+		return "", false, errors.New("apply integration candidate: target branch receipt is invalid")
+	}
+}
+
+func (registry *Registry) reconcileInterruptedRebase(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+	repository Repository,
+	conflictedRef string,
+) (application.IntegrationAdapterResult, bool, error) {
+	if request.Strategy != application.IntegrationRebase || request.RecoveryOperationID != "" {
+		return application.IntegrationAdapterResult{}, false, nil
+	}
+	rebasedHead, rebasedFound, err := registry.integrationReceiptHead(
+		ctx, repository, integrationReceiptRef("rebased", request),
+	)
+	if err != nil {
+		return application.IntegrationAdapterResult{}, true, errors.New("apply integration candidate: rebased head receipt is unavailable")
+	}
+	targetRef, found, err := registry.recordedIntegrationTargetRef(ctx, request)
+	if err != nil {
+		return application.IntegrationAdapterResult{}, true, err
+	}
+	if !found {
+		if rebasedFound {
+			return application.IntegrationAdapterResult{}, true, errors.New("apply integration candidate: rebased head receipt has no target")
+		}
+		return application.IntegrationAdapterResult{}, false, nil
+	}
+	conflicts, err := registry.integrationConflictPaths(ctx, request.Target.WorktreePath)
+	if err != nil {
+		return application.IntegrationAdapterResult{}, true, err
+	}
+	if len(conflicts) != 0 {
+		if rebasedFound {
+			return application.IntegrationAdapterResult{}, true, errors.New("apply integration candidate: rebased head receipt contradicts conflicts")
+		}
+		branchHead, err := registry.integrationBranchHead(ctx, request.Target.WorktreePath, targetRef)
+		if err != nil || branchHead != request.Target.ExpectedHead {
+			return application.IntegrationAdapterResult{}, true, errors.New("apply integration candidate: interrupted target branch differs")
+		}
+		result, _, err := registry.replayConflictedRebase(ctx, request, request.Target.ExpectedHead)
+		if err != nil {
+			return application.IntegrationAdapterResult{}, true, err
+		}
+		if err := registry.recordServerRebaseConflict(ctx, repository, request); err != nil {
+			return application.IntegrationAdapterResult{}, true, err
+		}
+		if err := registry.createIntegrationReceipt(ctx, repository, conflictedRef, request.Target.ExpectedHead); err != nil {
+			return application.IntegrationAdapterResult{}, true, errors.New("apply integration candidate: conflict receipt could not be recorded")
+		}
+		return result, true, nil
+	}
+	currentHead, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return application.IntegrationAdapterResult{}, true, errors.New("apply integration candidate: interrupted rebase head is unavailable")
+	}
+	headRef, attached, err := registry.integrationHeadRef(ctx, request.Target.WorktreePath)
+	if err != nil {
+		return application.IntegrationAdapterResult{}, true, err
+	}
+	if !rebasedFound {
+		restored, restoreErr := registry.restorePreparedRebaseTarget(
+			ctx, request, targetRef, currentHead, headRef, attached,
+		)
+		if restoreErr != nil {
+			return application.IntegrationAdapterResult{}, true, restoreErr
+		}
+		if restored {
+			return application.IntegrationAdapterResult{}, false, nil
+		}
+	}
+	if currentHead == request.Target.ExpectedHead && attached && headRef == targetRef {
+		if rebasedFound {
+			return application.IntegrationAdapterResult{}, true, errors.New("apply integration candidate: rebased head receipt differs from target")
+		}
+		return application.IntegrationAdapterResult{}, false, nil
+	}
+	if rebasedFound && currentHead != rebasedHead {
+		return application.IntegrationAdapterResult{}, true, errors.New("apply integration candidate: rebased head receipt differs from worktree")
+	}
+	if proof, proofFound, proofErr := registry.serverRebaseProof(repository, request); proofErr != nil {
+		return application.IntegrationAdapterResult{}, true, proofErr
+	} else if proofFound && proof.resultingHead != "" && currentHead == proof.resultingHead &&
+		attached && (headRef == targetRef || headRef == integrationRebaseProofRef(request)) {
+		result, err := registry.finalizeRecoveredRebase(ctx, request, repository, targetRef, proof.resultingHead)
+		return result, true, err
+	}
+	if err := registry.validateRebaseOrigin(ctx, request); err != nil {
+		return application.IntegrationAdapterResult{}, true, err
+	}
+	proofRef := integrationRebaseProofRef(request)
+	resultingHead, err := registry.inspectRecoveredRebaseHead(ctx, request)
+	if err != nil {
+		return application.IntegrationAdapterResult{}, true, err
+	}
+	branchHead, err := registry.integrationBranchHead(ctx, request.Target.WorktreePath, targetRef)
+	if err != nil || (branchHead != request.Target.ExpectedHead && branchHead != resultingHead) ||
+		(attached && headRef != proofRef && (headRef != targetRef || branchHead != resultingHead)) {
+		return application.IntegrationAdapterResult{}, true, errors.New("apply integration candidate: interrupted rebase posture differs")
+	}
+	result, err := registry.finalizeRecoveredRebase(ctx, request, repository, targetRef, resultingHead)
+	return result, true, err
+}
+
+func (registry *Registry) completedRebaseContinuation(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+	targetRef string,
+) (string, error) {
+	if err := registry.validateRebaseOrigin(ctx, request); err != nil {
+		return "", err
+	}
+	headRef, attached, err := registry.integrationHeadRef(ctx, request.Target.WorktreePath)
+	if err != nil || (attached && headRef != integrationRebaseProofRef(request)) {
+		return "", errors.New("apply integration candidate: completed rebase continuation attachment differs")
+	}
+	branchHead, err := registry.integrationBranchHead(ctx, request.Target.WorktreePath, targetRef)
+	if err != nil || branchHead != request.Target.ExpectedHead {
+		return "", errors.New("apply integration candidate: completed rebase continuation changed the target branch")
+	}
+	return registry.inspectRecoveredRebaseHead(ctx, request)
+}
+
+func (registry *Registry) validateRebaseOrigin(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+) error {
+	originalHead, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"rev-parse", "--verify", "ORIG_HEAD^{commit}")
+	if err != nil || originalHead != request.Candidate.HeadRevision {
+		return errors.New("apply integration candidate: rebase recovery origin differs")
+	}
+	return nil
+}
+
+func (registry *Registry) integrationBranchHead(ctx context.Context, worktreePath, targetRef string) (string, error) {
+	return runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
+		"rev-parse", "--verify", targetRef+"^{commit}")
+}
+
+func (registry *Registry) integrationHeadRef(ctx context.Context, worktreePath string) (string, bool, error) {
+	attached, err := gitPredicate(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
+		"symbolic-ref", "--quiet", "HEAD")
+	if err != nil || !attached {
+		return "", false, err
+	}
+	headRef, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", worktreePath,
+		"symbolic-ref", "--quiet", "HEAD")
+	if err != nil || !strings.HasPrefix(headRef, "refs/heads/") || strings.ContainsAny(headRef, "\x00\r\n\t ") {
+		return "", false, errors.New("apply integration candidate: target attachment is invalid")
+	}
+	return headRef, true, nil
+}
+
+func (registry *Registry) validateRecoverableRebase(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+	targetRef string,
+) ([]string, error) {
+	branchHead, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"rev-parse", "--verify", targetRef+"^{commit}")
+	if err != nil || branchHead != request.Target.ExpectedHead {
+		return nil, errors.New("apply integration candidate: target branch changed before recovery")
+	}
+	if err := registry.validateRebaseOrigin(ctx, request); err != nil {
+		return nil, err
+	}
+	rebaseHead, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"rev-parse", "--verify", "REBASE_HEAD^{commit}")
+	if err != nil {
+		return nil, errors.New("apply integration candidate: rebase recovery state is unavailable")
+	}
+	baseContains, err := gitPredicate(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"merge-base", "--is-ancestor", request.Candidate.BaseRevision, rebaseHead)
+	if err != nil || !baseContains {
+		return nil, errors.New("apply integration candidate: recovery conflict is outside candidate range")
+	}
+	candidateContains, err := gitPredicate(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"merge-base", "--is-ancestor", rebaseHead, request.Candidate.HeadRevision)
+	if err != nil || !candidateContains {
+		return nil, errors.New("apply integration candidate: recovery conflict differs from candidate")
+	}
+	currentHead, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return nil, errors.New("apply integration candidate: recovery head is unavailable")
+	}
+	targetContains, err := gitPredicate(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"merge-base", "--is-ancestor", request.Target.ExpectedHead, currentHead)
+	if err != nil || !targetContains {
+		return nil, errors.New("apply integration candidate: recovery head differs from target")
+	}
+	return registry.integrationConflictPaths(ctx, request.Target.WorktreePath)
+}
+
+func (registry *Registry) inspectRecoveredRebaseHead(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+) (string, error) {
+	if err := registry.ensureRebaseSequencerAbsent(ctx, request.Target.WorktreePath); err != nil {
+		return "", err
+	}
+	resultingHead, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil || !gitRevisionPattern.MatchString(resultingHead) || resultingHead == request.Target.ExpectedHead {
+		return "", errors.New("apply integration candidate: recovered rebase head is invalid")
+	}
+	clean, err := registry.integrationWorktreeCleanAtCommit(ctx, request.Target.WorktreePath, resultingHead)
+	if err != nil || !clean {
+		return "", errors.New("apply integration candidate: recovered rebase is not clean")
+	}
+	targetContains, err := gitPredicate(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"merge-base", "--is-ancestor", request.Target.ExpectedHead, resultingHead)
+	if err != nil || !targetContains {
+		return "", errors.New("apply integration candidate: recovered rebase omits target history")
+	}
+	return resultingHead, nil
+}
+
+func (registry *Registry) promoteCompletedRebaseProof(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+	resultingHead string,
+) error {
+	rebasedRef := integrationReceiptRef("rebased", request)
+	rebasedHead, rebasedFound, err := registry.integrationReceiptHeadAtPath(
+		ctx, request.Target.WorktreePath, rebasedRef,
+	)
+	if err != nil {
+		return errors.New("apply integration candidate: rebased head receipt is unavailable")
+	}
+	proofRef := integrationRebaseProofRef(request)
+	proofHead, proofFound, err := registry.integrationReceiptHeadAtPath(
+		ctx, request.Target.WorktreePath, proofRef,
+	)
+	if err != nil {
+		return errors.New("apply integration candidate: rebase completion proof is unavailable")
+	}
+	if rebasedFound {
+		if rebasedHead != resultingHead || (proofFound && proofHead != resultingHead) {
+			return errors.New("apply integration candidate: rebase completion proof differs")
+		}
+	} else {
+		if !proofFound || proofHead != resultingHead {
+			return errors.New("apply integration candidate: rebase completion proof is unavailable")
+		}
+		if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+			"update-ref", rebasedRef, resultingHead, integrationZeroRevision); err != nil {
+			return errors.New("apply integration candidate: rebased head receipt could not be recorded")
+		}
+	}
+	return nil
+}
+
+func (registry *Registry) retireIntegrationRebaseProof(
+	ctx context.Context,
+	request application.IntegrationAdapterRequest,
+	resultingHead string,
+) error {
+	proofRef := integrationRebaseProofRef(request)
+	proofHead, found, err := registry.integrationReceiptHeadAtPath(ctx, request.Target.WorktreePath, proofRef)
+	if err != nil || (found && proofHead != resultingHead) {
+		return errors.New("apply integration candidate: rebase completion proof differs")
+	}
+	if !found {
+		return nil
+	}
+	if _, err := runGitBytes(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
+		"update-ref", "-d", proofRef, resultingHead); err != nil {
+		return errors.New("apply integration candidate: rebase completion proof could not be retired")
+	}
+	return nil
+}

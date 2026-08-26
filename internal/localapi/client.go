@@ -95,6 +95,17 @@ func (client *Client) ReadEvents(
 	return result, err
 }
 
+// ReadAudit follows the durable operator-only audit trail from a cursor.
+func (client *Client) ReadAudit(
+	ctx context.Context,
+	operationID string,
+	input ReadAuditInput,
+) (application.AuditPage, error) {
+	var result application.AuditPage
+	err := client.call(ctx, operationID, MethodReadAudit, input, &result)
+	return result, err
+}
+
 // SurveyRepairs reads which unknown tasks can be reconciled and why the rest
 // cannot.
 func (client *Client) SurveyRepairs(
@@ -224,6 +235,18 @@ func (client *Client) CleanupTask(ctx context.Context, operationID string, input
 	return result, err
 }
 
+// MergeTask reserves current accepted evidence from the operator socket or
+// consumes exact private approval metadata from the MCP socket.
+func (client *Client) MergeTask(
+	ctx context.Context,
+	operationID string,
+	input MergeTaskInput,
+) (application.MergeTaskResult, error) {
+	var result application.MergeTaskResult
+	err := client.call(ctx, operationID, MethodMergeTask, input, &result)
+	return result, err
+}
+
 // PauseTask asks one task's worker to reach a safe boundary.
 func (client *Client) PauseTask(ctx context.Context, operationID string, input PauseTaskInput) (TaskMutationResult, error) {
 	var result TaskMutationResult
@@ -238,7 +261,8 @@ func (client *Client) CancelTask(ctx context.Context, operationID string, input 
 	return result, err
 }
 
-// ResumeTask returns one paused task to its existing worker.
+// ResumeTask requests another authenticated generation of the paused task's
+// existing worker profile.
 func (client *Client) ResumeTask(ctx context.Context, operationID string, input ResumeTaskInput) (TaskMutationResult, error) {
 	var result TaskMutationResult
 	err := client.call(ctx, operationID, MethodResumeTask, input, &result)
@@ -348,49 +372,6 @@ func (client *Client) call(ctx context.Context, operationID string, method Metho
 		return failure
 	default:
 		return errors.New("local API response has unknown status")
-	}
-}
-
-func projectedStateVersion(result any) (int64, bool) {
-	switch projection := result.(type) {
-	case *application.DiagnosticReport:
-		return projection.StateVersion, true
-	case *application.FleetSnapshot:
-		return projection.StateVersion, true
-	case *application.TaskList:
-		return projection.StateVersion, true
-	case *application.WorkerProfileList:
-		return projection.StateVersion, true
-	case *application.TaskDetail:
-		return projection.StateVersion, true
-	case *application.TaskDiffView:
-		return projection.StateVersion, true
-	case *application.RepairSurvey:
-		return projection.StateVersion, true
-	case *application.TaskLogPage:
-		return projection.NextCursor, true
-	case *application.EventPage:
-		// The stream's read-after-write marker is its cursor: the log is
-		// append-only and advances independently of task state versions.
-		return projection.NextCursor, true
-	case *application.DecisionList:
-		return projection.StateVersion, true
-	case *application.TaskDecision:
-		return projection.StateVersion, true
-	case *application.TaskExplanation:
-		return projection.Summary.StateVersion, true
-	case *application.LaunchPlan:
-		return projection.StateVersion, true
-	case *application.OperationView:
-		return projection.StateVersion, true
-	case *application.PrimarySyncReport:
-		return projection.StateVersion, true
-	case *PrepareTaskResult:
-		return projection.StateVersion, true
-	case *TaskMutationResult:
-		return projection.StateVersion, true
-	default:
-		return 0, false
 	}
 }
 

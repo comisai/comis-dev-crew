@@ -15,11 +15,15 @@ func (boundaryReportSink) AcceptReport(context.Context, domain.AuthenticatedRepo
 	return domain.ReportReceipt{}, nil
 }
 
+type boundaryAuditor struct{}
+
+func (boundaryAuditor) RecordReportAuthenticationFailure(context.Context, string) error { return nil }
+
 func TestEndpointSubmitRejectsUnusableContextAndReport(t *testing.T) {
 	const credential = "cred-0123456789abcdef0123456789abcdef"
 	endpoint, err := NewEndpoint(EndpointConfig{
 		TaskHandle: "task-0001", BriefRevision: 3, BriefRevisionHash: strings.Repeat("a", 64),
-		Credential: credential, Sink: boundaryReportSink{},
+		Credential: credential, Sink: boundaryReportSink{}, Auditor: boundaryAuditor{},
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -341,7 +341,7 @@ func reportClient(t *testing.T, store *Store, task domain.Task, acceptedAt time.
 	const credential = "fixture-credential-0000000000000001"
 	endpoint, err := reporter.NewEndpoint(reporter.EndpointConfig{
 		TaskHandle: task.Handle, BriefRevision: task.BriefRevision, BriefRevisionHash: task.BriefRevisionHash,
-		Credential: credential, Sink: sink,
+		Credential: credential, Sink: sink, Auditor: reportAuditor{},
 	})
 	if err != nil {
 		t.Fatalf("NewEndpoint() error = %v", err)
@@ -368,3 +368,7 @@ func directReportMutation(task domain.Task, report domain.WorkerReport, accepted
 		SubjectDigest: strings.Repeat("a", 64), AcceptedAt: acceptedAt,
 	}
 }
+
+type reportAuditor struct{}
+
+func (reportAuditor) RecordReportAuthenticationFailure(context.Context, string) error { return nil }

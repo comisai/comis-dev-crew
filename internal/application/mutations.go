@@ -24,6 +24,7 @@ type Mutations struct {
 	taskIDs            TaskIDSource
 	nonces             RegistrationNonceSource
 	preparationTTL     time.Duration
+	schedulingLimits   *InitiativeSchedulingLimits
 	promotions         ScoutPromotionStore
 	clock              Clock
 }
@@ -41,13 +42,21 @@ func NewMutations(config MutationConfig) (*Mutations, error) {
 	if config.PreparationTTL <= 0 || config.PreparationTTL > 24*time.Hour {
 		return nil, errors.New("create mutations: preparation TTL must be within 24 hours")
 	}
+	var schedulingLimits *InitiativeSchedulingLimits
+	if config.SchedulingLimits != nil {
+		cloned := cloneInitiativeSchedulingLimits(*config.SchedulingLimits)
+		if err := validateSchedulingLimits(cloned); err != nil {
+			return nil, fmt.Errorf("create mutations: %w", err)
+		}
+		schedulingLimits = &cloned
+	}
 	return &Mutations{
 		store: config.Store, repositories: config.Repositories,
 		workerProfiles: config.WorkerProfiles, validationProfiles: config.ValidationProfiles,
 		workspaces: config.Workspaces, attachments: config.RuntimeAttachments,
 		taskIDs: config.TaskIDs, nonces: config.RegistrationNonces,
 		preparationTTL: config.PreparationTTL, promotions: config.Promotions,
-		clock: config.Clock,
+		schedulingLimits: schedulingLimits, clock: config.Clock,
 	}, nil
 }
 
@@ -291,6 +300,19 @@ func RuntimeLaunchAcknowledgementOperationID(taskHandle string) (string, error) 
 	return "launch-ack-" + operationDigest[:32], nil
 }
 
+// RuntimeRelaunchAcknowledgementOperationID derives one acknowledgement
+// operation for an exact ready generation. Reusing the task's initial operation
+// would replay old evidence while the new terminal was still launching.
+func RuntimeRelaunchAcknowledgementOperationID(taskHandle string, readyStateVersion int64) (string, error) {
+	if err := domain.ValidateTaskHandle(taskHandle); err != nil || readyStateVersion < 1 {
+		return "", errors.New("runtime resume launch identity is invalid")
+	}
+	operationDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf(
+		"runtime-relaunch-ack\x00%s\x00%d", taskHandle, readyStateVersion,
+	))))
+	return "launch-ack-" + operationDigest[:32], nil
+}
+
 // AbandonManagedRun durably closes one exact unbound preparation. Preserve
 // retains prepared task state; reap-safe enters the reversible cleanup path.
 func (mutations *Mutations) AbandonManagedRun(ctx context.Context, command AbandonManagedRunCommand) (MutationResult, error) {
@@ -325,33 +347,6 @@ func (mutations *Mutations) AbandonManagedRun(ctx context.Context, command Aband
 		SubjectDigest: subjectDigest, At: mutations.clock(),
 	})
 	return result, mutationCommitFailure(err)
-}
-
-// StartTask durably records launch intent before any worker can acknowledge
-// its wrapper or begin work.
-func (mutations *Mutations) StartTask(ctx context.Context, command StartTaskCommand) (MutationResult, error) {
-	if err := validMutationContext(ctx); err != nil {
-		return MutationResult{}, err
-	}
-	if err := domain.ValidateOperationID(command.OperationID); err != nil {
-		return MutationResult{}, mutationValidationFailure("operation ID is invalid")
-	}
-	if err := domain.ValidateTaskHandle(command.TaskHandle); err != nil {
-		return MutationResult{}, mutationValidationFailure("task handle is invalid")
-	}
-	subjectDigest, err := digestMutationSubject(command)
-	if err != nil {
-		return MutationResult{}, mutationValidationFailure("start subject cannot be encoded")
-	}
-	if replay, found, err := mutations.store.ReplayMutation(ctx, command.OperationID, commandStartTask, subjectDigest); err != nil {
-		return MutationResult{}, mutationReplayFailure(err)
-	} else if found {
-		return replay, nil
-	}
-	return mutations.store.CommitTaskStart(ctx, TaskStartMutation{
-		TaskHandle: command.TaskHandle, OperationID: command.OperationID,
-		SubjectDigest: subjectDigest, At: mutations.clock(),
-	})
 }
 
 // RecordTerminalEvent validates and durably cross-binds one content-free Comis

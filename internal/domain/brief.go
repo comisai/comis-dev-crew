@@ -3,6 +3,7 @@ package domain
 import (
 	"crypto/sha256"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -51,6 +52,7 @@ func (task Task) PinBriefRevision() (Task, error) {
 	pinned := task
 	pinned.AcceptanceCriteria = append([]string(nil), task.AcceptanceCriteria...)
 	pinned.Constraints = append([]string(nil), task.Constraints...)
+	pinned.ConsumedContracts = append([]PinnedContract(nil), task.ConsumedContracts...)
 	pinned.BriefRevisionHash = ""
 	if err := pinned.validateBriefInputs(); err != nil {
 		return task, err
@@ -86,7 +88,29 @@ func (task Task) validateBriefInputs() error {
 	if err := validateContractTextList("acceptanceCriteria", task.AcceptanceCriteria, true); err != nil {
 		return err
 	}
-	return validateContractTextList("constraints", task.Constraints, false)
+	if err := validateContractTextList("constraints", task.Constraints, false); err != nil {
+		return err
+	}
+	return task.validateConsumedContracts()
+}
+
+func (task Task) validateConsumedContracts() error {
+	if len(task.ConsumedContracts) > maximumContractEntries {
+		return &ValidationError{Field: "consumedContracts", Reason: "must hold a bounded number of pins"}
+	}
+	seen := make(map[string]struct{}, len(task.ConsumedContracts))
+	for _, pin := range task.ConsumedContracts {
+		if err := pin.Validate(); err != nil {
+			return err
+		}
+		if _, exists := seen[pin.ArtifactHandle]; exists {
+			// Two pins of one artifact could name two different digests, and
+			// there would be no answer to which one the worker was told.
+			return &ValidationError{Field: "consumedContracts", Reason: "an artifact may be pinned once"}
+		}
+		seen[pin.ArtifactHandle] = struct{}{}
+	}
+	return nil
 }
 
 func (task Task) briefRevisionDigest() (string, error) {
@@ -112,6 +136,7 @@ func (task Task) renderBriefContent() (string, error) {
 	writeBriefField(&content, "workerProfileId", task.WorkerProfileID)
 	writeBriefList(&content, "acceptanceCriteria", task.AcceptanceCriteria)
 	writeBriefList(&content, "constraints", task.Constraints)
+	writeBriefContracts(&content, task.ConsumedContracts)
 	writeBriefField(&content, "workspaceSelfCheck", "verify the canonical working directory and task handle before mutation")
 	writeBriefField(&content, "reportCommand", "devcrew-report through the protected task reporter")
 	writeBriefField(&content, "reportKinds", "progress, attention, blocked, paused, candidate_complete, failed, resolution")
@@ -119,6 +144,29 @@ func (task Task) renderBriefContent() (string, error) {
 	writeBriefField(&content, "completionMeaning", "candidate_complete requires service validation and evidence")
 	writeBriefField(&content, "prohibitedActions", "merge, mutate the primary checkout, change task shape, or bypass the reporter")
 	return content.String(), nil
+}
+
+// writeBriefContracts renders the pins in sorted order, so the same set listed
+// differently yields the same brief. Ordering is not part of the contract, and a
+// revision hash that churned on it would signal a change that never happened.
+func writeBriefContracts(destination *strings.Builder, pins []PinnedContract) {
+	if len(pins) == 0 {
+		return
+	}
+	sorted := append([]PinnedContract(nil), pins...)
+	sort.Slice(sorted, func(left, right int) bool {
+		return sorted[left].ArtifactHandle < sorted[right].ArtifactHandle
+	})
+	destination.WriteString("consumedContracts:\n")
+	for _, pin := range sorted {
+		destination.WriteString("  - ")
+		destination.WriteString(pin.ArtifactHandle)
+		destination.WriteString(" ")
+		destination.WriteString(string(pin.Kind))
+		destination.WriteString(" ")
+		destination.WriteString(pin.ContentHash)
+		destination.WriteByte('\n')
+	}
 }
 
 func writeBriefField(destination *strings.Builder, name, value string) {

@@ -13,7 +13,7 @@ policy, capabilities, approvals, and terminal confinement. This project owns
 development tasks, worktrees, worker adapters, evidence, validation, delivery
 safety, and cleanup.
 
-> **Pre-release:** the project is under active E0 development. There is no
+> **Pre-release:** the project is under active staged development. There is no
 > supported production deployment or stability guarantee. Review the
 > [implementation status](docs/implementation-status.md) before using it with
 > important repositories, hosts, or credentials.

@@ -252,6 +252,9 @@ func (store *Store) CommitTaskStart(ctx context.Context, mutation application.Ta
 	if err != nil {
 		return application.MutationResult{}, err
 	}
+	if err := authorizeInitiativeTaskStart(ctx, transaction, task, mutation.SchedulingLimits); err != nil {
+		return application.MutationResult{}, err
+	}
 	started, err := task.ApplyTransition(domain.TransitionLaunchRequested, mutation.At)
 	if err != nil {
 		return application.MutationResult{}, fmt.Errorf("apply task start: %w", err)
@@ -295,6 +298,15 @@ const (
 )
 
 func updateTaskState(ctx context.Context, transaction *sql.Tx, task domain.Task) error {
+	return updateTaskStateWithReservationGuard(ctx, transaction, task, true)
+}
+
+func updateTaskStateWithReservationGuard(
+	ctx context.Context,
+	transaction *sql.Tx,
+	task domain.Task,
+	guardReservation bool,
+) error {
 	if err := task.Validate(); err != nil {
 		return fmt.Errorf("validate task state update: %w", err)
 	}
@@ -306,6 +318,11 @@ func updateTaskState(ctx context.Context, transaction *sql.Tx, task domain.Task)
 		`SELECT state FROM tasks WHERE handle = ?`, task.Handle,
 	).Scan(&previous); err != nil {
 		return fmt.Errorf("read task state before update: %w", err)
+	}
+	if guardReservation {
+		if err := refuseReservedIntegrationTaskTransition(ctx, transaction, task.Handle, previous, task.State); err != nil {
+			return err
+		}
 	}
 	const update = `UPDATE tasks SET state = ?, state_version = ?, updated_at = ? WHERE handle = ?`
 	result, err := transaction.ExecContext(ctx, update, task.State, task.StateVersion, formatTime(task.UpdatedAt), task.Handle)
@@ -325,7 +342,10 @@ func updateTaskState(ctx context.Context, transaction *sql.Tx, task domain.Task)
 	// Recorded here, inside the caller's transaction, because this is the sole
 	// writer of task state: an event appended anywhere else could describe a
 	// transition that rolled back, or be lost by a crash that kept the state.
-	return appendTaskStateEvent(ctx, transaction, task)
+	if err := appendTaskStateEvent(ctx, transaction, task); err != nil {
+		return err
+	}
+	return refreshInitiativeAggregate(ctx, transaction, task.Handle, task.StateVersion, task.UpdatedAt)
 }
 
 func mutationReplay(

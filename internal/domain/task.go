@@ -14,17 +14,39 @@ func (shape TaskShape) valid() bool {
 	return shape == ShapeShip || shape == ShapeScout
 }
 
-// DeliveryMode is the closed E0 delivery set. Local branch and merge modes are
-// intentionally absent until E1.
+// DeliveryMode is the closed delivery set.
 type DeliveryMode string
 
 const (
-	DeliveryPullRequest DeliveryMode = "pull_request"
-	DeliveryReport      DeliveryMode = "report"
+	DeliveryPullRequest        DeliveryMode = "pull_request"
+	DeliveryLocalBranch        DeliveryMode = "local_branch"
+	DeliveryReport             DeliveryMode = "report"
+	DeliveryMergeAfterApproval DeliveryMode = "merge_after_approval"
 )
 
 func (mode DeliveryMode) valid() bool {
-	return mode == DeliveryPullRequest || mode == DeliveryReport
+	switch mode {
+	case DeliveryPullRequest, DeliveryReport:
+		return true
+	}
+	return false
+}
+
+// ValidForShape reports whether one shape may deliver through this mode.
+func (mode DeliveryMode) ValidForShape(shape TaskShape) bool {
+	if !mode.valid() || !shape.valid() {
+		return false
+	}
+	if shape == ShapeScout {
+		return mode == DeliveryReport
+	}
+	return mode == DeliveryPullRequest
+}
+
+// RequiresMergeAuthority reports whether an accepted delivery mode needs the
+// separate merge credential. No E0 delivery mode does.
+func (mode DeliveryMode) RequiresMergeAuthority() bool {
+	return false
 }
 
 // TaskState is the closed E0 lifecycle. Unknown is a durable state, not a
@@ -63,6 +85,18 @@ func (state TaskState) valid() bool {
 	}
 }
 
+// SatisfiesInitiativeDependency reports whether a task has accepted candidate
+// evidence or a later delivery posture. Initiative integration consumes the
+// accepted head; host acknowledgement may settle independently afterward.
+func (state TaskState) SatisfiesInitiativeDependency() bool {
+	switch state {
+	case TaskCandidateComplete, TaskDelivering, TaskDelivered, TaskCleanupHeld, TaskCleaned:
+		return true
+	default:
+		return false
+	}
+}
+
 // Task is the pure E0 durable domain record. Comis protocol DTOs do not appear
 // here; only exact opaque host-authority references cross the adapter boundary.
 type Task struct {
@@ -81,6 +115,7 @@ type Task struct {
 	BriefRevisionHash     string
 	AcceptanceCriteria    []string
 	Constraints           []string
+	ConsumedContracts     []PinnedContract
 	ValidationProfile     string
 	DeliveryMode          DeliveryMode
 	WorkerProfileID       string
@@ -172,11 +207,11 @@ func (task Task) Validate() error {
 	if !task.DeliveryMode.valid() {
 		return &ValidationError{Field: "deliveryMode", Reason: "must be an E0 delivery mode"}
 	}
-	if task.Shape == ShapeShip && task.DeliveryMode != DeliveryPullRequest {
-		return &ValidationError{Field: "deliveryMode", Reason: "ship tasks require pull_request in E0"}
-	}
-	if task.Shape == ShapeScout && task.DeliveryMode != DeliveryReport {
-		return &ValidationError{Field: "deliveryMode", Reason: "scout tasks require report in E0"}
+	if !task.DeliveryMode.ValidForShape(task.Shape) {
+		return &ValidationError{
+			Field:  "deliveryMode",
+			Reason: "ship tasks deliver changes; scout tasks deliver a report",
+		}
 	}
 	if task.ReportCursor < 0 {
 		return &ValidationError{Field: "reportCursor", Reason: "must not be negative"}

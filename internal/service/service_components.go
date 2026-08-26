@@ -3,9 +3,39 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/localapi"
 )
+
+func runReadinessSteps(steps ...func(context.Context) error) func(context.Context) error {
+	if len(steps) == 0 {
+		return nil
+	}
+	return func(ctx context.Context) error {
+		for _, step := range steps {
+			if err := step(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
+// runAfterRuntimeAttachmentRecovery prevents a dependent boundary from
+// observing socket identities that the recovery pass is about to replace.
+func runAfterRuntimeAttachmentRecovery(
+	coordinator *runtimeAttachmentCoordinator,
+	component func(context.Context) error,
+) func(context.Context) error {
+	return func(ctx context.Context) error {
+		if err := coordinator.waitForRecovery(ctx); err != nil {
+			return err
+		}
+		return component(ctx)
+	}
+}
 
 func serveServiceComponents(
 	ctx context.Context,
@@ -76,4 +106,36 @@ func serveServiceComponents(
 		}
 	}
 	return resultErr
+}
+
+// composeRuntimeAttachments installs the service-owned attachment coordinator
+// and recovers relay identities it already owns. An injected coordinator keeps
+// its own authority, so a durable upgrade recorded against a coordinator this
+// process does not own is refused rather than silently skipped.
+func composeRuntimeAttachments(
+	ctx context.Context,
+	config *Config,
+	store runtimeAttachmentStore,
+	clock application.Clock,
+) (*runtimeAttachmentCoordinator, error) {
+	if config.RuntimeAttachments != nil || config.RuntimeRoot == "" {
+		upgrades, err := store.ListRuntimeRelayIdentityUpgrades(ctx)
+		if err != nil || len(upgrades) != 0 {
+			return nil, errors.New("run service runtime relay identity upgrade requires service-owned attachments")
+		}
+		return nil, nil
+	}
+	supervisor, err := newRuntimeAttachmentCoordinator(runtimeAttachmentCoordinatorConfig{
+		RuntimeRoot: config.RuntimeRoot, Store: store, Clock: clock, Logger: config.Logger,
+		NewCredential:           func() (string, error) { return randomIdentity("runtime-credential", 16) },
+		NewAttentionOperationID: func() (string, error) { return randomIdentity("attention-response", 16) },
+	})
+	if err != nil {
+		return nil, fmt.Errorf("run service runtime attachments: %w", err)
+	}
+	config.RuntimeAttachments = supervisor
+	if err := supervisor.recoverRuntimeRelayIdentityUpgrades(ctx); err != nil {
+		return nil, fmt.Errorf("run service runtime relay identity upgrade: %w", err)
+	}
+	return supervisor, nil
 }

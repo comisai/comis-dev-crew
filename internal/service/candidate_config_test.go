@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/forge"
 	"github.com/comisai/comis-dev-crew/internal/validation"
 )
@@ -22,9 +23,11 @@ func TestReadCandidateComposition_ParsesStrictReviewedPolicyAndForgeRoute(t *tes
     "id":"required",
     "localChecks":[{"id":"unit","programId":"repo-check","arguments":[{"kind":"literal","value":"--version"}],"timeout":"2m","required":true}],
     "forgeChecks":[{"name":"ci/unit","required":true}],
+	"pathRules":[{"kind":"exact","path":"report.md"}],
     "artifactRules":[{"kind":"regular_file","relativePath":"report.md","mediaType":"text/markdown","maxBytes":16384}],
     "evidenceTtl":"24h"
   }],
+  "integrationPolicies":[{"id":"integration-default","strategy":"merge"}],
   "maxOutputBytes":65536,
   "pollInterval":"250ms",
   "forge":{
@@ -43,17 +46,40 @@ func TestReadCandidateComposition_ParsesStrictReviewedPolicyAndForgeRoute(t *tes
 		t.Fatalf("readCandidateComposition() error = %v", err)
 	}
 	if validationConfig.MaxOutputBytes != 64<<10 || validationConfig.PollInterval != 250*time.Millisecond ||
-		len(validationConfig.Programs) != 1 || len(validationConfig.Profiles) != 1 {
+		len(validationConfig.Programs) != 1 || len(validationConfig.Profiles) != 1 ||
+		validationConfig.IntegrationPolicies["integration-default"] != application.IntegrationMerge {
 		t.Fatalf("validation configuration = %#v", validationConfig)
 	}
 	profile := validationConfig.Profiles[0]
 	if profile.EvidenceTTL != 24*time.Hour || profile.LocalChecks[0].Timeout != 2*time.Minute ||
+		len(profile.PathRules) != 1 || !profile.AllowsPath("report.md") ||
 		profile.ArtifactRules[0].Kind != validation.ArtifactRegularFile {
 		t.Fatalf("reviewed profile = %#v", profile)
 	}
 	if forgeConfig.APIBaseURL != "https://api.github.com" || forgeConfig.Owner != "comisai" ||
 		forgeConfig.LocalFixtureRemoteRoot != "" {
 		t.Fatalf("forge configuration = %#v", forgeConfig)
+	}
+}
+
+func TestReadCandidateComposition_AcceptsSeparateMergeAuthorityAndMethod(t *testing.T) {
+	path := filepath.Join(shortTempDir(t), "candidate.json")
+	writeCandidateConfig(t, path, `{
+  "programs":[],"profiles":[],"integrationPolicies":[{"id":"integration-default","strategy":"merge"}],
+  "maxOutputBytes":1,"pollInterval":"1ms",
+  "forge":{
+    "apiBaseUrl":"https://api.github.com","owner":"owner","repository":"repository",
+    "remoteUrl":"https://example.com/repository.git","readCredentialFile":"/private/read",
+    "pushCredentialFile":"/private/push","mergeCredentialFile":"/private/merge",
+    "mergeMethod":"squash","credentialDirectory":"/private/credentials"
+  }
+}`, 0o600)
+	_, forgeConfig, err := readCandidateComposition(path)
+	if err != nil {
+		t.Fatalf("readCandidateComposition(merge authority) error = %v", err)
+	}
+	if forgeConfig.MergeCredentialFile != "/private/merge" || forgeConfig.MergeMethod != forge.MergeSquash {
+		t.Fatalf("merge configuration = %#v", forgeConfig)
 	}
 }
 
@@ -92,6 +118,12 @@ func TestReadCandidateComposition_RejectsUntrustedFileAndUnknownPolicy(t *testin
 		{name: "trailing document", path: filepath.Join(root, "trailing.json"), contents: valid + `{}`},
 		{name: "invalid evidence lifetime", path: filepath.Join(root, "lifetime.json"), contents: `{"pollInterval":"1ms","profiles":[{"evidenceTtl":"later"}]}`},
 		{name: "invalid check timeout", path: filepath.Join(root, "timeout.json"), contents: `{"pollInterval":"1ms","profiles":[{"evidenceTtl":"1h","localChecks":[{"timeout":"later"}]}]}`},
+		{name: "missing integration policy", path: filepath.Join(root, "missing-integration-policy.json"), contents: `{"pollInterval":"1ms"}`},
+		{name: "unknown integration strategy", path: filepath.Join(root, "integration-strategy.json"), contents: `{"pollInterval":"1ms","integrationPolicies":[{"id":"integration-default","strategy":"reset"}]}`},
+		{name: "invalid integration policy identity", path: filepath.Join(root, "integration-identity.json"), contents: `{"pollInterval":"1ms","integrationPolicies":[{"id":"bad policy","strategy":"merge"}]}`},
+		{name: "duplicate integration policy", path: filepath.Join(root, "integration-duplicate.json"), contents: `{"pollInterval":"1ms","integrationPolicies":[{"id":"integration-default","strategy":"merge"},{"id":"integration-default","strategy":"rebase"}]}`},
+		{name: "merge credential without method", path: filepath.Join(root, "merge-method-missing.json"), contents: `{"pollInterval":"1ms","integrationPolicies":[{"id":"integration-default","strategy":"merge"}],"forge":{"mergeCredentialFile":"/private/merge"}}`},
+		{name: "unknown merge method", path: filepath.Join(root, "merge-method-unknown.json"), contents: `{"pollInterval":"1ms","integrationPolicies":[{"id":"integration-default","strategy":"merge"}],"forge":{"mergeCredentialFile":"/private/merge","mergeMethod":"fast-forward"}}`},
 		{name: "oversized file", path: filepath.Join(root, "oversized.json"), contents: strings.Repeat("x", maximumCandidateConfigurationBytes+1)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -108,7 +140,7 @@ func TestReadCandidateComposition_RejectsUntrustedFileAndUnknownPolicy(t *testin
 func TestReadCandidateCompositionPreservesPinnedSSHTransport(t *testing.T) {
 	path := filepath.Join(shortTempDir(t), "candidate.json")
 	writeCandidateConfig(t, path, `{
-  "programs":[],"profiles":[],"maxOutputBytes":1,"pollInterval":"1ms",
+  "programs":[],"profiles":[],"integrationPolicies":[{"id":"integration-default","strategy":"merge"}],"maxOutputBytes":1,"pollInterval":"1ms",
   "forge":{
     "apiBaseUrl":"https://api.github.com","owner":"fixture-owner","repository":"fixture-repository",
     "remoteUrl":"ssh://git@github.com/fixture-owner/fixture-repository.git",

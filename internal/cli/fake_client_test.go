@@ -14,25 +14,110 @@ import (
 // records every call so a test can prove what reached the service, and what
 // never did.
 type fakeClient struct {
-	diagnostic   application.DiagnosticReport
-	fleet        application.FleetSnapshot
-	list         application.TaskList
-	profiles     application.WorkerProfileList
-	detail       application.TaskDetail
-	explanation  application.TaskExplanation
-	operation    application.OperationView
-	launchPlan   application.LaunchPlan
-	decisions    application.DecisionList
-	decision     application.TaskDecision
-	diff         application.TaskDiffView
-	repairs      application.RepairSurvey
-	events       application.EventPage
-	logs         application.TaskLogPage
-	prepared     localapi.PrepareTaskResult
-	taskMutation localapi.TaskMutationResult
-	err          error
-	calls        []string
-	operationID  string
+	diagnostic          application.DiagnosticReport
+	fleet               application.FleetSnapshot
+	list                application.TaskList
+	profiles            application.WorkerProfileList
+	detail              application.TaskDetail
+	explanation         application.TaskExplanation
+	operation           application.OperationView
+	launchPlan          application.LaunchPlan
+	initiativeList      application.InitiativeList
+	initiativeDetail    application.InitiativeDetail
+	initiativeControl   localapi.InitiativeControlResult
+	integrationResult   localapi.ApplyIntegrationCandidateResult
+	integrationInput    localapi.ApplyIntegrationCandidateInput
+	backlogAdded        localapi.AddBacklogResult
+	backlogPromoted     localapi.PromoteBacklogResult
+	backlogAddInput     localapi.AddBacklogInput
+	backlogPromoteInput localapi.PromoteBacklogInput
+	decisions           application.DecisionList
+	decision            application.TaskDecision
+	diff                application.TaskDiffView
+	repairs             application.RepairSurvey
+	events              application.EventPage
+	audit               application.AuditPage
+	logs                application.TaskLogPage
+	prepared            localapi.PrepareTaskResult
+	taskMutation        localapi.TaskMutationResult
+	mergeResult         application.MergeTaskResult
+	err                 error
+	calls               []string
+	operationID         string
+}
+
+func (client *fakeClient) ApplyIntegrationCandidate(
+	_ context.Context,
+	operationID string,
+	input localapi.ApplyIntegrationCandidateInput,
+) (localapi.ApplyIntegrationCandidateResult, error) {
+	client.record(operationID, "apply-integration:"+input.InitiativeHandle+":"+input.CandidateTaskHandle)
+	client.integrationInput = input
+	return client.integrationResult, client.err
+}
+
+func (client *fakeClient) AddBacklog(
+	_ context.Context,
+	operationID string,
+	input localapi.AddBacklogInput,
+) (localapi.AddBacklogResult, error) {
+	client.record(operationID, "add-backlog:"+input.RepositoryID)
+	client.backlogAddInput = input
+	return client.backlogAdded, client.err
+}
+
+func (client *fakeClient) PromoteBacklog(
+	_ context.Context,
+	operationID string,
+	input localapi.PromoteBacklogInput,
+) (localapi.PromoteBacklogResult, error) {
+	client.record(operationID, "promote-backlog:"+input.BacklogHandle)
+	client.backlogPromoteInput = input
+	return client.backlogPromoted, client.err
+}
+
+func (client *fakeClient) PauseInitiative(
+	_ context.Context,
+	operationID string,
+	input localapi.InitiativeControlInput,
+) (localapi.InitiativeControlResult, error) {
+	client.record(operationID, "pause-initiative:"+input.InitiativeHandle)
+	return client.initiativeControl, client.err
+}
+
+func (client *fakeClient) ResumeInitiative(
+	_ context.Context,
+	operationID string,
+	input localapi.InitiativeControlInput,
+) (localapi.InitiativeControlResult, error) {
+	client.record(operationID, "resume-initiative:"+input.InitiativeHandle)
+	return client.initiativeControl, client.err
+}
+
+func (client *fakeClient) CancelInitiative(
+	_ context.Context,
+	operationID string,
+	input localapi.InitiativeControlInput,
+) (localapi.InitiativeControlResult, error) {
+	client.record(operationID, "cancel-initiative:"+input.InitiativeHandle)
+	return client.initiativeControl, client.err
+}
+
+func (client *fakeClient) ListInitiatives(
+	_ context.Context,
+	operationID string,
+	input localapi.ListInitiativesInput,
+) (application.InitiativeList, error) {
+	client.record(operationID, "list-initiatives:"+string(input.State)+":"+input.AfterHandle+":"+strconv.Itoa(input.Limit))
+	return client.initiativeList, client.err
+}
+
+func (client *fakeClient) GetInitiative(
+	_ context.Context,
+	operationID, initiativeHandle string,
+) (application.InitiativeDetail, error) {
+	client.record(operationID, "get-initiative:"+initiativeHandle)
+	return client.initiativeDetail, client.err
 }
 
 func (client *fakeClient) RespondDecision(
@@ -61,6 +146,15 @@ func (client *fakeClient) ReadTaskLogs(
 ) (application.TaskLogPage, error) {
 	client.record(operationID, "logs:"+input.TaskHandle+":"+string(input.Source)+":"+strconv.FormatInt(input.AfterSequence, 10))
 	return client.logs, client.err
+}
+
+func (client *fakeClient) ReadAudit(
+	_ context.Context,
+	operationID string,
+	input localapi.ReadAuditInput,
+) (application.AuditPage, error) {
+	client.record(operationID, "audit:"+strconv.FormatInt(input.AfterSequence, 10))
+	return client.audit, client.err
 }
 
 func (client *fakeClient) ReadEvents(
@@ -198,6 +292,19 @@ func (client *fakeClient) CleanupTask(
 	return client.taskMutation, client.err
 }
 
+func (client *fakeClient) MergeTask(
+	_ context.Context,
+	operationID string,
+	input localapi.MergeTaskInput,
+) (application.MergeTaskResult, error) {
+	call := "merge:" + input.TaskHandle
+	if input.ApprovalRequestID != "" || input.MCPOperationID != "" {
+		call += ":unexpected-authority"
+	}
+	client.record(operationID, call)
+	return client.mergeResult, client.err
+}
+
 func (client *fakeClient) HandbackTask(
 	_ context.Context,
 	operationID string,
@@ -282,6 +389,22 @@ func fixtureClient() *fakeClient {
 		LastActivityAtMs: 1234,
 		NextSafeActions:  []application.NextAction{application.ActionInspectTask},
 	}
+	initiative := domain.DevelopmentInitiative{
+		SchemaVersion: 1, Handle: "initiative-alpha", ManagedRunGroupID: "managed-run-group-alpha",
+		TitleRef: "title-alpha", State: domain.InitiativeActive, StateVersion: 7,
+		Components: []domain.InitiativeComponent{{
+			ComponentHandle: "component-api", RepositoryID: "product-api", TaskHandles: []string{"task-0001"},
+		}},
+	}
+	graph := application.InitiativeGraphView{
+		InitiativeHandle: "initiative-alpha", ManagedRunGroupID: "managed-run-group-alpha",
+		State: domain.InitiativeActive, StateVersion: 7,
+		Nodes: []application.InitiativeGraphNode{{
+			TaskHandle: "task-0001", ComponentHandle: "component-api", RepositoryID: "product-api",
+			State: domain.TaskBlocked, DependencyReady: true, IntegrationOwner: true,
+		}},
+		Edges: []application.InitiativeGraphEdge{},
+	}
 	return &fakeClient{
 		diagnostic: application.DiagnosticReport{
 			SchemaVersion: 1, CapturedAtMs: 1234, StateVersion: 7,
@@ -339,6 +462,29 @@ func fixtureClient() *fakeClient {
 			WorkerProfileID: "codex-standard", TerminalAllowEntryID: "terminal-codex-reviewed",
 			BriefRevisionHash:    strings.Repeat("c", 64),
 			AttachmentTargetName: "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
+		},
+		initiativeList: application.InitiativeList{
+			SchemaVersion: 1, CapturedAtMs: 1234, StateVersion: 7,
+			Initiatives: []application.InitiativeSummary{{
+				InitiativeHandle: "initiative-alpha", State: domain.InitiativeActive,
+				StateVersion: 7, ComponentCount: 1, TaskCount: 1,
+			}},
+		},
+		initiativeDetail: application.InitiativeDetail{
+			SchemaVersion: 1, CapturedAtMs: 1234, StateVersion: 7,
+			Initiative: initiative, Graph: graph, ReasonCode: "initiative_active",
+			Explanation:     "Initiative members are active.",
+			NextSafeActions: []application.InitiativeNextAction{application.InitiativeActionInspect},
+		},
+		initiativeControl: localapi.InitiativeControlResult{
+			SchemaVersion: 1, OperationID: "operation-initiative-control",
+			InitiativeHandle: "initiative-alpha", State: domain.InitiativeBlocked,
+			StateVersion: 8, SideEffect: localapi.SideEffectMutate,
+			Members: []application.InitiativeControlMemberResult{{
+				TaskHandle: "task-0001", OperationID: "control-member-task-0001",
+				Outcome: application.InitiativeControlRejected, ErrorCode: domain.ErrorPrecondition,
+				State: domain.TaskBlocked, StateVersion: 8,
+			}},
 		},
 	}
 }

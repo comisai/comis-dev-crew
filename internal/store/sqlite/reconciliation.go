@@ -28,6 +28,34 @@ func (store *Store) ReconcileStartup(ctx context.Context, at time.Time) (applica
 	if err := reconcileSettledTerminalBindings(ctx, transaction); err != nil {
 		return result, err
 	}
+	initiativeHandles, err := initiativeHandlesForReconciliation(ctx, transaction)
+	if err != nil {
+		return result, err
+	}
+	for _, handle := range initiativeHandles {
+		initiative, err := getInitiative(ctx, transaction, handle)
+		if err != nil {
+			return result, err
+		}
+		if !runtimeSensitiveInitiativeState(initiative.State) {
+			continue
+		}
+		if at.Before(initiative.UpdatedAt) {
+			return result, errors.New("reconcile initiative startup state: service time precedes durable state")
+		}
+		previousState := initiative.State
+		version, err := nextReconciliationVersion(ctx, transaction)
+		if err != nil {
+			return result, err
+		}
+		initiative.State = domain.InitiativeUnknown
+		initiative.StateVersion = version
+		initiative.UpdatedAt = at
+		if err := updateReconciledInitiative(ctx, transaction, initiative, previousState); err != nil {
+			return result, err
+		}
+		result.InitiativesMarkedUnknown++
+	}
 
 	tasks, err := listTasks(ctx, transaction)
 	if err != nil {
@@ -38,7 +66,7 @@ func (store *Store) ReconcileStartup(ctx context.Context, at time.Time) (applica
 			continue
 		}
 		if task.State == domain.TaskCandidateComplete {
-			resumable, resumeErr := resumableReconciledCandidateDelivery(ctx, transaction, task, at)
+			resumable, resumeErr := resumableCandidateDelivery(ctx, transaction, task, at)
 			if resumeErr != nil {
 				return result, resumeErr
 			}
@@ -55,7 +83,7 @@ func (store *Store) ReconcileStartup(ctx context.Context, at time.Time) (applica
 			return result, err
 		}
 		unknown.StateVersion = version
-		if err := updateTaskState(ctx, transaction, unknown); err != nil {
+		if err := updateTaskStateWithReservationGuard(ctx, transaction, unknown, false); err != nil {
 			return result, err
 		}
 		result.TasksMarkedUnknown++
@@ -90,6 +118,63 @@ func (store *Store) ReconcileStartup(ctx context.Context, at time.Time) (applica
 		return application.StartupReconciliation{}, fmt.Errorf("commit startup reconciliation: %w", err)
 	}
 	return result, nil
+}
+
+func initiativeHandlesForReconciliation(
+	ctx context.Context,
+	transaction *sql.Tx,
+) (handles []string, resultErr error) {
+	rows, err := transaction.QueryContext(ctx, "SELECT handle FROM initiatives ORDER BY handle")
+	if err != nil {
+		return nil, fmt.Errorf("list initiative handles for reconciliation: %w", err)
+	}
+	defer func() { resultErr = errors.Join(resultErr, rows.Close()) }()
+	for rows.Next() {
+		var handle string
+		if err := rows.Scan(&handle); err != nil {
+			return nil, fmt.Errorf("scan initiative handle for reconciliation: %w", err)
+		}
+		handles = append(handles, handle)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list initiative handles for reconciliation: %w", err)
+	}
+	return handles, nil
+}
+
+func runtimeSensitiveInitiativeState(state domain.InitiativeState) bool {
+	switch state {
+	case domain.InitiativePreparing, domain.InitiativeActive, domain.InitiativeBlocked,
+		domain.InitiativeIntegrating, domain.InitiativeValidating, domain.InitiativeCandidateComplete:
+		return true
+	default:
+		return false
+	}
+}
+
+func updateReconciledInitiative(
+	ctx context.Context,
+	transaction *sql.Tx,
+	initiative domain.DevelopmentInitiative,
+	previousState domain.InitiativeState,
+) error {
+	if err := initiative.Validate(); err != nil {
+		return fmt.Errorf("validate reconciled initiative: %w", err)
+	}
+	const update = `UPDATE initiatives SET state = ?, state_version = ?, updated_at = ?
+        WHERE handle = ? AND state = ?`
+	result, err := transaction.ExecContext(ctx, update,
+		initiative.State, initiative.StateVersion, formatTime(initiative.UpdatedAt),
+		initiative.Handle, previousState,
+	)
+	if err != nil {
+		return fmt.Errorf("update reconciled initiative: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return errors.New("update reconciled initiative: exact prior state was not updated")
+	}
+	return nil
 }
 
 func reconcileSettledTerminalBindings(ctx context.Context, transaction *sql.Tx) (resultErr error) {
@@ -146,7 +231,7 @@ func reconcileSettledTerminalBindings(ctx context.Context, transaction *sql.Tx) 
 func runtimeSensitiveState(state domain.TaskState) bool {
 	switch state {
 	case domain.TaskLaunching, domain.TaskWorking, domain.TaskAwaitingDecision,
-		domain.TaskBlocked, domain.TaskPaused, domain.TaskReconciling,
+		domain.TaskBlocked, domain.TaskReconciling,
 		domain.TaskCandidateComplete, domain.TaskDelivering:
 		return true
 	default:
@@ -182,7 +267,14 @@ func nextReconciliationVersion(ctx context.Context, transaction *sql.Tx) (int64,
 }
 
 func acceptedOperationIDs(ctx context.Context, transaction *sql.Tx) (ids []string, resultErr error) {
-	rows, err := transaction.QueryContext(ctx, "SELECT id FROM operations WHERE status = ? ORDER BY id", domain.OperationAccepted)
+	// Approval-bound merges have their own durable recovery posture. Their
+	// accepted ledger row is paired atomically with either a pending approval or
+	// a persisted external-mutation intent, so the merge coordinator—not the
+	// generic unknown-outcome sweep—reconciles them after restart.
+	rows, err := transaction.QueryContext(ctx, `SELECT operations.id FROM operations
+		LEFT JOIN task_merges ON task_merges.operation_id = operations.id
+		WHERE operations.status = ? AND task_merges.operation_id IS NULL
+		ORDER BY operations.id`, domain.OperationAccepted)
 	if err != nil {
 		return nil, fmt.Errorf("list accepted operations: %w", err)
 	}

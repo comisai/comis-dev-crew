@@ -29,15 +29,23 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	if !configured {
 		return config, nil
 	}
+	if config.Clock == nil {
+		config.Clock = func() time.Time { return time.Now().UTC() }
+	}
 	if config.RepositoryComposition == nil || config.ComisComposition == nil || config.CodexComposition == nil ||
 		config.ValidationComposition == nil || config.ForgeComposition == nil ||
-		config.MCPSocketPath == "" || config.RuntimeRoot == "" || config.ServiceInstanceID == "" {
+		config.MCPSocketPath == "" || config.RuntimeRoot == "" || config.ServiceInstanceID == "" ||
+		config.MaxConcurrentTasks < 1 || config.MaxConcurrentTasks > 1024 ||
+		config.MaxConcurrentTasksPerRepository < 1 ||
+		config.MaxConcurrentTasksPerRepository > config.MaxConcurrentTasks {
 		return Config{}, errors.New("run service: installed composition is incomplete")
 	}
 	if config.Repositories != nil || config.Workspaces != nil || config.TaskIDs != nil ||
 		config.RuntimeAttachments != nil || config.WorkerHarnesses != nil || config.RegistrationNonces != nil || config.ComisControl != nil ||
 		config.candidateGit != nil || config.workspaceInspector != nil || config.primarySynchronizer != nil || config.validationCatalog != nil || config.pullRequests != nil ||
-		config.cleanupRemover != nil || config.cleanupForge != nil ||
+		config.IntegrationPolicies != nil || config.integrationAdapter != nil ||
+		config.cleanupRemover != nil || config.cleanupForge != nil || config.mergePullRequests != nil ||
+		config.mergeOperatorEnabled ||
 		config.fixtureCandidatePreparer != nil ||
 		config.validationMaxOutputBytes != 0 || config.validationPollInterval != 0 {
 		return Config{}, errors.New("run service: installed and injected composition cannot be combined")
@@ -55,6 +63,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	registry, err := devgit.NewRegistry(ctx, devgit.RegistryConfig{
 		GitExecutable: repositoryConfig.GitExecutable,
 		ApprovedRoots: []string{repositoryConfig.ApprovedRoot},
+		Clock:         config.Clock,
 		Repositories: []devgit.RepositoryConfig{{
 			ID: repositoryConfig.RepositoryID, PrimaryCheckout: repositoryConfig.PrimaryCheckout,
 			WorktreeRoot: repositoryConfig.WorktreeRoot, DefaultBranch: repositoryConfig.DefaultBranch,
@@ -159,7 +168,15 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	// built by the workers package, so launch authority never reaches this
 	// composition — this hop only maps one published view onto the read DTO.
 	config.WorkerProfileCatalog = func() []application.WorkerProfileSummary {
-		return publishedWorkerProfileSummaries(profiles.PublishedProfiles())
+		summaries := publishedWorkerProfileSummaries(profiles.PublishedProfiles())
+		if config.FixtureComposition != nil {
+			summaries = append(summaries, application.WorkerProfileSummary{
+				ProfileID: "fixture-worker", Harness: "fixture",
+				AllowedShapes: []domain.TaskShape{domain.ShapeShip, domain.ShapeScout},
+				Availability:  "available", Unattended: true, ConcurrencyLimit: 1,
+			})
+		}
+		return summaries
 	}
 	config.ValidationProfiles = func(profileID string, shape domain.TaskShape) error {
 		_, resolveErr := catalog.ResolveProfileForShape(profileID, shape)
@@ -180,6 +197,18 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	}
 	if forgeConfig.ReadCredentialFile == forgeConfig.PushCredentialFile || readCredential == pushCredential {
 		return Config{}, errors.New("run service: forge read and push identities must differ")
+	}
+	var mergeCredentials forge.CredentialSource
+	if forgeConfig.MergeCredentialFile != "" {
+		if !filepath.IsAbs(forgeConfig.MergeCredentialFile) || filepath.Clean(forgeConfig.MergeCredentialFile) != forgeConfig.MergeCredentialFile ||
+			forgeConfig.MergeCredentialFile == forgeConfig.ReadCredentialFile ||
+			forgeConfig.MergeCredentialFile == forgeConfig.PushCredentialFile {
+			return Config{}, errors.New("run service: forge merge credential path must be canonical and separate")
+		}
+		mergeCredentials = ownerCredentialSource{
+			path: forgeConfig.MergeCredentialFile, kind: forge.CredentialMerge,
+			scopes: []forge.CredentialScope{forge.ScopePullRequestsWrite},
+		}
 	}
 	pusher, err := forge.NewGitBranchPusher(forge.GitBranchPusherConfig{
 		GitExecutable: repositoryConfig.GitExecutable, RemoteURL: forgeConfig.RemoteURL,
@@ -202,6 +231,7 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 			path: forgeConfig.PushCredentialFile, kind: forge.CredentialPush,
 			scopes: []forge.CredentialScope{forge.ScopeContentsWrite},
 		},
+		MergeCredentials: mergeCredentials, MergeMethod: forgeConfig.MergeMethod, Clock: config.Clock,
 	})
 	if err != nil {
 		return Config{}, fmt.Errorf("run service GitHub composition: %w", err)
@@ -221,9 +251,20 @@ func composeInstalledRuntime(ctx context.Context, config Config) (Config, error)
 	config.validationCatalog = catalog
 	config.validationMaxOutputBytes = validationConfig.MaxOutputBytes
 	config.validationPollInterval = validationConfig.PollInterval
+	config.IntegrationPolicies, err = newIntegrationPolicyResolver(validationConfig.IntegrationPolicies)
+	if err != nil {
+		return Config{}, fmt.Errorf("run service integration policy composition: %w", err)
+	}
+	config.integrationAdapter = registry
 	config.pullRequests = pullRequests
 	config.cleanupRemover = registry
 	config.cleanupForge = pullRequests
+	if mergeCredentials != nil {
+		config.mergePullRequests = pullRequests
+		config.mergeMethod = application.PullRequestMergeMethod(forgeConfig.MergeMethod)
+		config.mergeOperatorEnabled = true
+	}
+	config.cleanupLanded = pullRequests
 	if config.FixtureComposition != nil {
 		config.fixtureCandidatePreparer = registry
 	}
@@ -267,19 +308,36 @@ func stableTaskIdentity(serviceInstanceID, operationID string) string {
 	return "task-" + digest[:24]
 }
 
-func composeComisControl(config Config, mutations comiswire.DurableControlMutations) (ComisControl, error) {
+func stableBacklogIdentity(serviceInstanceID, operationID string) string {
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(serviceInstanceID+"\x00"+operationID)))
+	return "backlog-" + digest[:24]
+}
+
+func composeComisControl(
+	config Config,
+	mutations comiswire.DurableControlMutations,
+	groupActivations comiswire.DurableGroupActivations,
+	groupAbandonments comiswire.DurableGroupAbandonments,
+) (ComisControl, error) {
 	if config.ComisComposition == nil {
 		return config.ComisControl, nil
 	}
 	if mutations == nil {
 		return nil, errors.New("run service: Comis control requires durable mutations")
 	}
+	if groupActivations == nil {
+		return nil, errors.New("run service: Comis control requires durable group activations")
+	}
+	if groupAbandonments == nil {
+		return nil, errors.New("run service: Comis control requires durable group abandonments")
+	}
 	credential, err := readOwnerCredential(config.ComisComposition.CredentialFile)
 	if err != nil {
 		return nil, err
 	}
 	handler, err := comiswire.NewDurableControlHandler(comiswire.DurableControlHandlerConfig{
-		Mutations: mutations, ServiceInstanceID: comiswire.ServiceInstanceID(config.ServiceInstanceID),
+		Mutations: mutations, GroupActivations: groupActivations, GroupAbandonments: groupAbandonments,
+		ServiceInstanceID: comiswire.ServiceInstanceID(config.ServiceInstanceID),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("run service Comis handler: %w", err)
@@ -290,6 +348,7 @@ func composeComisControl(config Config, mutations comiswire.DurableControlMutati
 		HandshakeOperationID: comiswire.OperationID(config.ComisComposition.HandshakeOperationID),
 		Handler:              handler, RequestTimeout: comisRequestTimeout,
 		MinimumBackoff: comisMinimumBackoff, MaximumBackoff: comisMaximumBackoff,
+		Logger: config.Logger, Clock: config.Clock,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("run service Comis connection: %w", err)

@@ -95,18 +95,19 @@ func TestInterventions_HandbackReplaysBeforeInspectionAndRejectsUnsafeInputs(t *
 }
 
 type interventionStore struct {
-	task         domain.Task
-	preparation  ManagedRunPreparation
-	mutation     TaskHandbackMutation
-	resume       TaskResumeMutation
-	replace      TaskReplaceMutation
-	replaceCalls int
-	resumeCalls  int
-	replay       MutationResult
-	replayFound  bool
-	replayErr    error
-	commitErr    error
-	commitCalls  int
+	task                   domain.Task
+	preparation            ManagedRunPreparation
+	mutation               TaskHandbackMutation
+	resume                 TaskResumeMutation
+	replace                TaskReplaceMutation
+	replaceCalls           int
+	resumeCalls            int
+	replay                 MutationResult
+	replayFound            bool
+	replayErr              error
+	commitErr              error
+	commitCalls            int
+	preparationOperationID string
 }
 
 func (store *interventionStore) ReplayMutation(context.Context, string, string, string) (MutationResult, bool, error) {
@@ -122,6 +123,13 @@ func (store *interventionStore) GetTask(context.Context, string) (domain.Task, e
 
 func (store *interventionStore) GetManagedRunPreparation(context.Context, string) (ManagedRunPreparation, error) {
 	return store.preparation, nil
+}
+
+func (store *interventionStore) ReadCandidateHandoffAuthority(context.Context, string) (CandidateHandoffAuthority, error) {
+	return CandidateHandoffAuthority{
+		Task: store.task, Preparation: store.preparation,
+		PreparationOperationID: store.preparationOperationID,
+	}, nil
 }
 
 func (store *interventionStore) CommitTaskHandback(_ context.Context, mutation TaskHandbackMutation) (MutationResult, error) {
@@ -143,6 +151,11 @@ func (store *interventionStore) CommitTaskReplace(_ context.Context, mutation Ta
 	replaced.State = domain.TaskReady
 	replaced.WorkerProfileID = mutation.WorkerProfileID
 	replaced.BriefRevision = store.task.BriefRevision + 1
+	var err error
+	replaced, err = replaced.PinBriefRevision()
+	if err != nil {
+		return MutationResult{}, err
+	}
 	return MutationResult{Task: replaced}, nil
 }
 
@@ -153,7 +166,7 @@ func (store *interventionStore) CommitTaskResume(_ context.Context, mutation Tas
 		return MutationResult{}, store.commitErr
 	}
 	resumed := store.task
-	resumed.State = domain.TaskWorking
+	resumed.State = domain.TaskReady
 	return MutationResult{Task: resumed}, nil
 }
 

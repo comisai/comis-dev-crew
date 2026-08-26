@@ -57,7 +57,8 @@ func (server *RuntimeServer) receiveAttentionResponse(
 	request runtimeRequest,
 	launch *RuntimeLaunchConfig,
 ) RuntimeOutcome {
-	if request.Report != nil || request.Acknowledgement != nil || domain.ValidateDecisionKey(request.ExternalKey) != nil {
+	if request.Report != nil || request.Acknowledgement != nil || request.ArtifactHandle != "" ||
+		domain.ValidateDecisionKey(request.ExternalKey) != nil {
 		return runtimeRejected("malformed_request")
 	}
 	if launch == nil {
@@ -133,7 +134,8 @@ func (client *RuntimeClient) AwaitDecision(ctx context.Context, externalKey stri
 
 func validateRuntimeAttentionOutcome(outcome RuntimeOutcome, externalKey string) (string, bool, error) {
 	if outcome.AttentionResponse == nil || outcome.Brief != nil || outcome.Receipt != nil ||
-		outcome.Acknowledgement != nil || outcome.Error != nil || outcome.AttentionResponse.ExternalKey != externalKey {
+		outcome.Acknowledgement != nil || outcome.ContractArtifact != nil || outcome.Error != nil ||
+		outcome.AttentionResponse.ExternalKey != externalKey {
 		return "", false, errors.New("await runtime decision: attachment returned an invalid response")
 	}
 	attention := outcome.AttentionResponse

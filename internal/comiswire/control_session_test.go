@@ -15,9 +15,49 @@ import (
 )
 
 type controlHandlerStub struct {
-	activate func(context.Context, ActivateRequestParams) (ActivateResponseResult, error)
-	abandon  func(context.Context, AbandonRequestParams) (AbandonResponseResult, error)
-	terminal func(context.Context, TerminalEventRequestParams) (TerminalEventResponseResult, error)
+	activate      func(context.Context, ActivateRequestParams) (ActivateResponseResult, error)
+	groupActivate func(context.Context, GroupActivateRequestParams) (GroupActivateResponseResult, error)
+	groupAbandon  func(context.Context, GroupAbandonRequestParams) (GroupAbandonResponseResult, error)
+	abandon       func(context.Context, AbandonRequestParams) (AbandonResponseResult, error)
+	terminal      func(context.Context, TerminalEventRequestParams) (TerminalEventResponseResult, error)
+}
+
+func (stub controlHandlerStub) GroupAbandon(
+	ctx context.Context,
+	params GroupAbandonRequestParams,
+) (GroupAbandonResponseResult, error) {
+	if stub.groupAbandon == nil {
+		members := make([]GroupAbandonResponseResultMembersItem, 0, len(params.Members))
+		for _, member := range params.Members {
+			members = append(members, GroupAbandonResponseResultMembersItem{
+				ManagedRunID: member.ManagedRunID, Outcome: "completed",
+			})
+		}
+		return GroupAbandonResponseResult{
+			ManagedRunGroupID: params.ManagedRunGroupID, Members: members,
+			State: ManagedRunStateAbandoned, Disposition: params.Disposition,
+		}, nil
+	}
+	return stub.groupAbandon(ctx, params)
+}
+
+func (stub controlHandlerStub) GroupActivate(
+	ctx context.Context,
+	params GroupActivateRequestParams,
+) (GroupActivateResponseResult, error) {
+	if stub.groupActivate == nil {
+		members := make([]GroupActivateResponseResultMembersItem, 0, len(params.Members))
+		for _, member := range params.Members {
+			members = append(members, GroupActivateResponseResultMembersItem{
+				ManagedRunID: member.ManagedRunID, Outcome: "completed",
+			})
+		}
+		return GroupActivateResponseResult{
+			ManagedRunGroupID: params.ManagedRunGroupID, Members: members,
+			ActivatedAtMs: 1_800_000_000_000,
+		}, nil
+	}
+	return stub.groupActivate(ctx, params)
 }
 
 func (stub controlHandlerStub) Activate(ctx context.Context, params ActivateRequestParams) (ActivateResponseResult, error) {
@@ -88,6 +128,8 @@ func TestControlHandshakeRequestsCompleteRequiredScopeSet(t *testing.T) {
 		ServiceScopeWorkspaceLease,
 		ServiceScopeTerminalEvents,
 		ServiceScopeExecutionAttachment,
+		ServiceScopeManagedRunGroup,
+		ServiceScopeApprovalReceipt,
 	}
 	if !slices.Equal(request.Params.RequestedScopes, want) {
 		t.Fatalf("requested scopes = %v, want %v", request.Params.RequestedScopes, want)

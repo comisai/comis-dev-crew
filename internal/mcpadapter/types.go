@@ -12,26 +12,32 @@ import (
 )
 
 const (
-	ToolPrepareTask    = "prepare_task"
-	ToolReconcileTask  = "reconcile_task"
-	ToolHandbackTask   = "handback_task"
-	ToolCleanupTask    = "cleanup_task"
-	ToolDiscardTask    = "discard_task"
-	ToolPauseTask      = "pause_task"
-	ToolCancelTask     = "cancel_task"
-	ToolResumeTask     = "resume_task"
-	ToolVerifyTask     = "verify_task"
-	ToolPromoteScout   = "promote_scout"
-	ToolReplaceWorker  = "replace_worker"
-	ToolSteerTask      = "steer_task"
-	ToolListTasks      = "list_tasks"
-	ToolWorkerProfiles = "worker_profiles"
-	ToolGetTask        = "get_task"
-	ToolExplainTask    = "explain_task"
-	ToolGetLaunchPlan  = "get_launch_plan"
-	ToolSyncPrimary    = "sync_primary"
-	ToolAttestScout    = "attest_scout_decisions"
-	ToolDoctor         = "doctor"
+	ToolPrepareTask       = "prepare_task"
+	ToolPrepareInitiative = "prepare_initiative"
+	ToolApplyIntegration  = "apply_integration_candidate"
+	ToolGetInitiative     = "get_initiative"
+	ToolBacklogList       = "backlog_list"
+	ToolAddBacklog        = "backlog_add"
+	ToolPromoteBacklog    = "backlog_promote"
+	ToolReconcileTask     = "reconcile_task"
+	ToolHandbackTask      = "handback_task"
+	ToolCleanupTask       = "cleanup_task"
+	ToolMergeTask         = "merge_task"
+	ToolPauseTask         = "pause_task"
+	ToolCancelTask        = "cancel_task"
+	ToolResumeTask        = "resume_task"
+	ToolVerifyTask        = "verify_task"
+	ToolPromoteScout      = "promote_scout"
+	ToolReplaceWorker     = "replace_worker"
+	ToolSteerTask         = "steer_task"
+	ToolListTasks         = "list_tasks"
+	ToolWorkerProfiles    = "worker_profiles"
+	ToolGetTask           = "get_task"
+	ToolExplainTask       = "explain_task"
+	ToolGetLaunchPlan     = "get_launch_plan"
+	ToolSyncPrimary       = "sync_primary"
+	ToolAttestScout       = "attest_scout_decisions"
+	ToolDoctor            = "doctor"
 
 	CallContextMetaKey      = "comis.callContext"
 	ManagedRunResultMetaKey = "comis.managedRun"
@@ -40,10 +46,16 @@ const (
 // Client is the sole canonical local-service surface used by the facade.
 type Client interface {
 	PrepareTask(context.Context, string, localapi.PrepareTaskInput) (localapi.PrepareTaskResult, error)
+	PrepareInitiative(context.Context, string, localapi.PrepareInitiativeInput) (localapi.PrepareInitiativeResult, error)
+	ApplyIntegrationCandidate(context.Context, string, localapi.ApplyIntegrationCandidateInput) (localapi.ApplyIntegrationCandidateResult, error)
+	GetInitiative(context.Context, string, string) (application.InitiativeDetail, error)
+	ListBacklog(context.Context, string, localapi.ListBacklogInput) (application.BacklogList, error)
+	AddBacklog(context.Context, string, localapi.AddBacklogInput) (localapi.AddBacklogResult, error)
+	PromoteBacklog(context.Context, string, localapi.PromoteBacklogInput) (localapi.PromoteBacklogResult, error)
 	ReconcileTask(context.Context, string, localapi.ReconcileTaskInput) (localapi.TaskMutationResult, error)
 	HandbackTask(context.Context, string, localapi.HandbackTaskInput) (localapi.TaskMutationResult, error)
 	CleanupTask(context.Context, string, localapi.CleanupTaskInput) (localapi.TaskMutationResult, error)
-	DiscardTask(context.Context, string, localapi.DiscardTaskInput) (localapi.TaskMutationResult, error)
+	MergeTask(context.Context, string, localapi.MergeTaskInput) (application.MergeTaskResult, error)
 	Diagnose(context.Context, string) (application.DiagnosticReport, error)
 	ListTasks(context.Context, string, localapi.ListTasksInput) (application.TaskList, error)
 	ListWorkerProfiles(context.Context, string) (application.WorkerProfileList, error)
@@ -79,13 +91,24 @@ type TaskInput struct {
 	TaskHandle string `json:"taskHandle" jsonschema:"opaque task handle"`
 }
 
-// DiscardTaskInput removes the worktree of one task that never delivered.
-// The acknowledgement is a stated argument rather than something implied by
-// naming the tool: a discard has no delivered work to point at, so an
-// operator's explicit statement is the only gate the removal has.
-type DiscardTaskInput struct {
-	TaskHandle   string `json:"taskHandle" jsonschema:"opaque task handle"`
-	Acknowledged bool   `json:"acknowledged" jsonschema:"set true only when the operator accepted that uncommitted work is removed permanently"`
+// MergeTaskOutput exposes post-merge truth without the managed-run identity
+// that carried the approval. The approval identifier and resolving principal
+// are retained as bounded attribution for the destructive outcome.
+type MergeTaskOutput struct {
+	SchemaVersion        int                                `json:"schemaVersion"`
+	OperationID          string                             `json:"operationId"`
+	TaskHandle           string                             `json:"taskHandle"`
+	State                application.TaskMergeState         `json:"state"`
+	RepositoryID         string                             `json:"repositoryId"`
+	PullRequestID        string                             `json:"pullRequestId"`
+	HeadRevision         string                             `json:"headRevision"`
+	ApprovalRequestID    string                             `json:"approvalRequestId"`
+	ResolvingPrincipalID string                             `json:"resolvingPrincipalId"`
+	MergeCommitRevision  string                             `json:"mergeCommitRevision"`
+	Method               application.PullRequestMergeMethod `json:"method"`
+	CompletedAtMs        int64                              `json:"completedAtMs"`
+	StateVersion         int64                              `json:"stateVersion"`
+	SideEffect           localapi.SideEffectClass           `json:"sideEffect"`
 }
 
 // AttestScoutDecisionsInput records the liaison's inventory of a scout's still

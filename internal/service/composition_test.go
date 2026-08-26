@@ -11,6 +11,7 @@ import (
 
 	"github.com/comisai/comis-dev-crew/internal/application"
 	"github.com/comisai/comis-dev-crew/internal/domain"
+	"github.com/comisai/comis-dev-crew/internal/forge"
 	"github.com/comisai/comis-dev-crew/internal/store/sqlite"
 	"github.com/comisai/comis-dev-crew/internal/validation"
 	"github.com/comisai/comis-dev-crew/internal/workers"
@@ -26,6 +27,13 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 	if configured.Repositories == nil || configured.Workspaces == nil {
 		t.Fatalf("installed repository configuration = %#v", configured)
 	}
+	strategy, policyErr := configured.IntegrationPolicies("integration-default")
+	if configured.integrationAdapter == nil || policyErr != nil || strategy != application.IntegrationMerge {
+		t.Fatalf("installed integration configuration = %#v, %q, %v", configured.integrationAdapter, strategy, policyErr)
+	}
+	if _, err := configured.IntegrationPolicies("integration-unreviewed"); err == nil {
+		t.Fatal("unreviewed integration policy resolved")
+	}
 	for _, shape := range []domain.TaskShape{domain.ShapeShip, domain.ShapeScout} {
 		if err := configured.ValidationProfiles("required", shape); err != nil {
 			t.Fatalf("ValidationProfiles(required, %s) error = %v", shape, err)
@@ -34,9 +42,16 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 	if configured.candidateGit == nil || configured.workspaceInspector == nil || configured.reconciliationInspector == nil ||
 		configured.validationCatalog == nil ||
 		configured.pullRequests == nil || configured.cleanupRemover == nil || configured.cleanupForge == nil ||
+		configured.cleanupLanded == nil ||
+		configured.mergePullRequests != nil || configured.mergeOperatorEnabled ||
 		configured.validationMaxOutputBytes != 64<<10 ||
 		configured.validationPollInterval != 25*time.Millisecond {
 		t.Fatalf("installed candidate validation configuration = %#v", configured)
+	}
+	landedAdapter, landedOK := configured.cleanupLanded.(*forge.GitHubAdapter)
+	deliveryAdapter, deliveryOK := configured.pullRequests.(*forge.GitHubAdapter)
+	if !landedOK || !deliveryOK || landedAdapter != deliveryAdapter {
+		t.Fatalf("installed landed evidence does not use the authenticated forge adapter")
 	}
 	adapter, err := configured.WorkerHarnesses.ResolveWorkerHarness("codex-reviewed")
 	if err != nil {
@@ -101,12 +116,48 @@ func TestInstalledRuntime_ComposesVerifiedRepositoryIdentitiesAndControl(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	control, err := composeComisControl(configured, mutations)
+	groups, err := application.NewInitiativeActivations(application.InitiativeActivationConfig{
+		Store: store, RuntimeAttachments: serviceRuntimeAttachments{}, Acknowledger: mutations,
+		Clock: func() time.Time { return time.Now().UTC() },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	abandonments, err := application.NewInitiativeAbandonments(application.InitiativeAbandonmentConfig{
+		Store: store, Clock: func() time.Time { return time.Now().UTC() },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := composeComisControl(configured, mutations, groups, abandonments)
 	if err != nil || control == nil {
 		t.Fatalf("composeComisControl() = %#v, %v", control, err)
 	}
-	if passthrough, err := composeComisControl(Config{}, nil); err != nil || passthrough != nil {
+	if passthrough, err := composeComisControl(Config{}, nil, nil, nil); err != nil || passthrough != nil {
 		t.Fatalf("composeComisControl(empty) = %#v, %v", passthrough, err)
+	}
+}
+
+func TestInstalledRuntimeComposesMergeAuthorityWithoutReadingItsSecretAtStartup(t *testing.T) {
+	root := shortTempDir(t)
+	configuration := installedServiceConfig(t, root)
+	configuration.ForgeComposition.MergeCredentialFile = filepath.Join(root, "private", "merge.credential")
+	configuration.ForgeComposition.MergeMethod = forge.MergeSquash
+	configured, err := composeInstalledRuntime(context.Background(), configuration)
+	if err != nil {
+		t.Fatalf("composeInstalledRuntime() error = %v", err)
+	}
+	if configured.mergePullRequests == nil || configured.mergeMethod != application.PullRequestMergeSquash ||
+		!configured.mergeOperatorEnabled {
+		t.Fatalf("installed merge composition = %#v/%q/%t", configured.mergePullRequests, configured.mergeMethod, configured.mergeOperatorEnabled)
+	}
+}
+
+func TestComposeTaskMergesRejectsEnabledAuthorityWithoutForgeAdapter(t *testing.T) {
+	if _, err := composeTaskMerges(Config{
+		mergeMethod: application.PullRequestMergeSquash, mergeOperatorEnabled: true,
+	}, nil, nil, nil); err == nil {
+		t.Fatal("composeTaskMerges(enabled without forge adapter) error = nil")
 	}
 }
 
@@ -157,6 +208,15 @@ func TestInstalledRuntime_ComposesFixtureBesideRealCandidatePipeline(t *testing.
 		if err := configured.WorkerProfiles("fixture-worker", shape); err != nil {
 			t.Fatalf("WorkerProfiles(fixture-worker, %s) error = %v", shape, err)
 		}
+	}
+	foundFixtureLimit := false
+	for _, profile := range configured.WorkerProfileCatalog() {
+		if profile.ProfileID == "fixture-worker" && profile.ConcurrencyLimit == 1 {
+			foundFixtureLimit = true
+		}
+	}
+	if !foundFixtureLimit {
+		t.Fatal("fixture worker profile has no scheduler ceiling")
 	}
 }
 
@@ -241,6 +301,12 @@ func TestInstalledRuntime_RejectsPartialMixedAndUnverifiedConfiguration(t *testi
 		t.Fatal("composeInstalledRuntime(shared forge credential) error = nil")
 	}
 	configuration = installedServiceConfig(t, shortTempDir(t))
+	configuration.ForgeComposition.MergeCredentialFile = configuration.ForgeComposition.PushCredentialFile
+	configuration.ForgeComposition.MergeMethod = forge.MergeSquash
+	if _, err := composeInstalledRuntime(context.Background(), configuration); err == nil {
+		t.Fatal("composeInstalledRuntime(shared merge credential path) error = nil")
+	}
+	configuration = installedServiceConfig(t, shortTempDir(t))
 	configuration.ValidationComposition.MaxOutputBytes = 0
 	if _, err := composeInstalledRuntime(context.Background(), configuration); err == nil {
 		t.Fatal("composeInstalledRuntime(invalid validation bound) error = nil")
@@ -275,21 +341,21 @@ func TestComisComposition_RequiresMutationsCredentialAndValidAuthority(t *testin
 		SocketPath: filepath.Join(root, "comis.sock"), CredentialFile: credentialFile,
 		HandshakeOperationID: "installed-handshake-0001",
 	}}
-	if _, err := composeComisControl(configured, nil); err == nil {
+	if _, err := composeComisControl(configured, nil, serviceGroupActivationStub{}, serviceGroupAbandonmentStub{}); err == nil {
 		t.Fatal("composeComisControl(no mutations) error = nil")
 	}
 	configured.ServiceInstanceID = "bad identity"
-	if _, err := composeComisControl(configured, serviceMutationStub{}); err == nil {
+	if _, err := composeComisControl(configured, serviceMutationStub{}, serviceGroupActivationStub{}, serviceGroupAbandonmentStub{}); err == nil {
 		t.Fatal("composeComisControl(invalid service identity) error = nil")
 	}
 	configured.ServiceInstanceID = "service-instance-fixture"
 	configured.ComisComposition.CredentialFile = filepath.Join(root, "missing")
-	if _, err := composeComisControl(configured, serviceMutationStub{}); err == nil {
+	if _, err := composeComisControl(configured, serviceMutationStub{}, serviceGroupActivationStub{}, serviceGroupAbandonmentStub{}); err == nil {
 		t.Fatal("composeComisControl(missing credential) error = nil")
 	}
 	configured.ComisComposition.CredentialFile = credentialFile
 	configured.ComisComposition.HandshakeOperationID = "bad operation"
-	if _, err := composeComisControl(configured, serviceMutationStub{}); err == nil {
+	if _, err := composeComisControl(configured, serviceMutationStub{}, serviceGroupActivationStub{}, serviceGroupAbandonmentStub{}); err == nil {
 		t.Fatal("composeComisControl(invalid handshake operation) error = nil")
 	}
 }
@@ -374,6 +440,24 @@ func TestReadOwnerCredential_AcceptsBoundedSSHDeployKeyMaterial(t *testing.T) {
 
 type serviceMutationStub struct{}
 
+type serviceGroupActivationStub struct{}
+
+type serviceGroupAbandonmentStub struct{}
+
+func (serviceGroupActivationStub) ActivateManagedRunGroup(
+	context.Context,
+	application.ActivateManagedRunGroupCommand,
+) (application.InitiativeActivationResult, error) {
+	return application.InitiativeActivationResult{}, nil
+}
+
+func (serviceGroupAbandonmentStub) AbandonManagedRunGroup(
+	context.Context,
+	application.AbandonManagedRunGroupCommand,
+) (application.InitiativeAbandonmentResult, error) {
+	return application.InitiativeAbandonmentResult{}, nil
+}
+
 func (serviceMutationStub) ActivateManagedRun(context.Context, application.ActivateManagedRunCommand) (application.MutationResult, error) {
 	return application.MutationResult{}, nil
 }
@@ -442,7 +526,8 @@ func installedServiceConfig(t *testing.T, root string) Config {
 	return Config{
 		DatabasePath: filepath.Join(root, "state", "devcrew.db"), SocketPath: filepath.Join(root, "operator.sock"),
 		MCPSocketPath: filepath.Join(root, "mcp.sock"), RuntimeRoot: filepath.Join(root, "runtime"), ServiceInstanceID: "service-instance-fixture",
-		PreparationTTL: 10 * time.Minute,
+		PreparationTTL:     10 * time.Minute,
+		MaxConcurrentTasks: 4, MaxConcurrentTasksPerRepository: 3,
 		RepositoryComposition: &RepositoryComposition{
 			GitExecutable: gitExecutable, ApprovedRoot: approvedRoot, RepositoryID: "product-api",
 			PrimaryCheckout: primary, WorktreeRoot: worktreeRoot, DefaultBranch: "main",
@@ -463,9 +548,11 @@ func installedServiceConfig(t *testing.T, root string) Config {
 			ConfigDirectory: serviceClaudeConfigDirectory(t, root),
 		},
 		ValidationComposition: &ValidationComposition{
-			Programs: []validation.Program{{ID: "repo-check", Executable: validationExecutable}},
+			Programs:            []validation.Program{{ID: "repo-check", Executable: validationExecutable}},
+			IntegrationPolicies: map[string]application.IntegrationStrategy{"integration-default": application.IntegrationMerge},
 			Profiles: []validation.Profile{{
 				ID: "required", EvidenceTTL: 10 * time.Minute,
+				PathRules: []validation.PathRule{{Kind: validation.PathRuleExact, Path: "report.md"}},
 				LocalChecks: []validation.LocalCheck{{
 					ID: "unit", ProgramID: "repo-check", Required: true, Timeout: time.Minute,
 					Arguments: []validation.ArgumentTemplate{{Kind: validation.ArgumentLiteral, Value: "--version"}},

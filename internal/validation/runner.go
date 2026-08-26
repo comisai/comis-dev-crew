@@ -58,7 +58,9 @@ type ProcessObservation struct {
 	Exited               bool
 }
 
-// ErrProcessAbsent means the recorded PID is no longer present.
+// ErrProcessAbsent means a reviewed validation process is not present. It also
+// classifies a start attempt that durably settled as absent before a receipt
+// could exist.
 var ErrProcessAbsent = errors.New("validation process is absent")
 
 // RunRequest binds one validation operation to exact task-owned fields.
@@ -173,7 +175,7 @@ func (runner *Runner) Run(ctx context.Context, request RunRequest) (Receipt, err
 		if recordErr := runner.recordAbsent(context.WithoutCancel(ctx), starting); recordErr != nil {
 			return Receipt{}, recordErr
 		}
-		return Receipt{}, errors.New("run validation: fixed program did not start")
+		return Receipt{}, fmt.Errorf("run validation: fixed program did not start: %w", ErrProcessAbsent)
 	}
 	observation, err := runner.observeProcess(context.WithoutCancel(ctx), command.Process.Pid)
 	if err != nil || observation.PID != command.Process.Pid ||
@@ -183,7 +185,7 @@ func (runner *Runner) Run(ctx context.Context, request RunRequest) (Receipt, err
 		if recordErr := runner.recordAbsent(context.WithoutCancel(ctx), starting); recordErr != nil {
 			return Receipt{}, recordErr
 		}
-		return Receipt{}, errors.New("run validation: process identity could not be established")
+		return Receipt{}, fmt.Errorf("run validation: process identity could not be established: %w", ErrProcessAbsent)
 	}
 	observed := starting
 	observed.PID = observation.PID

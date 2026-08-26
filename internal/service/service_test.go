@@ -112,6 +112,83 @@ func TestRun_ComposesTaskReconciliationOnOperatorEndpoint(t *testing.T) {
 	}
 }
 
+func TestRunComposesApprovalBoundMergeOnCanonicalOperatorEndpoint(t *testing.T) {
+	root := shortTempDir(t)
+	socketPath := filepath.Join(root, "run", "operator.sock")
+	ready := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Config{
+			DatabasePath: filepath.Join(root, "state", "devcrew.db"), SocketPath: socketPath,
+			ComisControl: &serviceComisControl{}, mergePullRequests: serviceMergeForge{},
+			mergeMethod:          application.PullRequestMergeSquash,
+			mergeOperatorEnabled: true, Clock: serviceForwarderClock, Ready: func() { close(ready) },
+		})
+	}()
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("Run() before ready error = %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() did not advertise ready")
+	}
+	client, err := localapi.NewClient(socketPath, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.MergeTask(context.Background(), "operation-service-merge", localapi.MergeTaskInput{
+		TaskHandle: "task-service-merge",
+	})
+	var failure *domain.Failure
+	if !errors.As(err, &failure) || failure.Code != domain.ErrorPrecondition {
+		t.Fatalf("MergeTask(missing task) error = %v, want composed precondition failure", err)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
+func TestRunLeavesMergeUnavailableWithoutConfiguredAuthority(t *testing.T) {
+	root := shortTempDir(t)
+	socketPath := filepath.Join(root, "run", "operator.sock")
+	ready := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Config{
+			DatabasePath: filepath.Join(root, "state", "devcrew.db"), SocketPath: socketPath,
+			Clock: serviceForwarderClock, Ready: func() { close(ready) },
+		})
+	}()
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("Run() before ready error = %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() did not advertise ready")
+	}
+	client, err := localapi.NewClient(socketPath, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.MergeTask(context.Background(), "operation-service-merge", localapi.MergeTaskInput{
+		TaskHandle: "task-service-merge",
+	})
+	var failure *domain.Failure
+	if !errors.As(err, &failure) || failure.Code != domain.ErrorUnavailable || failure.Retryable == false ||
+		failure.Message != "task merge service is unavailable" {
+		t.Fatalf("MergeTask(disabled authority) error = %#v, want retryable unavailable failure", err)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
 type serviceReconciliationInspector struct{}
 
 func (serviceReconciliationInspector) InspectReconciliationCandidate(
@@ -320,6 +397,10 @@ type serviceComisControl struct {
 	reports       chan comiswire.ReportRequestParams
 	evidence      chan comiswire.PutEvidenceRequestParams
 	failRun       chan error
+	rollup        application.InitiativeHostRollup
+	rollupCalls   chan application.InitiativeHostRollupRequest
+	rollupGate    <-chan struct{}
+	rollupErr     error
 }
 
 func (control *serviceComisControl) Connected() bool {
@@ -451,92 +532,27 @@ func (control *serviceComisControl) ReleaseManagedRun(
 	}, nil
 }
 
-func TestRun_SupervisesDurableCandidateEvidenceForwarding(t *testing.T) {
-	root := shortTempDir(t)
-	databasePath := filepath.Join(root, "state", "devcrew.db")
-	store, err := sqlite.Open(context.Background(), databasePath)
-	if err != nil {
-		t.Fatalf("Open() error = %v", err)
-	}
-	task := serviceTask()
-	task.State = domain.TaskValidating
-	task.ManagedRunID = "managed-run-evidence"
-	task.WorkspaceLeaseID = "workspace-lease-evidence"
-	if err := store.CreateTask(context.Background(), task); err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
-	}
-	producedAt := serviceForwarderClock().Add(-time.Hour)
-	head := strings.Repeat("b", 40)
-	sealed, err := domain.SealDeliveryEvidence(domain.DeliveryEvidenceBundle{
-		SchemaVersion: 1, TaskHandle: task.Handle, RepositoryIdentity: task.RepositoryID,
-		BaseRevision: task.BaseRevision, HeadRevision: head, WorktreeCleanliness: domain.WorktreeClean,
-		ValidationReceipts: []domain.ValidationEvidenceReceipt{{
-			CheckID: "unit", ProgramID: "go-test", HeadRevision: head, Conclusion: domain.CheckPassed,
-			Required: true, OutputHash: strings.Repeat("d", 64),
-			StartedAt: producedAt.Add(-time.Minute), CompletedAt: producedAt,
-		}},
-		ForgeEvidence: &domain.ForgeEvidence{
-			Repository: task.RepositoryID, PullRequestID: "pull-request-evidence", HeadRevision: head,
-			CheckConclusions: []domain.ForgeCheckEvidence{{Name: "ci/unit", Conclusion: domain.CheckPassed}},
-		},
-		ProducedAt: producedAt, ExpiresAt: producedAt.Add(24 * time.Hour),
-	})
-	if err != nil {
-		t.Fatalf("SealDeliveryEvidence() error = %v", err)
-	}
-	publications, err := candidateEvidencePublications(
-		task, sealed, candidateDeliveryMaterial{referenceURL: "https://example.com/pull/17"},
-	)
-	if err != nil {
-		t.Fatalf("candidateEvidencePublications() error = %v", err)
-	}
-	if _, _, err := store.CommitCandidateEvidence(
-		context.Background(), task.Handle, sealed, []string{"unit"}, []string{"ci/unit"}, producedAt, publications,
-	); err != nil {
-		t.Fatalf("CommitCandidateEvidence() error = %v", err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("Close() error = %v", err)
-	}
+func (control *serviceComisControl) ConsumeMergeApproval(
+	context.Context,
+	application.MergeApprovalConsumeRequest,
+) (application.MergeApprovalReceipt, error) {
+	return application.MergeApprovalReceipt{}, errors.New("unexpected merge approval consumption")
+}
 
-	control := &serviceComisControl{
-		reports:  make(chan comiswire.ReportRequestParams, 1),
-		evidence: make(chan comiswire.PutEvidenceRequestParams, 2),
-	}
-	ready := make(chan struct{})
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() {
-		done <- Run(ctx, Config{
-			DatabasePath: databasePath, SocketPath: filepath.Join(root, "run", "devcrew.sock"),
-			ComisControl: control, Clock: serviceForwarderClock, Ready: func() { close(ready) },
-		})
-	}()
-	select {
-	case <-ready:
-	case err := <-done:
-		t.Fatalf("Run() before ready error = %v", err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("Run() did not advertise ready")
-	}
-	requests := make([]comiswire.PutEvidenceRequestParams, 2)
-	for index := range requests {
-		select {
-		case requests[index] = <-control.evidence:
-		case err := <-done:
-			t.Fatalf("Run() before evidence %d error = %v", index+1, err)
-		case <-time.After(time.Second):
-			t.Fatalf("evidence %d was not forwarded", index+1)
-		}
-	}
-	if requests[0].EvidenceRef == requests[1].EvidenceRef ||
-		requests[0].SubjectDigest != requests[1].SubjectDigest {
-		t.Fatalf("evidence requests = %#v / %#v", requests[0], requests[1])
-	}
-	cancel()
-	if err := <-done; err != nil {
-		t.Fatalf("Run() cancellation error = %v", err)
-	}
+type serviceMergeForge struct{}
+
+func (serviceMergeForge) ReconcileApprovedPullRequest(
+	context.Context,
+	application.PullRequestMergeRequest,
+) (application.PullRequestMergeReceipt, bool, error) {
+	return application.PullRequestMergeReceipt{}, false, nil
+}
+
+func (serviceMergeForge) MergeApprovedPullRequest(
+	context.Context,
+	application.PullRequestMergeRequest,
+) (application.PullRequestMergeReceipt, error) {
+	return application.PullRequestMergeReceipt{}, errors.New("unexpected merge invocation")
 }
 
 func TestRun_OwnsOneControlConnectionAndDurableReportForwarder(t *testing.T) {

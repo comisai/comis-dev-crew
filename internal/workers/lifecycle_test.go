@@ -37,6 +37,9 @@ func TestAdapters_ResumeDescriptorPinsTheHeadTheWorkerLeft(t *testing.T) {
 			if !strings.Contains(strings.ToLower(joined), "resum") && !strings.Contains(strings.ToLower(joined), "continu") {
 				t.Error("resume bootstrap does not tell the worker it is continuing existing work")
 			}
+			if !strings.Contains(joined, "devcrew-report artifact --handle HANDLE") {
+				t.Error("resume bootstrap does not make pinned contract content reachable")
+			}
 			// Task authority still never travels in argv.
 			for _, secret := range []string{launch.ManagedRunID, launch.WorkspaceLeaseID, launch.TaskHandle} {
 				if strings.Contains(joined, secret) {

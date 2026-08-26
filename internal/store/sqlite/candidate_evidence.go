@@ -160,6 +160,9 @@ func (store *Store) CommitCandidateEvidence(
 		if err := insertCandidatePublications(ctx, transaction, task, evidence, publications, stateVersion); err != nil {
 			return domain.Task{}, domain.CandidateJudgment{}, err
 		}
+		if err := insertReconciledComisReport(ctx, transaction, updated, evidence, stateVersion); err != nil {
+			return domain.Task{}, domain.CandidateJudgment{}, err
+		}
 	}
 	if err := transaction.Commit(); err != nil {
 		return domain.Task{}, domain.CandidateJudgment{}, fmt.Errorf("commit candidate evidence: %w", err)

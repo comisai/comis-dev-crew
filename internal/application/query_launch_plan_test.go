@@ -11,6 +11,27 @@ import (
 	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
+type queryResumeFixture struct {
+	launch TaskResumeLaunch
+	found  bool
+	err    error
+}
+
+func (repository *queryRepository) TaskResumeLaunch(
+	context.Context,
+	string,
+) (TaskResumeLaunch, bool, error) {
+	return repository.resume.launch, repository.resume.found, repository.resume.err
+}
+
+func failureCode(err error) domain.ErrorCode {
+	var failure *domain.Failure
+	if !errors.As(err, &failure) {
+		return ""
+	}
+	return failure.Code
+}
+
 func TestQueries_GetLaunchPlanBuildsAndSafelyProjectsReviewedDescriptor(t *testing.T) {
 	now := time.Date(2026, time.August, 10, 9, 30, 0, 0, time.UTC)
 	workspace := t.TempDir()
@@ -107,6 +128,86 @@ func TestQueries_GetLaunchPlanAllowsLaunchingRecoveryReread(t *testing.T) {
 	if plan.State != domain.TaskLaunching || plan.StateVersion != task.StateVersion ||
 		adapter.request.ManagedRunID != task.ManagedRunID || adapter.request.WorkspaceLeaseID != task.WorkspaceLeaseID {
 		t.Fatalf("GetLaunchPlan(launching recovery) = %#v, request %#v", plan, adapter.request)
+	}
+}
+
+func TestQueries_GetLaunchPlanUsesTheDurableResumeGenerationBootstrap(t *testing.T) {
+	now := time.Date(2026, time.August, 10, 9, 50, 0, 0, time.UTC)
+	task := queryTask("task-launch-plan-resume", domain.TaskReady, 18)
+	task.ExecutionAttachmentID = "execution-attachment-resume"
+	task.AttachmentTargetName = "attachment-dddddddddddddddddddddddddddddddd.sock"
+	workspace := t.TempDir()
+	adapter := &queryHarnessAdapter{}
+	repository := &queryRepository{
+		tasks: []domain.Task{task},
+		preparation: ManagedRunPreparation{
+			ExternalRunRef: task.Handle, RequestedWorkspaceRoot: workspace,
+			RequestedAttachment: PreparedRuntimeAttachment{RelayIdentity: strings.Repeat("ab", 32)},
+			State:               PreparationOpen,
+		},
+		resume: queryResumeFixture{
+			launch: TaskResumeLaunch{
+				OperationID: "operation-resume-launch-plan", TaskHandle: task.Handle,
+				HeadRevision: strings.Repeat("c", 40), StateVersion: task.StateVersion,
+			},
+			found: true,
+		},
+	}
+	queries, err := NewQueries(QueryConfig{
+		Repository: repository, Harnesses: &queryHarnesses{adapter: adapter},
+		Clock: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := queries.GetLaunchPlan(context.Background(), task.Handle)
+	if err != nil {
+		t.Fatalf("GetLaunchPlan(resume) error = %v", err)
+	}
+	if plan.State != domain.TaskReady || adapter.resume == nil ||
+		adapter.resume.ResumeFromHead != repository.resume.launch.HeadRevision ||
+		adapter.resume.Launch.TaskHandle != task.Handle {
+		t.Fatalf("resume launch plan = %#v, request %#v", plan, adapter.resume)
+	}
+}
+
+func TestBuildWorkerTaskLaunchDescriptorRefusesUnreadableOrMalformedResumeAuthority(t *testing.T) {
+	task := queryTask("task-launch-resume-refusal", domain.TaskReady, 22)
+	task.ExecutionAttachmentID = "execution-attachment-resume-refusal"
+	task.AttachmentTargetName = "attachment-ffffffffffffffffffffffffffffffff.sock"
+	preparation := ManagedRunPreparation{
+		ExternalRunRef: task.Handle, RequestedWorkspaceRoot: t.TempDir(),
+		RequestedAttachment: PreparedRuntimeAttachment{RelayIdentity: strings.Repeat("ab", 32)},
+		State:               PreparationOpen,
+	}
+	harnesses := &queryHarnesses{adapter: &queryHarnessAdapter{}}
+	if _, err := BuildWorkerTaskLaunchDescriptor(context.Background(), task, preparation, harnesses,
+		&queryRepository{resume: queryResumeFixture{err: errors.New("resume store unavailable")}}); err == nil {
+		t.Fatal("BuildWorkerTaskLaunchDescriptor(unreadable resume) error = nil")
+	}
+	malformed := TaskResumeLaunch{
+		OperationID: "../../forged", TaskHandle: task.Handle,
+		HeadRevision: strings.Repeat("c", 40), StateVersion: task.StateVersion,
+	}
+	if _, err := BuildWorkerTaskLaunchDescriptor(context.Background(), task, preparation, harnesses,
+		&queryRepository{resume: queryResumeFixture{launch: malformed, found: true}}); err == nil {
+		t.Fatal("BuildWorkerTaskLaunchDescriptor(malformed resume) error = nil")
+	}
+	valid := malformed
+	valid.OperationID = "operation-resume-adapter-refusal"
+	failingHarnesses := &queryHarnesses{adapter: &queryHarnessAdapter{err: errors.New("adapter unavailable")}}
+	if _, err := BuildWorkerTaskLaunchDescriptor(context.Background(), task, preparation, failingHarnesses,
+		&queryRepository{resume: queryResumeFixture{launch: valid, found: true}}); err == nil {
+		t.Fatal("BuildWorkerTaskLaunchDescriptor(resume adapter failure) error = nil")
+	}
+	if _, err := RuntimeRelaunchAcknowledgementOperationID("../forged", 0); err == nil {
+		t.Fatal("RuntimeRelaunchAcknowledgementOperationID(forged generation) error = nil")
+	}
+	inconsistentHarnesses := &queryHarnesses{adapter: &queryHarnessAdapter{descriptor: &WorkerLaunchDescriptor{}}}
+	if _, err := BuildWorkerTaskLaunchDescriptor(context.Background(), task, preparation, inconsistentHarnesses,
+		&queryRepository{resume: queryResumeFixture{launch: valid, found: true}}); err == nil {
+		t.Fatal("BuildWorkerTaskLaunchDescriptor(inconsistent resume descriptor) error = nil")
 	}
 }
 

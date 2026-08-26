@@ -125,15 +125,44 @@ type TaskSummary struct {
 	NextSafeActions  []NextAction     `json:"nextSafeActions"`
 }
 
-// FleetSnapshot is the canonical current E0 fleet projection.
+// FleetCapacityKind is the closed scope of one concurrency ceiling.
+type FleetCapacityKind string
+
+const (
+	CapacityHost          FleetCapacityKind = "host"
+	CapacityRepository    FleetCapacityKind = "repository"
+	CapacityWorkerProfile FleetCapacityKind = "worker_profile"
+)
+
+// FleetCapacityDimension reports exact current usage against one reviewed
+// concurrency ceiling. ID is empty only for the host-wide dimension.
+type FleetCapacityDimension struct {
+	Kind      FleetCapacityKind `json:"kind"`
+	ID        string            `json:"id,omitempty"`
+	Used      int               `json:"used"`
+	Limit     int               `json:"limit"`
+	Available int               `json:"available"`
+	Saturated bool              `json:"saturated"`
+}
+
+// FleetCapacitySnapshot is unavailable only when the service has no reviewed
+// scheduler configuration. Known snapshots always include the host ceiling,
+// every observed repository, and every configured worker profile.
+type FleetCapacitySnapshot struct {
+	Known      bool                     `json:"known"`
+	Dimensions []FleetCapacityDimension `json:"dimensions"`
+}
+
+// FleetSnapshot is the canonical current fleet projection.
 type FleetSnapshot struct {
-	SchemaVersion int           `json:"schemaVersion"`
-	CapturedAtMs  int64         `json:"capturedAtMs"`
-	StateVersion  int64         `json:"stateVersion"`
-	Completeness  Completeness  `json:"completeness"`
-	ServiceHealth HealthStatus  `json:"serviceHealth"`
-	ComisHealth   HealthStatus  `json:"comisHealth"`
-	Tasks         []TaskSummary `json:"tasks"`
+	SchemaVersion int                   `json:"schemaVersion"`
+	CapturedAtMs  int64                 `json:"capturedAtMs"`
+	StateVersion  int64                 `json:"stateVersion"`
+	Completeness  Completeness          `json:"completeness"`
+	ServiceHealth HealthStatus          `json:"serviceHealth"`
+	ComisHealth   HealthStatus          `json:"comisHealth"`
+	Capacity      FleetCapacitySnapshot `json:"capacity"`
+	Tasks         []TaskSummary         `json:"tasks"`
 }
 
 // TaskList is the versioned task-list projection.

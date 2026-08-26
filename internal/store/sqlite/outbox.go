@@ -43,24 +43,41 @@ func insertComisReportIdentity(ctx context.Context, transaction *sql.Tx, operati
 // acknowledgement. It never leases or deletes the item, so process loss is a
 // safe same-identity resend.
 func (store *Store) NextComisReport(ctx context.Context) (application.ComisReportDelivery, bool, error) {
-	const query = `SELECT
-        o.operation_id, o.service_report_id, t.managed_run_id,
-        r.task_handle, r.local_report_id, r.kind, r.external_key,
-        r.summary, r.details, r.worker_observed_at, r.state_version
-    FROM comis_report_outbox o
-    JOIN reports r ON r.task_handle = o.task_handle AND r.local_report_id = o.local_report_id
-    JOIN tasks t ON t.handle = r.task_handle
-    WHERE o.delivered_at IS NULL
-      AND (r.kind != 'candidate_complete' OR (
-        t.state IN ('candidate_complete', 'delivering', 'delivered')
-        AND (SELECT COUNT(*) FROM comis_evidence_outbox e WHERE e.task_handle = t.handle) = 2
-        AND NOT EXISTS (
-          SELECT 1 FROM comis_evidence_outbox e
-          WHERE e.task_handle = t.handle AND e.delivered_at IS NULL
-        )
-      ))
-    ORDER BY r.state_version, r.task_handle, r.local_report_id
-    LIMIT 1`
+	const query = `SELECT operation_id, service_report_id, managed_run_id,
+		task_handle, local_report_id, kind, external_key, summary, details,
+		worker_observed_at, state_version
+	FROM (
+		SELECT o.operation_id, o.service_report_id, t.managed_run_id,
+			r.task_handle, r.local_report_id, r.kind, r.external_key,
+			r.summary, r.details, r.worker_observed_at, r.state_version
+		FROM comis_report_outbox o
+		JOIN reports r ON r.task_handle = o.task_handle AND r.local_report_id = o.local_report_id
+		JOIN tasks t ON t.handle = r.task_handle
+		WHERE o.delivered_at IS NULL
+		  AND (r.kind != 'candidate_complete' OR (
+			t.state IN ('candidate_complete', 'delivering', 'delivered')
+			AND (SELECT COUNT(*) FROM comis_evidence_outbox e WHERE e.task_handle = t.handle) = 2
+			AND NOT EXISTS (
+			  SELECT 1 FROM comis_evidence_outbox e
+			  WHERE e.task_handle = t.handle AND e.delivered_at IS NULL
+			)
+		  ))
+		UNION ALL
+		SELECT o.operation_id, o.service_report_id, t.managed_run_id,
+			o.task_handle, o.local_report_id, 'candidate_complete', '',
+			o.summary, '', NULL, o.state_version
+		FROM comis_reconciled_report_outbox o
+		JOIN tasks t ON t.handle = o.task_handle
+		WHERE o.delivered_at IS NULL
+		  AND t.state IN ('candidate_complete', 'delivering', 'delivered', 'cleanup_held', 'cleaned')
+		  AND (SELECT COUNT(*) FROM comis_evidence_outbox e WHERE e.task_handle = t.handle) = 2
+		  AND NOT EXISTS (
+			SELECT 1 FROM comis_evidence_outbox e
+			WHERE e.task_handle = t.handle AND e.delivered_at IS NULL
+		  )
+	)
+	ORDER BY state_version, task_handle, local_report_id
+	LIMIT 1`
 	var delivery application.ComisReportDelivery
 	var observedAt sql.NullString
 	err := store.db.QueryRowContext(ctx, query).Scan(
@@ -131,13 +148,22 @@ func (store *Store) MarkComisReportDelivered(
 		return fmt.Errorf("begin Comis report acknowledgement: %w", err)
 	}
 	defer func() { _ = transaction.Rollback() }()
-	const query = `SELECT
-        t.managed_run_id, o.service_report_id, o.task_handle, r.kind, o.accepted_sequence,
-        o.retained_until, o.delivered_at
-    FROM comis_report_outbox o
-    JOIN tasks t ON t.handle = o.task_handle
-    JOIN reports r ON r.task_handle = o.task_handle AND r.local_report_id = o.local_report_id
-    WHERE o.operation_id = ?`
+	const query = `SELECT managed_run_id, service_report_id, task_handle, kind,
+		accepted_sequence, retained_until, delivered_at, source
+	FROM (
+		SELECT t.managed_run_id, o.service_report_id, o.task_handle, r.kind,
+			o.accepted_sequence, o.retained_until, o.delivered_at, 'worker' AS source
+		FROM comis_report_outbox o
+		JOIN tasks t ON t.handle = o.task_handle
+		JOIN reports r ON r.task_handle = o.task_handle AND r.local_report_id = o.local_report_id
+		WHERE o.operation_id = ?
+		UNION ALL
+		SELECT t.managed_run_id, o.service_report_id, o.task_handle, 'candidate_complete',
+			o.accepted_sequence, o.retained_until, o.delivered_at, 'reconciliation' AS source
+		FROM comis_reconciled_report_outbox o
+		JOIN tasks t ON t.handle = o.task_handle
+		WHERE o.operation_id = ?
+	)`
 	var managedRunID string
 	var serviceReportID string
 	var taskHandle string
@@ -145,9 +171,10 @@ func (store *Store) MarkComisReportDelivered(
 	var acceptedSequence sql.NullInt64
 	var retainedUntil sql.NullString
 	var priorDeliveredAt sql.NullString
-	if err := transaction.QueryRowContext(ctx, query, operationID).Scan(
+	var source reportOutboxSource
+	if err := transaction.QueryRowContext(ctx, query, operationID, operationID).Scan(
 		&managedRunID, &serviceReportID, &taskHandle, &reportKind,
-		&acceptedSequence, &retainedUntil, &priorDeliveredAt,
+		&acceptedSequence, &retainedUntil, &priorDeliveredAt, &source,
 	); errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("mark Comis report delivered: %w", application.ErrNotFound)
 	} else if err != nil {
@@ -162,10 +189,7 @@ func (store *Store) MarkComisReportDelivered(
 		}
 		return nil
 	}
-	const update = `UPDATE comis_report_outbox SET
-        accepted_sequence = ?, retained_until = ?, delivered_at = ?
-    WHERE operation_id = ? AND delivered_at IS NULL`
-	result, err := transaction.ExecContext(ctx, update, ack.AcceptedSequence, formatTime(ack.RetainedUntil), formatTime(deliveredAt), operationID)
+	result, err := updateComisReportAcknowledgement(ctx, transaction, source, operationID, ack, deliveredAt)
 	if err != nil {
 		return fmt.Errorf("write Comis report acknowledgement: %w", err)
 	}
@@ -173,7 +197,7 @@ func (store *Store) MarkComisReportDelivered(
 	if err != nil || rows != 1 {
 		return errors.New("write Comis report acknowledgement: exact item was not updated")
 	}
-	if reportKind == domain.ReportCandidateComplete {
+	if source == reportOutboxWorker && reportKind == domain.ReportCandidateComplete {
 		task, err := getTask(ctx, transaction, taskHandle)
 		if err != nil {
 			return err
@@ -199,6 +223,38 @@ func (store *Store) MarkComisReportDelivered(
 		return fmt.Errorf("commit Comis report acknowledgement: %w", err)
 	}
 	return nil
+}
+
+type reportOutboxSource string
+
+const (
+	reportOutboxWorker         reportOutboxSource = "worker"
+	reportOutboxReconciliation reportOutboxSource = "reconciliation"
+)
+
+func updateComisReportAcknowledgement(
+	ctx context.Context,
+	transaction *sql.Tx,
+	source reportOutboxSource,
+	operationID string,
+	ack application.ComisReportAcknowledgement,
+	deliveredAt time.Time,
+) (sql.Result, error) {
+	const workerUpdate = `UPDATE comis_report_outbox SET
+		accepted_sequence = ?, retained_until = ?, delivered_at = ?
+		WHERE operation_id = ? AND delivered_at IS NULL`
+	const reconciliationUpdate = `UPDATE comis_reconciled_report_outbox SET
+		accepted_sequence = ?, retained_until = ?, delivered_at = ?
+		WHERE operation_id = ? AND delivered_at IS NULL`
+	arguments := []any{ack.AcceptedSequence, formatTime(ack.RetainedUntil), formatTime(deliveredAt), operationID}
+	switch source {
+	case reportOutboxWorker:
+		return transaction.ExecContext(ctx, workerUpdate, arguments...)
+	case reportOutboxReconciliation:
+		return transaction.ExecContext(ctx, reconciliationUpdate, arguments...)
+	default:
+		return nil, errors.New("write Comis report acknowledgement: outbox source is invalid")
+	}
 }
 
 func validateComisDelivery(delivery application.ComisReportDelivery) error {

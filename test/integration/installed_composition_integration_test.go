@@ -83,6 +83,7 @@ func TestInstalledComposition_JoinsMCPActivationAndReviewedCodexLaunchPlan(t *te
 		"--codex-version", "codex-cli 0.147.0", "--codex-model", "gpt-5.5-codex",
 		"--codex-effort", "high", "--codex-terminal-allow-entry", "codex-confined",
 		"--codex-network", "restricted", "--codex-concurrency", "2",
+		"--max-concurrent-tasks", "2", "--max-concurrent-tasks-per-repository", "2",
 		"--candidate-config", candidateConfig,
 	)
 	serviceCommand.Stderr = serviceStderr
@@ -156,11 +157,11 @@ func TestInstalledComposition_JoinsMCPActivationAndReviewedCodexLaunchPlan(t *te
 		},
 	}
 	if err := writeInstalledFrame(peer.connection, installedAuthenticatedActivate{ActivateRequest: activation, Bearer: installedCredential}); err != nil {
-		t.Fatal(err)
+		t.Fatalf("write installed activation: %v; service stderr=%q", err, serviceStderr.String())
 	}
 	line, err := peer.reader.ReadBytes('\n')
 	if err != nil {
-		t.Fatalf("read installed activation response: %v", err)
+		t.Fatalf("read installed activation response: %v; service stderr=%q", err, serviceStderr.String())
 	}
 	var response comiswire.ActivateResponse
 	decodeJSON(t, line, &response)
@@ -358,8 +359,9 @@ func acceptInstalledControl(listener *net.UnixListener, ready chan<- installedCo
 			ServiceInstanceID: handshake.Params.ServiceInstanceID,
 			ActiveScopes:      append([]comiswire.ServiceScope(nil), handshake.Params.RequestedScopes...),
 			Limits: comiswire.ProtocolLimits{
-				MaxEvidenceBytes: comiswire.MaxEvidenceBytes, MaxInFlightRequests: comiswire.MaxInFlightRequests,
-				MaxLineBytes: comiswire.MaxLineBytes, MaxReportBytes: comiswire.MaxReportBytes,
+				MaxEvidenceBytes: comiswire.MaxEvidenceBytes, MaxGroupMembers: comiswire.MaxGroupMembers,
+				MaxInFlightRequests: comiswire.MaxInFlightRequests,
+				MaxLineBytes:        comiswire.MaxLineBytes, MaxReportBytes: comiswire.MaxReportBytes,
 				MaxRequestBytes: comiswire.MaxRequestBytes, MaxResponseBytes: comiswire.MaxResponseBytes,
 				ReportRetentionDays: comiswire.ReportRetentionDays,
 			},
@@ -490,11 +492,13 @@ func installedCandidateConfig(t *testing.T, root string) string {
 				"arguments": []map[string]any{{"kind": "literal", "value": "--version"}},
 			}},
 			"forgeChecks": []map[string]any{{"name": "ci/unit", "required": true}},
+			"pathRules":   []map[string]any{{"kind": "exact", "path": "report.md"}},
 			"artifactRules": []map[string]any{{
 				"kind": "regular_file", "relativePath": "report.md", "mediaType": "text/markdown", "maxBytes": 16384,
 			}},
 		}},
-		"maxOutputBytes": 65536, "pollInterval": "250ms",
+		"integrationPolicies": []map[string]any{{"id": "integration-default", "strategy": "merge"}},
+		"maxOutputBytes":      65536, "pollInterval": "250ms",
 		"forge": map[string]any{
 			"apiBaseUrl": "https://api.github.com", "owner": "comisai", "repository": "product-api",
 			"remoteUrl":          "https://github.com/comisai/product-api.git",

@@ -222,6 +222,10 @@ type TaskStartMutation struct {
 	OperationID   string
 	SubjectDigest string
 	At            time.Time
+	// SchedulingLimits is required only when the task belongs to an initiative.
+	// The store applies it inside the start transaction; a read-side decision is
+	// not launch authority because member or capacity state could change after it.
+	SchedulingLimits *InitiativeSchedulingLimits
 }
 
 // TerminalEventMutation is the validated durable terminal-event transaction.
@@ -355,6 +359,21 @@ type RuntimeAttachmentBindingRequest struct {
 	Acknowledger          WorkerLaunchAcknowledger
 }
 
+// RuntimeAttachmentLaunchRebindRequest selects a later launch generation for
+// an already-bound task socket without changing its host attachment authority.
+type RuntimeAttachmentLaunchRebindRequest struct {
+	TaskHandle        string
+	ReadyStateVersion int64
+	LaunchOperationID string
+	Brief             domain.WorkerBrief
+}
+
+// RuntimeAttachmentLaunchRebinder rotates only the acknowledgement generation
+// after a paused task has durably returned to ready.
+type RuntimeAttachmentLaunchRebinder interface {
+	RebindRuntimeAttachmentLaunch(context.Context, RuntimeAttachmentLaunchRebindRequest) error
+}
+
 // RuntimeAttachmentCoordinator owns per-task reporter listeners and binds the
 // activation identity to the same protected socket without replacing it.
 type RuntimeAttachmentCoordinator interface {
@@ -422,6 +441,9 @@ type MutationConfig struct {
 	TaskIDs            TaskIDSource
 	RegistrationNonces RegistrationNonceSource
 	PreparationTTL     time.Duration
+	// SchedulingLimits is absent only for deployments that cannot prepare
+	// initiatives. A member start fails closed if no reviewed limits arrive.
+	SchedulingLimits *InitiativeSchedulingLimits
 	// Absent when the deployment has no scout-promotion authority. Promotion is
 	// then refused rather than minting a ship task with no recorded origin.
 	Promotions ScoutPromotionStore

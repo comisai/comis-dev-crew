@@ -8,7 +8,8 @@ import (
 )
 
 // ComisReportDelivery is one already-durable sparse report ready for the
-// authenticated Comis connection. Both wire identities are stable on replay.
+// authenticated Comis connection. The source may be a worker report or a
+// service-owned recovery outcome; both wire identities are stable on replay.
 type ComisReportDelivery struct {
 	OperationID      string
 	TaskHandle       string

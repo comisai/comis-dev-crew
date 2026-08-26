@@ -404,3 +404,7 @@ func FuzzStrictDecoder(f *testing.F) {
 		}
 	})
 }
+
+func (queries *apiQueries) ReadAudit(context.Context, int64, int) (application.AuditPage, error) {
+	return application.AuditPage{SchemaVersion: 1, Events: []application.AuditEvent{}}, nil
+}

@@ -6,7 +6,7 @@ import (
 	devgit "github.com/comisai/comis-dev-crew/internal/git"
 )
 
-func candidateMatchesReconciledSnapshot(
+func candidateMatchesWorkspaceSnapshot(
 	task domain.Task,
 	observed devgit.CandidateSnapshot,
 	durable application.WorkspaceSnapshot,

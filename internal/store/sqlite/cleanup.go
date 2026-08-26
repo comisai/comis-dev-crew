@@ -62,6 +62,27 @@ func (store *Store) BeginTaskCleanup(
 	ctx context.Context,
 	mutation application.TaskCleanupMutation,
 ) (application.TaskCleanupRecord, error) {
+	record, err := store.beginTaskCleanup(ctx, mutation)
+	if err == nil || !errors.Is(err, application.ErrPrecondition) {
+		return record, err
+	}
+	// Recorded outside the refused transaction, which has already rolled back.
+	// A failure to audit is reported beside the refusal rather than replacing
+	// it: the operator still needs to know cleanup was refused and why, and a
+	// missing record must not read as a missing refusal.
+	if auditErr := store.RecordAuditEvent(ctx, application.AuditEvent{
+		OccurredAt: mutation.At, Kind: application.AuditCleanupRefused,
+		TaskHandle: mutation.TaskHandle, Reason: auditCleanupReason(err),
+	}); auditErr != nil {
+		return record, errors.Join(err, fmt.Errorf("audit refused cleanup: %w", auditErr))
+	}
+	return record, err
+}
+
+func (store *Store) beginTaskCleanup(
+	ctx context.Context,
+	mutation application.TaskCleanupMutation,
+) (application.TaskCleanupRecord, error) {
 	if err := validateCleanupMutation(store, ctx, mutation); err != nil {
 		return application.TaskCleanupRecord{}, err
 	}
@@ -124,6 +145,11 @@ func (store *Store) BeginTaskCleanup(
 		return application.TaskCleanupRecord{}, err
 	}
 	bundle := sealed.Bundle()
+	if err := proveCleanupIntegrationApplications(
+		ctx, transaction, task, evidenceRow.digest, bundle.HeadRevision,
+	); err != nil {
+		return application.TaskCleanupRecord{}, err
+	}
 	if err := proveCleanupCandidateOrigin(
 		ctx, transaction, task, preparationOperationID, worktreePath, bundle.HeadRevision,
 	); err != nil {
@@ -208,7 +234,7 @@ func (store *Store) RecordTaskCleanupHostRelease(
 	mutation application.TaskCleanupHostReleaseMutation,
 ) (application.TaskCleanupRecord, error) {
 	return store.advanceTaskCleanup(ctx, mutation.OperationID, mutation.SubjectDigest,
-		application.CleanupPrepared, application.CleanupHostReleased,
+		[]application.TaskCleanupStage{application.CleanupPrepared}, application.CleanupHostReleased,
 		mutation.Snapshot, mutation.DeliveryTruth, &mutation.Receipt, mutation.At)
 }
 
@@ -219,14 +245,16 @@ func (store *Store) AuthorizeTaskCleanupRemoval(
 	mutation application.TaskCleanupRemovalAuthorization,
 ) (application.TaskCleanupRecord, error) {
 	return store.advanceTaskCleanup(ctx, mutation.OperationID, mutation.SubjectDigest,
-		application.CleanupHostReleased, application.CleanupRemovalAuthorized,
+		[]application.TaskCleanupStage{application.CleanupHostReleased, application.CleanupManagedRunAbsent},
+		application.CleanupRemovalAuthorized,
 		mutation.Snapshot, mutation.DeliveryTruth, nil, mutation.At)
 }
 
 func (store *Store) advanceTaskCleanup(
 	ctx context.Context,
 	operationID, subjectDigest string,
-	from, to application.TaskCleanupStage,
+	from []application.TaskCleanupStage,
+	to application.TaskCleanupStage,
 	snapshot application.WorkspaceSnapshot,
 	truth application.PullRequestDeliveryTruth,
 	receipt *application.ManagedRunReleaseReceipt,
@@ -251,10 +279,11 @@ func (store *Store) advanceTaskCleanup(
 	if record.SubjectDigest != subjectDigest {
 		return application.TaskCleanupRecord{}, fmt.Errorf("advance task cleanup altered replay: %w", application.ErrConflict)
 	}
-	if record.Stage != from {
-		if record.Stage == to && cleanupProofMatches(record, snapshot, truth) {
-			return record, nil
-		}
+	if record.Stage == to && cleanupProofMatches(record, snapshot, truth) {
+		return record, nil
+	}
+	fromStage := record.Stage
+	if !cleanupStageAllowed(fromStage, from) {
 		return application.TaskCleanupRecord{}, fmt.Errorf("advance task cleanup stage: %w", application.ErrPrecondition)
 	}
 	if err := validateCleanupProof(record, snapshot, truth); err != nil {
@@ -272,6 +301,14 @@ func (store *Store) advanceTaskCleanup(
 	}
 	if task.State != domain.TaskCleanupHeld || at.Before(task.UpdatedAt) {
 		return application.TaskCleanupRecord{}, fmt.Errorf("advance task cleanup posture: %w", application.ErrPrecondition)
+	}
+	if fromStage == application.CleanupManagedRunAbsent &&
+		(!record.Discard || record.ManagedRunID != "" || record.WorkspaceLeaseID != "" ||
+			task.ManagedRunID != "" || task.WorkspaceLeaseID != "" ||
+			task.ExecutionAttachmentID != "" || task.AttachmentTargetName != "") {
+		return application.TaskCleanupRecord{}, fmt.Errorf(
+			"advance task cleanup absent managed-run authority differs: %w", application.ErrPrecondition,
+		)
 	}
 	stateVersion, err := nextMutationStateVersion(ctx, transaction)
 	if err != nil {
@@ -295,7 +332,7 @@ func (store *Store) advanceTaskCleanup(
         delivery_truth_json = ?, ` + timeColumn + ` = ?, state_version = ?
         WHERE operation_id = ? AND stage = ?`
 	result, err := transaction.ExecContext(ctx, statement, to, snapshot.Branch, snapshot.HeadRevision,
-		snapshot.Cleanliness, string(encodedTruth), formatTime(at), stateVersion, operationID, from)
+		snapshot.Cleanliness, string(encodedTruth), formatTime(at), stateVersion, operationID, fromStage)
 	if err != nil {
 		return application.TaskCleanupRecord{}, fmt.Errorf("advance task cleanup: %w", err)
 	}
@@ -309,6 +346,15 @@ func (store *Store) advanceTaskCleanup(
 	record.Stage = to
 	record.Snapshot = snapshot
 	return record, nil
+}
+
+func cleanupStageAllowed(stage application.TaskCleanupStage, allowed []application.TaskCleanupStage) bool {
+	for _, candidate := range allowed {
+		if stage == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 // CompleteTaskCleanup marks cleaned only after the removal-authorized adapter
@@ -333,11 +379,6 @@ func (store *Store) CompleteTaskCleanup(
 		return application.MutationResult{}, fmt.Errorf("begin task cleanup completion: %w", err)
 	}
 	defer func() { _ = transaction.Rollback() }()
-	if replay, found, err := mutationReplay(ctx, transaction, requestOperationID, commandCleanupTask, requestSubjectDigest); err != nil {
-		return application.MutationResult{}, commitReplayConflict(transaction, err)
-	} else if found {
-		return replayResult(ctx, transaction, replay)
-	}
 	record, found, err := findTaskCleanupRecord(ctx, transaction, completion.OperationID)
 	if err != nil {
 		return application.MutationResult{}, err
@@ -348,6 +389,15 @@ func (store *Store) CompleteTaskCleanup(
 	if record.SubjectDigest != completion.SubjectDigest {
 		return application.MutationResult{}, fmt.Errorf("complete task cleanup altered replay: %w", application.ErrConflict)
 	}
+	command := commandCleanupTask
+	if record.Discard {
+		command = commandDiscardTask
+	}
+	if replay, found, err := mutationReplay(ctx, transaction, requestOperationID, command, requestSubjectDigest); err != nil {
+		return application.MutationResult{}, commitReplayConflict(transaction, err)
+	} else if found {
+		return replayResult(ctx, transaction, replay)
+	}
 	if record.Stage == application.CleanupCompleted {
 		task, err := getTask(ctx, transaction, record.TaskHandle)
 		if err != nil {
@@ -357,7 +407,7 @@ func (store *Store) CompleteTaskCleanup(
 			return application.MutationResult{}, fmt.Errorf("complete task cleanup replay: %w", application.ErrPrecondition)
 		}
 		operation := completedMutationOperation(
-			requestOperationID, commandCleanupTask, requestSubjectDigest,
+			requestOperationID, command, requestSubjectDigest,
 			task.Handle, task.StateVersion, completion.At,
 		)
 		if err := insertOperation(ctx, transaction, operation); err != nil {
@@ -397,14 +447,14 @@ func (store *Store) CompleteTaskCleanup(
 	if err := updateTaskState(ctx, transaction, cleaned); err != nil {
 		return application.MutationResult{}, err
 	}
-	originalOperation := completedMutationOperation(completion.OperationID, commandCleanupTask,
+	originalOperation := completedMutationOperation(completion.OperationID, command,
 		completion.SubjectDigest, cleaned.Handle, stateVersion, completion.At)
 	if err := insertOperation(ctx, transaction, originalOperation); err != nil {
 		return application.MutationResult{}, fmt.Errorf("insert task cleanup operation: %w", err)
 	}
 	operation := originalOperation
 	if requestOperationID != completion.OperationID {
-		operation = completedMutationOperation(requestOperationID, commandCleanupTask,
+		operation = completedMutationOperation(requestOperationID, command,
 			requestSubjectDigest, cleaned.Handle, stateVersion, completion.At)
 		if err := insertOperation(ctx, transaction, operation); err != nil {
 			return application.MutationResult{}, fmt.Errorf("insert task cleanup retry operation: %w", err)

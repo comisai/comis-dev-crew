@@ -167,8 +167,8 @@ func TestRunner_RecordsAbsentWhenFixedProgramCannotStart(t *testing.T) {
 		OperationID: "validate-missing", TaskHandle: "task-alpha", ProfileID: "fixture-default", CheckID: "unit",
 		Fields: TaskFields{TaskHandle: "task-alpha", WorktreePath: t.TempDir(), BaseRevision: strings.Repeat("a", 40), HeadRevision: strings.Repeat("b", 40)},
 	})
-	if err == nil {
-		t.Fatal("Run(missing program) error = nil")
+	if !errors.Is(err, ErrProcessAbsent) {
+		t.Fatalf("Run(missing program) error = %v, want ErrProcessAbsent", err)
 	}
 	records := store.snapshot()
 	if len(records) != 2 || records[0].State != ProcessStarting || records[1].State != ProcessAbsent {
@@ -322,9 +322,10 @@ func runnerCatalog(t *testing.T, executable string, arguments []string) *Catalog
 	}
 	catalog, err := NewCatalog(CatalogConfig{
 		Programs: []Program{{ID: "fixture-program", Executable: executable}},
-		Profiles: []Profile{{ID: "fixture-default", EvidenceTTL: time.Minute, LocalChecks: []LocalCheck{{
-			ID: "unit", ProgramID: "fixture-program", Arguments: templates, Timeout: 10 * time.Second, Required: true,
-		}}}},
+		Profiles: []Profile{{ID: "fixture-default", EvidenceTTL: time.Minute,
+			PathRules: []PathRule{{Kind: PathRuleExact, Path: "report.md"}}, LocalChecks: []LocalCheck{{
+				ID: "unit", ProgramID: "fixture-program", Arguments: templates, Timeout: 10 * time.Second, Required: true,
+			}}}},
 	})
 	if err != nil {
 		t.Fatalf("NewCatalog() error = %v", err)

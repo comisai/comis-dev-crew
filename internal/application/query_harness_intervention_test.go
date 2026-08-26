@@ -35,10 +35,11 @@ func (*queryHarnessAdapter) ClassifyProcessRole(TaskProcessObservation) ProcessR
 	return ProcessRoleResult{Role: ProcessRoleUnknown, Reason: ProcessRoleReasonUnattributed}
 }
 
-func (*queryHarnessAdapter) BuildResumeDescriptor(
-	context.Context, WorkerResumeRequest,
+func (adapter *queryHarnessAdapter) BuildResumeDescriptor(
+	ctx context.Context, request WorkerResumeRequest,
 ) (WorkerLaunchDescriptor, error) {
-	return WorkerLaunchDescriptor{}, errors.New("query harness adapter does not build descriptors")
+	adapter.resume = &request
+	return adapter.BuildLaunchDescriptor(ctx, request.Launch)
 }
 
 func (*queryHarnessAdapter) InstallLifecycleIntegration(

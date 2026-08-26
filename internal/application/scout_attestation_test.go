@@ -3,9 +3,12 @@ package application
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/comisai/comis-dev-crew/internal/domain"
 )
 
 type stubAttestationStore struct {
@@ -174,6 +177,18 @@ func TestAttestScoutDecisions_SurfacesAStoreFailureAndACanceledCaller(t *testing
 		Finding: ScoutAttestationNoOpenDecisions,
 	}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("AttestScoutDecisions(canceled) error = %v", err)
+	}
+}
+
+func TestAttestScoutDecisions_ClassifiesAMissingScoutAsAPrecondition(t *testing.T) {
+	reviews := newScoutReviews(t, &stubAttestationStore{err: fmt.Errorf("read scout: %w", ErrNotFound)})
+	_, err := reviews.AttestScoutDecisions(context.Background(), AttestScoutDecisionsCommand{
+		OperationID: "operation-attest-0001", TaskHandle: "task-0001",
+		Finding: ScoutAttestationNoOpenDecisions,
+	})
+	var failure *domain.Failure
+	if !errors.As(err, &failure) || failure.Code != domain.ErrorPrecondition || failure.Retryable {
+		t.Fatalf("AttestScoutDecisions(missing scout) error = %#v, want non-retryable precondition", err)
 	}
 }
 
