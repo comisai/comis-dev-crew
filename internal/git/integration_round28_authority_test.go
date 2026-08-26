@@ -3,7 +3,6 @@ package git_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,23 +30,28 @@ func TestRegistry_PreparedRestorationExpiryNeverReportsMutationNotStarted(t *tes
 	}
 }
 
-func TestRegistry_PreparedRestorationReceiptRacePreservesJournal(t *testing.T) {
+func TestRegistry_ContradictorySymbolicReceiptPreservesPreparedJournal(t *testing.T) {
 	baseline := time.Date(2099, time.January, 1, 0, 0, 0, 0, time.UTC)
 	fixture := newIntegrationFixture(t)
 	request, _, restorationPath := stagePreparedRestorationCrash(t, fixture, "after-index", baseline)
 	appliedRef := integrationReceiptRefForTest("applied", request)
-	wrapper := writePreparedRestorationReceiptRaceWrapper(t, fixture, appliedRef)
-	registry := newIntegrationRegistryWithExecutableAndClock(t, fixture, wrapper, func() time.Time { return baseline })
+	// Receipts are read as an atomic filesystem snapshot rather than through a
+	// child process, so the contradiction is planted directly on the ref.
+	runGit(t, fixture.repository.gitExecutable, "--no-optional-locks", "-C", fixture.target.CanonicalPath,
+		"symbolic-ref", appliedRef, "refs/heads/missing-restoration-receipt")
+	registry := newIntegrationRegistryWithExecutableAndClock(
+		t, fixture, fixture.repository.gitExecutable, func() time.Time { return baseline },
+	)
 
 	if _, err := registry.ApplyIntegrationCandidate(context.Background(), request); err == nil {
-		t.Fatal("ApplyIntegrationCandidate(racing receipt) error = nil")
+		t.Fatal("ApplyIntegrationCandidate(contradictory symbolic receipt) error = nil")
 	}
 	if _, err := os.Lstat(restorationPath); err != nil {
-		t.Fatalf("prepared restoration journal was retired after receipt race: %v", err)
+		t.Fatalf("prepared restoration journal was retired after receipt refusal: %v", err)
 	}
 	if _, err := integrationGitOutputError(fixture.repository.gitExecutable,
 		fixture.target.CanonicalPath, "symbolic-ref", "--no-recurse", appliedRef); err != nil {
-		t.Fatalf("racing symbolic receipt is unavailable: %v", err)
+		t.Fatalf("contradictory symbolic receipt is unavailable: %v", err)
 	}
 }
 
@@ -146,48 +150,4 @@ func stagePreparedRestorationCrash(
 		t.Fatalf("prepared restoration journal is unavailable: %v", err)
 	}
 	return request, targetRef, path
-}
-
-func writePreparedRestorationReceiptRaceWrapper(
-	t *testing.T,
-	fixture integrationFixture,
-	reference string,
-) string {
-	t.Helper()
-	root := canonicalTempDir(t)
-	wrapper := filepath.Join(root, "git-prepared-receipt-race")
-	counter := filepath.Join(root, "counter")
-	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
-	script := fmt.Sprintf(`#!/bin/sh
-real=%s
-reference=%s
-counter=%s
-match=false
-previous=
-symbolic=false
-no_recurse=false
-for argument in "$@"; do
-  if [ "$argument" = symbolic-ref ]; then symbolic=true; fi
-  if [ "$argument" = --no-recurse ]; then no_recurse=true; fi
-  if [ "$argument" = "$reference" ]; then match=true; fi
-  previous=$argument
-done
-if [ "$symbolic" = true ] && [ "$no_recurse" = true ] && [ "$match" = true ]; then
-  count=0
-  if [ -f "$counter" ]; then count=$(cat "$counter"); fi
-  count=$((count + 1))
-  printf '%%s\n' "$count" > "$counter"
-  "$real" "$@"
-  status=$?
-  if [ "$count" -eq 2 ]; then
-    "$real" --no-optional-locks -C %s symbolic-ref "$reference" refs/heads/missing-restoration-receipt || exit $?
-  fi
-  exit $status
-fi
-exec "$real" "$@"
-`, quote(fixture.repository.gitExecutable), quote(reference), quote(counter), quote(fixture.target.CanonicalPath))
-	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	return wrapper
 }

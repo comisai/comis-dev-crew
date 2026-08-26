@@ -230,8 +230,10 @@ func publishMaterializationEntry(
 	publication := filepath.Join(recovery, materializationEvidenceName("publication", name))
 	previous, hadPrevious := expected[name]
 	result, hasResult := resulting[name]
-	if hadPrevious {
-		return errors.New("apply integration candidate: existing entry materialization is unsupported")
+	if hadPrevious && hasResult {
+		return publishExistingRegularMaterializationEntry(
+			root, target, recovery, name, previous, result, boundary,
+		)
 	}
 	captured, captureMatches, err := materializationEntryState(root, capture, previous)
 	if err != nil || captured && (!hadPrevious || !captureMatches) {
@@ -241,7 +243,7 @@ func publishMaterializationEntry(
 		}
 		return baseErr
 	}
-	targetFound, _, err := materializationEntryState(root, target, previous)
+	targetFound, targetExpected, err := materializationEntryState(root, target, previous)
 	if err != nil {
 		return err
 	}
@@ -251,6 +253,35 @@ func publishMaterializationEntry(
 		if err != nil {
 			return err
 		}
+	}
+	if hadPrevious && !hasResult && !captured {
+		// A removal displaces the entry into capture evidence, so an interrupted
+		// removal can still be restored, and the target is revalidated after the
+		// boundary so a racing developer edit is refused instead of discarded.
+		if !targetFound {
+			return nil
+		}
+		if !targetExpected {
+			return errors.New("apply integration candidate: materialization deletion target changed")
+		}
+		if boundary != nil {
+			boundary("before-capture", name)
+		}
+		if _, stillExpected, stateErr := materializationEntryState(root, target, previous); stateErr != nil {
+			return stateErr
+		} else if !stillExpected {
+			return errors.New("apply integration candidate: materialization deletion target changed")
+		}
+		if err := root.Rename(target, capture); err != nil {
+			return errors.New("apply integration candidate: materialization entry could not be captured")
+		}
+		if err := syncMaterializationDirectory(root, filepath.Dir(target)); err != nil {
+			return err
+		}
+		return syncMaterializationDirectory(root, recovery)
+	}
+	if captured && !hasResult {
+		return nil
 	}
 	if !hadPrevious && targetFound && !targetResult {
 		return errors.New("apply integration candidate: materialization addition target is occupied")

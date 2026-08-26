@@ -15,6 +15,7 @@ func (registry *Registry) validateIsolatedMaterializationTopology(
 	workspace gitWorkspaceEnvironment,
 	expectedHead string,
 	resultingHead string,
+	custody bool,
 ) error {
 	expected, err := registry.loadIsolatedMaterializationSnapshot(ctx, workspace, expectedHead)
 	if err != nil {
@@ -24,13 +25,21 @@ func (registry *Registry) validateIsolatedMaterializationTopology(
 	if err != nil {
 		return err
 	}
-	return validateIntegrationMaterializationTopology(expected, resulting)
+	if custody {
+		return validateIntegrationMaterializationTopology(expected, resulting)
+	}
+	return validateFreshMaterializationTopology(expected, resulting)
 }
 
 func (registry *Registry) validateLiveMaterializationBaseBeforeImport(
 	ctx context.Context,
 	request application.IntegrationAdapterRequest,
 ) error {
+	if integrationWriterCustodyProven(request) {
+		// A recovery worktree is legitimately mid-rebase, so it does not match the
+		// target base; its authority comes from the revalidated receipt instead.
+		return nil
+	}
 	tree, err := registry.integrationCommitTree(
 		ctx, request.Target.WorktreePath, request.Target.ExpectedHead,
 	)

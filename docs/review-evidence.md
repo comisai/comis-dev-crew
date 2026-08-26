@@ -328,9 +328,12 @@ The combined RED command was:
 go test ./internal/git -run 'Test(MaterializationRejectsTrackedRewriteBeforePublication|Registry_InspectCandidatePreservesStatusCleanlinessSemantics|CandidateWorktreeSnapshotBoundsAggregateRetainedContent|CandidateRenameMatchingHasBoundedWork|CandidateContentChangeCountsInteriorMatchesExactly)$' -count=1
 ```
 
-E0 therefore refuses modifications, removals, and type changes of existing
-worktree entries before target publication. Only unchanged entries and atomic
-no-replace additions are eligible for automatic materialization. Candidate
+A fresh integration therefore refuses modifications, removals, and type changes
+of existing worktree entries before target publication; only unchanged entries
+and atomic no-replace additions are eligible for it. A recovery naming an exact
+prior operation rewrites existing regular entries in place through their own
+inode and removes entries through capture evidence, so conflict resolutions
+settle without detaching a developer's open descriptor. Candidate
 cleanliness uses a copied index and repository exclude file in an empty,
 service-owned Git administration context; command-backed conversions remain
 unavailable, while safe built-in text normalization is reproduced. Gitlinks

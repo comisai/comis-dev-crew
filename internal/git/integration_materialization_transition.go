@@ -363,11 +363,12 @@ func (registry *Registry) authorizeIntegrationMaterializationAfterCAS(
 	} else if request.Strategy == application.IntegrationRebase {
 		err = registry.authorizeRebaseFinalization(ctx, request, resultingHead)
 	} else {
+		// A fresh operation must still hold unexpired evidence to finish what it
+		// started. Repository configuration is not re-read: the service's own
+		// writer publishes exact bytes and never executes it, so a racing writer
+		// must not strand an already-advanced target.
 		if err = registry.validateCompletedIntegrationReceiptFamily(ctx, request); err == nil {
-			if err = registry.validateIntegrationExecutionPolicy(ctx, request); err == nil {
-				err = registry.validateIntegrationMutationDeadline(request)
-			}
-			if err == nil {
+			if err = registry.validateIntegrationMutationDeadline(request); err == nil {
 				err = registry.validateCompletedIntegrationReceiptFamily(ctx, request)
 			}
 		}

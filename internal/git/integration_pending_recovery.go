@@ -161,9 +161,9 @@ func (registry *Registry) authorizePendingMaterializationRecovery(
 	if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
 		return err
 	}
-	if err := registry.validateIntegrationMutationDeadline(request); err != nil {
-		return err
-	}
+	// This authorization runs after the target compare-and-swap, so expiry can no
+	// longer withhold the mutation; the durable receipt set carries the authority
+	// that settles the advanced target.
 	return registry.validatePendingMaterializationReceiptSet(
 		ctx, request, originalIntegrationRequest(request), resultingHead,
 	)

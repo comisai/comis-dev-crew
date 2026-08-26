@@ -31,16 +31,26 @@ func (registry *Registry) validateIntegrationMaterializationResult(
 	if err != nil {
 		return err
 	}
-	return validateIntegrationMaterializationTopology(expected, resulting)
+	if integrationWriterCustodyProven(request) {
+		return validateIntegrationMaterializationTopology(expected, resulting)
+	}
+	return validateFreshMaterializationTopology(expected, resulting)
 }
 
-func validateIntegrationMaterializationTopology(
+// integrationWriterCustodyProven reports whether the operation already revalidated
+// the durable task, evidence, worktree, and sequencer state naming an exact prior
+// operation. Custody-free materialization may only add entries; a recovery that
+// carries that proof may also rewrite and remove them.
+func integrationWriterCustodyProven(request application.IntegrationAdapterRequest) bool {
+	return request.RecoveryOperationID != ""
+}
+
+func validateFreshMaterializationTopology(
 	expected integrationTreeSnapshot,
 	resulting integrationTreeSnapshot,
 ) error {
-	if snapshotContainsMaterializationAncestor(expected, resulting) ||
-		snapshotContainsMaterializationAncestor(resulting, expected) {
-		return errors.New("apply integration candidate: materialization directory transition is unsupported")
+	if err := validateIntegrationMaterializationTopology(expected, resulting); err != nil {
+		return err
 	}
 	for name, previous := range expected {
 		result, retained := resulting[name]
@@ -53,6 +63,21 @@ func validateIntegrationMaterializationTopology(
 		return errors.New("apply integration candidate: existing entry materialization is unsupported")
 	}
 	return nil
+}
+
+func validateIntegrationMaterializationTopology(
+	expected integrationTreeSnapshot,
+	resulting integrationTreeSnapshot,
+) error {
+	if snapshotContainsMaterializationAncestor(expected, resulting) ||
+		snapshotContainsMaterializationAncestor(resulting, expected) {
+		return errors.New("apply integration candidate: materialization directory transition is unsupported")
+	}
+	return nil
+}
+
+func regularIntegrationMode(mode string) bool {
+	return mode == "100644" || mode == "100755"
 }
 
 func snapshotContainsMaterializationAncestor(

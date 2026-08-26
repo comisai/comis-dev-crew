@@ -50,8 +50,8 @@ func TestMaterializationPreservesWritesThroughOpenTrackedDescriptor(t *testing.T
 			if materializeErr == nil {
 				t.Fatalf("materialization boundary %q returned nil error", boundary)
 			}
-			if invoked {
-				t.Fatalf("unsupported tracked rewrite reached boundary %q", boundary)
+			if !invoked {
+				t.Fatalf("tracked rewrite never reached boundary %q", boundary)
 			}
 			if _, err := writer.Seek(0, 0); err != nil {
 				t.Fatal(err)

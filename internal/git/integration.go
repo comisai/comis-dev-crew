@@ -39,12 +39,16 @@ func (registry *Registry) ApplyIntegrationCandidate(
 		return application.IntegrationAdapterResult{}, errors.New("apply integration candidate: repository is unavailable")
 	}
 	if err := registry.preflightIntegrationWorktrees(ctx, request); err != nil {
-		return application.IntegrationAdapterResult{}, err
+		// Preflight precedes every mutation, so its refusals stay attributable.
+		return application.IntegrationAdapterResult{}, errors.Join(err, application.ErrIntegrationMutationNotStarted)
 	}
-	pristine, replayStateErr := registry.integrationReplayStatePristine(ctx, repository, request)
+	_, replayStateErr := registry.integrationReplayStatePristine(ctx, repository, request)
 	if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
-		if replayStateErr != nil || !pristine {
-			return application.IntegrationAdapterResult{}, errors.Join(err, replayStateErr)
+		// A preflight refusal precedes every mutation, so it stays attributable
+		// unless durable replay evidence says an earlier operation already ran.
+		absent, absentErr := registry.integrationReplayEvidenceAbsent(ctx, repository, request)
+		if absentErr != nil || !absent {
+			return application.IntegrationAdapterResult{}, errors.Join(err, absentErr)
 		}
 		return application.IntegrationAdapterResult{}, errors.Join(err, application.ErrIntegrationMutationNotStarted)
 	}
@@ -82,7 +86,9 @@ func (registry *Registry) ApplyIntegrationCandidate(
 	}
 	target, candidate, err := registry.inspectIntegrationInputs(ctx, request, repository)
 	if err != nil {
-		return application.IntegrationAdapterResult{}, err
+		// Input inspection precedes every mutation, including the bounds that
+		// refuse an oversized candidate before Git runs.
+		return application.IntegrationAdapterResult{}, errors.Join(err, application.ErrIntegrationMutationNotStarted)
 	}
 	expectedBranch := expectedIntegrationTargetBranch(request)
 	if target.Cleanliness != CandidateClean || target.HeadRevision != request.Target.ExpectedHead || target.Branch != expectedBranch {

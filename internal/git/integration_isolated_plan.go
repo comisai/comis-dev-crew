@@ -98,7 +98,7 @@ func (registry *Registry) runIsolatedIntegration(
 				return err
 			}
 			if err := registry.validateIsolatedMaterializationTopology(
-				ctx, workspace, request.Target.ExpectedHead, resultingHead,
+				ctx, workspace, request.Target.ExpectedHead, resultingHead, integrationWriterCustodyProven(request),
 			); err != nil {
 				return err
 			}

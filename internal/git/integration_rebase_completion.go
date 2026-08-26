@@ -52,15 +52,16 @@ func (registry *Registry) runIntegrationStrategy(
 			return err
 		}
 		if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
-			return withoutIntegrationMutationNotStarted(err)
+			return errors.Join(err, application.ErrIntegrationMutationNotStarted)
 		}
 		if err := registry.validateIntegrationMutationDeadline(request); err != nil {
-			return withoutIntegrationMutationNotStarted(err)
+			return err
 		}
 		targetRef, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C", request.Target.WorktreePath,
 			"symbolic-ref", "--quiet", "HEAD")
 		if err != nil || targetRef != "refs/heads/"+expectedIntegrationTargetBranch(request) {
-			return errors.New("apply integration candidate: target branch identity is unavailable")
+			return errors.Join(errors.New("apply integration candidate: target branch identity is unavailable"),
+				application.ErrIntegrationMutationNotStarted)
 		}
 		return withoutIntegrationMutationNotStarted(
 			registry.materializeIntegrationResult(ctx, request, targetRef, plan.ResultingHead),
@@ -101,7 +102,10 @@ func (registry *Registry) runRebaseIntegration(
 	}
 	mutationAt := registry.clock().UTC()
 	if mutationAt.IsZero() || !mutationAt.Before(request.EvidenceExpiresAt) {
-		return errors.New("apply integration candidate: candidate evidence expired after isolated publication")
+		return errors.Join(
+			errors.New("apply integration candidate: candidate evidence expired after isolated publication"),
+			application.ErrIntegrationMutationNotStarted,
+		)
 	}
 	if err := registry.validateIntegrationExecutionPolicy(ctx, request); err != nil {
 		return withoutIntegrationMutationNotStarted(err)

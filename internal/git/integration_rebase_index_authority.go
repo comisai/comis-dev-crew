@@ -61,7 +61,7 @@ func (registry *Registry) preflightRebasePatches(
 					return validationErr
 				}
 				if err := registry.validateIsolatedMaterializationTopology(
-					ctx, workspace, request.Target.ExpectedHead, result.head,
+					ctx, workspace, request.Target.ExpectedHead, result.head, integrationWriterCustodyProven(request),
 				); err != nil {
 					return err
 				}

@@ -14,6 +14,45 @@ func (registry *Registry) integrationReplayStatePristine(
 	repository Repository,
 	request application.IntegrationAdapterRequest,
 ) (bool, error) {
+	absent, err := registry.integrationReplayEvidenceAbsent(ctx, repository, request)
+	if err != nil || !absent {
+		return false, err
+	}
+	target, err := registry.inspectIntegrationCandidate(ctx, CandidateSnapshotRequest{
+		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
+		WorktreePath: request.Target.WorktreePath,
+	})
+	if err != nil {
+		return false, err
+	}
+	if target.HeadRevision != request.Target.ExpectedHead || target.Branch != expectedIntegrationTargetBranch(request) ||
+		target.Cleanliness != CandidateClean {
+		return false, nil
+	}
+	gitDirectory, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C",
+		request.Target.WorktreePath, "rev-parse", "--absolute-git-dir")
+	if err != nil || !filepath.IsAbs(gitDirectory) {
+		return false, errors.New("apply integration candidate: replay sequencer identity is unavailable")
+	}
+	for _, name := range []string{"rebase-merge", "rebase-apply", "sequencer"} {
+		if _, err := os.Lstat(filepath.Join(gitDirectory, name)); err == nil {
+			return false, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return false, errors.New("apply integration candidate: replay sequencer identity is unavailable")
+		}
+	}
+	return true, nil
+}
+
+// integrationReplayEvidenceAbsent reports whether this operation and its original
+// left no durable receipt, proof, or replay artifact behind. Worktree cleanliness
+// is deliberately excluded: untracked developer content never means a mutation of
+// this integration has started.
+func (registry *Registry) integrationReplayEvidenceAbsent(
+	ctx context.Context,
+	repository Repository,
+	request application.IntegrationAdapterRequest,
+) (bool, error) {
 	snapshot, err := registry.integrationReceiptFamilySnapshot(ctx, request)
 	if err != nil {
 		return false, err
@@ -41,29 +80,6 @@ func (registry *Registry) integrationReplayStatePristine(
 			} else if !errors.Is(err, os.ErrNotExist) {
 				return false, errors.New("apply integration candidate: replay artifact identity is unavailable")
 			}
-		}
-	}
-	target, err := registry.inspectIntegrationCandidate(ctx, CandidateSnapshotRequest{
-		TaskHandle: request.Target.TaskHandle, RepositoryID: request.Target.RepositoryID,
-		WorktreePath: request.Target.WorktreePath,
-	})
-	if err != nil {
-		return false, err
-	}
-	if target.HeadRevision != request.Target.ExpectedHead || target.Branch != expectedIntegrationTargetBranch(request) ||
-		target.Cleanliness != CandidateClean {
-		return false, nil
-	}
-	gitDirectory, err := runGit(ctx, registry.gitExecutable, "--no-optional-locks", "-C",
-		request.Target.WorktreePath, "rev-parse", "--absolute-git-dir")
-	if err != nil || !filepath.IsAbs(gitDirectory) {
-		return false, errors.New("apply integration candidate: replay sequencer identity is unavailable")
-	}
-	for _, name := range []string{"rebase-merge", "rebase-apply", "sequencer"} {
-		if _, err := os.Lstat(filepath.Join(gitDirectory, name)); err == nil {
-			return false, nil
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return false, errors.New("apply integration candidate: replay sequencer identity is unavailable")
 		}
 	}
 	return true, nil

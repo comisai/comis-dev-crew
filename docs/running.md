@@ -321,11 +321,18 @@ the shared index, worktree, or target ref. A clean proved result is imported
 through a rooted object-database handle, then adopted through the durable
 materialization transition and target compare-and-swap. Evidence and
 strategy-specific receipts are reauthorized immediately before the worktree is
-materialized. Result-tree bounds are proved before the compare-and-swap. E0 has
-no enforceable writer custody, so automatic materialization refuses every
-change to an existing worktree entry before the target compare-and-swap; new
-entries use no-replace publication, and
-durable prepared/recovery restoration identity resumes only known partial index,
+materialized. Result-tree bounds are proved before the compare-and-swap. A fresh
+integration carries no writer custody, so it refuses every change to an existing
+worktree entry before the target compare-and-swap; only unchanged entries and
+atomic no-replace additions are eligible. An operation naming an exact prior
+operation has already revalidated the durable task, evidence, worktree, and
+sequencer state, so it may also rewrite an existing regular entry in place
+through that entry's own inode, leaving a developer's open descriptor addressing
+the file, and remove an entry by displacing it into capture evidence. Capture and
+in-place evidence make either resumable, the target is revalidated immediately
+before capture and again before publication so a racing developer write is
+refused rather than discarded, and type and directory transitions stay refused.
+Durable prepared/recovery restoration identity resumes only known partial index,
 worktree, and HEAD states. Expired restoration authority remains unknown after
 journaling and can be adopted only by a fresh exact recovery operation. Blocking
 filesystem topology is refused before target compare-and-swap, and success
